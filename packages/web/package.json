@@ -6,12 +6,13 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp dist/index.html dist/404.html",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource/public-sans": "^5.2.7",
     "@qed2/core-logic": "workspace:*",
     "@qed2/ui": "workspace:*",
     "pinia": "^3.0.3",

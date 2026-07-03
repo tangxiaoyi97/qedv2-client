@@ -1,0 +1,92 @@
+[
+  {
+    "name": "empty",
+    "content": {
+      "perPart": [],
+      "perCompetency": []
+    },
+    "checksum": "389e57af4fe5f0cea96241a5916185940cd3d1b7e66a5983e13f6c2c30b857be",
+    "canonical": "{\"perCompetency\":[],\"perPart\":[]}"
+  },
+  {
+    "name": "two-parts-unsorted-input",
+    "content": {
+      "perPart": [
+        {
+          "partId": "2023-ht-t1-09-a",
+          "fsrs": {
+            "due": "2026-07-05T10:00:00.000Z",
+            "stability": 3.2,
+            "difficulty": 5.1,
+            "reps": 4,
+            "lapses": 1,
+            "lastReview": "2026-07-01T10:00:00.000Z"
+          },
+          "lastResult": {
+            "correct": true,
+            "awardedPoints": 1,
+            "gradedAt": "2026-07-01T10:00:00.000Z"
+          },
+          "updatedAt": "2026-07-01T10:00:00.123Z"
+        },
+        {
+          "partId": "2019-ht-t1-02-a",
+          "fsrs": {
+            "due": "2026-07-04T00:00:00.000Z",
+            "stability": 1,
+            "difficulty": 6.31,
+            "reps": 1,
+            "lapses": 0
+          },
+          "updatedAt": "2026-07-03T08:30:00.000Z"
+        }
+      ],
+      "perCompetency": [
+        {
+          "code": "FA 1.5",
+          "mastery": 0.42,
+          "updatedAt": "2026-07-01T10:00:00.123Z"
+        },
+        {
+          "code": "AN 4.3",
+          "mastery": 1,
+          "updatedAt": "2026-07-03T08:30:00.000Z"
+        }
+      ]
+    },
+    "checksum": "b1ba155bcb0642f173e260bdcadf420fb87316590cb588ff405d5e3e74fa5b6c",
+    "canonical": "{\"perCompetency\":[{\"code\":\"AN 4.3\",\"mastery\":1,\"updatedAt\":\"2026-07-03T08:30:00.000Z\"},{\"code\":\"FA 1.5\",\"mastery\":0.42,\"updatedAt\":\"2026-07-01T10:00:00.123Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":6.31,\"due\":\"2026-07-04T00:00:00.000Z\",\"lapses\":0,\"reps\":1,\"stability\":1},\"partId\":\"2019-ht-t1-02-a\",\"updatedAt\":\"2026-07-03T08:30:00.000Z\"},{\"fsrs\":{\"difficulty\":5.1,\"due\":\"2026-07-05T10:00:00.000Z\",\"lapses\":1,\"lastReview\":\"2026-07-01T10:00:00.000Z\",\"reps\":4,\"stability\":3.2},\"lastResult\":{\"awardedPoints\":1,\"correct\":true,\"gradedAt\":\"2026-07-01T10:00:00.000Z\"},\"partId\":\"2023-ht-t1-09-a\",\"updatedAt\":\"2026-07-01T10:00:00.123Z\"}]}"
+  },
+  {
+    "name": "floats-umlaut-halfpoints",
+    "content": {
+      "perPart": [
+        {
+          "partId": "x-ä-1",
+          "fsrs": {
+            "due": "2026-01-01T00:00:00.000Z",
+            "stability": 0.5215,
+            "difficulty": 7.0001,
+            "reps": 2,
+            "lapses": 2
+          },
+          "lastResult": {
+            "correct": false,
+            "awardedPoints": 0.5,
+            "gradedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "perCompetency": [
+        {
+          "code": "WS 3.1",
+          "mastery": 0.3333333333333333,
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    "checksum": "1db6b28497292d570cfc9a13e87d8ac6a4d7059a994cf145899e12f946f34e22",
+    "canonical": "{\"perCompetency\":[{\"code\":\"WS 3.1\",\"mastery\":0.3333333333333333,\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":7.0001,\"due\":\"2026-01-01T00:00:00.000Z\",\"lapses\":2,\"reps\":2,\"stability\":0.5215},\"lastResult\":{\"awardedPoints\":0.5,\"correct\":false,\"gradedAt\":\"2026-01-01T00:00:00.000Z\"},\"partId\":\"x-ä-1\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}"
+  }
+]

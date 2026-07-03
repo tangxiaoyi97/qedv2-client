@@ -64,6 +64,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@fontsource/public-sans':
+        specifier: ^5.2.7
+        version: 5.2.7
       '@qed2/core-logic':
         specifier: workspace:*
         version: link:../core-logic

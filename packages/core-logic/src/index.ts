@@ -3,6 +3,7 @@ export * from './ports/index.js';
 export * from './config/index.js';
 export * from './api/index.js';
 export * from './grading/index.js';
+export * from './grading/expression-preview.js';
 export * from './fsrs/index.js';
 export * from './sync/index.js';
 export * from './store/index.js';
