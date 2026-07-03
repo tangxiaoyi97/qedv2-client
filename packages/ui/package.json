@@ -1,0 +1,32 @@
+{
+  "name": "@qed2/ui",
+  "version": "0.1.0",
+  "description": "Shared QED2 UI components (Vue 3, platform-free): RichText/KaTeX rendering, answer controls for all six kinds, practice flow, progress views, settings. Consumed by the web shell today, desktop/mobile shells later.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles": "./src/styles/tokens.css"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource/public-sans": "^5.2.5",
+    "@qed2/core-logic": "workspace:*",
+    "katex": "^0.16.22"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "vue": "^3.5.16",
+    "vue-tsc": "^2.2.10"
+  }
+}

@@ -1,0 +1,130 @@
+# qed2-client · Engineering conventions & shared context
+
+Internal reference for everyone (human or agent) working on this repo.
+Authoritative upstream documents, in priority order:
+
+1. **QED2-CONTRACT.md** (`~/Downloads/QED2-CONTRACT.md`) — three-party integration contract. Wins every conflict.
+2. **QED2-WEBCLIENT-agent-brief.md** — client architecture mandate (monorepo, shared packages, ports).
+3. **QED2-question-types-supplement.md** — functional truth for the six answer kinds (controls, grading, scoring).
+4. **UI prototype** (`scratchpad/prototype/QED2 Prototype.dc.html`) — visual truth (tokens, layouts). Function defers to the supplement.
+
+## Iron rules (violating any of these = stop and fix)
+
+- **Platform-agnostic logic lives in `@qed2/core-logic`** (grading, FSRS, mastery, sync, checksum, API clients, archive store, config). The web app only adapts and assembles. No Vue, no DOM, no Node-specific APIs inside core-logic (`fetch` global is allowed — available in browsers, Node ≥18, Electron, WKWebView).
+- **Client is the only middleman**: core and server never talk to each other; the server token is never sent to core.
+- **Grading is client-side and pure** — `grade(part, submission)` has no I/O, no clock, no side effects.
+- **Checksum must be byte-identical to the server's** (`qedv2-server/src/sync/checksum.ts` is the authority — reproduced below).
+- **Login/logout NEVER clears the local archive.**
+- **Web never spawns a local core** (that's the desktop shell's future job — the `CoreRuntimePort` interface already models it).
+- Progress writes go through **`POST /me/sync` only**; `/me/attempts` is optional audit-only.
+
+## Repo layout
+
+```
+packages/core-logic   @qed2/core-logic  — pure TS. src/{api,model,grading,fsrs,sync,store,ports,config}
+packages/ui           @qed2/ui          — Vue 3 components, platform-free. src/{question,practice,review,settings,shared}
+packages/web          @qed2/web         — Vite app. src/{routes,stores,platform,pwa}
+packages/desktop      (future Electron shell — structure reserved only)
+packages/mobile       (future iOS shell — structure reserved only)
+```
+
+- pnpm workspaces; packages export **source** (`./src/index.ts`) — Vite/vitest consume TS directly.
+- TypeScript strict everywhere (`tsconfig.base.json`, incl. `exactOptionalPropertyTypes` in core-logic — required for "omit, never null" archive semantics).
+- Tests: vitest, colocated under `test/**/*.spec.ts` per package.
+- German UI text (the product language); code and comments in English.
+
+## Checksum spec (server-identical, verified against the live server)
+
+1. Content only: `{ perPart, perCompetency }` — no archiveVersion/checksum/server timestamps.
+2. All timestamps normalized via `new Date(x).toISOString()` (ms precision UTC).
+3. `perPart` sorted by `partId`, `perCompetency` by `code` (code-point order).
+4. Absent optional fields (`fsrs.lastReview`, `lastResult`) are **omitted entirely — never null**.
+5. `stableStringify`: object keys sorted (code point), `undefined`-valued keys dropped, arrays in order, no whitespace, `JSON.stringify` for primitives.
+6. `sha256` over UTF-8 bytes, lowercase hex.
+
+Empty archive checksum (verified vs live server): `389e57af4fe5f0cea96241a5916185940cd3d1b7e66a5983e13f6c2c30b857be`.
+Use `@noble/hashes/sha256` (pure TS, platform-free).
+
+## Sync protocol client behavior (contract §5, real server verified)
+
+- `POST /me/sync {baseVersion, localArchive}` →
+  - `fast-forward` → update local baseVersion; done.
+  - `merged` → replace local content with `mergedArchive`, update baseVersion; **user never notified**.
+  - `conflict` → `{serverVersion, serverChecksum, conflicts: ConflictEntry[], autoMergeable}`; `ConflictEntry` is a **mixed array**: part conflicts `{partId, server, local}`, competency conflicts `{competencyCode, server, local}`. UI dialog lets the user pick per entry (or all-cloud / all-local); assemble `resolvedArchive` = autoMergeable + picks; `POST /me/sync/resolve {baseServerVersion: serverVersion, resolvedArchive}`. A resolve can conflict again (optimistic concurrency) → new round.
+- Sync triggers: after login, app start (if logged in), every N graded parts (N=3) and on session end.
+- Before requesting recommendations while logged in: compare local checksum to server checksum; equal → skip sync.
+- HTTP conflict semantics: **200 + `result` field** (never 409).
+
+## Grading engine (supplement is the authority)
+
+Dispatch on `answer.kind`; every grader returns `GradeResult {verdict: correct|partial|incorrect, correct, awardedPoints, maxPoints, breakdown?}` — `expression` may instead return `{verdict:'indeterminate', reason}` → UI falls back to self-assessment (NEVER hard-fail the user).
+
+- **choice**: set equality with `correct`. Scoring per `scoring` mode; no invented penalty rules.
+- **matching**: user pairs vs `pairs` (default one right item used once; UI enforces).
+- **numeric**: per blank `|user − value| <= tol`; accept decimal comma AND point; whitespace tolerated.
+- **interval**: bounds + closedness all match; `null` = ±∞; numeric compare with 1e-9 epsilon; accept `-∞`/`inf`/empty as unbounded input.
+- **expression**: CAS equivalence via mathjs. The bank's `canonical` is **KaTeX-flavoured LaTeX** (e.g. `x_n\cdot 1{,}03`, `\frac{a}{b}`, `^{...}`, `{,}` decimal comma) — normalize LaTeX → mathjs syntax first. User input is mathjs-flavoured with tolerance (implicit multiplication, `,` decimals, unicode −·√). Equivalence check: symbolic simplify(a−b)==0 attempt, then numeric sampling over `vars` (multiple points, relative tolerance) — both must agree it's equal; parse failure of USER input → incorrect only if clearly malformed, else indeterminate; parse failure of CANONICAL → indeterminate (self-assess).
+- **open**: v1 self-assessment. With `scoring.mode==='rubric'`: one checkbox per criterion → sum of met criteria points. Otherwise: overall `full|partial|none` → maxPoints / round-half / 0. `grader:"ai"` values in bank data are treated as self in v1.
+
+Scoring modes (§7): `allOrNothing{points}`, `perBlank{pointsPerCorrect,max}`, `tiered{tiers[{minCorrect,points}]}` (pick highest tier whose minCorrect ≤ correctCount), `rubric{criteria}`. Missing `scoring`/`points` → fall back to `points ?? 1` allOrNothing. Verdict: correct = full points & nothing wrong; incorrect = 0 points; else partial.
+
+## FSRS + mastery (client-computed, server only stores)
+
+- Hand-rolled FSRS (long-term scheduler variant, FSRS-4.5/5 published weights) in `core-logic/fsrs` — the archive stores exactly `{due, stability, difficulty, reps, lapses, lastReview}` (contract), which is sufficient state for the long-term algorithm. No learning steps.
+- Rating mapping from grade verdict: correct→Good, partial→Hard, incorrect→Again (Easy unused). Desired retention 0.9.
+- First review initializes S/D from rating; later reviews use elapsed days (≥0) from `lastReview`.
+- `due = lastReview + interval(S)` where interval(S) = S·(ln 0.9-retention factor)=S days at 0.9 retention (clamped to [1, 36500] days, rounded).
+- **Mastery**: per competency EMA — `m' = m + 0.3·(ratio − m)`, initialized to `ratio` on first grade; `ratio = awardedPoints/maxPoints` of the graded part. Documented in fsrs/README section. Each graded part updates every competency attached to that part.
+- Part FSRS entries are independent (contract): update per part, set that part's `updatedAt` to grading time.
+
+## API clients
+
+- `CoreClient(baseUrl)` / `ServerClient(baseUrl, tokenProvider)` — thin `fetch` wrappers, no framework deps; JSON in/out; non-2xx → `ApiError(status, code, message)` parsed from the contract error envelope (fall back to status text); network failures → `NetworkError`.
+- Asset URL helper: `assetUrl(baseUrl, src)` → `${base}/content/assets/${src}`.
+- All baseURLs configurable (`ClientConfig`); never hardcode deployment hosts outside `config/`.
+
+## Design tokens (from the prototype — implement as CSS custom properties in @qed2/ui)
+
+Light theme:
+| Token | Value | Use |
+|---|---|---|
+| `--q-page` | `#f5f5f6` | page background |
+| `--q-panel` | `#faf9f4` | subtle panels, rails |
+| `--q-panel-2` | `#eef0e6` | section headers, hero band |
+| `--q-track` | `#e5e7d9` | progress tracks, empty bars |
+| `--q-card` | `#ffffff` | cards |
+| `--q-ink` | `#1a1a1a` | primary text |
+| `--q-ink-2` | `#282828` | body text / dark CTA card bg |
+| `--q-mut` | `#54564d` / `#6b6d63` | secondary text |
+| `--q-faint` | `#8a8c82` / `#a8aa9e` | labels, disabled |
+| `--q-accent` | `#8e9c49` | olive accent (focus, progress, selection border) |
+| `--q-accent-strong` | `#5f6b2e` | primary buttons, active nav |
+| `--q-accent-bg` | `#f7f9ee` | selected option bg |
+| `--q-chip-bg/border` | `#eef1df` / `#d5dcae` | competency chips |
+| `--q-ok` | `#2f7d54` bg `#e9f2ec`/`#e3efe8` border `#b9dcc7` text `#215c3d` | correct |
+| `--q-err` | `#b4462f` bg `#f6e6e0` border `#e6bfb2` text `#8a3423` | wrong |
+| `--q-part` | `#b07d1f` bg `#f6efdb` border `#e6d3a3` text `#7f5a14` | partial |
+| `--q-neutral` | `#6b6d63` bg `#eef0e6` border `#d7dac6` | untouched |
+| focus ring | `2px solid #8e9c49` + `0 0 0 3px rgba(142,156,73,.12)` | inputs |
+
+Typography: **Public Sans** (400/500/600/700/800; self-host via @fontsource — no runtime Google Fonts), math via **KaTeX**. Radii: buttons 8–9px, inputs 8–9px, cards 10–14px, pills 20px. Never color-only state: always icon + text (✓ richtig / ✕ falsch / ◑ half-filled circle for teilweise, dashed green border for missed-correct).
+
+Dark theme is NOT in the prototype — derive it from the same hues (page `#151513`, card `#1f1f1c`, panel `#242420`, ink `#ececе6`→use `#ecebe6`, track `#33342c`, accent stays `#8e9c49`/text-on-accent dark, state colors lightened: ok `#4ca97a`, err `#d4694f`, part `#d3a13f`, translucent state backgrounds). Both themes = two `[data-theme]` blocks of the same custom properties.
+
+UI language: German (Heute / Üben / Aufgaben / Fortschritt / Einstellungen; Überprüfen / Weiter / Überspringen; richtig / falsch / teilweise / verpasst; Fällig / Neu / Bearbeitet).
+
+## Key data-shape gotchas (verified against the live core)
+
+- `part.solution` is `SolutionEntry[] = {result: RichText, note?: string, figures?: Figure[]}[]` — NOT plain RichText.
+- Figures usually arrive as inline `{t:"fig",src,alt}` RichText nodes; `figures[]` arrays are often empty but must render when present.
+- expression `canonical` uses LaTeX with `{,}` decimal commas.
+- matching `left/right` items are RichText; scoring can be `tiered`.
+- List endpoint: `{items, page, pageSize, total}`; batch: `{questions, missing}`; recommend reasons: `due-review|weak-competency|coldstart`.
+- `open` parts in the bank may carry `grader:"ai"` — treat as self in v1.
+
+## Local dev
+
+- core: `http://localhost:8787`, server: `http://localhost:8080` (real services, no mocks).
+- Vite env overrides for dev: `VITE_QED2_CORE_URL`, `VITE_QED2_SERVER_URL` (web/.env.development points at localhost).
+- Test fixtures captured from the real services live in `packages/core-logic/test/fixtures/`.
+- Deploy target: GitHub Pages, custom domain `qed.barcarolle.studio` (SPA fallback 404.html, relative base).

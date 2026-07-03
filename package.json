@@ -1,0 +1,20 @@
+{
+  "name": "qed2-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "QED2 learning tracker client monorepo — web first, desktop/mobile shells later. Shared platform-agnostic logic lives in @qed2/core-logic, shared Vue UI in @qed2/ui.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @qed2/web dev",
+    "build": "pnpm --filter @qed2/web build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

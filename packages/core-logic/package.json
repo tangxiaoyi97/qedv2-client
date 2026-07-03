@@ -1,0 +1,31 @@
+{
+  "name": "@qed2/core-logic",
+  "version": "0.1.0",
+  "description": "Platform-agnostic QED2 client logic: API clients, grading, FSRS, mastery, archive store, sync protocol (incl. server-identical checksum). Pure TypeScript — no browser, Node or UI framework dependencies; platform capabilities are injected through ports.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./grading": "./src/grading/index.ts",
+    "./fsrs": "./src/fsrs/index.ts",
+    "./sync": "./src/sync/index.ts",
+    "./api": "./src/api/index.ts",
+    "./model": "./src/model/index.ts",
+    "./ports": "./src/ports/index.ts",
+    "./store": "./src/store/index.ts",
+    "./config": "./src/config/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0",
+    "mathjs": "^14.5.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
