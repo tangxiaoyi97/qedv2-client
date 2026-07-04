@@ -195,7 +195,7 @@ function redo(questionId: string): void {
 
     <section class="hist__section">
       <h2 class="hist__section-title">Aktivität</h2>
-      <ActivityHeatmap :data="activity" :weeks="26" />
+      <ActivityHeatmap :data="activity" :weeks="52" />
     </section>
 
     <div v-if="error" class="hist__error">
@@ -315,9 +315,19 @@ function redo(questionId: string): void {
   color: var(--q-ink);
   text-align: left;
   width: 100%;
+  transition: all var(--q-transition-fast);
 }
-.hist__row:hover {
-  border-color: var(--q-accent);
+@media (hover: hover) and (pointer: fine) {
+  .hist__row:hover {
+    border-color: var(--q-accent);
+    background: linear-gradient(135deg, var(--q-card), var(--q-panel-2));
+    transform: translateY(-1px);
+    box-shadow: var(--q-shadow-card);
+  }
+}
+.hist__row:active {
+  background: var(--q-panel-2);
+  transform: scale(0.99);
 }
 .hist__row:focus-visible {
   outline: 2px solid var(--q-accent);

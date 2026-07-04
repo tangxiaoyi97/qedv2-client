@@ -15,7 +15,8 @@
   "dependencies": {
     "@fontsource/public-sans": "^5.2.5",
     "@qed2/core-logic": "workspace:*",
-    "katex": "^0.16.22"
+    "katex": "^0.16.22",
+    "lucide-vue-next": "^1.0.0"
   },
   "peerDependencies": {
     "vue": "^3.5.0"

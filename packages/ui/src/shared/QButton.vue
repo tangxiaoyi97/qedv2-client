@@ -26,18 +26,26 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   border-radius: 9px;
   cursor: pointer;
   border: none;
-  transition: filter 0.12s ease, background 0.12s ease;
+  transition: all var(--q-transition-fast, 0.15s ease);
 }
 .q-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
+.q-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
 .q-btn--primary {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
 }
-.q-btn--primary:not(:disabled):hover {
-  filter: brightness(1.08);
+@media (hover: hover) and (pointer: fine) {
+  .q-btn--primary:not(:disabled):hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(142, 156, 73, 0.25);
+  }
 }
 .q-btn--secondary {
   background: var(--q-card);
@@ -46,8 +54,11 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   font-weight: 600;
   padding: 10px 14px;
 }
-.q-btn--secondary:not(:disabled):hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .q-btn--secondary:not(:disabled):hover {
+    background: linear-gradient(135deg, var(--q-card), var(--q-panel));
+    transform: translateY(-1px);
+  }
 }
 .q-btn--ghost {
   background: transparent;
@@ -55,8 +66,11 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   font-weight: 600;
   padding: 10px 12px;
 }
-.q-btn--ghost:not(:disabled):hover {
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .q-btn--ghost:not(:disabled):hover {
+    color: var(--q-ink);
+    background: var(--q-panel-2);
+  }
 }
 .q-btn--danger {
   background: var(--q-card);

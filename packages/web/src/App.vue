@@ -9,6 +9,7 @@
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { provideAssetResolver } from '@qed2/ui';
+import { Calendar, Play, ListTodo, History, LineChart, Settings, UserCircle } from 'lucide-vue-next';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -29,23 +30,23 @@ const focusMode = computed(() => route.meta.focus === true);
 
 /** Two practice entries, visually grouped (supplement §7). */
 const practiceItems = [
-  { to: '/practice', label: 'Intelligent üben', icon: '▶', title: 'FSRS-Empfehlungen' },
-  { to: '/questions', label: 'Aufgaben', icon: '▤', title: 'Selbst Aufgaben auswählen' },
+  { to: '/practice', label: 'Intelligent üben', icon: Play, title: 'FSRS-Empfehlungen' },
+  { to: '/questions', label: 'Aufgaben', icon: ListTodo, title: 'Selbst Aufgaben auswählen' },
 ] as const;
 
 const otherItems = [
-  { to: '/history', label: 'Verlauf', icon: '≡' },
-  { to: '/progress', label: 'Fortschritt', icon: '▨' },
-  { to: '/settings', label: 'Einstellungen', icon: '⚙' },
+  { to: '/history', label: 'Verlauf', icon: History },
+  { to: '/progress', label: 'Fortschritt', icon: LineChart },
+  { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
 /** Mobile tab bar — 5 slots; Einstellungen via the fixed gear button. */
 const tabItems = [
-  { to: '/', label: 'Heute', icon: '◈' },
-  { to: '/practice', label: 'Üben', icon: '▶' },
-  { to: '/questions', label: 'Aufgaben', icon: '▤' },
-  { to: '/history', label: 'Verlauf', icon: '≡' },
-  { to: '/progress', label: 'Fortschritt', icon: '▨' },
+  { to: '/', label: 'Heute', icon: Calendar },
+  { to: '/practice', label: 'Üben', icon: Play },
+  { to: '/questions', label: 'Aufgaben', icon: ListTodo },
+  { to: '/history', label: 'Verlauf', icon: History },
+  { to: '/progress', label: 'Fortschritt', icon: LineChart },
 ] as const;
 
 function isActive(to: string): boolean {
@@ -55,8 +56,7 @@ function isActive(to: string): boolean {
 
 <template>
   <div class="app q-app">
-    <template v-if="!focusMode">
-      <aside class="app__sidebar">
+    <aside class="app__sidebar" :class="{ 'app__sidebar--hidden': focusMode }">
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
         <nav class="app__nav">
           <RouterLink
@@ -64,7 +64,7 @@ function isActive(to: string): boolean {
             class="app__nav-item"
             :class="{ 'app__nav-item--active': isActive('/') }"
           >
-            <span class="app__nav-icon" aria-hidden="true">◈</span>
+            <Calendar class="app__nav-icon" aria-hidden="true" />
             <span>Heute</span>
           </RouterLink>
 
@@ -77,7 +77,7 @@ function isActive(to: string): boolean {
             :class="{ 'app__nav-item--active': isActive(item.to) }"
             :title="item.title"
           >
-            <span class="app__nav-icon" aria-hidden="true">{{ item.icon }}</span>
+            <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
             <span>{{ item.label }}</span>
           </RouterLink>
 
@@ -89,28 +89,38 @@ function isActive(to: string): boolean {
             class="app__nav-item"
             :class="{ 'app__nav-item--active': isActive(item.to) }"
           >
-            <span class="app__nav-icon" aria-hidden="true">{{ item.icon }}</span>
+            <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
             <span>{{ item.label }}</span>
           </RouterLink>
         </nav>
         <div v-if="!auth.isLoggedIn" class="app__guest-card">
-          <div class="app__guest-title">Als Gast unterwegs</div>
-          <div class="app__guest-text">Anmelden sichert deinen Fortschritt geräteübergreifend.</div>
+          <div class="app__guest-header">
+            <UserCircle class="app__guest-avatar" aria-hidden="true" />
+            <div class="app__guest-info">
+              <div class="app__guest-title">Als Gast unterwegs</div>
+              <div class="app__guest-text">Lokal gespeichert</div>
+            </div>
+          </div>
           <button type="button" class="app__guest-btn" @click="ui.openAuthModal()">Anmelden</button>
         </div>
         <div v-else class="app__guest-card">
-          <div class="app__guest-title">{{ auth.username }}</div>
-          <div class="app__guest-text">
-            <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
-            <template v-else-if="progress.syncStatus.state === 'syncing'">⟳ Synchronisiere …</template>
-            <template v-else-if="progress.syncStatus.state === 'offline'">Offline · lokal gespeichert</template>
-            <template v-else-if="progress.syncStatus.state === 'conflict'">⚠ Konflikt — bitte wählen</template>
-            <template v-else>Cloud-Sync aktiv</template>
+          <div class="app__guest-header">
+            <UserCircle class="app__guest-avatar" aria-hidden="true" />
+            <div class="app__guest-info">
+              <div class="app__guest-title">{{ auth.username }}</div>
+              <div class="app__guest-text">
+                <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
+                <template v-else-if="progress.syncStatus.state === 'syncing'">⟳ Sync …</template>
+                <template v-else-if="progress.syncStatus.state === 'offline'">Offline</template>
+                <template v-else-if="progress.syncStatus.state === 'conflict'">⚠ Konflikt</template>
+                <template v-else>Cloud aktiv</template>
+              </div>
+            </div>
           </div>
         </div>
       </aside>
 
-      <nav class="app__tabbar">
+      <nav class="app__tabbar" :class="{ 'app__tabbar--hidden': focusMode }">
         <RouterLink
           v-for="item in tabItems"
           :key="item.to"
@@ -118,18 +128,21 @@ function isActive(to: string): boolean {
           class="app__tab"
           :class="{ 'app__tab--active': isActive(item.to) }"
         >
-          <span class="app__tab-icon" aria-hidden="true">{{ item.icon }}</span>
+          <component :is="item.icon" class="app__tab-icon" aria-hidden="true" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
 
-      <RouterLink to="/settings" class="app__gear" aria-label="Einstellungen" title="Einstellungen">
-        <span aria-hidden="true">⚙</span>
+      <RouterLink to="/settings" class="app__gear" :class="{ 'app__gear--hidden': focusMode }" aria-label="Einstellungen" title="Einstellungen">
+        <Settings aria-hidden="true" />
       </RouterLink>
-    </template>
 
-    <main class="app__main" :class="{ 'app__main--focus': focusMode }">
-      <RouterView />
+    <main class="app__main">
+      <RouterView v-slot="{ Component }">
+        <transition name="page-fade" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </RouterView>
     </main>
 
     <ConflictDialog />
@@ -156,6 +169,12 @@ function isActive(to: string): boolean {
   position: sticky;
   top: 0;
   height: 100vh;
+  transition: margin-left var(--q-transition-normal), opacity var(--q-transition-normal);
+}
+.app__sidebar--hidden {
+  margin-left: calc(-1 * var(--q-sidebar-width));
+  opacity: 0;
+  pointer-events: none;
 }
 .app__logo {
   font-weight: 800;
@@ -195,37 +214,76 @@ function isActive(to: string): boolean {
   font-weight: 500;
   font-size: 13.5px;
   text-decoration: none;
+  transition: all var(--q-transition-fast);
 }
-.app__nav-item:hover {
+@media (hover: hover) and (pointer: fine) {
+  .app__nav-item:hover {
+    background: linear-gradient(135deg, var(--q-panel-2), var(--q-panel));
+    color: var(--q-ink);
+  }
+}
+.app__nav-item:active {
   background: var(--q-panel-2);
+  opacity: 0.8;
+  transform: scale(0.98);
 }
-.app__nav-item--active {
+.app__nav-item--active,
+.app__nav-item--active:hover {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
   font-weight: 700;
 }
 .app__nav-icon {
-  font-size: 14px;
-  width: 16px;
-  text-align: center;
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2px;
+  flex-shrink: 0;
 }
 .app__guest-card {
   margin-top: auto;
-  padding: 11px;
-  background: var(--q-card);
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
+  padding: 10px;
+  background: var(--q-panel-2);
+  border-radius: 12px;
+  border: 1px solid var(--q-border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.app__guest-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app__guest-avatar {
+  width: 32px;
+  height: 32px;
+  color: var(--q-mut-2);
+  flex-shrink: 0;
+  stroke-width: 1.5;
+}
+.app__guest-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
 }
 .app__guest-title {
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 3px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--q-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .app__guest-text {
   font-size: 11px;
   color: var(--q-mut-2);
-  line-height: 1.4;
-  margin-bottom: 9px;
+  margin-top: 3px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .app__guest-btn {
   display: block;
@@ -238,9 +296,17 @@ function isActive(to: string): boolean {
   padding: 8px;
   border-radius: 7px;
   cursor: pointer;
+  transition: all var(--q-transition-fast);
 }
-.app__guest-btn:hover {
+@media (hover: hover) and (pointer: fine) {
+  .app__guest-btn:hover {
+    background: linear-gradient(135deg, var(--q-panel-2), var(--q-panel));
+    transform: scale(1.02);
+  }
+}
+.app__guest-btn:active {
   background: var(--q-panel-2);
+  transform: scale(0.97);
 }
 
 /* bottom tab bar + gear (mobile only) */
@@ -252,9 +318,7 @@ function isActive(to: string): boolean {
 .app__main {
   flex: 1;
   min-width: 0;
-}
-.app__main--focus {
-  width: 100%;
+  transition: padding var(--q-transition-normal);
 }
 
 @media (max-width: 899px) {
@@ -272,12 +336,18 @@ function isActive(to: string): boolean {
     background: var(--q-card);
     border-top: 1px solid var(--q-border);
     z-index: 40;
+    transition: transform var(--q-transition-normal);
+  }
+  .app__tabbar--hidden {
+    transform: translateY(100%);
+    pointer-events: none;
   }
   .app__tab {
     flex: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 3px;
     color: var(--q-disabled);
     font-size: 10.5px;
@@ -285,13 +355,22 @@ function isActive(to: string): boolean {
     text-decoration: none;
     padding-top: 2px;
     min-width: 0;
+    min-height: 48px;
+    transition: color var(--q-transition-fast), transform 0.1s ease;
+  }
+  .app__tab:active {
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+    transform: scale(0.95);
   }
   .app__tab--active {
     color: var(--q-accent-strong);
     font-weight: 700;
   }
   .app__tab-icon {
-    font-size: 18px;
+    width: 22px;
+    height: 22px;
+    stroke-width: 2.2px;
   }
   /* Einstellungen on mobile: fixed round gear, top-right (safe-area aware). */
   .app__gear {
@@ -300,18 +379,40 @@ function isActive(to: string): boolean {
     position: fixed;
     top: calc(env(safe-area-inset-top) + 10px);
     right: 12px;
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: var(--q-card);
     border: 1px solid var(--q-border);
     color: var(--q-mut);
-    font-size: 16px;
     text-decoration: none;
     z-index: 40;
+    transition: transform 0.1s ease, background 0.1s ease, opacity var(--q-transition-normal);
+  }
+  .app__gear--hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .app__gear svg {
+    width: 20px;
+    height: 20px;
+    stroke-width: 2.2px;
+  }
+  .app__gear:active {
+    background: var(--q-panel-2);
+    transform: scale(0.92);
   }
   .app__main:not(.app__main--focus) {
     padding-bottom: 84px;
+  }
+  /* we override padding via focusMode class indirectly or just use body padding, but 
+     since app__main--focus is removed, let's keep padding-bottom dynamic via a wrapper class?
+     Wait, I can just do .app__tabbar--hidden ~ .app__main { padding-bottom: 0 } */
+  .app__main {
+    padding-bottom: 84px;
+  }
+  .app__tabbar--hidden ~ .app__main {
+    padding-bottom: 0;
   }
 }
 </style>

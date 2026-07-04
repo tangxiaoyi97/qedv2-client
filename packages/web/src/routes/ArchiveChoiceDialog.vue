@@ -59,8 +59,9 @@ function onEscape(): void {
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="choice"
+    <transition name="modal-fade">
+      <div
+        v-if="choice"
       class="achoice"
       role="dialog"
       aria-modal="true"
@@ -121,7 +122,8 @@ function onEscape(): void {
           <QButton :disabled="pending" @click="apply">{{ pending ? 'Übernehme …' : 'Weiter' }}</QButton>
         </div>
       </div>
-    </div>
+      </div>
+    </transition>
   </Teleport>
 </template>
 
@@ -135,6 +137,23 @@ function onEscape(): void {
   justify-content: center;
   z-index: 100;
   padding: 16px;
+}
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity var(--q-transition-fast);
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+.modal-fade-enter-active .achoice__card,
+.modal-fade-leave-active .achoice__card {
+  transition: transform var(--q-transition-fast), opacity var(--q-transition-fast);
+}
+.modal-fade-enter-from .achoice__card,
+.modal-fade-leave-to .achoice__card {
+  opacity: 0;
+  transform: scale(0.96) translateY(8px);
 }
 .achoice__card {
   width: 100%;
@@ -218,6 +237,19 @@ function onEscape(): void {
   color: var(--q-ink);
   text-align: left;
   width: 100%;
+  transition: all var(--q-transition-fast);
+}
+@media (hover: hover) and (pointer: fine) {
+  .achoice__option:not(.achoice__option--on):hover {
+    border-color: var(--q-accent);
+    background: linear-gradient(135deg, var(--q-card), var(--q-panel-2));
+    transform: translateY(-1px);
+    box-shadow: var(--q-shadow-card);
+  }
+}
+.achoice__option:not(.achoice__option--on):active {
+  background: var(--q-panel-2);
+  transform: scale(0.99);
 }
 .achoice__option--on {
   border: 2px solid var(--q-accent);

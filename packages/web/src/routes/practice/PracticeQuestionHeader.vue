@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Grading, GradingOrUnseen } from '@qed2/core-logic';
 import { GradingMenu, QChip, StarButton } from '@qed2/ui';
+import { ExternalLink } from 'lucide-vue-next';
 
 defineProps<{
   title: string;
@@ -37,8 +38,9 @@ const emit = defineEmits<{
         :href="officialUrl"
         target="_blank"
         rel="noopener noreferrer"
+        title="Offizielle Originalaufgabe"
       >
-        查看官方原题
+        Originalaufgabe <ExternalLink class="practice-qhead__official-icon" aria-hidden="true" />
       </a>
       <span v-if="points != null" class="practice-qhead__points">{{ points }} P</span>
     </div>
@@ -85,6 +87,7 @@ const emit = defineEmits<{
 .practice-qhead__official {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   min-height: 26px;
   border: 1px solid var(--q-border-2);
   border-radius: 7px;
@@ -96,6 +99,12 @@ const emit = defineEmits<{
   padding: 5px 9px;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.practice-qhead__official-icon {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.2px;
 }
 
 .practice-qhead__official:hover,

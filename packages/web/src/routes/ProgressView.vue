@@ -719,17 +719,21 @@ function closeDetail(): void {
 }
 .prog__activity {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
 }
 .prog__activity-chart {
   padding: 4px 2px 0;
+  flex: none;
 }
 .prog__activity-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  align-items: stretch;
+  flex: 1;
+  min-width: 280px;
 }
 .prog__activity-metrics {
   display: grid;
@@ -785,9 +789,6 @@ function closeDetail(): void {
   color: var(--q-ink-2);
 }
 @media (max-width: 760px) {
-  .prog__activity-panel {
-    grid-template-columns: 1fr;
-  }
   .prog__activity-metrics {
     grid-template-columns: 1fr;
   }

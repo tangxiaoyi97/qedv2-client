@@ -349,18 +349,28 @@ function fmtPoints(n: number): string {
 
 const playableIds = computed(() => filtered.value.filter((q) => q.playable).map((q) => q.id));
 
+const selectedIds = ref<Set<string>>(new Set());
+
 function practiceAll(): void {
-  if (playableIds.value.length === 0) return;
+  const targets = selectedIds.value.size > 0 ? Array.from(selectedIds.value) : playableIds.value;
+  if (targets.length === 0) return;
   // Store handoff instead of ?questions=<hundreds of ids>: the session is
   // seeded here, /practice mounts onto it (PracticeView keeps loading/running).
-  void practice.startPrepared(playableIds.value);
+  void practice.startPrepared(targets);
   void router.push({ path: '/practice', query: practiceQuery() });
 }
 
-function practiceOne(q: QuestionSummary): void {
+function practiceSingle(id: string): void {
+  void practice.startPrepared([id]);
+  void router.push({ path: '/practice', query: practiceQuery() });
+}
+
+function toggleSelection(q: QuestionSummary): void {
   if (!q.playable) return;
-  // Excluded questions stay clickable — exclusion is not deletion (§1.4).
-  void router.push({ path: '/practice', query: practiceQuery({ questions: q.id }) });
+  const next = new Set(selectedIds.value);
+  if (next.has(q.id)) next.delete(q.id);
+  else next.add(q.id);
+  selectedIds.value = next;
 }
 
 function firstCode(q: QuestionSummary): string | undefined {
@@ -370,54 +380,56 @@ function firstCode(q: QuestionSummary): string | undefined {
 
 <template>
   <div class="browse">
-    <div class="browse__head">
-      <h1 class="browse__title">Aufgaben</h1>
-      <QButton :disabled="playableIds.length === 0" @click="practiceAll">Ganze Auswahl üben →</QButton>
-    </div>
+    <div class="browse__sticky-header">
+      <div class="browse__head">
+        <h1 class="browse__title">Aufgaben</h1>
+        <QButton :disabled="playableIds.length === 0" @click="practiceAll">Auswahl üben →</QButton>
+      </div>
 
-    <SearchBox
-      v-model="searchQuery"
-      class="browse__search"
-      placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
-      :busy="searchBusy"
-      @search="runSearch"
-    />
+      <SearchBox
+        v-model="searchQuery"
+        class="browse__search"
+        placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
+        :busy="searchBusy"
+        @search="runSearch"
+      />
 
-    <div v-if="!searchMode" class="browse__filterbar">
-      <button
-        type="button"
-        class="browse__filterbtn"
-        :aria-expanded="dialogOpen ? 'true' : 'false'"
-        @click="dialogOpen = true"
-      >
-        <svg class="browse__funnel" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-          <path
-            d="M1 1.5h10L7.5 6v4L4.5 8.5V6L1 1.5Z"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.4"
-            stroke-linejoin="round"
-          />
-        </svg>
-        Filter
-        <span v-if="filterCount > 0" class="browse__badge">{{ filterCount }}</span>
-      </button>
-
-      <span v-for="chip in activeChips" :key="chip.key" class="browse__active">
-        {{ chip.label }}
+      <div v-if="!searchMode" class="browse__filterbar">
         <button
           type="button"
-          class="browse__active-x"
-          :aria-label="`Filter ${chip.label} entfernen`"
-          @click="chip.remove()"
+          class="browse__filterbtn"
+          :aria-expanded="dialogOpen ? 'true' : 'false'"
+          @click="dialogOpen = true"
         >
-          ✕
+          <svg class="browse__funnel" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+            <path
+              d="M1 1.5h10L7.5 6v4L4.5 8.5V6L1 1.5Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+          Filter
+          <span v-if="filterCount > 0" class="browse__badge">{{ filterCount }}</span>
         </button>
-      </span>
 
-      <button v-if="filterCount > 0" type="button" class="browse__reset" @click="resetFilters">
-        Zurücksetzen
-      </button>
+        <span v-for="chip in activeChips" :key="chip.key" class="browse__active">
+          {{ chip.label }}
+          <button
+            type="button"
+            class="browse__active-x"
+            :aria-label="`Filter ${chip.label} entfernen`"
+            @click="chip.remove()"
+          >
+            ✕
+          </button>
+        </span>
+
+        <button v-if="filterCount > 0" type="button" class="browse__reset" @click="resetFilters">
+          Zurücksetzen
+        </button>
+      </div>
     </div>
 
     <!-- search mode: an independent view; clearing returns to browse -->
@@ -493,9 +505,11 @@ function firstCode(q: QuestionSummary): string | undefined {
         :class="{
           'browse__row--disabled': !q.playable,
           'browse__row--excluded': rowInfo(q).allExcluded,
+          'browse__row--selected': selectedIds.has(q.id)
         }"
         :disabled="!q.playable"
-        @click="practiceOne(q)"
+        @click="toggleSelection(q)"
+        @dblclick="q.playable && practiceSingle(q.id)"
       >
         <span class="browse__dots" aria-hidden="false">
           <GradingDot v-for="p in q.parts" :key="p.id" :grading="partGrading(p.id)" :size="11" />
@@ -522,6 +536,16 @@ function firstCode(q: QuestionSummary): string | undefined {
           </span>
         </template>
         <span v-else class="browse__state browse__state--new">Neu</span>
+
+        <span
+          v-if="selectedIds.has(q.id) && selectedIds.size === 1"
+          role="button"
+          class="browse__single-btn"
+          title="Diese Aufgabe üben"
+          @click.stop="practiceSingle(q.id)"
+        >
+          →
+        </span>
       </button>
     </div>
 
@@ -539,6 +563,15 @@ function firstCode(q: QuestionSummary): string | undefined {
   max-width: 860px;
   margin: 0 auto;
   padding: 26px 20px 40px;
+}
+.browse__sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--q-page);
+  margin: -26px -20px 10px;
+  padding: 26px 20px 10px;
+  border-bottom: 1px solid var(--q-border-soft);
 }
 .browse__head {
   display: flex;
@@ -703,6 +736,13 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__row:hover:not(:disabled) {
   border-color: var(--q-accent);
 }
+.browse__row--selected {
+  background: var(--q-accent-bg);
+  border-color: var(--q-accent);
+}
+.browse__row--selected:hover:not(:disabled) {
+  border-color: var(--q-accent-strong, var(--q-accent));
+}
 .browse__row:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 1px;
@@ -773,6 +813,26 @@ function firstCode(q: QuestionSummary): string | undefined {
   font-size: 11px;
   flex: none;
   margin-left: auto;
+}
+.browse__single-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--q-accent-strong);
+  color: var(--q-on-accent);
+  font-weight: 800;
+  font-size: 14px;
+  margin-left: 8px;
+  flex: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.browse__single-btn:hover {
+  background: var(--q-ink);
+  transform: translateX(2px);
 }
 .browse__state--new {
   color: var(--q-faint);

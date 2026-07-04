@@ -8,7 +8,35 @@
     <title>QED2 · Matura Mathematik</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <style>
+        .initial-loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 100vh;
+          width: 100vw;
+          background: #f5f5f6; /* var(--q-page) fallback */
+        }
+        @media (prefers-color-scheme: dark) {
+          .initial-loading { background: #161613; }
+        }
+        .spinner {
+          width: 40px;
+          height: 40px;
+          border: 3px solid rgba(142, 156, 73, 0.2); /* accent-ring */
+          border-top-color: #8e9c49; /* accent */
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      </style>
+      <div class="initial-loading">
+        <div class="spinner"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

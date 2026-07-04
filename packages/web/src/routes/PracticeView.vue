@@ -364,139 +364,141 @@ const currentCompetencyCodes = computed(() =>
       <span v-else class="practice__spacer" />
     </div>
 
-    <!-- loading -->
-    <div v-if="practice.phase === 'loading'" class="practice__center">
-      <div class="practice__skeleton">
-        <div class="practice__skeleton-bar" style="width: 40%" />
-        <div class="practice__skeleton-bar" style="width: 90%" />
-        <div class="practice__skeleton-bar" style="width: 75%" />
-        <div class="practice__skeleton-bar" style="width: 85%" />
+    <transition name="page-fade" mode="out-in">
+      <!-- loading -->
+      <div v-if="practice.phase === 'loading'" key="loading" class="practice__center">
+        <div class="practice__skeleton">
+          <div class="practice__skeleton-bar" style="width: 40%" />
+          <div class="practice__skeleton-bar" style="width: 90%" />
+          <div class="practice__skeleton-bar" style="width: 75%" />
+          <div class="practice__skeleton-bar" style="width: 85%" />
+        </div>
+        <div class="practice__loading-text">Aufgaben werden geladen …</div>
       </div>
-      <div class="practice__loading-text">Aufgaben werden geladen …</div>
-    </div>
 
-    <!-- error -->
-    <div v-else-if="practice.phase === 'error'" class="practice__center">
-      <div class="practice__error">
-        <div class="practice__error-title">Aufgaben konnten nicht geladen werden</div>
-        <div class="practice__error-text">
-          {{ practice.error }} — ist der Inhalts-Server erreichbar? (Einstellungen → Serveradressen)
-        </div>
-        <div class="practice__actions-row">
-          <QButton variant="secondary" @click="exitNow">Zurück</QButton>
-          <QButton @click="start">Erneut versuchen</QButton>
+      <!-- error -->
+      <div v-else-if="practice.phase === 'error'" key="error" class="practice__center">
+        <div class="practice__error">
+          <div class="practice__error-title">Aufgaben konnten nicht geladen werden</div>
+          <div class="practice__error-text">
+            {{ practice.error }} — ist der Inhalts-Server erreichbar? (Einstellungen → Serveradressen)
+          </div>
+          <div class="practice__actions-row">
+            <QButton variant="secondary" @click="exitNow">Zurück</QButton>
+            <QButton @click="start">Erneut versuchen</QButton>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- summary -->
-    <div v-else-if="practice.phase === 'summary'" class="practice__center">
-      <div class="practice__summary">
-        <h2 class="practice__summary-title">Programm abgeschlossen</h2>
-        <div v-if="summaryStats.count === 0" class="practice__error-text">
-          Keine passenden Aufgaben gefunden — andere Filter probieren?
-        </div>
-        <template v-else>
-          <div class="practice__summary-grid">
-            <div class="practice__stat">
-              <div class="practice__stat-num">{{ summaryStats.count }}</div>
-              <div class="practice__stat-label">Aufgaben</div>
-            </div>
-            <div class="practice__stat">
-              <div class="practice__stat-num">
-                {{ summaryStats.points.toLocaleString('de-AT') }}<span class="practice__stat-sub">/{{ summaryStats.maxPoints.toLocaleString('de-AT') }}</span>
+      <!-- summary -->
+      <div v-else-if="practice.phase === 'summary'" key="summary" class="practice__center">
+        <div class="practice__summary">
+          <h2 class="practice__summary-title">Programm abgeschlossen</h2>
+          <div v-if="summaryStats.count === 0" class="practice__error-text">
+            Keine passenden Aufgaben gefunden — andere Filter probieren?
+          </div>
+          <template v-else>
+            <div class="practice__summary-grid">
+              <div class="practice__stat">
+                <div class="practice__stat-num">{{ summaryStats.count }}</div>
+                <div class="practice__stat-label">Aufgaben</div>
               </div>
-              <div class="practice__stat-label">Punkte</div>
+              <div class="practice__stat">
+                <div class="practice__stat-num">
+                  {{ summaryStats.points.toLocaleString('de-AT') }}<span class="practice__stat-sub">/{{ summaryStats.maxPoints.toLocaleString('de-AT') }}</span>
+                </div>
+                <div class="practice__stat-label">Punkte</div>
+              </div>
+              <div class="practice__stat practice__stat--verdicts">
+                <span class="practice__verdict"><StateIcon state="correct" :size="16" /> {{ summaryStats.byVerdict.correct }}</span>
+                <span class="practice__verdict"><StateIcon state="partial" :size="16" /> {{ summaryStats.byVerdict.partial }}</span>
+                <span class="practice__verdict"><StateIcon state="incorrect" :size="16" /> {{ summaryStats.byVerdict.incorrect }}</span>
+              </div>
             </div>
-            <div class="practice__stat practice__stat--verdicts">
-              <span class="practice__verdict"><StateIcon state="correct" :size="16" /> {{ summaryStats.byVerdict.correct }}</span>
-              <span class="practice__verdict"><StateIcon state="partial" :size="16" /> {{ summaryStats.byVerdict.partial }}</span>
-              <span class="practice__verdict"><StateIcon state="incorrect" :size="16" /> {{ summaryStats.byVerdict.incorrect }}</span>
+            <div v-if="summaryStats.competencies.length > 0" class="practice__summary-comps">
+              <QChip v-for="c in summaryStats.competencies" :key="c">{{ c }}</QChip>
             </div>
+            <div v-if="auth.isLoggedIn" class="practice__sync-note">
+              <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
+              <template v-else-if="progress.syncStatus.state === 'offline'">Offline — wird später synchronisiert</template>
+            </div>
+          </template>
+          <div class="practice__actions-row">
+            <QButton variant="secondary" @click="start">Noch ein Programm</QButton>
+            <QButton @click="exitNow">Zurück</QButton>
           </div>
-          <div v-if="summaryStats.competencies.length > 0" class="practice__summary-comps">
-            <QChip v-for="c in summaryStats.competencies" :key="c">{{ c }}</QChip>
-          </div>
-          <div v-if="auth.isLoggedIn" class="practice__sync-note">
-            <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
-            <template v-else-if="progress.syncStatus.state === 'offline'">Offline — wird später synchronisiert</template>
-          </div>
-        </template>
-        <div class="practice__actions-row">
-          <QButton variant="secondary" @click="start">Noch ein Programm</QButton>
-          <QButton @click="exitNow">Zurück</QButton>
-        </div>
-      </div>
-    </div>
-
-    <!-- running -->
-    <template v-else-if="practice.phase === 'running' && current">
-      <div class="practice__body">
-        <PracticeSessionRail
-          v-if="showProgramRail"
-          :items="railItems"
-          :graded-count="gradedCount"
-          :total="practice.total"
-          @jump="jumpToSessionItem"
-        />
-
-        <PracticeSessionDrawer
-          v-if="showProgramRail"
-          :open="mobileRailOpen"
-          :items="railItems"
-          :graded-count="gradedCount"
-          :total="practice.total"
-          @close="mobileRailOpen = false"
-          @jump="jumpToSessionItem"
-        />
-
-        <div class="practice__content">
-        <PracticeQuestionHeader
-          :title="current.question.title"
-          :competency-codes="currentCompetencyCodes"
-          :grading="currentGrading"
-          :source-line="sourceLine"
-          :points="current.part.points"
-          :format="current.part.format"
-          :starred="currentStarred"
-          :official-url="officialAufgabenpoolUrl"
-          @grading-select="onGradingSelect"
-          @star-toggle="onStarToggle"
-        />
-
-        <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
-          <RichTextView :nodes="current.question.prompt" />
-        </div>
-
-        <PartPlayer
-          :key="current.part.id"
-          ref="playerRef"
-          :part="current.part"
-          :label="multiPart ? `Teil ${current.part.label}` : undefined"
-          chromeless
-          @graded="onGraded"
-          @state="onPlayerState"
-        />
         </div>
       </div>
 
-      <PracticeBottomBar
-        v-model:solution-open="solutionOpen"
-        :state="playerState"
-        :answer-preview="playerState.answerPreview"
-        :solution="current.part.solution"
-        :primary-label="primaryLabel"
-        :primary-disabled="primaryDisabled"
-        @score-select="onSelfScoreSelect"
-        @grading-select="onSelfGradingSelect"
-        @primary="primaryAction"
-      />
+      <!-- running -->
+      <div v-else-if="practice.phase === 'running' && current" key="running" class="practice__running">
+        <div class="practice__body">
+          <PracticeSessionRail
+            v-if="showProgramRail"
+            :items="railItems"
+            :graded-count="gradedCount"
+            :total="practice.total"
+            @jump="jumpToSessionItem"
+          />
 
-      <div v-if="practice.warning" class="practice__warning">{{ practice.warning }}</div>
-      <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
-        Offline — wird später synchronisiert
+          <PracticeSessionDrawer
+            v-if="showProgramRail"
+            :open="mobileRailOpen"
+            :items="railItems"
+            :graded-count="gradedCount"
+            :total="practice.total"
+            @close="mobileRailOpen = false"
+            @jump="jumpToSessionItem"
+          />
+
+          <div class="practice__content">
+            <PracticeQuestionHeader
+              :title="current.question.title"
+              :competency-codes="currentCompetencyCodes"
+              :grading="currentGrading"
+              :source-line="sourceLine"
+              :points="current.part.points"
+              :format="current.part.format"
+              :starred="currentStarred"
+              :official-url="officialAufgabenpoolUrl"
+              @grading-select="onGradingSelect"
+              @star-toggle="onStarToggle"
+            />
+
+            <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
+              <RichTextView :nodes="current.question.prompt" />
+            </div>
+
+            <PartPlayer
+              :key="current.part.id"
+              ref="playerRef"
+              :part="current.part"
+              :label="multiPart ? `Teil ${current.part.label}` : undefined"
+              chromeless
+              @graded="onGraded"
+              @state="onPlayerState"
+            />
+          </div>
+        </div>
+
+        <PracticeBottomBar
+          v-model:solution-open="solutionOpen"
+          :state="playerState"
+          :answer-preview="playerState.answerPreview"
+          :solution="current.part.solution"
+          :primary-label="primaryLabel"
+          :primary-disabled="primaryDisabled"
+          @score-select="onSelfScoreSelect"
+          @grading-select="onSelfGradingSelect"
+          @primary="primaryAction"
+        />
+
+        <div v-if="practice.warning" class="practice__warning">{{ practice.warning }}</div>
+        <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
+          Offline — wird später synchronisiert
+        </div>
       </div>
-    </template>
+    </transition>
   </div>
 </template>
 
@@ -611,6 +613,12 @@ const currentCompetencyCodes = computed(() =>
   background: var(--q-panel);
 }
 
+.practice__running {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .practice__body {
   display: flex;
   flex: 1;

@@ -100,8 +100,9 @@ watch(
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="ui.authModalOpen"
+    <transition name="modal-fade">
+      <div
+        v-if="ui.authModalOpen"
       class="authm"
       role="dialog"
       aria-modal="true"
@@ -175,7 +176,8 @@ watch(
         </QButton>
         <button type="button" class="authm__switch" @click="switchMode('login')">← Zurück zur Anmeldung</button>
       </form>
-    </div>
+      </div>
+    </transition>
   </Teleport>
 </template>
 
@@ -189,6 +191,23 @@ watch(
   justify-content: center;
   z-index: 100;
   padding: 16px;
+}
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity var(--q-transition-fast);
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+.modal-fade-enter-active .authm__card,
+.modal-fade-leave-active .authm__card {
+  transition: transform var(--q-transition-fast), opacity var(--q-transition-fast);
+}
+.modal-fade-enter-from .authm__card,
+.modal-fade-leave-to .authm__card {
+  opacity: 0;
+  transform: scale(0.96) translateY(8px);
 }
 .authm__card {
   position: relative;
