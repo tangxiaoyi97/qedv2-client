@@ -228,7 +228,8 @@ function returnTarget(): string {
   return localReturnPath(queryReturn) ?? localReturnPath(router.options.history.state.back) ?? '/';
 }
 
-function exitNow(): void {
+async function exitNow(): Promise<void> {
+  await practice.finishSession();
   practice.abort();
   void router.replace(returnTarget());
 }
@@ -238,7 +239,7 @@ function exit(): void {
     exitArmed.value = true;
     return;
   }
-  exitNow();
+  void exitNow();
 }
 
 function onDocumentPointerDown(ev: PointerEvent): void {
