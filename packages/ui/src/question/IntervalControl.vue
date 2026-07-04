@@ -155,7 +155,7 @@ const correctNotation = computed(() => {
 <style scoped>
 .q-interval__row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   justify-content: center;
   padding: 8px 0;
@@ -169,12 +169,18 @@ const correctNotation = computed(() => {
 }
 .q-interval__toggle {
   display: flex;
+  height: 42px;
   border: 1px solid var(--q-border-3);
   border-radius: 8px;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .q-interval__bracket {
-  padding: 6px 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 35px;
+  padding: 0;
   font-size: 15px;
   border: none;
   background: var(--q-card);
@@ -197,6 +203,8 @@ const correctNotation = computed(() => {
 }
 .q-interval__input {
   width: 76px;
+  height: 42px;
+  box-sizing: border-box;
   border: 1px solid var(--q-border-3);
   border-radius: 8px;
   padding: 10px;
@@ -212,6 +220,9 @@ const correctNotation = computed(() => {
   box-shadow: 0 0 0 3px var(--q-accent-ring);
 }
 .q-interval__sep {
+  display: inline-flex;
+  align-items: center;
+  height: 42px;
   font-size: 16px;
   color: var(--q-mut-2);
 }

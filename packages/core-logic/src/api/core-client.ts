@@ -14,6 +14,7 @@ import type {
   QuestionsListResponse,
   RecommendRequest,
   RecommendResponse,
+  SearchResponse,
 } from './types.js';
 
 /** Contract §3.1: batch requests carry at most 200 ids each. */
@@ -71,6 +72,21 @@ export class CoreClient {
     return requestJson<RecommendResponse>(this.baseUrl, '/content/recommend', {
       method: 'POST',
       body: req,
+    });
+  }
+
+  /**
+   * GET /content/search — fuzzy full-text search, relevance-ranked by core
+   * (search upgrade doc; results must NOT be re-sorted client-side).
+   * Empty/whitespace queries never reach the network.
+   */
+  search(q: string, opts: { limit?: number } = {}): Promise<SearchResponse> {
+    const query = q.trim();
+    if (query === '') {
+      return Promise.resolve({ query: '', total: 0, items: [] });
+    }
+    return requestJson<SearchResponse>(this.baseUrl, '/content/search', {
+      query: { q: query, limit: opts.limit },
     });
   }
 

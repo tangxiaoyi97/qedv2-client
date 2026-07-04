@@ -8,5 +8,13 @@ export {
   performSync,
   buildResolvedArchive,
   submitResolution,
+  assessLoginArchives,
+  summarizeArchiveSide,
+  overwriteServerArchive,
 } from './sync-engine.js';
-export type { SyncTransport, SyncOutcome } from './sync-engine.js';
+export type {
+  SyncTransport,
+  SyncOutcome,
+  ArchiveSideSummary,
+  LoginArchiveAssessment,
+} from './sync-engine.js';

@@ -1,9 +1,25 @@
 <script setup lang="ts">
-/** Fortschritt / Beherrschung (prototype 3c, mobile 5d). */
-import { computed } from 'vue';
-import { CompetencyGroups } from '@qed2/ui';
+/**
+ * Fortschritt / Beherrschung (prototype 3c, mobile 5d; supplement §5):
+ * stats band, grading-state distribution, activity heatmap, per-category
+ * mastery table, then the full competency groups. All visualizations are
+ * shared @qed2/ui components (dashboard reuses them, §8).
+ */
+import { computed, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { competencyCategory } from '@qed2/core-logic';
+import {
+  ActivityHeatmap,
+  CompetencyGroups,
+  GradingDistribution,
+  MasteryBar,
+  RadarChart,
+  type RadarAxis,
+} from '@qed2/ui';
+import { historyLog } from '../services.js';
 import { useProgressStore } from '../stores/progress.js';
 
+const router = useRouter();
 const progress = useProgressStore();
 
 // Per-competency due flags need the part→competency map, which the archive
@@ -17,6 +33,69 @@ const avgMastery = computed(() => {
   const list = progress.masteryEntries;
   if (list.length === 0) return 0;
   return Math.round((list.reduce((s, e) => s + e.mastery, 0) / list.length) * 100);
+});
+
+/** Heatmap feed (26 weeks = 182 days) — re-queried when the log changes. */
+const activity = ref<Record<string, number>>({});
+watch(
+  () => progress.historyVersion,
+  async () => {
+    activity.value = await historyLog.dailyActivity(182, new Date());
+  },
+  { immediate: true },
+);
+
+/** Per-category rollup: competency count + average mastery per AG/FA/AN/WS. */
+const CATEGORY_ORDER = ['AG', 'FA', 'AN', 'WS'] as const;
+const CATEGORY_NAMES: Record<(typeof CATEGORY_ORDER)[number], string> = {
+  AG: 'Algebra & Geometrie',
+  FA: 'Funktionale Abhängigkeiten',
+  AN: 'Analysis',
+  WS: 'Wahrscheinlichkeit & Statistik',
+};
+
+/** Radar over the four Kompetenz categories (0 for untouched ones). */
+const radarAxes = computed<RadarAxis[]>(() => {
+  const groups = new Map<string, number[]>();
+  for (const e of progress.masteryEntries) {
+    const cat = competencyCategory(e.code);
+    if (cat === 'other') continue;
+    const list = groups.get(cat) ?? [];
+    list.push(e.mastery);
+    groups.set(cat, list);
+  }
+  return CATEGORY_ORDER.map((c) => {
+    const list = groups.get(c);
+    const avg = list && list.length > 0 ? list.reduce((a, b) => a + b, 0) / list.length : 0;
+    return { label: c, value: avg, hint: `${Math.round(avg * 100)} %` };
+  });
+});
+
+/** Category → Aufgaben with that Kompetenz filter pre-applied. */
+function openCategory(code: string): void {
+  void router.push({ path: '/questions', query: { kat: code } });
+}
+
+const categoryRows = computed(() => {
+  const groups = new Map<string, number[]>();
+  for (const e of progress.masteryEntries) {
+    const cat = competencyCategory(e.code);
+    if (cat === 'other') continue;
+    const list = groups.get(cat) ?? [];
+    list.push(e.mastery);
+    groups.set(cat, list);
+  }
+  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => {
+    const list = groups.get(c)!;
+    const avg = list.reduce((a, b) => a + b, 0) / list.length;
+    return {
+      code: c,
+      name: CATEGORY_NAMES[c],
+      count: list.length,
+      avg,
+      percent: Math.round(avg * 100),
+    };
+  });
 });
 </script>
 
@@ -46,10 +125,65 @@ const avgMastery = computed(() => {
       </div>
     </div>
 
+    <!-- grading-state distribution (supplement §5). The unseen count needs
+         the bank's total PART count, which /info does not expose — omitted. -->
+    <div class="prog__duo">
+      <section class="prog__section">
+        <h2 class="prog__section-title">Beherrschung nach Status</h2>
+        <GradingDistribution :counts="progress.gradingCounts" />
+      </section>
+      <section class="prog__section">
+        <h2 class="prog__section-title">Kompetenz-Radar</h2>
+        <RadarChart :axes="radarAxes" />
+      </section>
+    </div>
+
+    <section class="prog__section">
+      <h2 class="prog__section-title">Aktivität</h2>
+      <ActivityHeatmap :data="activity" :weeks="26" />
+    </section>
+
+    <section v-if="categoryRows.length > 0" class="prog__section">
+      <h2 class="prog__section-title">Nach Bereich</h2>
+      <div class="prog__table-scroll">
+        <table class="prog__table">
+          <thead>
+            <tr>
+              <th scope="col">Bereich</th>
+              <th scope="col" class="prog__table-num">Kompetenzen</th>
+              <th scope="col" class="prog__table-num">Ø Beherrschung</th>
+              <th scope="col" class="prog__table-bar">Verlauf</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="row in categoryRows"
+              :key="row.code"
+              class="prog__table-row--link"
+              role="link"
+              tabindex="0"
+              :title="`Aufgaben mit ${row.code} anzeigen`"
+              @click="openCategory(row.code)"
+              @keydown.enter="openCategory(row.code)"
+            >
+              <td>
+                <span class="prog__cat-code">{{ row.code }}</span>
+                <span class="prog__cat-name">{{ row.name }}</span>
+                <span class="prog__cat-go" aria-hidden="true">→</span>
+              </td>
+              <td class="prog__table-num">{{ row.count }}</td>
+              <td class="prog__table-num">{{ row.percent }} %</td>
+              <td class="prog__table-bar"><MasteryBar :code="row.code" :mastery="row.avg" /></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <CompetencyGroups v-if="entries.length > 0" :entries="entries" />
     <div v-else class="prog__empty">
       Noch kein Fortschritt — starte deine erste Sitzung.
-      <RouterLink to="/ueben" class="prog__cta">Intelligent üben →</RouterLink>
+      <RouterLink to="/practice" class="prog__cta">Intelligent üben →</RouterLink>
     </div>
   </div>
 </template>
@@ -118,6 +252,98 @@ const avgMastery = computed(() => {
   font-size: 11px;
   color: var(--q-faint);
   margin-top: 2px;
+}
+.prog__section {
+  background: var(--q-card);
+  border: 1px solid var(--q-border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.prog__section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--q-faint);
+  margin: 0 0 12px;
+}
+.prog__duo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 640px) {
+  .prog__duo {
+    grid-template-columns: 1fr;
+  }
+}
+.prog__table-row--link {
+  cursor: pointer;
+}
+.prog__table-row--link:hover td,
+.prog__table-row--link:focus-visible td {
+  background: var(--q-panel);
+}
+.prog__table-row--link:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: -2px;
+}
+.prog__cat-go {
+  margin-left: 8px;
+  color: var(--q-accent-strong);
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.prog__table-row--link:hover .prog__cat-go {
+  opacity: 1;
+}
+.prog__table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.prog__table {
+  width: 100%;
+  min-width: 460px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.prog__table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--q-faint);
+  padding: 0 10px 8px 0;
+  border-bottom: 1px solid var(--q-border);
+}
+.prog__table td {
+  padding: 9px 10px 9px 0;
+  border-bottom: 1px solid var(--q-border-soft);
+  vertical-align: middle;
+}
+.prog__table tr:last-child td {
+  border-bottom: none;
+}
+.prog__table-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.prog__table th.prog__table-num {
+  text-align: right;
+}
+.prog__table-bar {
+  width: 38%;
+  min-width: 150px;
+}
+.prog__cat-code {
+  font-weight: 800;
+  color: var(--q-accent-strong);
+  margin-right: 8px;
+}
+.prog__cat-name {
+  color: var(--q-mut);
 }
 .prog__empty {
   padding: 32px 20px;

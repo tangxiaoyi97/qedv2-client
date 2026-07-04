@@ -103,20 +103,23 @@ describe('MatchingControl', () => {
     });
     const rows = wrapper.findAll('.q-match__row');
     expect(rows[0]!.classes()).toContain('q-match__row--ok');
-    expect(rows[0]!.text()).toContain('Richtig');
     expect(rows[1]!.classes()).toContain('q-match__row--err');
-    expect(rows[1]!.text()).toContain('Falsch');
 
-    // correct right item shown for the wrong rows, dashed-ok framed
-    const fix = rows[1]!.find('.q-match__correct');
+    // correct row: single compact confirmation line with the chosen letter
+    expect(rows[0]!.find('.q-match__cmp-line--ok').exists()).toBe(true);
+    expect(rows[0]!.find('.q-match__cmp-letter').text()).toBe('A');
+
+    // wrong row: Gewählt/Richtig comparison lines, correct item rendered with math
+    const wrong = rows[1]!;
+    expect(wrong.find('.q-match__cmp-line--user').text()).toContain('Gewählt');
+    const fix = wrong.find('.q-match__cmp-line--ok');
     expect(fix.exists()).toBe(true);
-    expect(fix.text()).toContain('Richtig wäre:');
-    expect(fix.text()).toContain('B ·');
+    expect(fix.text()).toContain('Richtig');
+    expect(fix.text()).toContain('B');
     expect(fix.find('.katex').exists()).toBe(true);
 
-    // read-only: selects disabled, no emissions possible
-    for (const sel of wrapper.findAll('select')) {
-      expect(sel.attributes('disabled')).toBeDefined();
-    }
+    // review is form-free and pool-free — no dead controls, less noise
+    expect(wrapper.findAll('select')).toHaveLength(0);
+    expect(wrapper.find('.q-match__pool').exists()).toBe(false);
   });
 });

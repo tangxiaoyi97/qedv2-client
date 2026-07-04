@@ -123,3 +123,120 @@ export async function submitResolution(
   }
   return { outcome: { type: 'conflict', conflict: res } };
 }
+
+/* ================================================================== *
+ * Login-time archive choice (history-and-archive-choice upgrade §2).
+ *
+ * A ONE-TIME check right after login — the regular in-session syncs keep
+ * following the automatic contract-§5 three-outcome flow. Only when BOTH
+ * sides hold data AND their checksums differ does the user get an explicit
+ * choice (merge — recommended —, keep cloud, keep local).
+ * ================================================================== */
+
+export interface ArchiveSideSummary {
+  parts: number;
+  competencies: number;
+  /** Latest per-entry updatedAt on that side (undefined when empty). */
+  lastUpdated?: string;
+  /** Mean mastery over perCompetency, 0..1 (undefined when none). */
+  avgMastery?: number;
+}
+
+export type LoginArchiveAssessment =
+  /** Local had nothing — adopt the cloud archive outright, no dialog. */
+  | { kind: 'adopt-server'; archive: LocalArchive }
+  /** Cloud is empty — upload local via a normal sync (expects fast-forward). */
+  | { kind: 'upload-local'; baseVersion: number }
+  /** Checksums already match — just record the server version. */
+  | { kind: 'in-sync'; archive: LocalArchive }
+  /** Both sides hold different data — ask the user (§2.3 dialog). */
+  | {
+      kind: 'choice-needed';
+      serverState: ServerArchiveState;
+      server: ArchiveSideSummary;
+      local: ArchiveSideSummary;
+    };
+
+function isEmptyContent(content: ArchiveContent): boolean {
+  return content.perPart.length === 0 && content.perCompetency.length === 0;
+}
+
+export function summarizeArchiveSide(content: ArchiveContent): ArchiveSideSummary {
+  const summary: ArchiveSideSummary = {
+    parts: content.perPart.length,
+    competencies: content.perCompetency.length,
+  };
+  let last = '';
+  for (const p of content.perPart) if (p.updatedAt > last) last = p.updatedAt;
+  for (const c of content.perCompetency) if (c.updatedAt > last) last = c.updatedAt;
+  if (last !== '') summary.lastUpdated = last;
+  if (content.perCompetency.length > 0) {
+    summary.avgMastery =
+      content.perCompetency.reduce((s, c) => s + c.mastery, 0) / content.perCompetency.length;
+  }
+  return summary;
+}
+
+/**
+ * Pure decision step (§2.2). NOTE: the local baseVersion is meaningless when
+ * logging into a (different) account, so the returned actions always anchor
+ * on the server's CURRENT archiveVersion, never on the stale local one.
+ */
+export function assessLoginArchives(
+  local: LocalArchive,
+  serverState: ServerArchiveState,
+): LoginArchiveAssessment {
+  const serverContent: ArchiveContent = {
+    perPart: serverState.perPart,
+    perCompetency: serverState.perCompetency,
+  };
+  if (isEmptyContent(local.content)) {
+    return {
+      kind: 'adopt-server',
+      archive: {
+        content: canonicalizeArchive(serverContent),
+        baseVersion: serverState.archiveVersion,
+      },
+    };
+  }
+  if (isEmptyContent(serverContent)) {
+    return { kind: 'upload-local', baseVersion: serverState.archiveVersion };
+  }
+  if (archiveChecksum(local.content) === serverState.checksum) {
+    return {
+      kind: 'in-sync',
+      archive: { content: local.content, baseVersion: serverState.archiveVersion },
+    };
+  }
+  return {
+    kind: 'choice-needed',
+    serverState,
+    server: summarizeArchiveSide(serverContent),
+    local: summarizeArchiveSide(local.content),
+  };
+}
+
+/**
+ * "Use local" choice (§2.3): the WHOLE local archive replaces the cloud one,
+ * submitted through /me/sync/resolve with the server version the user was
+ * shown. A nested conflict means another device wrote meanwhile — the caller
+ * should re-run the login assessment.
+ */
+export async function overwriteServerArchive(
+  transport: SyncTransport,
+  serverVersion: number,
+  content: ArchiveContent,
+): Promise<{ outcome: SyncOutcome; archive?: LocalArchive }> {
+  const canonical = canonicalizeArchive(content);
+  const res = await transport.resolve({
+    baseServerVersion: serverVersion,
+    resolvedArchive: canonical,
+  });
+  if (res.result === 'resolved') {
+    return {
+      outcome: { type: 'fast-forward', archiveVersion: res.archiveVersion },
+      archive: { content: canonical, baseVersion: res.archiveVersion },
+    };
+  }
+  return { outcome: { type: 'conflict', conflict: res } };
+}

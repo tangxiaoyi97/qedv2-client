@@ -45,11 +45,16 @@ core alone — login/sync additionally needs the server.
 All three upstream addresses are user-configurable at runtime (Einstellungen →
 Erweitert · Serveradressen) and persisted in IndexedDB:
 
-| Setting | Default |
-|---|---|
-| Inhalts-Server (core) | `https://qedcore.barcarolle.studio` |
-| Nutzer-Server (sync) | `https://qedsync.barcarolle.studio` |
-| Aufgaben-Datenbank | `https://github.com/tangxiaoyi97/srdpmppr` |
+| Setting | Default | Used by |
+|---|---|---|
+| Inhalts-Server (core) | `https://qedcore.barcarolle.studio` | all shells (HTTP) |
+| Nutzer-Server (sync) | `https://qedsync.barcarolle.studio` | all shells (HTTP) |
+| Core-Quellcode (Repository) | `https://github.com/tangxiaoyi97/qed2-core` | desktop clone/update (git) |
+| Aufgaben-Datenbank (Repository) | `https://github.com/tangxiaoyi97/srdpmppr` | desktop clone/update (git) |
+
+Package-level defaults live in `packages/core-logic/src/config/index.ts`
+(`DEFAULT_CONFIG`); dev overrides in `packages/web/.env.development`; user
+overrides persist in IndexedDB. Merge order: user > env > defaults.
 
 Dev builds overlay `VITE_QED2_CORE_URL` / `VITE_QED2_SERVER_URL` between the
 package defaults and the user's explicit overrides.
@@ -142,3 +147,20 @@ recommendation (its projected `due` is pushed to a far-future sentinel AND
 recommendation results are filtered), FSRS stops advancing it, and the
 Aufgaben list greys it out — but it stays openable and re-gradable; choosing
 any other grade thaws it from the frozen state.
+
+## History & login-time archive choice (upgrade doc)
+
+- **Verlauf**: logged-in users read the cloud audit trail (`GET /me/history`,
+  paginated, identifiers only — titles are joined client-side from the
+  question cache / core batch endpoint). Guests keep the local `HistoryLog`
+  (IndexedDB, labeled "this device only"). Guest history is NOT backfilled
+  into the cloud on login (v1, by design).
+- **Login reconciliation** (one-time, right after login): local empty → adopt
+  cloud silently; cloud empty → upload local (fast-forward); checksums equal
+  → nothing; both differ → the archive-choice dialog: **merge (recommended)**
+  / keep cloud / keep local (`POST /me/sync/resolve` with the full local
+  archive). Regular in-session syncs keep following the automatic
+  contract-§5 three-outcome flow.
+- Browse filters currently fetch all summaries once and filter client-side
+  (enables multi-select); migrating to core's comma-separated multi-value
+  query params is deliberately deferred (upgrade doc §3, non-blocking).

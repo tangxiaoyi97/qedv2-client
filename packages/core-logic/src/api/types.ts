@@ -111,6 +111,34 @@ export interface ManifestResponse {
   items: Record<string, string>;
 }
 
+/* --- GET /content/search (search upgrade) — fuzzy full-text, ranked --- */
+
+export interface SearchHighlight {
+  field: string;
+  /**
+   * HTML-escaped text where hits are wrapped in literal <em> tags (the ONLY
+   * markup the renderer may honor — whitelist, never raw HTML).
+   */
+  snippet: string;
+  term: string;
+}
+
+export interface SearchResultItem {
+  id: string;
+  title: string;
+  source: QuestionSummary['source'];
+  status: string;
+  score: number;
+  matchedFields: string[];
+  highlights: SearchHighlight[];
+}
+
+export interface SearchResponse {
+  query: string;
+  total: number;
+  items: SearchResultItem[];
+}
+
 export interface HealthResponse {
   status: string;
   uptime: number;
@@ -206,6 +234,40 @@ export interface AttemptRecord {
   awardedPoints: number;
   elapsedMs?: number;
   gradedAt: string;
+}
+
+/* --- GET /me/history (history upgrade) — read-only audit-trail view --- */
+
+export interface HistoryQuery {
+  /** ISO 8601 with timezone; gradedAt >= since. */
+  since?: string;
+  /** ISO 8601 with timezone; gradedAt <= until. */
+  until?: string;
+  /** 1-based; default 1. */
+  page?: number;
+  /** Default 50, server max 200. */
+  pageSize?: number;
+  partId?: string;
+  questionId?: string;
+}
+
+/** Identifiers only — question content always comes from core (contract §8.3). */
+export interface ServerHistoryItem {
+  id: string;
+  questionId: string;
+  partId: string;
+  correct: boolean;
+  awardedPoints: number;
+  elapsedMs: number | null;
+  gradedAt: string;
+  recordedAt: string;
+}
+
+export interface HistoryResponse {
+  items: ServerHistoryItem[];
+  page: number;
+  pageSize: number;
+  total: number;
 }
 
 export interface ServerInfo {

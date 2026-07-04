@@ -11,6 +11,7 @@ import {
   mergeConfig,
   type ClientConfig,
   type CoreInfo,
+  type ServerInfo,
 } from '@qed2/core-logic';
 import { configStore, envConfigDefaults, ports, setCurrentCoreUrl } from '../services.js';
 
@@ -28,13 +29,31 @@ export const useAppStore = defineStore('app', () => {
   const theme = ref<ThemePref>('system');
   const online = ref(ports.network.isOnline());
   const coreInfo = shallowRef<CoreInfo | undefined>();
+  const serverInfo = shallowRef<ServerInfo | undefined>();
   const ready = ref(false);
+  /**
+   * Core endpoint RESOLVED through CoreRuntimePort — on web this mirrors the
+   * configured remote URL; a desktop shell's injected port may instead point
+   * at its locally spawned core process (contract §8.1 offline mode).
+   */
+  const coreEndpointUrl = ref('');
 
   /** Token is injected by the auth store so ServerClient stays fresh. */
   let tokenProvider: () => string | undefined = () => undefined;
 
-  const coreClient = computed(() => new CoreClient(config.value.coreBaseUrl));
+  const coreClient = computed(
+    () => new CoreClient(coreEndpointUrl.value || config.value.coreBaseUrl),
+  );
   const serverClient = computed(() => new ServerClient(config.value.serverBaseUrl, () => tokenProvider()));
+
+  async function resolveCoreEndpoint(): Promise<void> {
+    try {
+      const ep = await ports.coreRuntime.getEndpoint();
+      coreEndpointUrl.value = ep.baseUrl;
+    } catch {
+      coreEndpointUrl.value = config.value.coreBaseUrl; // port failed → remote
+    }
+  }
 
   function setTokenProvider(fn: () => string | undefined): void {
     tokenProvider = fn;
@@ -44,6 +63,7 @@ export const useAppStore = defineStore('app', () => {
     const overrides = await configStore.getOverrides();
     config.value = mergeConfig({ ...envConfigDefaults(), ...overrides });
     setCurrentCoreUrl(config.value.coreBaseUrl);
+    await resolveCoreEndpoint();
     theme.value = ((await configStore.getTheme()) as ThemePref | undefined) ?? 'system';
     applyThemeToDom(theme.value);
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -53,12 +73,27 @@ export const useAppStore = defineStore('app', () => {
       online.value = v;
     });
     ready.value = true;
+    refreshServiceInfo();
+  }
+
+  /** Best-effort version probes for the settings page (offline → undefined). */
+  function refreshServiceInfo(): void {
     void coreClient.value
       .info()
       .then((i) => {
         coreInfo.value = i;
       })
-      .catch(() => undefined);
+      .catch(() => {
+        coreInfo.value = undefined;
+      });
+    void serverClient.value
+      .info()
+      .then((i) => {
+        serverInfo.value = i;
+      })
+      .catch(() => {
+        serverInfo.value = undefined;
+      });
   }
 
   async function updateConfig(partial: Partial<ClientConfig>): Promise<void> {
@@ -66,13 +101,10 @@ export const useAppStore = defineStore('app', () => {
     const overrides = await configStore.getOverrides();
     config.value = mergeConfig({ ...envConfigDefaults(), ...overrides });
     setCurrentCoreUrl(config.value.coreBaseUrl);
+    await resolveCoreEndpoint();
     coreInfo.value = undefined;
-    void coreClient.value
-      .info()
-      .then((i) => {
-        coreInfo.value = i;
-      })
-      .catch(() => undefined);
+    serverInfo.value = undefined;
+    refreshServiceInfo();
   }
 
   async function setTheme(pref: ThemePref): Promise<void> {
@@ -91,6 +123,7 @@ export const useAppStore = defineStore('app', () => {
     theme,
     online,
     coreInfo,
+    serverInfo,
     ready,
     coreClient,
     serverClient,
@@ -99,5 +132,6 @@ export const useAppStore = defineStore('app', () => {
     setTheme,
     assetUrl,
     setTokenProvider,
+    refreshServiceInfo,
   };
 });

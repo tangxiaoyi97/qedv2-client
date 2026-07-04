@@ -1,66 +1,63 @@
-<script setup lang="ts">
-/** Aufgaben browse + filter (prototype 4a). */
-import { computed, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
-import {
-  competencyCategory,
-  type QuestionsFilter,
-  type QuestionSummary,
-  type Term,
-  type ExamPart,
-} from '@qed2/core-logic';
-import { QButton, QChip } from '@qed2/ui';
-import { useAppStore } from '../stores/app.js';
-import { useProgressStore } from '../stores/progress.js';
+<script lang="ts">
+import { ref } from 'vue';
+import type { QuestionSummary } from '@qed2/core-logic';
 
+/**
+ * Module-level cache: ALL question summaries, fetched once per app session
+ * (~7 pages à 100). Re-visits of the route skip the refetch; filtering is
+ * entirely client-side, which is what enables multi-select filters.
+ */
+const allQuestions = ref<QuestionSummary[]>([]);
+let fetchedOnce = false;
+</script>
+
+<script setup lang="ts">
+/** Aufgaben browse — client-side multi-select filtering (supplement §4). */
+import { computed, onMounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { competencyCategory, type GradingOrUnseen, type SearchResponse } from '@qed2/core-logic';
+import { GradingDot, HighlightSnippet, QButton, QChip, SearchBox } from '@qed2/ui';
+import { useAppStore } from '../stores/app.js';
+import { usePracticeStore } from '../stores/practice.js';
+import { useProgressStore } from '../stores/progress.js';
+import FilterDialog, {
+  activeFilterCount,
+  emptyFilterState,
+  GRADING_FILTER_LABELS,
+  TEIL_LABELS,
+  TERM_LABELS,
+  type FilterState,
+} from './FilterDialog.vue';
+
+const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
 const progress = useProgressStore();
+const practice = usePracticeStore();
 
-const YEARS = Array.from({ length: 13 }, (_, i) => 2014 + i);
-const TERMS: { value: Term; label: string }[] = [
-  { value: 'haupttermin', label: 'Haupttermin' },
-  { value: 'nebentermin-1', label: 'Nebentermin 1' },
-  { value: 'nebentermin-2', label: 'Nebentermin 2' },
-  { value: 'herbsttermin', label: 'Herbsttermin' },
-  { value: 'wintertermin', label: 'Wintertermin' },
-];
-const CATEGORIES = ['AG', 'FA', 'AN', 'WS'] as const;
+const PAGE_SIZE = 100;
 
-const year = ref<string>('');
-const term = ref<string>('');
-const teil = ref<string>('');
-const category = ref<string>('');
-
-const items = ref<QuestionSummary[]>([]);
-const total = ref(0);
-const page = ref(1);
 const loading = ref(false);
 const error = ref<string | undefined>();
+const filter = ref<FilterState>(emptyFilterState());
+const dialogOpen = ref(false);
 
-const anyFilter = computed(() => year.value !== '' || term.value !== '' || teil.value !== '' || category.value !== '');
-
-function buildFilter(p: number): QuestionsFilter {
-  const f: QuestionsFilter = { page: p, pageSize: 100 };
-  if (year.value) f.year = Number(year.value);
-  if (term.value) f.term = term.value as Term;
-  if (teil.value) f.part = teil.value as ExamPart;
-  return f;
-}
-
-async function load(append = false): Promise<void> {
+async function load(force = false): Promise<void> {
+  if (fetchedOnce && !force && allQuestions.value.length > 0) return;
   loading.value = true;
   error.value = undefined;
   try {
-    const res = await app.coreClient.listQuestions(buildFilter(append ? page.value + 1 : 1));
-    if (append) {
-      items.value = [...items.value, ...res.items];
-      page.value += 1;
-    } else {
-      items.value = res.items;
-      page.value = 1;
+    const first = await app.coreClient.listQuestions({ page: 1, pageSize: PAGE_SIZE });
+    let items = first.items;
+    let page = 1;
+    while (items.length < first.total) {
+      page += 1;
+      const res = await app.coreClient.listQuestions({ page, pageSize: PAGE_SIZE });
+      if (res.items.length === 0) break; // defensive: never loop on a short page
+      items = items.concat(res.items);
     }
-    total.value = res.total;
+    allQuestions.value = items;
+    fetchedOnce = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -68,50 +65,206 @@ async function load(append = false): Promise<void> {
   }
 }
 
-onMounted(() => void load());
-watch([year, term, teil], () => void load());
+onMounted(() => {
+  // Fortschritt category linkage: /questions?kat=AG pre-applies the filter.
+  const kat = route.query.kat;
+  if (typeof kat === 'string' && ['AG', 'FA', 'AN', 'WS'].includes(kat)) {
+    filter.value = { ...emptyFilterState(), categories: [kat as 'AG' | 'FA' | 'AN' | 'WS'] };
+  }
+  void load();
+});
 
-/** Category filtering is client-side (the API's gk param wants full codes). */
-const filtered = computed(() => {
-  if (!category.value) return items.value;
-  return items.value.filter((q) =>
-    q.parts.some((p) => p.competencies.some((c) => competencyCategory(c.code) === category.value)),
-  );
+/* --- global search (search upgrade doc): a separate MODE, independent of
+   the chip filters; clearing the query returns to the normal view. --- */
+const searchQuery = ref('');
+const searchBusy = ref(false);
+const searchError = ref<string | undefined>();
+const searchResult = ref<SearchResponse | undefined>();
+let searchSeq = 0;
+
+const searchMode = computed(() => searchQuery.value.trim() !== '');
+
+async function runSearch(q: string): Promise<void> {
+  const seq = ++searchSeq;
+  if (q === '') {
+    searchResult.value = undefined;
+    searchError.value = undefined;
+    searchBusy.value = false;
+    return;
+  }
+  searchBusy.value = true;
+  searchError.value = undefined;
+  try {
+    const res = await app.coreClient.search(q, { limit: 30 });
+    if (seq !== searchSeq) return; // a newer query superseded this one
+    searchResult.value = res; // core ranks by relevance — never re-sort
+  } catch (e) {
+    if (seq !== searchSeq) return;
+    searchError.value = e instanceof Error ? e.message : String(e);
+    searchResult.value = undefined;
+  } finally {
+    if (seq === searchSeq) searchBusy.value = false;
+  }
+}
+
+/** Grading dots/star for a search hit need the full part list — resolve from
+ *  the already-loaded summaries (search items carry identifiers only). */
+const summaryById = computed(() => new Map(allQuestions.value.map((q) => [q.id, q])));
+
+function hitStarred(id: string): boolean {
+  const q = summaryById.value.get(id);
+  return q?.parts.some((p) => progress.partState.get(p.id)?.starred === true) ?? false;
+}
+
+function hitExcluded(id: string): boolean {
+  const q = summaryById.value.get(id);
+  if (!q || q.parts.length === 0) return false;
+  return q.parts.every((p) => (progress.partState.get(p.id)?.grading ?? 'unseen') === 'excluded');
+}
+
+function openHit(id: string): void {
+  void router.push({ path: '/practice', query: { questions: id } });
+}
+
+function partGrading(partId: string): GradingOrUnseen {
+  return progress.partState.get(partId)?.grading ?? 'unseen';
+}
+
+/**
+ * Grading semantics: a question matches when ANY part's grading is in the
+ * selected set; starredOnly: any part starred.
+ */
+function matches(q: QuestionSummary, f: FilterState): boolean {
+  if (f.years.length > 0 && !f.years.includes(q.source.year)) return false;
+  if (f.terms.length > 0 && !f.terms.includes(q.source.term)) return false;
+  if (f.teils.length > 0 && !f.teils.includes(q.source.part)) return false;
+  if (
+    f.categories.length > 0 &&
+    !q.parts.some((p) =>
+      p.competencies.some((c) => (f.categories as string[]).includes(competencyCategory(c.code))),
+    )
+  ) {
+    return false;
+  }
+  if (f.gradings.length > 0 && !q.parts.some((p) => f.gradings.includes(partGrading(p.id)))) {
+    return false;
+  }
+  if (f.starredOnly && !q.parts.some((p) => progress.partState.get(p.id)?.starred === true)) {
+    return false;
+  }
+  return true;
+}
+
+const filtered = computed(() => allQuestions.value.filter((q) => matches(q, filter.value)));
+
+const filterCount = computed(() => activeFilterCount(filter.value));
+
+/** One removable summary chip per active pick. */
+interface ActiveChip {
+  key: string;
+  label: string;
+  remove: () => void;
+}
+
+const activeChips = computed<ActiveChip[]>(() => {
+  const f = filter.value;
+  const out: ActiveChip[] = [];
+  for (const y of f.years) {
+    out.push({
+      key: `y${y}`,
+      label: String(y),
+      remove: () => (filter.value = { ...f, years: f.years.filter((v) => v !== y) }),
+    });
+  }
+  for (const t of f.terms) {
+    out.push({
+      key: `t${t}`,
+      label: TERM_LABELS[t],
+      remove: () => (filter.value = { ...f, terms: f.terms.filter((v) => v !== t) }),
+    });
+  }
+  for (const t of f.teils) {
+    out.push({
+      key: `p${t}`,
+      label: TEIL_LABELS[t],
+      remove: () => (filter.value = { ...f, teils: f.teils.filter((v) => v !== t) }),
+    });
+  }
+  for (const c of f.categories) {
+    out.push({
+      key: `c${c}`,
+      label: c,
+      remove: () => (filter.value = { ...f, categories: f.categories.filter((v) => v !== c) }),
+    });
+  }
+  for (const g of f.gradings) {
+    out.push({
+      key: `g${g}`,
+      label: GRADING_FILTER_LABELS[g],
+      remove: () => (filter.value = { ...f, gradings: f.gradings.filter((v) => v !== g) }),
+    });
+  }
+  if (f.starredOnly) {
+    out.push({
+      key: 'star',
+      label: 'Nur markierte (★)',
+      remove: () => (filter.value = { ...f, starredOnly: false }),
+    });
+  }
+  return out;
 });
 
 function resetFilters(): void {
-  year.value = '';
-  term.value = '';
-  teil.value = '';
-  category.value = '';
+  filter.value = emptyFilterState();
 }
 
-interface RowState {
-  disc: 'done' | 'partial' | 'due' | 'new';
-  label: string;
+/** Row summary (feedback #8): points sum instead of a "Teilweise" word. */
+interface RowInfo {
+  practiced: boolean;
+  due: boolean;
+  awarded: number;
+  allExcluded: boolean;
+  starred: boolean;
 }
 
-function rowState(q: QuestionSummary): RowState {
-  const states = q.parts.map((p) => progress.partState.get(p.id));
-  const graded = states.filter((s) => s !== undefined);
-  const anyDue = states.some((s) => s?.due);
-  if (graded.length === 0) return { disc: 'new', label: 'Neu' };
-  if (anyDue) return { disc: 'due', label: 'Fällig' };
-  const allCorrect = graded.length === q.parts.length && graded.every((s) => s!.correct);
-  if (allCorrect) return { disc: 'done', label: `Bearbeitet · ${graded.length}/${q.parts.length}` };
-  return { disc: 'partial', label: `Teilweise · ${graded.filter((s) => s!.correct).length}/${q.parts.length}` };
+function rowInfo(q: QuestionSummary): RowInfo {
+  let practiced = false;
+  let due = false;
+  let awarded = 0;
+  let allExcluded = q.parts.length > 0;
+  let starred = false;
+  for (const p of q.parts) {
+    const s = progress.partState.get(p.id);
+    if (s?.practiced) {
+      practiced = true;
+      awarded += s.awardedPoints;
+    }
+    if (s?.due) due = true;
+    if (s?.starred) starred = true;
+    if ((s?.grading ?? 'unseen') !== 'excluded') allExcluded = false;
+  }
+  return { practiced, due, awarded, allExcluded, starred };
+}
+
+/** German decimal comma; trims float noise (rubric halves → "1,5"). */
+function fmtPoints(n: number): string {
+  return String(Math.round(n * 100) / 100).replace('.', ',');
 }
 
 const playableIds = computed(() => filtered.value.filter((q) => q.playable).map((q) => q.id));
 
 function practiceAll(): void {
   if (playableIds.value.length === 0) return;
-  void router.push({ path: '/ueben', query: { questions: playableIds.value.join(',') } });
+  // Store handoff instead of ?questions=<hundreds of ids>: the session is
+  // seeded here, /practice mounts onto it (PracticeView keeps loading/running).
+  void practice.startPrepared(playableIds.value);
+  void router.push('/practice');
 }
 
 function practiceOne(q: QuestionSummary): void {
   if (!q.playable) return;
-  void router.push({ path: '/ueben', query: { questions: q.id } });
+  // Excluded questions stay clickable — exclusion is not deletion (§1.4).
+  void router.push({ path: '/practice', query: { questions: q.id } });
 }
 
 function firstCode(q: QuestionSummary): string | undefined {
@@ -126,66 +279,162 @@ function firstCode(q: QuestionSummary): string | undefined {
       <QButton :disabled="playableIds.length === 0" @click="practiceAll">Ganze Auswahl üben →</QButton>
     </div>
 
-    <div class="browse__filters">
-      <select v-model="year" class="browse__select" aria-label="Jahr">
-        <option value="">Jahr: Alle</option>
-        <option v-for="y in YEARS" :key="y" :value="String(y)">Jahr: {{ y }}</option>
-      </select>
-      <select v-model="term" class="browse__select" aria-label="Termin">
-        <option value="">Termin: Alle</option>
-        <option v-for="t in TERMS" :key="t.value" :value="t.value">Termin: {{ t.label }}</option>
-      </select>
-      <select v-model="teil" class="browse__select" aria-label="Teil">
-        <option value="">Teil: Alle</option>
-        <option value="t1">Teil 1</option>
-        <option value="t2">Teil 2</option>
-      </select>
-      <select v-model="category" class="browse__select" aria-label="Kompetenz">
-        <option value="">Kompetenz: Alle</option>
-        <option v-for="c in CATEGORIES" :key="c" :value="c">Kompetenz: {{ c }}</option>
-      </select>
-      <button v-if="anyFilter" type="button" class="browse__reset" @click="resetFilters">✕ Zurücksetzen</button>
+    <SearchBox
+      v-model="searchQuery"
+      class="browse__search"
+      placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
+      :busy="searchBusy"
+      @search="runSearch"
+    />
+
+    <div v-if="!searchMode" class="browse__filterbar">
+      <button
+        type="button"
+        class="browse__filterbtn"
+        :aria-expanded="dialogOpen ? 'true' : 'false'"
+        @click="dialogOpen = true"
+      >
+        <svg class="browse__funnel" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path
+            d="M1 1.5h10L7.5 6v4L4.5 8.5V6L1 1.5Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          />
+        </svg>
+        Filter
+        <span v-if="filterCount > 0" class="browse__badge">{{ filterCount }}</span>
+      </button>
+
+      <span v-for="chip in activeChips" :key="chip.key" class="browse__active">
+        {{ chip.label }}
+        <button
+          type="button"
+          class="browse__active-x"
+          :aria-label="`Filter ${chip.label} entfernen`"
+          @click="chip.remove()"
+        >
+          ✕
+        </button>
+      </span>
+
+      <button v-if="filterCount > 0" type="button" class="browse__reset" @click="resetFilters">
+        Zurücksetzen
+      </button>
     </div>
 
-    <div class="browse__meta">
-      <span v-if="!loading">{{ category ? filtered.length : total }} Aufgaben</span>
+    <!-- search mode: an independent view; clearing returns to browse -->
+    <template v-if="searchMode">
+      <div class="browse__meta">
+        <span v-if="searchBusy">Suche …</span>
+        <span v-else-if="searchResult">{{ searchResult.total }} Treffer für „{{ searchResult.query }}“</span>
+      </div>
+      <div v-if="searchError" class="browse__error">
+        Suche fehlgeschlagen: {{ searchError }}
+      </div>
+      <div v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy" class="browse__empty">
+        Keine Treffer — Tippfehler sind erlaubt, aber probier ein anderes Wort.
+      </div>
+      <div v-else-if="searchResult" class="browse__list">
+        <button
+          v-for="hit in searchResult.items"
+          :key="hit.id"
+          type="button"
+          class="browse__row browse__hit"
+          :class="{ 'browse__row--excluded': hitExcluded(hit.id) }"
+          @click="openHit(hit.id)"
+        >
+          <span class="browse__dots" aria-hidden="false">
+            <GradingDot
+              v-for="p in summaryById.get(hit.id)?.parts ?? []"
+              :key="p.id"
+              :grading="partGrading(p.id)"
+              :size="11"
+            />
+          </span>
+          <span class="browse__hit-main">
+            <span class="browse__hit-title">
+              {{ hit.title }}
+              <span v-if="hitStarred(hit.id)" class="browse__star" title="Gemerkt">★</span>
+              <span v-if="hitExcluded(hit.id)" class="browse__excl" title="Ausgeschlossen">⊗</span>
+            </span>
+            <span class="browse__hit-source">
+              {{ hit.source.year }} · {{ TERM_LABELS[hit.source.term] }} · {{ hit.source.part === 't1' ? 'Teil 1' : 'Teil 2' }} · Nr. {{ hit.source.nr }}
+            </span>
+            <HighlightSnippet
+              v-if="hit.highlights[0]"
+              :snippet="hit.highlights[0]!.snippet"
+              class="browse__hit-snippet"
+            />
+          </span>
+        </button>
+      </div>
+    </template>
+
+    <div v-if="!searchMode" class="browse__meta">
+      <span v-if="!loading">{{ filtered.length }} Aufgaben</span>
       <span v-else>Lade …</span>
     </div>
 
-    <div v-if="error" class="browse__error">
+    <div v-if="!searchMode && error" class="browse__error">
       Aufgabenliste konnte nicht geladen werden: {{ error }}
-      <QButton variant="secondary" @click="load()">Erneut versuchen</QButton>
+      <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
     </div>
 
-    <div v-else-if="loading && items.length === 0" class="browse__list">
+    <div v-else-if="!searchMode && loading && allQuestions.length === 0" class="browse__list">
       <div v-for="i in 6" :key="i" class="browse__skeleton" />
     </div>
 
-    <div v-else-if="filtered.length === 0" class="browse__empty">Keine Aufgaben für diese Filter.</div>
+    <div v-else-if="!searchMode && filtered.length === 0" class="browse__empty">Keine Aufgaben für diese Filter.</div>
 
-    <div v-else class="browse__list">
+    <div v-else-if="!searchMode" class="browse__list">
       <button
         v-for="q in filtered"
         :key="q.id"
         type="button"
         class="browse__row"
-        :class="{ 'browse__row--disabled': !q.playable }"
+        :class="{
+          'browse__row--disabled': !q.playable,
+          'browse__row--excluded': rowInfo(q).allExcluded,
+        }"
         :disabled="!q.playable"
         @click="practiceOne(q)"
       >
-        <span class="browse__disc" :class="`browse__disc--${rowState(q).disc}`" aria-hidden="true" />
+        <span class="browse__dots" aria-hidden="false">
+          <GradingDot v-for="p in q.parts" :key="p.id" :grading="partGrading(p.id)" :size="11" />
+        </span>
         <span class="browse__nr">{{ q.source.nr }}</span>
-        <QChip v-if="firstCode(q)">{{ firstCode(q) }}</QChip>
+        <QChip v-if="firstCode(q)" class="browse__chip">{{ firstCode(q) }}</QChip>
+        <span
+          v-if="rowInfo(q).allExcluded"
+          class="browse__excl"
+          title="Ausgeschlossen"
+          aria-label="Ausgeschlossen"
+          >⊗</span
+        >
         <span class="browse__qtitle">{{ q.title }}</span>
+        <span v-if="rowInfo(q).starred" class="browse__star" title="Gemerkt" aria-label="Gemerkt">★</span>
+
         <span v-if="!q.playable" class="browse__state browse__state--na">Noch nicht verfügbar</span>
-        <span v-else class="browse__state" :class="`browse__state--${rowState(q).disc}`">{{ rowState(q).label }}</span>
+        <template v-else-if="rowInfo(q).practiced">
+          <span v-if="rowInfo(q).due" class="browse__due">
+            <span class="browse__due-dot" aria-hidden="true" />Fällig
+          </span>
+          <span class="browse__points">
+            {{ fmtPoints(rowInfo(q).awarded) }}/{{ fmtPoints(q.totalPoints) }} P
+          </span>
+        </template>
+        <span v-else class="browse__state browse__state--new">Neu</span>
       </button>
-      <div v-if="!category && items.length < total" class="browse__more">
-        <QButton variant="secondary" :disabled="loading" @click="load(true)">
-          {{ loading ? 'Lade …' : 'Mehr laden' }}
-        </QButton>
-      </div>
     </div>
+
+    <FilterDialog
+      v-if="dialogOpen"
+      v-model="filter"
+      :result-count="filtered.length"
+      @close="dialogOpen = false"
+    />
   </div>
 </template>
 
@@ -209,23 +458,113 @@ function firstCode(q: QuestionSummary): string | undefined {
   letter-spacing: -0.01em;
   margin: 0;
 }
-.browse__filters {
+.browse__search {
+  margin-bottom: 12px;
+}
+.browse__star {
+  color: var(--q-part);
+  font-size: 14px;
+  flex: none;
+  line-height: 1;
+}
+.browse__hit {
+  align-items: flex-start;
+}
+.browse__hit-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+.browse__hit-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.browse__hit-source {
+  font-size: 11px;
+  color: var(--q-faint);
+}
+.browse__hit-snippet {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.browse__filterbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: center;
+  gap: 7px;
   margin-bottom: 10px;
 }
-.browse__select {
-  padding: 7px 10px;
+.browse__filterbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 20px;
   border: 1px solid var(--q-border-3);
-  border-radius: 8px;
   background: var(--q-card);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--q-ink);
+  color: var(--q-ink-2);
+  font: 700 12.5px 'Public Sans', system-ui, sans-serif;
   cursor: pointer;
 }
-.browse__select:focus-visible {
+.browse__filterbtn:hover {
+  border-color: var(--q-accent);
+}
+.browse__filterbtn:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 1px;
+}
+.browse__funnel {
+  flex: none;
+  color: var(--q-mut-2);
+}
+.browse__badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--q-accent-strong);
+  color: var(--q-on-accent);
+  font-size: 10.5px;
+  font-weight: 800;
+  display: inline-grid;
+  place-items: center;
+}
+.browse__active {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--q-accent);
+  background: var(--q-accent-bg);
+  color: var(--q-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.browse__active-x {
+  border: none;
+  background: none;
+  color: var(--q-mut-2);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 50%;
+  font-family: inherit;
+  line-height: 1;
+}
+.browse__active-x:hover {
+  color: var(--q-err);
+}
+.browse__active-x:focus-visible {
   outline: 2px solid var(--q-accent);
 }
 .browse__reset {
@@ -234,8 +573,12 @@ function firstCode(q: QuestionSummary): string | undefined {
   font-size: 12px;
   color: var(--q-mut-2);
   cursor: pointer;
-  padding: 7px 10px;
+  padding: 6px 8px;
   font-family: inherit;
+  font-weight: 600;
+}
+.browse__reset:hover {
+  color: var(--q-ink);
 }
 .browse__meta {
   font-size: 12px;
@@ -250,7 +593,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__row {
   display: flex;
   align-items: center;
-  gap: 13px;
+  gap: 12px;
   padding: 12px 14px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
@@ -272,30 +615,26 @@ function firstCode(q: QuestionSummary): string | undefined {
   opacity: 0.55;
   cursor: default;
 }
-.browse__disc {
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
+/* All parts excluded: greyed but still clickable (§1.4 — not deletion). */
+.browse__row--excluded {
+  opacity: 0.5;
+}
+.browse__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex: none;
-  box-sizing: border-box;
-}
-.browse__disc--done {
-  background: var(--q-ok);
-}
-.browse__disc--partial {
-  border: 1.5px solid var(--q-part);
-  background: linear-gradient(90deg, var(--q-part) 50%, transparent 50%);
-}
-.browse__disc--due {
-  background: var(--q-accent);
-}
-.browse__disc--new {
-  border: 1.5px solid var(--q-btn-border);
 }
 .browse__nr {
   font-weight: 700;
   font-size: 13.5px;
-  width: 30px;
+  min-width: 26px;
+  flex: none;
+}
+.browse__excl {
+  color: var(--q-neutral);
+  font-size: 13px;
+  font-weight: 700;
   flex: none;
 }
 .browse__qtitle {
@@ -307,19 +646,37 @@ function firstCode(q: QuestionSummary): string | undefined {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.browse__state {
+.browse__points {
+  font-family: ui-monospace, Menlo, monospace;
+  font-weight: 700;
+  font-size: 12.5px;
+  flex: none;
+  margin-left: auto;
+}
+.browse__due {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   font-weight: 700;
+  color: var(--q-accent-strong);
+  flex: none;
+  margin-left: auto;
+}
+.browse__due + .browse__points {
+  margin-left: 0;
+}
+.browse__due-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--q-accent);
   flex: none;
 }
-.browse__state--done {
-  color: var(--q-ok);
-}
-.browse__state--partial {
-  color: var(--q-part);
-}
-.browse__state--due {
-  color: var(--q-accent-strong);
+.browse__state {
+  font-size: 11px;
+  flex: none;
+  margin-left: auto;
 }
 .browse__state--new {
   color: var(--q-faint);
@@ -353,14 +710,17 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 12px;
   align-items: center;
 }
-.browse__more {
-  display: flex;
-  justify-content: center;
-  padding: 12px 0;
-}
 @media (max-width: 640px) {
   .browse__qtitle {
     display: none;
+  }
+}
+@media (max-width: 420px) {
+  .browse__chip {
+    display: none;
+  }
+  .browse__row {
+    gap: 9px;
   }
 }
 </style>

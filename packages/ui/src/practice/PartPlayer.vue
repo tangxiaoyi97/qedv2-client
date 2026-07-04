@@ -2,17 +2,30 @@
 /**
  * PartPlayer — one part's full answer cycle (supplement §0):
  *
- *   answering ──Überprüfen──► graded? ──► reviewed (banner + marks + solution)
+ *   answering ──Überprüfen──► graded? ──► reviewed
  *        │                       │
  *        │ (open kind)           │ (expression: CAS indeterminate)
  *        ▼                       ▼
- *   self-assessing (solution + rubric + SelfAssessmentPanel) ──► reviewed
+ *   self-assessing (rubric + SelfAssessmentPanel) ──► reviewed
  *
  * Grading is pure and lives in @qed2/core-logic; this component only drives
  * the state machine and emits the final result upward (FSRS/archive/sync are
  * the shell's job).
+ *
+ * Two chrome modes (part-player-types.ts is the shell contract):
+ *  - chromeless falsy (default): fully self-contained — ResultBanner,
+ *    SolutionPanel and its own action buttons, exactly as before, so any
+ *    existing consumer keeps working unchanged.
+ *  - chromeless=true (practice page): the shell owns the feedback pill, the
+ *    solution sheet and the primary action button (sticky bottom bar).
+ *    PartPlayer renders only the part head, prompt, AnswerControl and — while
+ *    self-assessing — the SelfAssessmentPanel (incl. the open part's rubric).
+ *    It reports every phase/canSubmit/result change via the `state` event and
+ *    exposes submit()/confirmSelfAssessment() for the shell to trigger.
+ *    During 'self-assessing' the user must compare against the official
+ *    solution: the SHELL auto-opens its SolutionSheet when it sees that state.
  */
-import { computed, reactive, ref } from 'vue';
+import { computed, ref, watchEffect } from 'vue';
 import {
   grade,
   isIndeterminate,
@@ -21,6 +34,7 @@ import {
   type SelfAssessment,
   type Submission,
 } from '@qed2/core-logic';
+import type { PartPlayerState } from './part-player-types.js';
 import { emptySubmission, isSubmissionComplete } from '../question/submission-defaults.js';
 import AnswerControl from '../question/AnswerControl.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
@@ -33,10 +47,12 @@ import SolutionPanel from './SolutionPanel.vue';
 const props = defineProps<{
   part: QuestionPart;
   label?: string;
+  chromeless?: boolean;
 }>();
 
 const emit = defineEmits<{
   graded: [payload: { partId: string; result: GradeResult; submission: Submission; selfAssessed: boolean }];
+  state: [payload: PartPlayerState];
 }>();
 
 type Phase = 'answering' | 'self-assessing' | 'reviewed';
@@ -45,7 +61,7 @@ const phase = ref<Phase>('answering');
 const result = ref<GradeResult | null>(null);
 const indeterminate = ref(false);
 const indeterminateMax = ref(1);
-const selfAssessment = reactive<SelfAssessment>({});
+const selfAssessment = ref<SelfAssessment>({});
 
 const answer = computed(() => props.part.answer);
 const submission = ref<Submission | null>(answer.value ? emptySubmission(answer.value) : null);
@@ -62,7 +78,21 @@ const maxPointsForSelf = computed(() => {
   return indeterminate.value ? indeterminateMax.value : (props.part.points ?? 1);
 });
 
+// Shell contract: emit the full state on mount and on every phase /
+// canSubmit / result change (canSubmit re-evaluates whenever the AnswerControl
+// replaces the submission ref, i.e. on every input).
+watchEffect(() => {
+  emit('state', {
+    phase: phase.value,
+    canSubmit: phase.value === 'answering' && canSubmit.value,
+    result: result.value,
+    indeterminate: indeterminate.value,
+    unplayable: !answer.value,
+  });
+});
+
 function submit(): void {
+  if (phase.value !== 'answering') return;
   if (!canSubmit.value || !submission.value) return;
   if (submission.value.kind === 'open') {
     // grade only after the user compared with the solution and self-assessed
@@ -82,10 +112,11 @@ function submit(): void {
 }
 
 function confirmSelfAssessment(): void {
+  if (phase.value !== 'self-assessing') return;
   if (!submission.value) return;
   let final: GradeResult;
   if (submission.value.kind === 'open') {
-    const withAssessment: Submission = { ...submission.value, selfAssessment: { ...selfAssessment } };
+    const withAssessment: Submission = { ...submission.value, selfAssessment: { ...selfAssessment.value } };
     submission.value = withAssessment;
     const outcome = grade(props.part, withAssessment);
     if (isIndeterminate(outcome)) return; // open never yields indeterminate
@@ -93,7 +124,7 @@ function confirmSelfAssessment(): void {
   } else {
     // expression fell back to self-assessment: map overall → points
     const max = indeterminateMax.value;
-    const overall = selfAssessment.overall ?? 'none';
+    const overall = selfAssessment.value.overall ?? 'none';
     const awarded = overall === 'full' ? max : overall === 'partial' ? Math.round((max / 2) * 100) / 100 : 0;
     const verdict = overall === 'full' ? 'correct' : overall === 'partial' ? 'partial' : 'incorrect';
     final = { verdict, correct: verdict === 'correct', awardedPoints: awarded, maxPoints: max };
@@ -117,6 +148,8 @@ function onKeydown(ev: KeyboardEvent): void {
     submit();
   }
 }
+
+defineExpose({ submit, confirmSelfAssessment });
 </script>
 
 <template>
@@ -136,7 +169,11 @@ function onKeydown(ev: KeyboardEvent): void {
     </div>
 
     <template v-else>
-      <ResultBanner v-if="phase === 'reviewed' && result" :result="result" class="q-part__banner" />
+      <ResultBanner
+        v-if="!chromeless && phase === 'reviewed' && result"
+        :result="result"
+        class="q-part__banner"
+      />
 
       <AnswerControl
         v-if="submission"
@@ -148,25 +185,26 @@ function onKeydown(ev: KeyboardEvent): void {
       />
 
       <div v-if="phase === 'self-assessing'" class="q-part__selfassess">
-        <SolutionPanel :solution="part.solution" :default-open="true" />
+        <!-- chromeless: the shell auto-opens its SolutionSheet for comparison -->
+        <SolutionPanel v-if="!chromeless" :solution="part.solution" :default-open="true" />
         <SelfAssessmentPanel
           v-model="selfAssessment"
           :scoring="part.scoring"
           :rubric="answer.kind === 'open' ? answer.rubric : undefined"
           :max-points="maxPointsForSelf"
         />
-        <div class="q-part__actions">
+        <div v-if="!chromeless" class="q-part__actions">
           <QButton @click="confirmSelfAssessment">Bewertung übernehmen</QButton>
         </div>
       </div>
 
-      <div v-else-if="phase === 'answering'" class="q-part__actions">
+      <div v-else-if="phase === 'answering' && !chromeless" class="q-part__actions">
         <span class="q-part__key-hint">↵ prüfen</span>
         <QButton :disabled="!canSubmit" @click="submit">Überprüfen</QButton>
       </div>
 
       <SolutionPanel
-        v-if="phase === 'reviewed'"
+        v-if="!chromeless && phase === 'reviewed'"
         :solution="part.solution"
         :default-open="true"
         class="q-part__solution"

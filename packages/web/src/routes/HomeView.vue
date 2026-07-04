@@ -1,15 +1,23 @@
 <script setup lang="ts">
-/** Startseite „Heute" (prototype 3a) — the one-glance launchpad. */
-import { computed } from 'vue';
+/**
+ * Startseite „Heute" (prototype 3a) — the one-glance launchpad. Cards are
+ * navigable teasers of their detail pages (Beherrschung/Status → Fortschritt,
+ * Zuletzt/Aktivität → Verlauf) and reuse the shared review components
+ * (supplement §6/§8).
+ */
+import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { competencyCategory } from '@qed2/core-logic';
-import { MasteryBar, StateIcon } from '@qed2/ui';
+import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
+import { historyLog } from '../services.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
+import { useUiStore } from '../stores/ui.js';
 
 const router = useRouter();
 const auth = useAuthStore();
 const progress = useProgressStore();
+const ui = useUiStore();
 
 const greeting = computed(() => {
   const h = new Date().getHours();
@@ -49,6 +57,20 @@ const heroText = computed(() => {
   return parts.join(' + ') + '.';
 });
 
+/** Relative day for the „Zuletzt" rows — text, never color/icon-only. */
+function relativeDay(iso: string): string {
+  const then = new Date(iso);
+  const now = new Date();
+  const days = Math.round(
+    (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
+      new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime()) /
+      86_400_000,
+  );
+  if (days <= 0) return 'heute';
+  if (days === 1) return 'gestern';
+  return `vor ${days} Tagen`;
+}
+
 const recent = computed(() =>
   [...progress.archive.content.perPart]
     .filter((p) => p.lastResult)
@@ -56,13 +78,26 @@ const recent = computed(() =>
     .slice(0, 3)
     .map((p) => ({
       partId: p.partId,
-      state:
-        p.lastResult!.correct ? ('correct' as const) : p.lastResult!.awardedPoints > 0 ? ('partial' as const) : ('incorrect' as const),
-      points: p.lastResult!.awardedPoints,
+      grading: progress.partState.get(p.partId)?.grading ?? ('unseen' as const),
+      day: relativeDay(p.updatedAt),
     })),
 );
 
+/** Heatmap feed — local log; re-queried whenever the log changes. */
+const activity = ref<Record<string, number>>({});
+watch(
+  () => progress.historyVersion,
+  async () => {
+    activity.value = await historyLog.dailyActivity(84, new Date());
+  },
+  { immediate: true },
+);
+
 const hasProgress = computed(() => progress.practicedParts > 0);
+
+function go(path: string): void {
+  void router.push(path);
+}
 </script>
 
 <template>
@@ -80,7 +115,7 @@ const hasProgress = computed(() => progress.practicedParts > 0);
         <div class="home__hero-title">Intelligent üben</div>
         <div class="home__hero-text">{{ heroText }}</div>
       </div>
-      <button type="button" class="home__hero-cta" @click="router.push('/ueben')">Sitzung starten →</button>
+      <button type="button" class="home__hero-cta" @click="go('/practice')">Sitzung starten →</button>
     </div>
 
     <div class="home__cards">
@@ -92,34 +127,82 @@ const hasProgress = computed(() => progress.practicedParts > 0);
         </div>
       </div>
 
-      <div class="home__card home__card--wide">
-        <div class="home__card-label">Beherrschung</div>
+      <div
+        class="home__card home__card--wide home__card--click"
+        role="link"
+        tabindex="0"
+        @click="go('/progress')"
+        @keydown.enter="go('/progress')"
+      >
+        <div class="home__card-head">
+          <div class="home__card-label">Beherrschung</div>
+          <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
+        </div>
         <div v-if="categoryMastery.length > 0" class="home__mastery">
           <MasteryBar v-for="c in categoryMastery" :key="c.code" :code="c.code" :mastery="c.mastery" />
         </div>
         <div v-else class="home__empty-note">Noch keine Daten — starte deine erste Sitzung.</div>
       </div>
 
-      <div class="home__card">
-        <div class="home__card-label">Zuletzt</div>
+      <div
+        class="home__card home__card--click"
+        role="link"
+        tabindex="0"
+        @click="go('/history')"
+        @keydown.enter="go('/history')"
+      >
+        <div class="home__card-head">
+          <div class="home__card-label">Zuletzt</div>
+          <RouterLink to="/history" class="home__card-link">Details →</RouterLink>
+        </div>
         <div v-if="recent.length > 0" class="home__recent">
           <div v-for="r in recent" :key="r.partId" class="home__recent-row">
-            <StateIcon :state="r.state" :size="16" />
+            <GradingDot :grading="r.grading" :size="14" />
             <span class="home__recent-id">{{ r.partId }}</span>
+            <span class="home__recent-day">{{ r.day }}</span>
           </div>
         </div>
         <div v-else class="home__empty-note">Noch nichts geübt.</div>
+      </div>
+
+      <div
+        class="home__card home__card--click"
+        role="link"
+        tabindex="0"
+        @click="go('/history')"
+        @keydown.enter="go('/history')"
+      >
+        <div class="home__card-head">
+          <div class="home__card-label">Aktivität</div>
+          <RouterLink to="/history" class="home__card-link">Details →</RouterLink>
+        </div>
+        <ActivityHeatmap :data="activity" :weeks="12" />
+      </div>
+
+      <div
+        class="home__card home__card--wide home__card--click"
+        role="link"
+        tabindex="0"
+        @click="go('/progress')"
+        @keydown.enter="go('/progress')"
+      >
+        <div class="home__card-head">
+          <div class="home__card-label">Beherrschung nach Status</div>
+          <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
+        </div>
+        <GradingDistribution :counts="progress.gradingCounts" />
       </div>
     </div>
 
     <div v-if="!hasProgress" class="home__intro">
       Willkommen bei QED2 — SRDP-Mathematik mit intelligenter Wiederholung. Starte oben eine Sitzung
-      oder stöbere in den <RouterLink to="/aufgaben">Aufgaben</RouterLink>.
+      oder stöbere in den <RouterLink to="/questions">Aufgaben</RouterLink>.
     </div>
 
     <div v-if="!auth.isLoggedIn" class="home__guest">
       Anmelden sichert deinen Fortschritt geräteübergreifend —
-      <RouterLink to="/anmelden">jetzt anmelden</RouterLink>. Üben geht auch ohne.
+      <button type="button" class="home__guest-link" @click="ui.openAuthModal()">jetzt anmelden</button>.
+      Üben geht auch ohne.
     </div>
   </div>
 </template>
@@ -195,21 +278,59 @@ const hasProgress = computed(() => progress.practicedParts > 0);
   filter: brightness(1.06);
 }
 .home__cards {
-  display: flex;
+  /* fixed 12-col grid — flex+min-width used to overflow into a squeezed
+     single row (deformed dashboard); explicit spans place every card. */
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
   gap: 14px;
-  flex-wrap: wrap;
 }
 .home__card {
-  flex: 1;
-  min-width: 200px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
   border-radius: 12px;
   padding: 16px;
+  min-width: 0;
+  grid-column: span 6;
+}
+.home__cards > .home__card:nth-child(1) {
+  grid-column: span 4;
+}
+.home__cards > .home__card:nth-child(2) {
+  grid-column: span 8;
+}
+.home__cards > .home__card:nth-child(5) {
+  grid-column: span 12;
+}
+@media (max-width: 719px) {
+  .home__cards > .home__card {
+    grid-column: span 12 !important;
+  }
 }
 .home__card--wide {
-  flex: 1.3;
-  min-width: 240px;
+  /* spans handled by nth-child rules above */
+}
+.home__card--click {
+  cursor: pointer;
+}
+.home__card--click:hover,
+.home__card--click:focus-visible {
+  border-color: var(--q-accent);
+}
+.home__card--click:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.home__card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.home__card-head .home__card-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .home__card-label {
   font-size: 11px;
@@ -218,6 +339,16 @@ const hasProgress = computed(() => progress.practicedParts > 0);
   text-transform: uppercase;
   color: var(--q-faint);
   margin-bottom: 10px;
+}
+.home__card-link {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--q-accent-strong);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.home__card-link:hover {
+  text-decoration: underline;
 }
 .home__big {
   display: flex;
@@ -264,6 +395,15 @@ const hasProgress = computed(() => progress.practicedParts > 0);
 .home__recent-id {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home__recent-day {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--q-faint);
+  white-space: nowrap;
 }
 .home__empty-note {
   font-size: 12px;
@@ -279,5 +419,25 @@ const hasProgress = computed(() => progress.practicedParts > 0);
   font-size: 12.5px;
   color: var(--q-mut-2);
   line-height: 1.55;
+}
+.home__guest-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font: 600 12.5px 'Public Sans', system-ui, sans-serif;
+  color: var(--q-accent-strong);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* narrow phones (380px): single column, cards stack */
+@media (max-width: 480px) {
+  .home__cards {
+    flex-direction: column;
+  }
+  .home__card,
+  .home__card--wide {
+    min-width: 0;
+  }
 }
 </style>

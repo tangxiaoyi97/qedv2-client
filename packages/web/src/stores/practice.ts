@@ -2,11 +2,17 @@
  * Practice session store — drives the practice flow:
  * recommend (or explicit selection) → fetch full questions → per-part
  * answer/grade cycle → archive updates → periodic sync.
+ *
+ * Grading supplement: excluded parts are filtered OUT of every session
+ * source (they are also projected away in the recommend userState); manual
+ * grading overrides rebase FSRS on the pre-answer snapshot kept per part.
  */
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
 import type {
+  FsrsState,
   GradeResult,
+  Grading,
   Question,
   QuestionPart,
   QuestionsFilter,
@@ -44,7 +50,11 @@ export const usePracticeStore = defineStore('practice', () => {
   const graded = ref<GradedRecord[]>([]);
   const phase = ref<'idle' | 'loading' | 'running' | 'summary' | 'error'>('idle');
   const error = ref<string | undefined>();
+  /** Non-fatal notice (e.g. some questions failed to load, session continues). */
+  const warning = ref<string | undefined>();
   const partShownAt = ref(0);
+  /** Pre-answer FSRS snapshots for same-event manual override (per partId). */
+  const preAnswerFsrs = new Map<string, FsrsState | undefined>();
 
   const total = computed(() => items.value.length);
   const current = computed(() => {
@@ -71,6 +81,12 @@ export const usePracticeStore = defineStore('practice', () => {
     return { count: list.length, points, maxPoints, byVerdict, competencies: [...codes] };
   });
 
+  /**
+   * Load full questions, cache-first. When the network fetch fails but SOME
+   * questions are already cached (e.g. core briefly unreachable), the session
+   * proceeds with the cached subset and a warning instead of hard-failing;
+   * with nothing usable the error propagates.
+   */
   async function fetchQuestions(ids: string[]): Promise<void> {
     const app = useAppStore();
     const unique = [...new Set(ids)];
@@ -82,9 +98,14 @@ export const usePracticeStore = defineStore('practice', () => {
       else missing.push(id);
     }
     if (missing.length > 0) {
-      const res = await app.coreClient.getQuestionsBatch(missing);
-      for (const q of res.questions) map.set(q.id, q);
-      await questionCache.putMany(res.questions);
+      try {
+        const res = await app.coreClient.getQuestionsBatch(missing);
+        for (const q of res.questions) map.set(q.id, q);
+        await questionCache.putMany(res.questions);
+      } catch (e) {
+        if (map.size === 0) throw e;
+        warning.value = `${missing.length} Aufgaben konnten nicht geladen werden — Sitzung läuft mit ${map.size} gespeicherten weiter.`;
+      }
     }
     questions.value = map;
   }
@@ -93,14 +114,25 @@ export const usePracticeStore = defineStore('practice', () => {
     items.value = list;
     index.value = 0;
     graded.value = [];
+    preAnswerFsrs.clear();
     phase.value = list.length > 0 ? 'running' : 'summary';
     partShownAt.value = Date.now();
+  }
+
+  /**
+   * Bulk practice handoff (URL-bloat fix): the browse page seeds the session
+   * IN THE STORE and navigates to a bare /practice — hundreds of question ids
+   * never enter the URL. Single questions keep the shareable ?questions= link.
+   */
+  async function startPrepared(questionIds: string[]): Promise<void> {
+    await startQuestions(questionIds);
   }
 
   /** Smart session: FSRS-due reviews + weak-competency new parts (core decides). */
   async function startSmart(opts?: { count?: number; filters?: QuestionsFilter }): Promise<void> {
     phase.value = 'loading';
     error.value = undefined;
+    warning.value = undefined;
     try {
       const app = useAppStore();
       const auth = useAuthStore();
@@ -116,8 +148,11 @@ export const usePracticeStore = defineStore('practice', () => {
       if (opts?.filters) req.filters = opts.filters;
       const rec = await app.coreClient.recommend(req);
       await fetchQuestions(rec.items.map((i) => i.questionId));
-      // Guard against non-playable/missing parts.
+      // Guards: playable parts only, and NEVER an excluded part (supplement
+      // §1.4 — belt to the userState projection's braces).
+      const excluded = progress.excludedPartIds;
       const list: SessionItem[] = rec.items.filter((i) => {
+        if (excluded.has(i.partId)) return false;
         const q = questions.value.get(i.questionId);
         return q?.parts.some((p) => p.id === i.partId && p.answer);
       });
@@ -128,17 +163,28 @@ export const usePracticeStore = defineStore('practice', () => {
     }
   }
 
-  /** Practice explicit questions (whole exam or a hand-picked set). */
+  /**
+   * Practice explicit questions (whole exam or a hand-picked set) —
+   * user-driven, so excluded parts stay OPENABLE here when a single question
+   * is chosen deliberately (supplement §1.4: exclusion is not deletion).
+   * For bulk selections (more than one question) excluded parts are skipped.
+   */
   async function startQuestions(questionIds: string[]): Promise<void> {
     phase.value = 'loading';
     error.value = undefined;
+    warning.value = undefined;
     try {
+      const progress = useProgressStore();
       await fetchQuestions(questionIds);
+      const excluded = progress.excludedPartIds;
+      const deliberateSingle = questionIds.length === 1;
       const list: SessionItem[] = [];
       for (const id of questionIds) {
         const q = questions.value.get(id);
         for (const p of q?.parts ?? []) {
-          if (p.answer) list.push({ questionId: id, partId: p.id, reason: 'manual' });
+          if (!p.answer) continue;
+          if (!deliberateSingle && excluded.has(p.id)) continue;
+          list.push({ questionId: id, partId: p.id, reason: 'manual' });
         }
       }
       beginSession(list);
@@ -158,6 +204,7 @@ export const usePracticeStore = defineStore('practice', () => {
     const progress = useProgressStore();
     const auth = useAuthStore();
     const gradedAt = new Date().toISOString();
+    const elapsedMs = Math.max(0, Date.now() - partShownAt.value);
     graded.value = [
       ...graded.value,
       {
@@ -166,27 +213,70 @@ export const usePracticeStore = defineStore('practice', () => {
         result: payload.result,
         reason: cur.item.reason,
         gradedAt,
-        elapsedMs: Math.max(0, Date.now() - partShownAt.value),
+        elapsedMs,
       },
     ];
-    await progress.applyGrade({
+    const { previousFsrs } = await progress.applyGrade({
       partId: payload.part.id,
+      questionId: cur.question.id,
       competencyCodes: payload.part.competencies.map((c) => c.code),
       result: payload.result,
+      elapsedMs,
     });
+    preAnswerFsrs.set(payload.part.id, previousFsrs);
     if (auth.isLoggedIn && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
       void progress.syncNow({ quiet: true });
     }
   }
 
+  /**
+   * Manual grading from the ever-present menu (supplement §1.2 — manual
+   * always wins). If the part was answered THIS session, the override
+   * replaces the auto advance (rebased on the pre-answer snapshot);
+   * otherwise it acts as a standalone review event.
+   */
+  async function overrideGrading(partId: string, grading: Grading): Promise<void> {
+    const progress = useProgressStore();
+    const input: Parameters<typeof progress.setGrading>[0] = { partId, grading };
+    if (preAnswerFsrs.has(partId)) input.baseFsrs = preAnswerFsrs.get(partId);
+    await progress.setGrading(input);
+  }
+
+  /** Set of partIds already graded this session (drives the session rail). */
+  const gradedPartIds = computed(() => new Set(graded.value.map((g) => g.partId)));
+
+  /**
+   * Jump to a not-yet-graded session item (session rail). Graded parts are
+   * not revisitable — re-answering would advance FSRS twice for one attempt.
+   */
+  function jumpTo(i: number): void {
+    if (phase.value !== 'running') return;
+    const item = items.value[i];
+    if (!item || i === index.value) return;
+    if (gradedPartIds.value.has(item.partId)) return;
+    index.value = i;
+    partShownAt.value = Date.now();
+  }
+
+  /** Advance to the next UNGRADED item (cyclic — jumping may leave gaps);
+   *  the session completes only when every item has been graded. */
   function next(): void {
-    if (index.value + 1 < items.value.length) {
-      index.value += 1;
-      partShownAt.value = Date.now();
-    } else {
+    const n = items.value.length;
+    if (graded.value.length >= n) {
       phase.value = 'summary';
       void endOfSession();
+      return;
     }
+    for (let step = 1; step <= n; step++) {
+      const i = (index.value + step) % n;
+      if (!gradedPartIds.value.has(items.value[i]!.partId)) {
+        index.value = i;
+        partShownAt.value = Date.now();
+        return;
+      }
+    }
+    phase.value = 'summary';
+    void endOfSession();
   }
 
   async function endOfSession(): Promise<void> {
@@ -215,8 +305,10 @@ export const usePracticeStore = defineStore('practice', () => {
 
   function abort(): void {
     phase.value = 'idle';
+    warning.value = undefined;
     items.value = [];
     graded.value = [];
+    preAnswerFsrs.clear();
     index.value = 0;
   }
 
@@ -227,12 +319,17 @@ export const usePracticeStore = defineStore('practice', () => {
     graded,
     phase,
     error,
+    warning,
     total,
     current,
     summary,
+    gradedPartIds,
+    jumpTo,
     startSmart,
     startQuestions,
+    startPrepared,
     recordGraded,
+    overrideGrading,
     next,
     abort,
   };

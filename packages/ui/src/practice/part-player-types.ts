@@ -1,0 +1,18 @@
+/**
+ * PartPlayer ⇄ shell contract for chromeless mode: the shell (PracticeView's
+ * sticky bottom bar) renders the primary action, feedback pill and solution
+ * sheet; PartPlayer reports its state and exposes imperative triggers.
+ */
+import type { GradeResult } from '@qed2/core-logic';
+
+export interface PartPlayerState {
+  phase: 'answering' | 'self-assessing' | 'reviewed';
+  /** Enough input to allow Überprüfen (answering phase only). */
+  canSubmit: boolean;
+  /** Final result once reviewed. */
+  result: GradeResult | null;
+  /** Expression fell back to self-assessment (CAS indeterminate). */
+  indeterminate: boolean;
+  /** Part is not answerable at all (no answer data). */
+  unplayable: boolean;
+}

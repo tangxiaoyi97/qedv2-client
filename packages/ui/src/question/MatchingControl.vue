@@ -1,7 +1,11 @@
 <script setup lang="ts">
 /**
- * matching control — assignment via <select>, NOT drag (prototype 2a):
- * keyboard & mobile friendly.
+ * matching control — assignment via <select> PLUS desktop drag & drop.
+ *
+ * Selects stay the accessible/mobile-reliable base (prototype 2a); pool
+ * chips are additionally draggable onto the left rows (HTML5 DnD). Dropping
+ * an already-used option MOVES it (one-to-one stays guaranteed). Keyboard
+ * and touch users lose nothing — drag is an enhancement layer only.
  *
  * Each left row pairs the left RichText with a native select whose options
  * are "A · plain-text" projections of the right items (richTextToPlain).
@@ -12,11 +16,11 @@
  * unambiguous even with formulas. Default one-to-one: a right item used by
  * another row is disabled in the other selects.
  *
- * Review (result set): read-only; per left row ok/err from result.breakdown
- * (ref = left index); on error the correct right item is shown in a
- * dashed-ok framed box ("Richtig wäre: …").
+ * Review (result set): the form controls and the pool disappear — each row
+ * collapses to the state icon + compact comparison lines (Gewählt/Richtig),
+ * so the feedback stays scannable even with long German option texts.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { BreakdownItem, GradeResult, MatchingAnswer, RichText } from '@qed2/core-logic';
 import { richTextToPlain } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
@@ -53,10 +57,39 @@ function hasMath(rt: RichText): boolean {
 
 function onSelect(leftIdx: number, ev: Event): void {
   const raw = (ev.target as HTMLSelectElement).value;
+  assign(leftIdx, raw === '' ? null : Number(raw), false);
+}
+
+/**
+ * Central assignment. `move` (drag semantics): a right item already used by
+ * another row is taken away from it, keeping the mapping one-to-one.
+ */
+function assign(leftIdx: number, rightIdx: number | null, move: boolean): void {
   const next: (number | null)[] = [];
   for (let i = 0; i < props.answer.left.length; i++) next.push(props.modelValue[i] ?? null);
-  next[leftIdx] = raw === '' ? null : Number(raw);
+  if (move && rightIdx !== null) {
+    for (let i = 0; i < next.length; i++) if (next[i] === rightIdx) next[i] = null;
+  }
+  next[leftIdx] = rightIdx;
   emit('update:modelValue', next);
+}
+
+/* --- drag & drop enhancement (desktop) --- */
+const dragOverRow = ref<number | null>(null);
+
+function onDragStart(rightIdx: number, ev: DragEvent): void {
+  if (review.value || !ev.dataTransfer) return;
+  ev.dataTransfer.setData('text/plain', String(rightIdx));
+  ev.dataTransfer.effectAllowed = 'move';
+}
+
+function onDrop(leftIdx: number, ev: DragEvent): void {
+  dragOverRow.value = null;
+  if (review.value) return;
+  const raw = ev.dataTransfer?.getData('text/plain') ?? '';
+  const rightIdx = Number(raw);
+  if (!Number.isInteger(rightIdx) || rightIdx < 0 || rightIdx >= props.answer.right.length) return;
+  assign(leftIdx, rightIdx, true);
 }
 
 /** result.breakdown by left index. */
@@ -82,21 +115,19 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
         :class="{
           'q-match__row--ok': marks[i]?.correct === true,
           'q-match__row--err': marks[i]?.correct === false,
+          'q-match__row--dragover': dragOverRow === i,
         }"
+        @dragover.prevent="!review && (dragOverRow = i)"
+        @dragleave="dragOverRow === i && (dragOverRow = null)"
+        @drop.prevent="onDrop(i, $event)"
       >
         <div class="q-match__main">
           <StateIcon v-if="marks[i]" :state="marks[i]!.correct ? 'correct' : 'incorrect'" :size="20" />
           <span class="q-match__left">
             <RichTextView :nodes="leftItem" inline-only />
           </span>
-          <span
-            v-if="marks[i]"
-            class="q-match__verdict"
-            :class="marks[i]!.correct ? 'q-match__verdict--ok' : 'q-match__verdict--err'"
-          >
-            {{ marks[i]!.correct ? 'Richtig' : 'Falsch' }}
-          </span>
           <select
+            v-if="!review"
             class="q-match__select"
             :class="{ 'q-match__select--assigned': chosen(i) !== null }"
             :value="chosen(i) === null ? '' : String(chosen(i))"
@@ -116,33 +147,51 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
           </select>
         </div>
 
-        <!-- math-safe echo of the chosen right item -->
-        <div v-if="chosen(i) !== null && hasMath(answer.right[chosen(i)!]!)" class="q-match__echo">
+        <!-- math-safe echo of the chosen right item (answering only) -->
+        <div v-if="!review && chosen(i) !== null && hasMath(answer.right[chosen(i)!]!)" class="q-match__echo">
           <span class="q-match__echo-letter">{{ letter(chosen(i)!) }} ·</span>
           <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
         </div>
 
-        <!-- review: correct answer on error -->
-        <div
-          v-if="marks[i] && !marks[i]!.correct && expectedRight.has(i)"
-          class="q-match__correct"
-        >
-          <span class="q-match__correct-label">Richtig wäre:</span>
-          <span class="q-match__echo-letter">{{ letter(expectedRight.get(i)!) }} ·</span>
-          <RichTextView :nodes="answer.right[expectedRight.get(i)!]" inline-only />
+        <!-- review: compact comparison — no nested boxes, no dead form controls -->
+        <div v-if="review" class="q-match__cmp">
+          <div v-if="marks[i]?.correct && chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--ok">
+            <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
+            <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
+          </div>
+          <template v-else-if="marks[i] && !marks[i]!.correct">
+            <div v-if="chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--user">
+              <span class="q-match__cmp-tag">Gewählt</span>
+              <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
+              <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
+            </div>
+            <div v-if="expectedRight.has(i)" class="q-match__cmp-line q-match__cmp-line--ok">
+              <span class="q-match__cmp-tag q-match__cmp-tag--ok">Richtig</span>
+              <span class="q-match__cmp-letter">{{ letter(expectedRight.get(i)!) }}</span>
+              <RichTextView :nodes="answer.right[expectedRight.get(i)!]" inline-only />
+            </div>
+          </template>
         </div>
       </div>
     </div>
 
-    <!-- options pool -->
-    <div class="q-match__pool">
-      <div class="q-match__pool-title">Optionen</div>
+    <!-- options pool (chips draggable onto rows on desktop; answering only) -->
+    <div v-if="!review" class="q-match__pool">
+      <div class="q-match__pool-title">
+        Optionen
+        <span v-if="!review" class="q-match__pool-hint">ziehen oder per Auswahl zuordnen</span>
+      </div>
       <div class="q-match__pool-items">
         <span
           v-for="(rightItem, j) in answer.right"
           :key="j"
           class="q-match__pool-item"
-          :class="{ 'q-match__pool-item--used': usedRight.has(j) }"
+          :class="{
+            'q-match__pool-item--used': usedRight.has(j),
+            'q-match__pool-item--draggable': !review,
+          }"
+          :draggable="!review"
+          @dragstart="onDragStart(j, $event)"
         >
           <span class="q-match__pool-letter">{{ letter(j) }} ·</span>
           <RichTextView :nodes="rightItem" inline-only />
@@ -173,6 +222,11 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
   border: 1.5px solid var(--q-err);
   background: var(--q-err-bg);
 }
+.q-match__row--dragover {
+  border: 2px dashed var(--q-accent);
+  background: var(--q-accent-bg);
+  padding: 9px 11px;
+}
 
 .q-match__main {
   display: flex;
@@ -185,18 +239,6 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
   font-size: 14.5px;
   overflow-x: auto;
   overflow-wrap: break-word;
-}
-.q-match__verdict {
-  font-size: 11.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  flex: none;
-}
-.q-match__verdict--ok {
-  color: var(--q-ok);
-}
-.q-match__verdict--err {
-  color: var(--q-err);
 }
 
 .q-match__select {
@@ -242,20 +284,45 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
   margin-right: 4px;
 }
 
-.q-match__correct {
-  margin-top: 8px;
-  padding: 8px 11px;
-  border: 1.5px dashed var(--q-ok);
-  border-radius: 8px;
-  background: var(--q-card);
-  font-size: 13.5px;
-  overflow-x: auto;
+.q-match__cmp {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 30px; /* align under the left item, past the state icon */
 }
-.q-match__correct-label {
-  font-size: 11.5px;
-  font-weight: 700;
+.q-match__cmp-line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 13px;
+  min-width: 0;
+}
+.q-match__cmp-line--user {
+  color: var(--q-mut-2);
+}
+.q-match__cmp-line--ok {
+  color: var(--q-ink);
+}
+.q-match__cmp-tag {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--q-faint);
+  width: 52px;
+  flex: none;
+}
+.q-match__cmp-tag--ok {
   color: var(--q-ok);
-  margin-right: 6px;
+}
+.q-match__cmp-letter {
+  font: 700 11px ui-monospace, Menlo, monospace;
+  color: var(--q-mut);
+  flex: none;
+}
+.q-match__cmp-line--ok .q-match__cmp-letter {
+  color: var(--q-ok);
 }
 
 .q-match__pool {
@@ -295,5 +362,18 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
   border-color: transparent;
   opacity: 0.5;
   text-decoration: line-through;
+}
+.q-match__pool-item--draggable {
+  cursor: grab;
+}
+.q-match__pool-item--draggable:active {
+  cursor: grabbing;
+}
+.q-match__pool-hint {
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--q-hint);
+  margin-left: 8px;
 }
 </style>

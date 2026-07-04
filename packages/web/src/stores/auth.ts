@@ -59,9 +59,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function afterAuth(s: Session): Promise<void> {
     session.value = s;
     await authStorage.setSession(s);
-    // Contract §8.2: guest progress merges into the account via one sync.
+    // Login-time reconciliation (history-and-archive-choice upgrade §2):
+    // silent when one side is empty or checksums match; otherwise the
+    // archive-choice dialog lets the user pick merge / cloud / local.
     const progress = useProgressStore();
-    await progress.syncNow({ quiet: false });
+    await progress.reconcileOnLogin();
   }
 
   async function login(usernameInput: string, password: string): Promise<void> {

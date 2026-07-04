@@ -15,6 +15,8 @@ import type {
   AttemptRecord,
   AuthResponse,
   HealthResponse,
+  HistoryQuery,
+  HistoryResponse,
   RefreshResponse,
   ResolveRequest,
   ResolveResponse,
@@ -90,6 +92,28 @@ export class ServerClient {
       this.baseUrl,
       '/me/attempts',
       this.authed({ method: 'POST', body: { attempts } }),
+    );
+  }
+
+  /**
+   * GET /me/history — read-only, paginated view over the attempt audit trail
+   * (newest gradedAt first; identifiers only, never question content).
+   * The client joins titles etc. from core / its question cache.
+   */
+  getHistory(query: HistoryQuery = {}): Promise<HistoryResponse> {
+    return requestJson<HistoryResponse>(
+      this.baseUrl,
+      '/me/history',
+      this.authed({
+        query: {
+          since: query.since,
+          until: query.until,
+          page: query.page,
+          pageSize: query.pageSize,
+          partId: query.partId,
+          questionId: query.questionId,
+        },
+      }),
     );
   }
 

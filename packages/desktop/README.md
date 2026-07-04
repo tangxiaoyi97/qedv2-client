@@ -19,3 +19,20 @@ stays honest: the desktop app will be a thin shell that
 If a desktop feature ever seems to require copying grading/FSRS/sync code out
 of `@qed2/core-logic`, that is an encapsulation failure — fix core-logic
 instead.
+
+## Injection mechanism (already wired in the web bundle)
+
+`packages/web/src/services.ts` reads `globalThis.__QED2_PLATFORM_PORTS__`
+before falling back to the web adapters. The Electron shell therefore is:
+
+1. a main process that spawns/manages the local core (from the clone of
+   `ClientConfig.coreRepoUrl` + `bankRepoUrl` — both user-configurable under
+   Einstellungen → Erweitert),
+2. a preload script that exposes desktop implementations of any subset of
+   `PlatformPorts` on `__QED2_PLATFORM_PORTS__` via the context bridge,
+3. a BrowserWindow loading the UNMODIFIED `@qed2/web` build output.
+
+The app resolves its core endpoint through `CoreRuntimePort.getEndpoint()`
+at startup and on config changes, so an injected desktop port switching
+between remote and `http://localhost:<port>` takes effect without any web
+code changes. UI/logic upgrades = rebuild the web bundle; packaging stays.

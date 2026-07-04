@@ -6,7 +6,9 @@
 import { STORAGE, type StoragePort } from '@qed2/core-logic';
 
 const DB_NAME = 'qed2';
-const DB_VERSION = 1;
+// v2: added the 'history' object store (onupgradeneeded creates any missing
+// collection, so bumping the version is all a migration needs).
+const DB_VERSION = 2;
 const COLLECTIONS = Object.values(STORAGE);
 
 function openDb(): Promise<IDBDatabase> {

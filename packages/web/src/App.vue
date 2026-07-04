@@ -1,8 +1,10 @@
 <script setup lang="ts">
 /**
  * App shell: sidebar navigation on desktop, bottom tab bar on mobile
- * (prototype 3a / 5a). Practice routes (meta.focus) render without the
- * navigation chrome. The sync-conflict dialog mounts globally.
+ * (prototype 3a / 5a). The sidebar separates the two practice modes
+ * (supplement §7): „Intelligent üben" (FSRS-driven) vs „Aufgaben"
+ * (user-picked). Practice routes (meta.focus) render without the
+ * navigation chrome. Sync-conflict dialog + auth modal mount globally.
  */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
@@ -10,22 +12,40 @@ import { provideAssetResolver } from '@qed2/ui';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
+import { useUiStore } from './stores/ui.js';
 import ConflictDialog from './routes/ConflictDialog.vue';
+import AuthModal from './routes/AuthModal.vue';
+import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
 
 const route = useRoute();
 const app = useAppStore();
 const auth = useAuthStore();
 const progress = useProgressStore();
+const ui = useUiStore();
 
 provideAssetResolver((src) => app.assetUrl(src));
 
 const focusMode = computed(() => route.meta.focus === true);
 
-const navItems = [
+/** Two practice entries, visually grouped (supplement §7). */
+const practiceItems = [
+  { to: '/practice', label: 'Intelligent üben', icon: '▶', title: 'FSRS-Empfehlungen' },
+  { to: '/questions', label: 'Aufgaben', icon: '▤', title: 'Selbst Aufgaben auswählen' },
+] as const;
+
+const otherItems = [
+  { to: '/history', label: 'Verlauf', icon: '≡' },
+  { to: '/progress', label: 'Fortschritt', icon: '▨' },
+  { to: '/settings', label: 'Einstellungen', icon: '⚙' },
+] as const;
+
+/** Mobile tab bar — 5 slots; Einstellungen via the fixed gear button. */
+const tabItems = [
   { to: '/', label: 'Heute', icon: '◈' },
-  { to: '/aufgaben', label: 'Aufgaben', icon: '▤' },
-  { to: '/fortschritt', label: 'Fortschritt', icon: '▨' },
-  { to: '/einstellungen', label: 'Einstellungen', icon: '⚙' },
+  { to: '/practice', label: 'Üben', icon: '▶' },
+  { to: '/questions', label: 'Aufgaben', icon: '▤' },
+  { to: '/history', label: 'Verlauf', icon: '≡' },
+  { to: '/progress', label: 'Fortschritt', icon: '▨' },
 ] as const;
 
 function isActive(to: string): boolean {
@@ -40,7 +60,30 @@ function isActive(to: string): boolean {
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
         <nav class="app__nav">
           <RouterLink
-            v-for="item in navItems"
+            to="/"
+            class="app__nav-item"
+            :class="{ 'app__nav-item--active': isActive('/') }"
+          >
+            <span class="app__nav-icon" aria-hidden="true">◈</span>
+            <span>Heute</span>
+          </RouterLink>
+
+          <div class="app__nav-group" aria-hidden="true">Üben</div>
+          <RouterLink
+            v-for="item in practiceItems"
+            :key="item.to"
+            :to="item.to"
+            class="app__nav-item"
+            :class="{ 'app__nav-item--active': isActive(item.to) }"
+            :title="item.title"
+          >
+            <span class="app__nav-icon" aria-hidden="true">{{ item.icon }}</span>
+            <span>{{ item.label }}</span>
+          </RouterLink>
+
+          <div class="app__nav-sep" aria-hidden="true" />
+          <RouterLink
+            v-for="item in otherItems"
             :key="item.to"
             :to="item.to"
             class="app__nav-item"
@@ -53,7 +96,7 @@ function isActive(to: string): boolean {
         <div v-if="!auth.isLoggedIn" class="app__guest-card">
           <div class="app__guest-title">Als Gast unterwegs</div>
           <div class="app__guest-text">Anmelden sichert deinen Fortschritt geräteübergreifend.</div>
-          <RouterLink to="/anmelden" class="app__guest-btn">Anmelden</RouterLink>
+          <button type="button" class="app__guest-btn" @click="ui.openAuthModal()">Anmelden</button>
         </div>
         <div v-else class="app__guest-card">
           <div class="app__guest-title">{{ auth.username }}</div>
@@ -69,7 +112,7 @@ function isActive(to: string): boolean {
 
       <nav class="app__tabbar">
         <RouterLink
-          v-for="item in navItems"
+          v-for="item in tabItems"
           :key="item.to"
           :to="item.to"
           class="app__tab"
@@ -79,6 +122,10 @@ function isActive(to: string): boolean {
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
+
+      <RouterLink to="/settings" class="app__gear" aria-label="Einstellungen" title="Einstellungen">
+        <span aria-hidden="true">⚙</span>
+      </RouterLink>
     </template>
 
     <main class="app__main" :class="{ 'app__main--focus': focusMode }">
@@ -86,6 +133,8 @@ function isActive(to: string): boolean {
     </main>
 
     <ConflictDialog />
+    <AuthModal />
+    <ArchiveChoiceDialog />
   </div>
 </template>
 
@@ -121,6 +170,20 @@ function isActive(to: string): boolean {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.app__nav-group {
+  margin: 12px 0 3px;
+  padding: 0 12px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--q-faint);
+}
+.app__nav-sep {
+  height: 1px;
+  margin: 10px 8px;
+  background: var(--q-border);
 }
 .app__nav-item {
   display: flex;
@@ -166,19 +229,23 @@ function isActive(to: string): boolean {
 }
 .app__guest-btn {
   display: block;
+  width: 100%;
   text-align: center;
   border: 1px solid var(--q-btn-border);
   background: var(--q-panel);
   color: var(--q-ink);
-  font-weight: 600;
-  font-size: 12px;
+  font: 600 12px 'Public Sans', system-ui, sans-serif;
   padding: 8px;
   border-radius: 7px;
-  text-decoration: none;
+  cursor: pointer;
+}
+.app__guest-btn:hover {
+  background: var(--q-panel-2);
 }
 
-/* bottom tab bar (mobile) */
-.app__tabbar {
+/* bottom tab bar + gear (mobile only) */
+.app__tabbar,
+.app__gear {
   display: none;
 }
 
@@ -217,6 +284,7 @@ function isActive(to: string): boolean {
     font-weight: 500;
     text-decoration: none;
     padding-top: 2px;
+    min-width: 0;
   }
   .app__tab--active {
     color: var(--q-accent-strong);
@@ -224,6 +292,23 @@ function isActive(to: string): boolean {
   }
   .app__tab-icon {
     font-size: 18px;
+  }
+  /* Einstellungen on mobile: fixed round gear, top-right (safe-area aware). */
+  .app__gear {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    top: calc(env(safe-area-inset-top) + 10px);
+    right: 12px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--q-card);
+    border: 1px solid var(--q-border);
+    color: var(--q-mut);
+    font-size: 16px;
+    text-decoration: none;
+    z-index: 40;
   }
   .app__main:not(.app__main--focus) {
     padding-bottom: 84px;

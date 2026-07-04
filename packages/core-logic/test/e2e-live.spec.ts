@@ -14,7 +14,13 @@
 import { describe, expect, it } from 'vitest';
 import { ServerClient } from '../src/api/server-client.js';
 import { archiveChecksum } from '../src/sync/checksum.js';
-import { buildResolvedArchive, performSync, submitResolution } from '../src/sync/sync-engine.js';
+import {
+  assessLoginArchives,
+  buildResolvedArchive,
+  overwriteServerArchive,
+  performSync,
+  submitResolution,
+} from '../src/sync/sync-engine.js';
 import type { ArchiveContent, PartEntry } from '../src/model/archive.js';
 
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
@@ -111,5 +117,82 @@ describe.skipIf(!enabled)('live sync acceptance (real qed2-server)', () => {
     expect(archiveChecksum(resolved)).toBe(state3.checksum);
     const p1Final = state3.perPart.find((p) => p.partId === `${runId}-p1`);
     expect(p1Final?.lastResult?.correct).toBe(false); // the picked local side won
+  }, 30_000);
+
+  it('grading/starred round-trip, /me/history pagination, login archive choice', async () => {
+    let token: string | undefined;
+    const client = new ServerClient(SERVER, () => token);
+    const login = await client.login(USER!, PASS!);
+    token = login.token;
+
+    const runId = `e2e-g-${Date.now()}`;
+    const t1 = new Date(Date.now() - 60_000).toISOString();
+
+    /* -------- grading/starred survive a sync round-trip byte-for-byte -------- */
+    const before = await client.getState();
+    const content: ArchiveContent = {
+      perPart: [
+        { ...part(`${runId}-good`, { stamp: t1 }), grading: 'good', starred: true },
+        { ...part(`${runId}-baffled`, { stamp: t1, points: 0 }), grading: 'baffled', starred: false },
+        { ...part(`${runId}-excluded`, { stamp: t1 }), grading: 'excluded', starred: true },
+        { ...part(`${runId}-ungraded`, { stamp: t1 }), grading: null, starred: false },
+      ],
+      perCompetency: [{ code: 'AN 4.3', mastery: 0.333333, updatedAt: t1 }],
+    };
+    const r1 = await performSync(client, { content, baseVersion: before.archiveVersion });
+    expect(r1.outcome.type).toBe('fast-forward');
+
+    const state1 = await client.getState();
+    expect(archiveChecksum(r1.archive.content)).toBe(state1.checksum); // parity incl. grading/starred
+    const byId = new Map(state1.perPart.map((p) => [p.partId, p]));
+    expect(byId.get(`${runId}-good`)?.grading).toBe('good');
+    expect(byId.get(`${runId}-good`)?.starred).toBe(true);
+    expect(byId.get(`${runId}-excluded`)?.grading).toBe('excluded');
+    expect(byId.get(`${runId}-ungraded`)?.grading).toBeNull();
+
+    /* -------- /me/history: append-only audit, paginated, ids only -------- */
+    const historyBefore = await client.getHistory({ pageSize: 1 });
+    const gradedAt = new Date().toISOString();
+    await client.recordAttempts([
+      { questionId: '2019-ht-t1-01', partId: '2019-ht-t1-01-a', correct: true, awardedPoints: 1, elapsedMs: 30_000, gradedAt },
+      { questionId: '2019-ht-t1-02', partId: '2019-ht-t1-02-a', correct: false, awardedPoints: 0, gradedAt },
+    ]);
+    // attempts never touch the archive (contract §4.2)
+    const stateAfterAttempts = await client.getState();
+    expect(stateAfterAttempts.archiveVersion).toBe(state1.archiveVersion);
+    expect(stateAfterAttempts.checksum).toBe(state1.checksum);
+
+    const page1 = await client.getHistory({ page: 1, pageSize: 2 });
+    expect(page1.total).toBe(historyBefore.total + 2);
+    expect(page1.items.length).toBeLessThanOrEqual(2);
+    // newest first; identifiers only — no question content fields
+    expect(page1.items[0]!.gradedAt >= (page1.items[1]?.gradedAt ?? '')).toBe(true);
+    expect(page1.items[0]).not.toHaveProperty('title');
+    expect(page1.items[0]).not.toHaveProperty('prompt');
+    const page2 = await client.getHistory({ page: 2, pageSize: 1 });
+    expect(page2.page).toBe(2);
+    expect(page2.items.length).toBe(1);
+
+    /* -------- login archive choice: assess + "use local" overwrite -------- */
+    const divergedLocal: ArchiveContent = {
+      perPart: [{ ...part(`${runId}-local-only`, { stamp: gradedAt }), grading: 'meh', starred: false }],
+      perCompetency: [{ code: 'WS 1.1', mastery: 0.25, updatedAt: gradedAt }],
+    };
+    const assessment = assessLoginArchives(
+      { content: divergedLocal, baseVersion: 0 },
+      await client.getState(),
+    );
+    expect(assessment.kind).toBe('choice-needed');
+
+    const freshState = await client.getState();
+    const over = await overwriteServerArchive(client, freshState.archiveVersion, divergedLocal);
+    expect(over.outcome.type).toBe('fast-forward');
+    const state2 = await client.getState();
+    expect(state2.perPart.map((p) => p.partId)).toEqual([`${runId}-local-only`]);
+    expect(archiveChecksum(divergedLocal)).toBe(state2.checksum); // local side now IS the cloud
+    // after adopting, a re-assessment is silently in-sync
+    expect(
+      assessLoginArchives({ content: divergedLocal, baseVersion: state2.archiveVersion }, state2).kind,
+    ).toBe('in-sync');
   }, 30_000);
 });
