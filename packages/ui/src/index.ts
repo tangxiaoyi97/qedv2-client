@@ -5,6 +5,9 @@ export { default as StateIcon } from './shared/StateIcon.vue';
 export { default as QButton } from './shared/QButton.vue';
 export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';
+export { default as MarkdownView } from './shared/MarkdownView.vue';
+export { parseMarkdown } from './shared/markdown.js';
+export type { MdBlock, MdInline } from './shared/markdown.js';
 export * from './shared/assets.js';
 
 // grading system (grading supplement)

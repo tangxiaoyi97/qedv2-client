@@ -1,12 +1,12 @@
 {
   "name": "@qed2/web",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "QED2 web client (PWA) — browser shell over @qed2/core-logic and @qed2/ui. Static build deploys to GitHub Pages.",
   "type": "module",
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build && cp dist/index.html dist/404.html",
+    "build": "vite build && node scripts/archive-changelog.mjs && cp dist/index.html dist/404.html",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit"

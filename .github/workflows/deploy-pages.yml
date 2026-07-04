@@ -1,0 +1,78 @@
+name: Deploy web to GitHub Pages
+
+# Builds @qed2/web (static) and publishes packages/web/dist to GitHub Pages.
+# The client is a pure static SPA — login/content live on the remote
+# core/server services (configurable in the app's settings).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Least-privilege token that the Pages deploy needs.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deployment at a time; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # need the previous commit to diff latest.md against
+          fetch-depth: 2
+
+      - name: Detect changelog change
+        id: changelog
+        run: |
+          before='${{ github.event.before }}'
+          # Fall back to HEAD~1 for manual runs / missing before sha.
+          if [ -z "$before" ] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            before="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
+          fi
+          if [ -n "$before" ] && git diff --name-only "$before" '${{ github.sha }}' \
+              | grep -qx 'packages/web/public/changelogs/latest.md'; then
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (workspace)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        env:
+          CHANGELOG_CHANGED: ${{ steps.changelog.outputs.changed }}
+        run: pnpm --filter @qed2/web build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

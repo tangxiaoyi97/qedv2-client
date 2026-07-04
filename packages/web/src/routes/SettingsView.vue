@@ -138,45 +138,107 @@ async function doLogout(): Promise<void> {
   <div class="settings">
     <h1 class="settings__title">Einstellungen</h1>
 
-    <div class="settings__row">
-      <div>
-        <div class="settings__row-title">Erscheinungsbild</div>
-        <div class="settings__row-sub">Auch nachts angenehm</div>
+    <section class="settings__section">
+      <div class="settings__row">
+        <div>
+          <div class="settings__row-title">Erscheinungsbild</div>
+          <div class="settings__row-sub">Auch nachts angenehm</div>
+        </div>
+        <div class="settings__segments" role="radiogroup" aria-label="Erscheinungsbild">
+          <button
+            v-for="t in THEMES"
+            :key="t.value"
+            type="button"
+            class="settings__segment"
+            :class="{ 'settings__segment--on': app.theme === t.value }"
+            role="radio"
+            :aria-checked="app.theme === t.value"
+            @click="app.setTheme(t.value)"
+          >
+            {{ t.label }}
+          </button>
+        </div>
       </div>
-      <div class="settings__segments" role="radiogroup" aria-label="Erscheinungsbild">
-        <button
-          v-for="t in THEMES"
-          :key="t.value"
-          type="button"
-          class="settings__segment"
-          :class="{ 'settings__segment--on': app.theme === t.value }"
-          role="radio"
-          :aria-checked="app.theme === t.value"
-          @click="app.setTheme(t.value)"
+
+      <div class="settings__account-sep" />
+
+      <div class="settings__row">
+        <div>
+          <div class="settings__row-title">{{ ui.t('settingsLanguage') }}</div>
+          <div class="settings__row-sub">{{ ui.t('settingsLanguageHint') }}</div>
+        </div>
+        <select
+          class="settings__select"
+          aria-label="Sprache"
+          :value="ui.locale"
+          @change="onLocaleChange"
         >
-          {{ t.label }}
-        </button>
+          <option v-for="locale in LOCALES" :key="locale" :value="locale">
+            {{ LOCALE_LABELS[locale] }}
+          </option>
+        </select>
       </div>
-    </div>
+    </section>
 
-    <div class="settings__row">
-      <div>
-        <div class="settings__row-title">{{ ui.t('settingsLanguage') }}</div>
-        <div class="settings__row-sub">{{ ui.t('settingsLanguageHint') }}</div>
+    <section class="settings__section">
+      <div class="settings__versions-head">
+        <div>
+          <div class="settings__row-title">Versionen</div>
+          <div class="settings__row-sub">Systeminformationen</div>
+        </div>
+        <QButton variant="ghost" @click="app.refreshServiceInfo()" title="Dienst-Infos neu laden">
+          ⟳ Aktualisieren
+        </QButton>
       </div>
-      <select
-        class="settings__select"
-        aria-label="Sprache"
-        :value="ui.locale"
-        @change="onLocaleChange"
-      >
-        <option v-for="locale in LOCALES" :key="locale" :value="locale">
-          {{ LOCALE_LABELS[locale] }}
-        </option>
-      </select>
-    </div>
+      <div class="settings__versions">
+        <div class="settings__version-line">
+          Web-App {{ APP_VERSION }}
+        </div>
+        <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.coreInfo }">
+          {{ coreLine }}
+          <span v-if="app.coreInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.coreInfo.buildTime) }}</span>
+        </div>
+        <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.serverInfo }">
+          {{ serverLine }}
+          <span v-if="app.serverInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.serverInfo.buildTime) }}</span>
+        </div>
+        <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
+          Nach Updates suchen
+        </QButton>
+      </div>
+    </section>
 
-    <div class="settings__divider" />
+    <section class="settings__section">
+      <template v-if="auth.isLoggedIn">
+        <div class="settings__row">
+          <div>
+            <div class="settings__row-title">Archiv jetzt hochladen</div>
+            <div class="settings__row-sub">Manuelle Synchronisierung außerhalb des Auto-Syncs</div>
+          </div>
+          <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
+            {{ uploading ? 'Lädt hoch …' : 'Archiv jetzt hochladen' }}
+          </QButton>
+        </div>
+        <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
+        <div class="settings__account-sep" />
+        <div class="settings__row">
+          <div>
+            <div class="settings__row-title">Abmelden</div>
+            <div class="settings__row-sub">Lokaler Fortschritt bleibt erhalten</div>
+          </div>
+          <QButton variant="danger" @click="doLogout">Abmelden</QButton>
+        </div>
+      </template>
+      <template v-else>
+        <div class="settings__row">
+          <div>
+            <div class="settings__row-title">Konto</div>
+            <div class="settings__row-sub">Als Gast unterwegs — Anmelden aktiviert die Synchronisierung</div>
+          </div>
+          <QButton @click="ui.openAuthModal()">Anmelden</QButton>
+        </div>
+      </template>
+    </section>
 
     <CollapsePanel title="Erweitert · Serveradressen" subtitle="nur für Fortgeschrittene">
       <div class="settings__adv">
@@ -210,70 +272,6 @@ async function doLogout(): Promise<void> {
         </div>
       </div>
     </CollapsePanel>
-
-    <div class="settings__divider" />
-
-    <!-- version block: all three services (feedback #9) -->
-    <div class="settings__versions">
-      <div class="settings__versions-head">
-        <div class="settings__row-title">Versionen</div>
-        <button
-          type="button"
-          class="settings__refresh"
-          title="Dienst-Infos neu laden"
-          aria-label="Dienst-Infos neu laden"
-          @click="app.refreshServiceInfo()"
-        >
-          ⟳
-        </button>
-      </div>
-      <div class="settings__version-line">
-        Web-App {{ APP_VERSION }}
-      </div>
-      <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.coreInfo }">
-        {{ coreLine }}
-        <span v-if="app.coreInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.coreInfo.buildTime) }}</span>
-      </div>
-      <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.serverInfo }">
-        {{ serverLine }}
-        <span v-if="app.serverInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.serverInfo.buildTime) }}</span>
-      </div>
-      <button type="button" class="settings__update" disabled title="Updates in der Desktop-App">
-        Nach Updates suchen
-      </button>
-    </div>
-
-    <div class="settings__account">
-      <template v-if="auth.isLoggedIn">
-        <div class="settings__account-row">
-          <div>
-            <div class="settings__row-title">Archiv jetzt hochladen</div>
-            <div class="settings__row-sub">Manuelle Synchronisierung außerhalb des Auto-Syncs</div>
-          </div>
-          <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
-            {{ uploading ? 'Lädt hoch …' : 'Archiv jetzt hochladen' }}
-          </QButton>
-        </div>
-        <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
-        <div class="settings__account-sep" />
-        <div class="settings__account-row">
-          <div>
-            <div class="settings__row-title">Abmelden</div>
-            <div class="settings__row-sub">Lokaler Fortschritt bleibt erhalten</div>
-          </div>
-          <QButton variant="danger" @click="doLogout">Abmelden</QButton>
-        </div>
-      </template>
-      <template v-else>
-        <div class="settings__account-row">
-          <div>
-            <div class="settings__row-title">Konto</div>
-            <div class="settings__row-sub">Als Gast unterwegs — Anmelden aktiviert die Synchronisierung</div>
-          </div>
-          <button type="button" class="settings__login-link" @click="ui.openAuthModal()">Anmelden</button>
-        </div>
-      </template>
-    </div>
   </div>
 </template>
 
@@ -341,9 +339,14 @@ async function doLogout(): Promise<void> {
   font-size: 12.5px;
   font-weight: 600;
 }
-.settings__divider {
-  height: 1px;
-  background: var(--q-border);
+.settings__section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: var(--q-card);
+  border: 1px solid var(--q-border);
+  border-radius: 12px;
 }
 .settings__adv {
   display: flex;
@@ -382,50 +385,37 @@ async function doLogout(): Promise<void> {
   padding: 9px 11px;
   font: 500 12px ui-monospace, Menlo, monospace;
   color: var(--q-ink);
-  background: var(--q-card);
+  background: var(--q-panel);
 }
 .settings__input:focus {
   outline: none;
   border: 2px solid var(--q-accent);
   padding: 8px 10px;
   box-shadow: 0 0 0 3px var(--q-accent-ring);
+  background: var(--q-card);
 }
 .settings__adv-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 6px;
 }
 .settings__versions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .settings__versions-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-.settings__refresh {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--q-btn-border);
-  border-radius: 8px;
-  background: var(--q-card);
-  color: var(--q-mut);
-  font-size: 14px;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  font-family: inherit;
-}
-.settings__refresh:hover {
-  background: var(--q-panel);
-  color: var(--q-ink);
+  flex-wrap: wrap;
 }
 .settings__version-line {
   font-size: 12px;
   color: var(--q-mut);
+  padding-left: 2px;
 }
 .settings__version-line--dim {
   color: var(--q-faint);
@@ -433,56 +423,21 @@ async function doLogout(): Promise<void> {
 .settings__build {
   color: var(--q-faint);
 }
-.settings__update {
+.settings__update-btn {
   align-self: flex-start;
-  margin-top: 6px;
-  padding: 8px 13px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--q-disabled);
-  background: var(--q-page);
-  cursor: not-allowed;
-  font-family: inherit;
-}
-.settings__account {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px 14px;
-  background: var(--q-card);
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
-}
-.settings__account-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
+  margin-top: 8px;
 }
 .settings__account-sep {
   height: 1px;
   background: var(--q-border-soft);
+  margin: 2px 0;
 }
 .settings__sync-status {
   font-size: 12px;
   color: var(--q-mut);
-  padding: 8px 11px;
+  padding: 10px 14px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
   border-radius: 8px;
-}
-.settings__login-link {
-  border: 1px solid var(--q-btn-border);
-  background: var(--q-panel);
-  color: var(--q-ink);
-  font: 600 12.5px 'Public Sans', system-ui, sans-serif;
-  padding: 8px 15px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-.settings__login-link:hover {
-  background: var(--q-panel-2);
 }
 </style>

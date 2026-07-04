@@ -1,6 +1,6 @@
 {
   "name": "@qed2/core-logic",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Platform-agnostic QED2 client logic: API clients, grading, FSRS, mastery, archive store, sync protocol (incl. server-identical checksum). Pure TypeScript — no browser, Node or UI framework dependencies; platform capabilities are injected through ports.",
   "type": "module",
   "main": "./src/index.ts",

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Generates the PWA icons (olive tile, white stylized Q ring with tail)
- * without native image deps — raw RGBA buffer → minimal PNG encoder.
+ * Generates the PWA icons — a light tile with a centered theme-color
+ * (olive) rounded square. No native image deps: raw RGBA buffer with 3x3
+ * supersampling → minimal PNG encoder.
  * Run: node scripts/gen-icons.mjs
  */
 import { deflateSync } from 'node:zlib';
@@ -12,8 +13,8 @@ import { fileURLToPath } from 'node:url';
 const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'icons');
 mkdirSync(OUT, { recursive: true });
 
-const OLIVE = [0x5f, 0x6b, 0x2e, 255];
-const WHITE = [255, 255, 255, 255];
+const LIGHT = [0xf4, 0xf3, 0xee]; // warm light background (app panel tone)
+const OLIVE = [0x5f, 0x6b, 0x2e]; // theme color (accent-strong)
 
 function crc32(buf) {
   let c;
@@ -57,38 +58,36 @@ function encodePng(size, pixels) {
 }
 
 function drawIcon(size) {
-  const px = Buffer.alloc(size * size * 4);
-  const set = (x, y, c) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    const i = (y * size + x) * 4;
-    px[i] = c[0];
-    px[i + 1] = c[1];
-    px[i + 2] = c[2];
-    px[i + 3] = c[3];
-  };
-  // background
-  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) set(x, y, OLIVE);
+  // Geometry in fractions of the size.
+  const cx = size * 0.5;
+  const cy = size * 0.5;
+  const half = size * 0.24; // theme square half-edge (sharp corners)
 
-  const cx = size / 2;
-  const cy = size / 2 - size * 0.03;
-  const rOuter = size * 0.3;
-  const rInner = size * 0.19;
-  // Q ring
+  const inSquare = (x, y) => Math.abs(x - cx) <= half && Math.abs(y - cy) <= half;
+
+  const colorAt = (x, y) => (inSquare(x, y) ? OLIVE : LIGHT);
+
+  const SS = 3; // supersampling per axis
+  const px = Buffer.alloc(size * size * 4);
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const d = Math.hypot(x - cx, y - cy);
-      if (d <= rOuter && d >= rInner) set(x, y, WHITE);
-    }
-  }
-  // Q tail: thick diagonal from lower-right of the ring outward
-  const tailW = size * 0.055;
-  const t0 = size * 0.58;
-  const t1 = size * 0.82;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const along = (x + y) / 2;
-      const perp = Math.abs(x - y);
-      if (along >= t0 && along <= t1 && perp <= tailW) set(x, y, WHITE);
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const c = colorAt(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS);
+          r += c[0];
+          g += c[1];
+          b += c[2];
+        }
+      }
+      const n = SS * SS;
+      const i = (y * size + x) * 4;
+      px[i] = Math.round(r / n);
+      px[i + 1] = Math.round(g / n);
+      px[i + 2] = Math.round(b / n);
+      px[i + 3] = 255;
     }
   }
   return encodePng(size, px);

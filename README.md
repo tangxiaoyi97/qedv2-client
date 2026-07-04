@@ -98,6 +98,43 @@ loaded material stays readable offline. Per contract §8.2, the web/PWA build
 never runs a local core — full offline self-hosting is the future desktop
 shell's capability.
 
+### GitHub Pages, first-time setup
+
+- **Custom domain**: `packages/web/public/CNAME` holds `qed.barcarolle.studio`
+  (copied into `dist/` on build). At the DNS provider, add a CNAME record
+  `qed` → `<github-user>.github.io`. `vite.config` keeps `base: '/'` for the
+  root-served domain. If you instead serve from `<user>.github.io/<repo>/`,
+  change `base` to `'/<repo>/'` and drop the CNAME.
+- **Repo → Settings → Pages → Source: "GitHub Actions"**. Then every push to
+  `main` runs `.github/workflows/deploy-pages.yml` (build + deploy).
+- **CORS**: core and server must whitelist the deployed origin. The official
+  `qed.barcarolle.studio` is already whitelisted; any other origin (e.g.
+  `<user>.github.io`) must be added to each service's `CORS_ORIGINS`.
+
+## Changelog-on-update dialog
+
+New builds can greet the user with a "what's new" dialog, driven entirely by
+the static site — no backend.
+
+1. **Write** the notes in `packages/web/public/changelogs/latest.md` (Markdown:
+   `#`/`##`/`###`, `-`/`1.` lists, `**bold**`, `` `code` ``, `[text](url)`),
+   in the SAME commit as the change.
+2. **On deploy**, `scripts/archive-changelog.mjs` (run by `pnpm build`)
+   archives it as `dist/changelogs/<commit-sha>.md` — but only when `latest.md`
+   is non-empty AND was changed in this push (the workflow passes
+   `CHANGELOG_CHANGED`; local builds always archive so you can preview). The
+   draft and this folder's README are stripped from the published output.
+3. **The app** bakes in its own build commit (`__APP_COMMIT__`, injected by
+   `vite.config`) and, on first load after an update, fetches
+   `/changelogs/<commit>.md`. If it exists → the dialog pops; 404/empty/first
+   run → nothing pops; the last-seen commit is remembered in `localStorage`.
+
+You do **not** need to empty `latest.md` between releases: an unchanged draft
+is never re-archived, so a version with no new notes simply never pops a
+dialog. Overwrite it when you have something to announce. The Markdown is
+rendered through `@qed2/ui`'s `MarkdownView` (a restricted, `v-html`-free
+subset — unsafe link schemes are dropped).
+
 ## What's where (quick map)
 
 - Grading engine: `packages/core-logic/src/grading/` — pure

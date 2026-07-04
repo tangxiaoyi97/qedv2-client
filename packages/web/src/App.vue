@@ -17,6 +17,7 @@ import { useUiStore } from './stores/ui.js';
 import ConflictDialog from './routes/ConflictDialog.vue';
 import AuthModal from './routes/AuthModal.vue';
 import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
+import ChangelogDialog from './routes/ChangelogDialog.vue';
 
 const route = useRoute();
 const app = useAppStore();
@@ -148,6 +149,7 @@ function isActive(to: string): boolean {
     <ConflictDialog />
     <AuthModal />
     <ArchiveChoiceDialog />
+    <ChangelogDialog />
   </div>
 </template>
 

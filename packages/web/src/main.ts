@@ -12,6 +12,7 @@ import { router } from './router.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
+import { useUiStore } from './stores/ui.js';
 
 async function boot(): Promise<void> {
   const app = createApp(App);
@@ -29,6 +30,9 @@ async function boot(): Promise<void> {
   if (auth.isLoggedIn) void progress.syncNow({ quiet: true });
 
   app.mount('#app');
+
+  // After mount: announce what changed if this is a new build (non-blocking).
+  void useUiStore().checkForChangelog();
 }
 
 void boot();
