@@ -1,13 +1,18 @@
 /**
- * Archive checksum — byte-identical port of the server's algorithm
- * (qedv2-server/src/sync/checksum.ts is the authority; contract §5.4):
+ * Archive checksum — implements the authoritative spec (QED2-checksum-spec.md,
+ * the precise form of contract §5.4; server implements the same spec):
  *
  *  1. Only archive CONTENT participates: { perPart, perCompetency }.
  *  2. Timestamps normalized via `new Date(x).toISOString()` (ms-precision UTC).
  *  3. perPart sorted by partId, perCompetency by code (code point order).
- *  4. Absent optionals (fsrs.lastReview, lastResult) omitted — never null.
- *  5. Stable JSON: keys sorted, undefined-valued keys dropped, no whitespace.
- *  6. checksum = lowercase hex SHA-256 of the UTF-8 bytes.
+ *  4. Optionality is field-specific: `lastResult` absent → key OMITTED;
+ *     `grading` unset → null (key retained); `fsrs.lastReview` unset → null
+ *     (key retained); `starred` always present.
+ *  5. Floats (stability/difficulty/mastery/awardedPoints) rounded to
+ *     6 decimals half-up before serialization (model/archive.ts normNum).
+ *  6. Stable JSON: keys sorted by code point, no whitespace, default
+ *     JSON.stringify escaping (non-ASCII stays raw UTF-8).
+ *  7. checksum = lowercase hex SHA-256 of the UTF-8 bytes.
  *
  * The server uses node:crypto; core-logic must stay platform-free, so we use
  * @noble/hashes (pure TS) — output is identical.

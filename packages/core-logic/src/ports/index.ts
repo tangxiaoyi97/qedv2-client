@@ -31,6 +31,8 @@ export const STORAGE = {
   config: 'config',
   /** Cached Question JSON by id. */
   questions: 'questions',
+  /** Local practice-history log (this device only — see store/history-log.ts). */
+  history: 'history',
   /** Misc app state (last session, etc.). */
   app: 'app',
 } as const;

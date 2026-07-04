@@ -17,15 +17,18 @@ import { archiveChecksum } from '../src/sync/checksum.js';
 import { buildResolvedArchive, performSync, submitResolution } from '../src/sync/sync-engine.js';
 import type { ArchiveContent, PartEntry } from '../src/model/archive.js';
 
-const SERVER = process.env['QED2_E2E_SERVER'] ?? 'http://localhost:8080';
-const USER = process.env['QED2_E2E_USER'];
-const PASS = process.env['QED2_E2E_PASS'];
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+const SERVER = env['QED2_E2E_SERVER'] ?? 'http://localhost:8080';
+const USER = env['QED2_E2E_USER'];
+const PASS = env['QED2_E2E_PASS'];
 
 const enabled = Boolean(USER && PASS);
 
 function part(partId: string, opts: { stamp: string; due?: string; points?: number; stability?: number }): PartEntry {
   return {
     partId,
+    grading: 'good',
+    starred: false,
     fsrs: {
       due: opts.due ?? '2026-08-01T00:00:00.000Z',
       stability: opts.stability ?? 2.5,

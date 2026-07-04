@@ -57,11 +57,12 @@ describe('advanceFsrs — first review', () => {
     expect(s.due).toBe(daysLater(NOW, intervalDays(INITIAL_S[r])).toISOString());
   });
 
-  it('initial difficulty follows D0(g) = w4 - e^(w5*(g-1)) + 1, clamped', () => {
+  it('initial difficulty follows D0(g) = w4 - e^(w5*(g-1)) + 1, clamped and 6dp-rounded', () => {
     expect(advanceFsrs(undefined, 'again', NOW).difficulty).toBeCloseTo(5.1618, 10);
+    // difficulty is rounded to 6 decimals at write time (checksum spec §5.1)
     expect(advanceFsrs(undefined, 'hard', NOW).difficulty).toBeCloseTo(
       5.1618 - Math.exp(1.2298) + 1,
-      10,
+      5,
     );
     // good/easy raw D0 goes below 1 with these weights → clamped to the floor
     expect(advanceFsrs(undefined, 'good', NOW).difficulty).toBe(1);
@@ -205,6 +206,7 @@ describe('retrievability', () => {
       difficulty: 5,
       reps: 1,
       lapses: 0,
+      lastReview: null,
     };
     expect(retrievability(bare, NOW)).toBe(1);
     expect(retrievability(bare, daysLater(NOW, 10))).toBeCloseTo(0.9, 12);

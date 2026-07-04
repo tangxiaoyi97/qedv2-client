@@ -11,6 +11,7 @@
  * Purity: `now` is always a parameter — no Date.now() — and all timestamps
  * are emitted via Date#toISOString() (archive canonical form).
  */
+import { normNum } from '../model/archive.js';
 import type { FsrsState } from '../model/archive.js';
 import type { Verdict } from '../grading/types.js';
 
@@ -133,6 +134,11 @@ export function advanceFsrs(prev: FsrsState | undefined, rating: FsrsRating, now
     lapses = prev.lapses + (rating === 'again' ? 1 : 0);
   }
 
+  // 6-decimal rounding at write time (checksum spec §5.1) so both sync sides
+  // serialize identical floats.
+  stability = normNum(stability);
+  difficulty = normNum(difficulty);
+
   return {
     due: new Date(now.getTime() + intervalDays(stability) * MS_PER_DAY).toISOString(),
     stability,
@@ -142,3 +148,8 @@ export function advanceFsrs(prev: FsrsState | undefined, rating: FsrsRating, now
     lastReview: now.toISOString(),
   };
 }
+
+/** Exported for the grading map (initial-state formulas). */
+export const FSRS_WEIGHTS = W;
+export const FSRS_MS_PER_DAY = MS_PER_DAY;
+export { clamp as fsrsClamp, rawInitialDifficulty };

@@ -99,12 +99,46 @@ shell's capability.
   `grade(part, submission)`, dispatched on `answer.kind`; expression grading
   degrades to self-assessment when the CAS cannot decide (never hard-fails).
 - FSRS: `packages/core-logic/src/fsrs/fsrs.ts` — long-term-scheduler variant
-  operating exactly on the archived fields; rating map: correct→Good,
-  partial→Hard, incorrect→Again.
+  operating exactly on the archived fields.
 - Mastery: `packages/core-logic/src/fsrs/mastery.ts` — per-competency EMA
   (`m' = m + 0.3·(ratio − m)`, ratio = awarded/max of the graded part).
-- Sync: `packages/core-logic/src/sync/` — checksum (server-identical) +
-  engine for the three outcomes; conflict UI in
-  `packages/web/src/routes/ConflictDialog.vue`.
+- Sync: `packages/core-logic/src/sync/` — checksum per the authoritative
+  QED2-checksum-spec (server implements the same spec; includes
+  grading/starred, 6-decimal float rounding, `lastReview` null-retained);
+  conflict UI in `packages/web/src/routes/ConflictDialog.vue`.
 - Ports: `packages/core-logic/src/ports/index.ts`; web adapters in
   `packages/web/src/platform/`.
+
+## Mastery grading → FSRS mapping (why it is designed this way)
+
+Users grade each part on a six-state scale (`unseen · good · careless · meh ·
+baffled · excluded`; grading supplement §1). Answering auto-records `good`
+(correct), `meh` (partial credit) or `baffled` (wrong) — a manual pick in the
+ever-present grading menu always overrides the automatic value.
+
+The mapping to FSRS (`packages/core-logic/src/fsrs/grading-map.ts`) is NOT a
+literal translation but tuned to the real scheduling effect each state should
+have:
+
+| Grading | FSRS treatment | Effect |
+|---|---|---|
+| good | Good | normal interval growth |
+| careless | **Hard, no lapse** | mild stretch — "actually known, just slipped" |
+| meh | **Again + short comeback (1–3 days)** | genuinely not retained, return soon |
+| baffled | **Again + full reset, due immediately** | start over right away |
+| excluded | **frozen** — no scheduling, never recommended | out of the pool until re-graded |
+
+Rationale: FSRS natively has a single failure grade. But a careless slip and
+genuine bafflement need very different review pressure — treating every error
+as Again would over-repeat careless slips, while treating careless as a
+success would wrongly stretch an interval that was, in fact, answered wrong.
+So careless maps to Hard **without counting a lapse** (a gentle stretch, no
+forgetting penalty), and the two true failures (meh, baffled) share Again but
+get distinct comeback intervals, giving three error flavors genuinely
+different scheduling behavior instead of one blunt reset.
+
+`excluded` is a hard freeze (supplement §1.4): the part is dropped from every
+recommendation (its projected `due` is pushed to a far-future sentinel AND
+recommendation results are filtered), FSRS stops advancing it, and the
+Aufgaben list greys it out — but it stays openable and re-gradable; choosing
+any other grade thaws it from the frozen state.

@@ -18,7 +18,9 @@ import type {
 
 const part = (partId: string, updatedAt: string, stability = 1): ArchiveContent['perPart'][number] => ({
   partId,
-  fsrs: { due: '2026-07-10T00:00:00.000Z', stability, difficulty: 5, reps: 1, lapses: 0 },
+  grading: null,
+  starred: false,
+  fsrs: { due: '2026-07-10T00:00:00.000Z', stability, difficulty: 5, reps: 1, lapses: 0, lastReview: null },
   updatedAt,
 });
 

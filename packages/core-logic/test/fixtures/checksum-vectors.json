@@ -5,18 +5,20 @@
       "perPart": [],
       "perCompetency": []
     },
-    "checksum": "389e57af4fe5f0cea96241a5916185940cd3d1b7e66a5983e13f6c2c30b857be",
-    "canonical": "{\"perCompetency\":[],\"perPart\":[]}"
+    "canonical": "{\"perCompetency\":[],\"perPart\":[]}",
+    "checksum": "389e57af4fe5f0cea96241a5916185940cd3d1b7e66a5983e13f6c2c30b857be"
   },
   {
-    "name": "two-parts-unsorted-input",
+    "name": "full-mixture",
     "content": {
       "perPart": [
         {
-          "partId": "2023-ht-t1-09-a",
+          "partId": "z-2023-ht-t1-09-a",
+          "grading": "good",
+          "starred": true,
           "fsrs": {
-            "due": "2026-07-05T10:00:00.000Z",
-            "stability": 3.2,
+            "due": "2026-07-05T12:00:00+02:00",
+            "stability": 3.2000004,
             "difficulty": 5.1,
             "reps": 4,
             "lapses": 1,
@@ -25,57 +27,37 @@
           "lastResult": {
             "correct": true,
             "awardedPoints": 1,
-            "gradedAt": "2026-07-01T10:00:00.000Z"
+            "gradedAt": "2026-07-01T10:00:00.500Z"
           },
           "updatedAt": "2026-07-01T10:00:00.123Z"
         },
         {
-          "partId": "2019-ht-t1-02-a",
+          "partId": "a-2019-ht-t1-02-a",
+          "grading": null,
+          "starred": false,
           "fsrs": {
             "due": "2026-07-04T00:00:00.000Z",
-            "stability": 1,
-            "difficulty": 6.31,
+            "stability": 0.3333333333,
+            "difficulty": 6.310001999,
             "reps": 1,
-            "lapses": 0
+            "lapses": 0,
+            "lastReview": null
           },
           "updatedAt": "2026-07-03T08:30:00.000Z"
-        }
-      ],
-      "perCompetency": [
-        {
-          "code": "FA 1.5",
-          "mastery": 0.42,
-          "updatedAt": "2026-07-01T10:00:00.123Z"
         },
         {
-          "code": "AN 4.3",
-          "mastery": 1,
-          "updatedAt": "2026-07-03T08:30:00.000Z"
-        }
-      ]
-    },
-    "checksum": "b1ba155bcb0642f173e260bdcadf420fb87316590cb588ff405d5e3e74fa5b6c",
-    "canonical": "{\"perCompetency\":[{\"code\":\"AN 4.3\",\"mastery\":1,\"updatedAt\":\"2026-07-03T08:30:00.000Z\"},{\"code\":\"FA 1.5\",\"mastery\":0.42,\"updatedAt\":\"2026-07-01T10:00:00.123Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":6.31,\"due\":\"2026-07-04T00:00:00.000Z\",\"lapses\":0,\"reps\":1,\"stability\":1},\"partId\":\"2019-ht-t1-02-a\",\"updatedAt\":\"2026-07-03T08:30:00.000Z\"},{\"fsrs\":{\"difficulty\":5.1,\"due\":\"2026-07-05T10:00:00.000Z\",\"lapses\":1,\"lastReview\":\"2026-07-01T10:00:00.000Z\",\"reps\":4,\"stability\":3.2},\"lastResult\":{\"awardedPoints\":1,\"correct\":true,\"gradedAt\":\"2026-07-01T10:00:00.000Z\"},\"partId\":\"2023-ht-t1-09-a\",\"updatedAt\":\"2026-07-01T10:00:00.123Z\"}]}"
-  },
-  {
-    "name": "floats-umlaut-halfpoints",
-    "content": {
-      "perPart": [
-        {
-          "partId": "x-ä-1",
+          "partId": "m-excluded-part",
+          "grading": "excluded",
+          "starred": false,
           "fsrs": {
             "due": "2026-01-01T00:00:00.000Z",
-            "stability": 0.5215,
-            "difficulty": 7.0001,
-            "reps": 2,
-            "lapses": 2
+            "stability": 0.01,
+            "difficulty": 5,
+            "reps": 0,
+            "lapses": 0,
+            "lastReview": null
           },
-          "lastResult": {
-            "correct": false,
-            "awardedPoints": 0.5,
-            "gradedAt": "2026-01-01T00:00:00.000Z"
-          },
-          "updatedAt": "2026-01-01T00:00:00.000Z"
+          "updatedAt": "2026-07-02T00:00:00.000Z"
         }
       ],
       "perCompetency": [
@@ -83,10 +65,130 @@
           "code": "WS 3.1",
           "mastery": 0.3333333333333333,
           "updatedAt": "2026-01-01T00:00:00.000Z"
+        },
+        {
+          "code": "AG 1.1",
+          "mastery": 0.42,
+          "updatedAt": "2026-07-01T10:00:00.123Z"
         }
       ]
     },
-    "checksum": "1db6b28497292d570cfc9a13e87d8ac6a4d7059a994cf145899e12f946f34e22",
-    "canonical": "{\"perCompetency\":[{\"code\":\"WS 3.1\",\"mastery\":0.3333333333333333,\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":7.0001,\"due\":\"2026-01-01T00:00:00.000Z\",\"lapses\":2,\"reps\":2,\"stability\":0.5215},\"lastResult\":{\"awardedPoints\":0.5,\"correct\":false,\"gradedAt\":\"2026-01-01T00:00:00.000Z\"},\"partId\":\"x-ä-1\",\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}"
+    "canonical": "{\"perCompetency\":[{\"code\":\"AG 1.1\",\"mastery\":0.42,\"updatedAt\":\"2026-07-01T10:00:00.123Z\"},{\"code\":\"WS 3.1\",\"mastery\":0.333333,\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":6.310002,\"due\":\"2026-07-04T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":1,\"stability\":0.333333},\"grading\":null,\"partId\":\"a-2019-ht-t1-02-a\",\"starred\":false,\"updatedAt\":\"2026-07-03T08:30:00.000Z\"},{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-01-01T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":0,\"stability\":0.01},\"grading\":\"excluded\",\"partId\":\"m-excluded-part\",\"starred\":false,\"updatedAt\":\"2026-07-02T00:00:00.000Z\"},{\"fsrs\":{\"difficulty\":5.1,\"due\":\"2026-07-05T10:00:00.000Z\",\"lapses\":1,\"lastReview\":\"2026-07-01T10:00:00.000Z\",\"reps\":4,\"stability\":3.2},\"grading\":\"good\",\"lastResult\":{\"awardedPoints\":1,\"correct\":true,\"gradedAt\":\"2026-07-01T10:00:00.500Z\"},\"partId\":\"z-2023-ht-t1-09-a\",\"starred\":true,\"updatedAt\":\"2026-07-01T10:00:00.123Z\"}]}",
+    "checksum": "45c2e87fa7d565bb85cdfafbe594b8cee39c3f94778978d6da65cbf8cb5d05a8"
+  },
+  {
+    "name": "rounding-halfup",
+    "content": {
+      "perPart": [
+        {
+          "partId": "p1",
+          "grading": "careless",
+          "starred": false,
+          "fsrs": {
+            "due": "2026-01-01T00:00:00.000Z",
+            "stability": 1.0000005,
+            "difficulty": 9.9999994,
+            "reps": 2,
+            "lapses": 0,
+            "lastReview": "2026-01-01T00:00:00.000Z"
+          },
+          "lastResult": {
+            "correct": false,
+            "awardedPoints": 0.6666665,
+            "gradedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "perCompetency": [
+        {
+          "code": "FA 1.5",
+          "mastery": 0.1234564999,
+          "updatedAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
+    },
+    "canonical": "{\"perCompetency\":[{\"code\":\"FA 1.5\",\"mastery\":0.123456,\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}],\"perPart\":[{\"fsrs\":{\"difficulty\":9.999999,\"due\":\"2026-01-01T00:00:00.000Z\",\"lapses\":0,\"lastReview\":\"2026-01-01T00:00:00.000Z\",\"reps\":2,\"stability\":1.000001},\"grading\":\"careless\",\"lastResult\":{\"awardedPoints\":0.666667,\"correct\":false,\"gradedAt\":\"2026-01-01T00:00:00.000Z\"},\"partId\":\"p1\",\"starred\":false,\"updatedAt\":\"2026-01-01T00:00:00.000Z\"}]}",
+    "checksum": "ab01c59d752dfd062ad4c67844b05b0c5f9c2aba72da2c5e2edcb4dc60c641fd"
+  },
+  {
+    "name": "grading-variants",
+    "content": {
+      "perPart": [
+        {
+          "partId": "part-good",
+          "grading": "good",
+          "starred": true,
+          "fsrs": {
+            "due": "2026-06-01T00:00:00.000Z",
+            "stability": 2,
+            "difficulty": 5,
+            "reps": 1,
+            "lapses": 0,
+            "lastReview": null
+          },
+          "updatedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "partId": "part-careless",
+          "grading": "careless",
+          "starred": false,
+          "fsrs": {
+            "due": "2026-06-02T00:00:00.000Z",
+            "stability": 2,
+            "difficulty": 5,
+            "reps": 2,
+            "lapses": 0,
+            "lastReview": null
+          },
+          "updatedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "partId": "part-meh",
+          "grading": "meh",
+          "starred": true,
+          "fsrs": {
+            "due": "2026-06-03T00:00:00.000Z",
+            "stability": 2,
+            "difficulty": 5,
+            "reps": 3,
+            "lapses": 0,
+            "lastReview": null
+          },
+          "updatedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "partId": "part-baffled",
+          "grading": "baffled",
+          "starred": false,
+          "fsrs": {
+            "due": "2026-06-04T00:00:00.000Z",
+            "stability": 2,
+            "difficulty": 5,
+            "reps": 4,
+            "lapses": 0,
+            "lastReview": null
+          },
+          "updatedAt": "2026-06-01T00:00:00.000Z"
+        },
+        {
+          "partId": "part-excluded",
+          "grading": "excluded",
+          "starred": true,
+          "fsrs": {
+            "due": "2026-06-05T00:00:00.000Z",
+            "stability": 2,
+            "difficulty": 5,
+            "reps": 5,
+            "lapses": 0,
+            "lastReview": null
+          },
+          "updatedAt": "2026-06-01T00:00:00.000Z"
+        }
+      ],
+      "perCompetency": []
+    },
+    "canonical": "{\"perCompetency\":[],\"perPart\":[{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-06-04T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":4,\"stability\":2},\"grading\":\"baffled\",\"partId\":\"part-baffled\",\"starred\":false,\"updatedAt\":\"2026-06-01T00:00:00.000Z\"},{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-06-02T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":2,\"stability\":2},\"grading\":\"careless\",\"partId\":\"part-careless\",\"starred\":false,\"updatedAt\":\"2026-06-01T00:00:00.000Z\"},{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-06-05T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":5,\"stability\":2},\"grading\":\"excluded\",\"partId\":\"part-excluded\",\"starred\":true,\"updatedAt\":\"2026-06-01T00:00:00.000Z\"},{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-06-01T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":1,\"stability\":2},\"grading\":\"good\",\"partId\":\"part-good\",\"starred\":true,\"updatedAt\":\"2026-06-01T00:00:00.000Z\"},{\"fsrs\":{\"difficulty\":5,\"due\":\"2026-06-03T00:00:00.000Z\",\"lapses\":0,\"lastReview\":null,\"reps\":3,\"stability\":2},\"grading\":\"meh\",\"partId\":\"part-meh\",\"starred\":true,\"updatedAt\":\"2026-06-01T00:00:00.000Z\"}]}",
+    "checksum": "a9513cbde41bd5906d0e8e38219a7ce79bf1f7d445f8cfb64f141cdf3b081c39"
   }
 ]
