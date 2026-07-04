@@ -316,9 +316,11 @@ const countText = computed(() =>
   border-radius: 8px;
   font-family: inherit;
 }
-.fdlg__close:hover {
-  color: var(--q-ink);
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .fdlg__close:hover {
+    color: var(--q-ink);
+    background: var(--q-panel);
+  }
 }
 .fdlg__close:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -360,8 +362,10 @@ const countText = computed(() =>
   cursor: pointer;
   white-space: nowrap;
 }
-.fdlg__chip:hover {
-  border-color: var(--q-accent);
+@media (hover: hover) and (pointer: fine) {
+  .fdlg__chip:hover {
+    border-color: var(--q-accent);
+  }
 }
 .fdlg__chip:focus-visible {
   outline: 2px solid var(--q-accent);

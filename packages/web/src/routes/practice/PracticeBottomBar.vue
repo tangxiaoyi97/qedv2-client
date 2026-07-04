@@ -278,9 +278,11 @@ function onMasteryChange(ev: Event): void {
   cursor: pointer;
 }
 
-.practice-bar__score-option:hover,
-.practice-bar__mastery-select:hover {
-  border-color: var(--q-accent);
+@media (hover: hover) and (pointer: fine) {
+  .practice-bar__score-option:hover,
+  .practice-bar__mastery-select:hover {
+    border-color: var(--q-accent);
+  }
 }
 
 .practice-bar__score-option:focus-visible,
@@ -311,9 +313,11 @@ function onMasteryChange(ev: Event): void {
   cursor: pointer;
 }
 
-.practice-bar__solution-toggle:hover {
-  color: var(--q-ink);
-  border-color: var(--q-border-3);
+@media (hover: hover) and (pointer: fine) {
+  .practice-bar__solution-toggle:hover {
+    color: var(--q-ink);
+    border-color: var(--q-border-3);
+  }
 }
 
 .practice-bar__solution-toggle--on {

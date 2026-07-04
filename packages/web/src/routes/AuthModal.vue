@@ -241,9 +241,11 @@ watch(
   font-family: inherit;
   z-index: 1;
 }
-.authm__close:hover {
-  background: var(--q-panel-2);
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .authm__close:hover {
+    background: var(--q-panel-2);
+    color: var(--q-ink);
+  }
 }
 .authm__brand {
   font-weight: 800;
@@ -312,8 +314,10 @@ watch(
   cursor: pointer;
   padding: 4px 0 0;
 }
-.authm__switch:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .authm__switch:hover {
+    text-decoration: underline;
+  }
 }
 .authm__invite-head {
   margin: -24px -24px 4px;

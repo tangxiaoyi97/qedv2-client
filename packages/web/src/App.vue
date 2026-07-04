@@ -2,14 +2,14 @@
 /**
  * App shell: sidebar navigation on desktop, bottom tab bar on mobile
  * (prototype 3a / 5a). The sidebar separates the two practice modes
- * (supplement §7): „Intelligent üben" (FSRS-driven) vs „Aufgaben"
- * (user-picked). Practice routes (meta.focus) render without the
+ * (supplement §7): „Programm starten" (FSRS-driven) vs „Aufgaben"
+ * (browse/filter/search). Practice routes (meta.focus) render without the
  * navigation chrome. Sync-conflict dialog + auth modal mount globally.
  */
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { provideAssetResolver } from '@qed2/ui';
-import { Calendar, Play, ListTodo, History, LineChart, Settings, UserCircle } from 'lucide-vue-next';
+import { Calendar, Play, ListTodo, History, LineChart, Settings, UserCircle, Grid } from 'lucide-vue-next';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -31,13 +31,13 @@ const focusMode = computed(() => route.meta.focus === true);
 
 /** Two practice entries, visually grouped (supplement §7). */
 const practiceItems = [
-  { to: '/practice', label: 'Intelligent üben', icon: Play, title: 'FSRS-Empfehlungen' },
-  { to: '/questions', label: 'Aufgaben', icon: ListTodo, title: 'Selbst Aufgaben auswählen' },
+  { to: '/practice', label: 'Programm starten', icon: Play, title: 'FSRS-Empfehlungen' },
+  { to: '/questions', label: 'Aufgaben', icon: Grid, title: 'Alle Aufgaben' },
 ] as const;
 
 const otherItems = [
   { to: '/history', label: 'Verlauf', icon: History },
-  { to: '/progress', label: 'Fortschritt', icon: LineChart },
+  { to: '/progress', label: 'Übersicht', icon: LineChart },
   { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
@@ -47,7 +47,7 @@ const tabItems = [
   { to: '/practice', label: 'Üben', icon: Play },
   { to: '/questions', label: 'Aufgaben', icon: ListTodo },
   { to: '/history', label: 'Verlauf', icon: History },
-  { to: '/progress', label: 'Fortschritt', icon: LineChart },
+  { to: '/progress', label: 'Übersicht', icon: LineChart },
 ] as const;
 
 function isActive(to: string): boolean {
@@ -133,10 +133,6 @@ function isActive(to: string): boolean {
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
-
-      <RouterLink to="/settings" class="app__gear" :class="{ 'app__gear--hidden': focusMode }" aria-label="Einstellungen" title="Einstellungen">
-        <Settings aria-hidden="true" />
-      </RouterLink>
 
     <main class="app__main">
       <RouterView v-slot="{ Component }">
@@ -374,42 +370,9 @@ function isActive(to: string): boolean {
     height: 22px;
     stroke-width: 2.2px;
   }
-  /* Einstellungen on mobile: fixed round gear, top-right (safe-area aware). */
-  .app__gear {
-    display: grid;
-    place-items: center;
-    position: fixed;
-    top: calc(env(safe-area-inset-top) + 10px);
-    right: 12px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    background: var(--q-card);
-    border: 1px solid var(--q-border);
-    color: var(--q-mut);
-    text-decoration: none;
-    z-index: 40;
-    transition: transform 0.1s ease, background 0.1s ease, opacity var(--q-transition-normal);
-  }
-  .app__gear--hidden {
-    opacity: 0;
-    pointer-events: none;
-  }
-  .app__gear svg {
-    width: 20px;
-    height: 20px;
-    stroke-width: 2.2px;
-  }
-  .app__gear:active {
-    background: var(--q-panel-2);
-    transform: scale(0.92);
-  }
   .app__main:not(.app__main--focus) {
     padding-bottom: 84px;
   }
-  /* we override padding via focusMode class indirectly or just use body padding, but 
-     since app__main--focus is removed, let's keep padding-bottom dynamic via a wrapper class?
-     Wait, I can just do .app__tabbar--hidden ~ .app__main { padding-bottom: 0 } */
   .app__main {
     padding-bottom: 84px;
   }

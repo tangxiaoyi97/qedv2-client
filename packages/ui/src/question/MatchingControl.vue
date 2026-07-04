@@ -423,8 +423,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   cursor: pointer;
   transition: border-color 0.1s ease, background 0.1s ease;
 }
-.q-match__inline-choice:hover {
-  border-color: var(--q-accent);
+@media (hover: hover) and (pointer: fine) {
+  .q-match__inline-choice:hover {
+    border-color: var(--q-accent);
+  }
 }
 .q-match__inline-choice:focus-visible {
   outline: 2px solid var(--q-accent);

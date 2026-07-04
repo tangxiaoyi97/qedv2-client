@@ -128,12 +128,13 @@ const emit = defineEmits<{ jump: [index: number] }>();
   font-weight: 700;
 }
 
-.practice-rail__item:not(:disabled):hover {
-  background: var(--q-panel-2);
-}
-
-.practice-rail__item--current:hover {
-  background: var(--q-accent-bg);
+@media (hover: hover) and (pointer: fine) {
+  .practice-rail__item:not(:disabled):hover {
+    background: var(--q-panel-2);
+  }
+  .practice-rail__item--current:hover {
+    background: var(--q-accent-bg);
+  }
 }
 
 .practice-rail__icon {

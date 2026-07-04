@@ -77,8 +77,10 @@ const label = computed(() => GRADING_LABELS[props.grading]);
   cursor: pointer;
   transition: box-shadow 0.12s ease;
 }
-.q-grading-capsule--interactive:not(:disabled):hover {
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
+@media (hover: hover) and (pointer: fine) {
+  .q-grading-capsule--interactive:not(:disabled):hover {
+    box-shadow: 0 0 0 3px var(--q-accent-ring);
+  }
 }
 .q-grading-capsule--interactive:disabled {
   opacity: 0.55;

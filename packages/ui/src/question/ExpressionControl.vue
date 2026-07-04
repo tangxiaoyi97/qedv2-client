@@ -124,8 +124,10 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
   font-style: italic;
   cursor: pointer;
 }
-.q-expr__tool:hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .q-expr__tool:hover {
+    background: var(--q-panel);
+  }
 }
 .q-expr__tool:focus-visible {
   outline: 2px solid var(--q-accent);

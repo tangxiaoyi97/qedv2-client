@@ -642,8 +642,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   font: 700 12.5px 'Public Sans', system-ui, sans-serif;
   cursor: pointer;
 }
-.browse__filterbtn:hover {
-  border-color: var(--q-accent);
+@media (hover: hover) and (pointer: fine) {
+  .browse__filterbtn:hover {
+    border-color: var(--q-accent);
+  }
 }
 .browse__filterbtn:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -690,8 +692,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   font-family: inherit;
   line-height: 1;
 }
-.browse__active-x:hover {
-  color: var(--q-err);
+@media (hover: hover) and (pointer: fine) {
+  .browse__active-x:hover {
+    color: var(--q-err);
+  }
 }
 .browse__active-x:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -706,8 +710,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   font-family: inherit;
   font-weight: 600;
 }
-.browse__reset:hover {
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .browse__reset:hover {
+    color: var(--q-ink);
+  }
 }
 .browse__meta {
   font-size: 12px;
@@ -733,15 +739,13 @@ function firstCode(q: QuestionSummary): string | undefined {
   text-align: left;
   width: 100%;
 }
-.browse__row:hover:not(:disabled) {
-  border-color: var(--q-accent);
-}
-.browse__row--selected {
-  background: var(--q-accent-bg);
-  border-color: var(--q-accent);
-}
-.browse__row--selected:hover:not(:disabled) {
-  border-color: var(--q-accent-strong, var(--q-accent));
+@media (hover: hover) and (pointer: fine) {
+  .browse__row:hover:not(:disabled) {
+    border-color: var(--q-accent);
+  }
+  .browse__row--selected:hover:not(:disabled) {
+    border-color: var(--q-accent-strong, var(--q-accent));
+  }
 }
 .browse__row:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -830,9 +834,11 @@ function firstCode(q: QuestionSummary): string | undefined {
   cursor: pointer;
   transition: transform 0.15s ease, background 0.15s ease;
 }
-.browse__single-btn:hover {
-  background: var(--q-ink);
-  transform: translateX(2px);
+@media (hover: hover) and (pointer: fine) {
+  .browse__single-btn:hover {
+    background: var(--q-ink);
+    transform: translateX(2px);
+  }
 }
 .browse__state--new {
   color: var(--q-faint);

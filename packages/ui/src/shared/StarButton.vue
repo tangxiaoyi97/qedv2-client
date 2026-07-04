@@ -47,8 +47,10 @@ const title = computed(() => (props.starred ? 'Gemerkt' : 'Merken'));
 .q-star-btn--on {
   color: var(--q-part);
 }
-.q-star-btn:hover {
-  color: var(--q-part);
+@media (hover: hover) and (pointer: fine) {
+  .q-star-btn:hover {
+    color: var(--q-part);
+  }
 }
 .q-star-btn:focus-visible {
   outline: 2px solid var(--q-accent);

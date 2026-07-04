@@ -107,7 +107,12 @@ const emit = defineEmits<{
   stroke-width: 2.2px;
 }
 
-.practice-qhead__official:hover,
+@media (hover: hover) and (pointer: fine) {
+  .practice-qhead__official:hover {
+    border-color: var(--q-accent);
+    background: var(--q-accent-bg);
+  }
+}
 .practice-qhead__official:focus-visible {
   border-color: var(--q-accent);
   background: var(--q-accent-bg);

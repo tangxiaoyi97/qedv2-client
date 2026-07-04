@@ -7,6 +7,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { Settings } from 'lucide-vue-next';
 import { competencyCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
 import { historyLog } from '../services.js';
@@ -115,12 +116,15 @@ function openCategoryFilter(code: string): void {
         <h1 class="home__greeting">{{ greeting }} 👋</h1>
         <div class="home__date">{{ dateLine }} · Bereit für heute?</div>
       </div>
+      <RouterLink to="/settings" class="home__settings-btn" title="Einstellungen" aria-label="Einstellungen">
+        <Settings aria-hidden="true" />
+      </RouterLink>
     </div>
 
     <div class="home__hero">
       <div class="home__hero-body">
         <div class="home__hero-label">Empfohlen für heute</div>
-        <div class="home__hero-title">Intelligent üben</div>
+        <div class="home__hero-title">Programm starten</div>
         <div class="home__hero-text">{{ heroText }}</div>
       </div>
       <button type="button" class="home__hero-cta" @click="go('/practice')">Programm starten →</button>
@@ -231,10 +235,35 @@ function openCategoryFilter(code: string): void {
   padding: 26px 20px 40px;
 }
 .home__header {
+  margin-bottom: 24px;
   display: flex;
-  align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 20px;
+  align-items: flex-start;
+}
+.home__settings-btn {
+  display: none;
+}
+@media (max-width: 860px) {
+  .home__settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--q-card);
+    border: 1px solid var(--q-border);
+    color: var(--q-mut);
+    text-decoration: none;
+    transition: background 0.1s ease, color 0.1s ease;
+  }
+  .home__settings-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+  .home__settings-btn:active {
+    background: var(--q-panel-2);
+  }
 }
 .home__greeting {
   font-weight: 800;
@@ -291,8 +320,10 @@ function openCategoryFilter(code: string): void {
   cursor: pointer;
   white-space: nowrap;
 }
-.home__hero-cta:hover {
-  filter: brightness(1.06);
+@media (hover: hover) and (pointer: fine) {
+  .home__hero-cta:hover {
+    filter: brightness(1.06);
+  }
 }
 .home__cards {
   /* fixed 12-col grid — flex+min-width used to overflow into a squeezed
@@ -329,7 +360,11 @@ function openCategoryFilter(code: string): void {
 .home__card--click {
   cursor: pointer;
 }
-.home__card--click:hover,
+@media (hover: hover) and (pointer: fine) {
+  .home__card--click:hover {
+    border-color: var(--q-accent);
+  }
+}
 .home__card--click:focus-visible {
   border-color: var(--q-accent);
 }
@@ -364,8 +399,10 @@ function openCategoryFilter(code: string): void {
   text-decoration: none;
   white-space: nowrap;
 }
-.home__card-link:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .home__card-link:hover {
+    text-decoration: underline;
+  }
 }
 .home__big {
   display: flex;
@@ -407,7 +444,12 @@ function openCategoryFilter(code: string): void {
   color: inherit;
   cursor: pointer;
 }
-.home__mastery-row:hover,
+@media (hover: hover) and (pointer: fine) {
+  .home__mastery-row:hover {
+    border-color: var(--q-accent);
+    background: var(--q-panel);
+  }
+}
 .home__mastery-row:focus-visible {
   border-color: var(--q-accent);
   background: var(--q-panel);

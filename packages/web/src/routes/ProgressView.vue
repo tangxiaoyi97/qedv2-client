@@ -313,7 +313,7 @@ function closeDetail(): void {
 <template>
   <div class="prog">
     <div class="prog__head">
-      <h1 class="prog__title">Fortschritt</h1>
+      <h1 class="prog__title">Übersicht</h1>
       <div class="prog__legend">
         <span class="prog__legend-item"><span class="prog__sq prog__sq--ok" />hoch</span>
         <span class="prog__legend-item"><span class="prog__sq prog__sq--part" />mittel</span>
@@ -442,7 +442,7 @@ function closeDetail(): void {
     <CompetencyGroups v-if="entries.length > 0" :entries="entries" />
     <div v-else class="prog__empty">
       Noch kein Fortschritt — starte dein erstes Programm.
-      <RouterLink to="/practice" class="prog__cta">Intelligent üben →</RouterLink>
+      <RouterLink to="/practice" class="prog__cta">Programm starten →</RouterLink>
     </div>
 
     <Teleport to="body">
@@ -701,7 +701,12 @@ function closeDetail(): void {
   padding: 5px 9px;
   cursor: pointer;
 }
-.prog__detail-btn:hover,
+@media (hover: hover) and (pointer: fine) {
+  .prog__detail-btn:hover {
+    border-color: var(--q-accent);
+    color: var(--q-accent-strong);
+  }
+}
 .prog__detail-btn:focus-visible {
   border-color: var(--q-accent);
   color: var(--q-accent-strong);
@@ -796,7 +801,11 @@ function closeDetail(): void {
 .prog__table-row--link {
   cursor: pointer;
 }
-.prog__table-row--link:hover td,
+@media (hover: hover) and (pointer: fine) {
+  .prog__table-row--link:hover td {
+    background: var(--q-panel);
+  }
+}
 .prog__table-row--link:focus-visible td {
   background: var(--q-panel);
 }
@@ -811,8 +820,10 @@ function closeDetail(): void {
   opacity: 0;
   transition: opacity 0.12s ease;
 }
-.prog__table-row--link:hover .prog__cat-go {
-  opacity: 1;
+@media (hover: hover) and (pointer: fine) {
+  .prog__table-row--link:hover .prog__cat-go {
+    opacity: 1;
+  }
 }
 .prog__table-scroll {
   overflow-x: auto;
@@ -999,7 +1010,11 @@ function closeDetail(): void {
   text-align: left;
   cursor: pointer;
 }
-.prog-modal__status-card:not(:disabled):hover,
+@media (hover: hover) and (pointer: fine) {
+  .prog-modal__status-card:not(:disabled):hover {
+    border-color: var(--q-accent);
+  }
+}
 .prog-modal__status-card:focus-visible {
   border-color: var(--q-accent);
   outline: none;
@@ -1072,7 +1087,11 @@ function closeDetail(): void {
   color: var(--q-disabled);
   cursor: default;
 }
-.prog-modal__mini-link:not(:disabled):hover,
+@media (hover: hover) and (pointer: fine) {
+  .prog-modal__mini-link:not(:disabled):hover {
+    border-color: var(--q-accent);
+  }
+}
 .prog-modal__mini-link:focus-visible {
   border-color: var(--q-accent);
   outline: none;

@@ -116,8 +116,10 @@ onBeforeUnmount(() => {
   font-size: 13px;
   padding: 4px;
 }
-.q-search__clear:hover {
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .q-search__clear:hover {
+    color: var(--q-ink);
+  }
 }
 .q-search__spinner {
   color: var(--q-accent-strong);

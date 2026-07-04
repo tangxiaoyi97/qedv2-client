@@ -175,8 +175,10 @@ const emit = defineEmits<{
   font-weight: 800;
 }
 
-.practice-session-drawer__item:not(:disabled):hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .practice-session-drawer__item:not(:disabled):hover {
+    background: var(--q-panel);
+  }
 }
 
 .practice-session-drawer__icon {

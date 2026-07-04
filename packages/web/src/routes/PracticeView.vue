@@ -544,8 +544,10 @@ const currentCompetencyCodes = computed(() =>
     color 0.16s ease,
     background 0.16s ease;
 }
-.practice__close:hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .practice__close:hover {
+    background: var(--q-panel);
+  }
 }
 .practice__close--armed {
   width: 88px;
@@ -553,8 +555,10 @@ const currentCompetencyCodes = computed(() =>
   color: var(--q-err);
   font-weight: 800;
 }
-.practice__close--armed:hover {
-  background: var(--q-err-bg);
+@media (hover: hover) and (pointer: fine) {
+  .practice__close--armed:hover {
+    background: var(--q-err-bg);
+  }
 }
 .practice__close-mark {
   flex: none;
@@ -609,8 +613,10 @@ const currentCompetencyCodes = computed(() =>
   place-items: center;
   visibility: hidden;
 }
-.practice__session-button:hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .practice__session-button:hover {
+    background: var(--q-panel);
+  }
 }
 
 .practice__running {

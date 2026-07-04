@@ -209,7 +209,7 @@ function redo(questionId: string): void {
 
     <div v-else-if="rows.length === 0" class="hist__empty">
       Noch keine Antworten aufgezeichnet.
-      <RouterLink to="/practice" class="hist__cta">Intelligent üben →</RouterLink>
+      <RouterLink to="/practice" class="hist__cta">Programm starten →</RouterLink>
     </div>
 
     <template v-else>

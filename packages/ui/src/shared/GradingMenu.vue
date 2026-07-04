@@ -129,8 +129,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
   color: var(--q-ink);
 }
-.q-grading-menu__option:hover {
-  background: var(--q-panel);
+@media (hover: hover) and (pointer: fine) {
+  .q-grading-menu__option:hover {
+    background: var(--q-panel);
+  }
 }
 .q-grading-menu__option:focus-visible {
   outline: 2px solid var(--q-accent);
