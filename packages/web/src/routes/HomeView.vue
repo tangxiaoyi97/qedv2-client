@@ -7,7 +7,7 @@
  */
 import { computed, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { competencyCategory } from '@qed2/core-logic';
+import { competencyCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
 import { historyLog } from '../services.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -98,6 +98,14 @@ const hasProgress = computed(() => progress.practicedParts > 0);
 function go(path: string): void {
   void router.push(path);
 }
+
+function openStatusFilter(state: GradingOrUnseen): void {
+  void router.push({ path: '/questions', query: { grading: state } });
+}
+
+function openCategoryFilter(code: string): void {
+  void router.push({ path: '/questions', query: { kat: code } });
+}
 </script>
 
 <template>
@@ -115,7 +123,7 @@ function go(path: string): void {
         <div class="home__hero-title">Intelligent üben</div>
         <div class="home__hero-text">{{ heroText }}</div>
       </div>
-      <button type="button" class="home__hero-cta" @click="go('/practice')">Sitzung starten →</button>
+      <button type="button" class="home__hero-cta" @click="go('/practice')">Programm starten →</button>
     </div>
 
     <div class="home__cards">
@@ -139,9 +147,18 @@ function go(path: string): void {
           <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
         </div>
         <div v-if="categoryMastery.length > 0" class="home__mastery">
-          <MasteryBar v-for="c in categoryMastery" :key="c.code" :code="c.code" :mastery="c.mastery" />
+          <button
+            v-for="c in categoryMastery"
+            :key="c.code"
+            type="button"
+            class="home__mastery-row"
+            :title="`Aufgaben mit ${c.code} anzeigen`"
+            @click.stop="openCategoryFilter(c.code)"
+          >
+            <MasteryBar :code="c.code" :mastery="c.mastery" />
+          </button>
         </div>
-        <div v-else class="home__empty-note">Noch keine Daten — starte deine erste Sitzung.</div>
+        <div v-else class="home__empty-note">Noch keine Daten — starte dein erstes Programm.</div>
       </div>
 
       <div
@@ -190,12 +207,12 @@ function go(path: string): void {
           <div class="home__card-label">Beherrschung nach Status</div>
           <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
         </div>
-        <GradingDistribution :counts="progress.gradingCounts" />
+        <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />
       </div>
     </div>
 
     <div v-if="!hasProgress" class="home__intro">
-      Willkommen bei QED2 — SRDP-Mathematik mit intelligenter Wiederholung. Starte oben eine Sitzung
+      Willkommen bei QED2 — SRDP-Mathematik mit intelligenter Wiederholung. Starte oben ein Programm
       oder stöbere in den <RouterLink to="/questions">Aufgaben</RouterLink>.
     </div>
 
@@ -378,7 +395,23 @@ function go(path: string): void {
 .home__mastery {
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 6px;
+}
+.home__mastery-row {
+  display: block;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.home__mastery-row:hover,
+.home__mastery-row:focus-visible {
+  border-color: var(--q-accent);
+  background: var(--q-panel);
+  outline: none;
 }
 .home__recent {
   display: flex;

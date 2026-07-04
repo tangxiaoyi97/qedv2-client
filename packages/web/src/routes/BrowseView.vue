@@ -13,9 +13,15 @@ let fetchedOnce = false;
 
 <script setup lang="ts">
 /** Aufgaben browse — client-side multi-select filtering (supplement §4). */
-import { computed, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { competencyCategory, type GradingOrUnseen, type SearchResponse } from '@qed2/core-logic';
+import { computed, nextTick, onMounted, watch } from 'vue';
+import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router';
+import {
+  competencyCategory,
+  type ExamPart,
+  type GradingOrUnseen,
+  type SearchResponse,
+  type Term,
+} from '@qed2/core-logic';
 import { GradingDot, HighlightSnippet, QButton, QChip, SearchBox } from '@qed2/ui';
 import { useAppStore } from '../stores/app.js';
 import { usePracticeStore } from '../stores/practice.js';
@@ -36,11 +42,30 @@ const progress = useProgressStore();
 const practice = usePracticeStore();
 
 const PAGE_SIZE = 100;
+const FILTER_QUERY_KEYS = new Set(['year', 'term', 'teil', 'kat', 'grading', 'starred']);
+const VALID_TERMS: readonly Term[] = [
+  'haupttermin',
+  'nebentermin-1',
+  'nebentermin-2',
+  'herbsttermin',
+  'wintertermin',
+];
+const VALID_TEILS: readonly ExamPart[] = ['t1', 't2'];
+const VALID_CATEGORIES: readonly FilterState['categories'][number][] = ['AG', 'FA', 'AN', 'WS'];
+const VALID_GRADINGS: readonly GradingOrUnseen[] = [
+  'good',
+  'careless',
+  'meh',
+  'baffled',
+  'excluded',
+  'unseen',
+];
 
 const loading = ref(false);
 const error = ref<string | undefined>();
 const filter = ref<FilterState>(emptyFilterState());
 const dialogOpen = ref(false);
+let syncingFromRoute = false;
 
 async function load(force = false): Promise<void> {
   if (fetchedOnce && !force && allQuestions.value.length > 0) return;
@@ -65,12 +90,83 @@ async function load(force = false): Promise<void> {
   }
 }
 
-onMounted(() => {
-  // Fortschritt category linkage: /questions?kat=AG pre-applies the filter.
-  const kat = route.query.kat;
-  if (typeof kat === 'string' && ['AG', 'FA', 'AN', 'WS'].includes(kat)) {
-    filter.value = { ...emptyFilterState(), categories: [kat as 'AG' | 'FA' | 'AN' | 'WS'] };
+function queryStrings(value: LocationQueryValue | LocationQueryValue[] | undefined): string[] {
+  const raw = Array.isArray(value) ? value : [value];
+  return raw.flatMap((item) =>
+    typeof item === 'string' ? item.split(',').map((part) => part.trim()).filter(Boolean) : [],
+  );
+}
+
+function uniqueAllowed<T extends string>(
+  value: LocationQueryValue | LocationQueryValue[] | undefined,
+  allowed: readonly T[],
+): T[] {
+  const allowedSet = new Set<string>(allowed);
+  return [...new Set(queryStrings(value).filter((item): item is T => allowedSet.has(item)))];
+}
+
+function parseFilterQuery(): FilterState {
+  // Fortschritt linkage: /questions?kat=AG or ?grading=good pre-applies filters.
+  const allowedYears = new Set(allQuestions.value.map((q) => q.source.year));
+  const years = [...new Set(queryStrings(route.query.year).map(Number))]
+    .filter((year) => Number.isInteger(year) && (allowedYears.size === 0 || allowedYears.has(year)))
+    .sort((a, b) => a - b);
+  return {
+    years,
+    terms: uniqueAllowed(route.query.term, VALID_TERMS),
+    teils: uniqueAllowed(route.query.teil, VALID_TEILS),
+    categories: uniqueAllowed(route.query.kat, VALID_CATEGORIES),
+    gradings: uniqueAllowed(route.query.grading, VALID_GRADINGS),
+    starredOnly: queryStrings(route.query.starred).some((value) => value === '1' || value === 'true'),
+  };
+}
+
+function filterQuery(f: FilterState): LocationQueryRaw {
+  const query: LocationQueryRaw = {};
+  for (const [key, value] of Object.entries(route.query)) {
+    if (!FILTER_QUERY_KEYS.has(key)) query[key] = value;
   }
+  if (f.years.length > 0) query.year = f.years.map(String);
+  if (f.terms.length > 0) query.term = [...f.terms];
+  if (f.teils.length > 0) query.teil = [...f.teils];
+  if (f.categories.length > 0) query.kat = [...f.categories];
+  if (f.gradings.length > 0) query.grading = [...f.gradings];
+  if (f.starredOnly) query.starred = '1';
+  return query;
+}
+
+function applyRouteFilters(): void {
+  syncingFromRoute = true;
+  filter.value = parseFilterQuery();
+  void nextTick(() => {
+    syncingFromRoute = false;
+  });
+}
+
+const browseReturnTo = computed(() => router.resolve({ path: '/questions', query: filterQuery(filter.value) }).fullPath);
+
+function practiceQuery(extra: LocationQueryRaw = {}): LocationQueryRaw {
+  return { ...extra, returnTo: browseReturnTo.value };
+}
+
+watch(
+  () => route.query,
+  applyRouteFilters,
+  { immediate: true },
+);
+
+watch(
+  filter,
+  (next) => {
+    if (syncingFromRoute) return;
+    const query = filterQuery(next);
+    const nextPath = router.resolve({ path: '/questions', query }).fullPath;
+    if (nextPath !== route.fullPath) void router.replace({ path: '/questions', query });
+  },
+  { deep: true },
+);
+
+onMounted(() => {
   void load();
 });
 
@@ -123,7 +219,7 @@ function hitExcluded(id: string): boolean {
 }
 
 function openHit(id: string): void {
-  void router.push({ path: '/practice', query: { questions: id } });
+  void router.push({ path: '/practice', query: practiceQuery({ questions: id }) });
 }
 
 function partGrading(partId: string): GradingOrUnseen {
@@ -258,13 +354,13 @@ function practiceAll(): void {
   // Store handoff instead of ?questions=<hundreds of ids>: the session is
   // seeded here, /practice mounts onto it (PracticeView keeps loading/running).
   void practice.startPrepared(playableIds.value);
-  void router.push('/practice');
+  void router.push({ path: '/practice', query: practiceQuery() });
 }
 
 function practiceOne(q: QuestionSummary): void {
   if (!q.playable) return;
   // Excluded questions stay clickable — exclusion is not deletion (§1.4).
-  void router.push({ path: '/practice', query: { questions: q.id } });
+  void router.push({ path: '/practice', query: practiceQuery({ questions: q.id }) });
 }
 
 function firstCode(q: QuestionSummary): string | undefined {

@@ -48,7 +48,7 @@ export const GRADING_FILTER_LABELS: Record<GradingOrUnseen, string> = {
   meh: 'Halb verstanden',
   baffled: 'Keine Ahnung',
   excluded: 'Ausgeschlossen',
-  unseen: 'Ungesehen',
+  unseen: 'Neu',
 };
 </script>
 

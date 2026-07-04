@@ -60,11 +60,69 @@ function onSelect(leftIdx: number, ev: Event): void {
   assign(leftIdx, raw === '' ? null : Number(raw), false);
 }
 
+type MatchOption = { item: RichText; idx: number };
+type MatchGroup = { key: string; label: string; leftIndices: number[]; items: MatchOption[] };
+
+const hasCandidateGroups = computed(
+  () => Array.isArray(props.answer.candidateGroups) && props.answer.candidateGroups.length > 0,
+);
+
+function groupLabel(group: { label?: RichText; leftIndices: number[] }, groupIdx: number): string {
+  const explicit = richTextToPlain(group.label ?? []);
+  if (explicit) return explicit;
+  const leftLabels = group.leftIndices
+    .map((leftIdx) => richTextToPlain(props.answer.left[leftIdx] ?? []))
+    .filter(Boolean);
+  return leftLabels.join(', ') || `Gruppe ${groupIdx + 1}`;
+}
+
+const groupedRightOptions = computed<MatchGroup[]>(() => {
+  const all = props.answer.right.map((item, idx) => ({ item, idx }));
+  if (!hasCandidateGroups.value) {
+    return [{ key: 'all', label: 'Optionen', leftIndices: props.answer.left.map((_, idx) => idx), items: all }];
+  }
+  return props.answer.candidateGroups!.map((group, groupIdx) => {
+    const leftIndices = group.leftIndices.filter((idx) => idx >= 0 && idx < props.answer.left.length);
+    const items = group.rightIndices
+      .filter((idx) => idx >= 0 && idx < props.answer.right.length)
+      .map((idx) => ({ item: props.answer.right[idx]!, idx }));
+    return {
+      key: `${groupIdx}:${leftIndices.join(',')}:${items.map((option) => option.idx).join(',')}`,
+      label: groupLabel({ label: group.label, leftIndices }, groupIdx),
+      leftIndices,
+      items,
+    };
+  });
+});
+
+const groupedOptionMode = computed(() => hasCandidateGroups.value);
+
+const allowedRightsByLeft = computed<Map<number, Set<number>>>(() => {
+  const out = new Map<number, Set<number>>();
+  for (const group of groupedRightOptions.value) {
+    const rightSet = new Set(group.items.map((option) => option.idx));
+    for (const leftIdx of group.leftIndices) out.set(leftIdx, rightSet);
+  }
+  return out;
+});
+
+function optionsForLeft(leftIdx: number): MatchOption[] {
+  return props.answer.right
+    .map((item, idx) => ({ item, idx }))
+    .filter((option) => allowedRightsByLeft.value.get(leftIdx)?.has(option.idx) ?? true);
+}
+
+function canAssign(leftIdx: number, rightIdx: number | null): boolean {
+  if (rightIdx === null) return true;
+  return allowedRightsByLeft.value.get(leftIdx)?.has(rightIdx) ?? true;
+}
+
 /**
  * Central assignment. `move` (drag semantics): a right item already used by
  * another row is taken away from it, keeping the mapping one-to-one.
  */
 function assign(leftIdx: number, rightIdx: number | null, move: boolean): void {
+  if (!canAssign(leftIdx, rightIdx)) return;
   const next: (number | null)[] = [];
   for (let i = 0; i < props.answer.left.length; i++) next.push(props.modelValue[i] ?? null);
   if (move && rightIdx !== null) {
@@ -103,6 +161,22 @@ const marks = computed<(BreakdownItem | null)[]>(() => {
 
 /** Expected right index per left index (from answer.pairs). */
 const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.pairs));
+
+/**
+ * Grouped ("Lückentext") review state per option card — mirrors
+ * ChoiceControl's visual language: the gap behaves like an independent
+ * single-choice question, so feedback lands ON the options themselves.
+ */
+type GapOptionState = 'on' | 'ok' | 'err' | 'missed' | null;
+
+function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
+  const isChosen = chosen(leftIdx) === rightIdx;
+  if (!review.value) return isChosen ? 'on' : null;
+  const expected = expectedRight.value.get(leftIdx);
+  if (isChosen) return rightIdx === expected ? 'ok' : 'err';
+  if (rightIdx === expected) return 'missed';
+  return null;
+}
 </script>
 
 <template>
@@ -117,7 +191,7 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
           'q-match__row--err': marks[i]?.correct === false,
           'q-match__row--dragover': dragOverRow === i,
         }"
-        @dragover.prevent="!review && (dragOverRow = i)"
+        @dragover.prevent="!review && !groupedOptionMode && (dragOverRow = i)"
         @dragleave="dragOverRow === i && (dragOverRow = null)"
         @drop.prevent="onDrop(i, $event)"
       >
@@ -127,7 +201,7 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
             <RichTextView :nodes="leftItem" inline-only />
           </span>
           <select
-            v-if="!review"
+            v-if="!review && !groupedOptionMode"
             class="q-match__select"
             :class="{ 'q-match__select--assigned': chosen(i) !== null }"
             :value="chosen(i) === null ? '' : String(chosen(i))"
@@ -147,14 +221,66 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
           </select>
         </div>
 
-        <!-- math-safe echo of the chosen right item (answering only) -->
-        <div v-if="!review && chosen(i) !== null && hasMath(answer.right[chosen(i)!]!)" class="q-match__echo">
+        <!-- grouped ("Lückentext") mode: the gap IS a single-choice question —
+             option cards like ChoiceControl, feedback in place, no pool. -->
+        <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="`Optionen für ${richTextToPlain(leftItem)}`">
+          <button
+            v-for="option in optionsForLeft(i)"
+            :key="option.idx"
+            type="button"
+            class="q-match__inline-choice"
+            :class="{
+              'q-match__inline-choice--on': gapOptionState(i, option.idx) === 'on',
+              'q-match__inline-choice--ok': gapOptionState(i, option.idx) === 'ok',
+              'q-match__inline-choice--err': gapOptionState(i, option.idx) === 'err',
+              'q-match__inline-choice--missed': gapOptionState(i, option.idx) === 'missed',
+            }"
+            role="radio"
+            :aria-checked="chosen(i) === option.idx"
+            :aria-disabled="review || undefined"
+            @click="!review && assign(i, chosen(i) === option.idx ? null : option.idx, false)"
+          >
+            <StateIcon
+              v-if="review && gapOptionState(i, option.idx) === 'ok'"
+              state="correct"
+              :size="20"
+            />
+            <StateIcon
+              v-else-if="review && gapOptionState(i, option.idx) === 'err'"
+              state="incorrect"
+              :size="20"
+            />
+            <StateIcon
+              v-else-if="review && gapOptionState(i, option.idx) === 'missed'"
+              state="missed"
+              :size="20"
+            />
+            <span
+              v-else
+              class="q-match__oc-radio"
+              :class="{ 'q-match__oc-radio--on': chosen(i) === option.idx }"
+              aria-hidden="true"
+            />
+            <span class="q-match__oc-content"><RichTextView :nodes="option.item" inline-only /></span>
+            <span
+              v-if="review && gapOptionState(i, option.idx)"
+              class="q-match__oc-label"
+              :class="`q-match__oc-label--${gapOptionState(i, option.idx)}`"
+            >
+              {{ gapOptionState(i, option.idx) === 'ok' ? 'Richtig · gewählt' : gapOptionState(i, option.idx) === 'err' ? 'Falsch · gewählt' : 'Richtig' }}
+            </span>
+            <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
+          </button>
+        </div>
+
+        <!-- math-safe echo of the chosen right item (classic mode, answering only) -->
+        <div v-if="!review && !groupedOptionMode && chosen(i) !== null && hasMath(answer.right[chosen(i)!]!)" class="q-match__echo">
           <span class="q-match__echo-letter">{{ letter(chosen(i)!) }} ·</span>
           <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
         </div>
 
-        <!-- review: compact comparison — no nested boxes, no dead form controls -->
-        <div v-if="review" class="q-match__cmp">
+        <!-- review (classic mode): compact comparison lines -->
+        <div v-if="review && !groupedOptionMode" class="q-match__cmp">
           <div v-if="marks[i]?.correct && chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--ok">
             <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
             <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
@@ -175,27 +301,34 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
       </div>
     </div>
 
-    <!-- options pool (chips draggable onto rows on desktop; answering only) -->
-    <div v-if="!review" class="q-match__pool">
+    <!-- options pool (classic mode only — grouped mode's options live inline) -->
+    <div v-if="!review && !groupedOptionMode" class="q-match__pool">
       <div class="q-match__pool-title">
         Optionen
         <span v-if="!review" class="q-match__pool-hint">ziehen oder per Auswahl zuordnen</span>
       </div>
       <div class="q-match__pool-items">
-        <span
-          v-for="(rightItem, j) in answer.right"
-          :key="j"
-          class="q-match__pool-item"
-          :class="{
-            'q-match__pool-item--used': usedRight.has(j),
-            'q-match__pool-item--draggable': !review,
-          }"
-          :draggable="!review"
-          @dragstart="onDragStart(j, $event)"
+        <div
+          v-for="group in groupedRightOptions"
+          :key="group.key"
+          class="q-match__pool-group"
         >
-          <span class="q-match__pool-letter">{{ letter(j) }} ·</span>
-          <RichTextView :nodes="rightItem" inline-only />
-        </span>
+          <div v-if="groupedOptionMode" class="q-match__pool-group-title">{{ group.label }}</div>
+          <span
+            v-for="option in group.items"
+            :key="option.idx"
+            class="q-match__pool-item"
+            :class="{
+              'q-match__pool-item--used': usedRight.has(option.idx),
+              'q-match__pool-item--draggable': !review,
+            }"
+            :draggable="!review"
+            @dragstart="onDragStart(option.idx, $event)"
+          >
+            <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
+            <RichTextView :nodes="option.item" inline-only />
+          </span>
+        </div>
       </div>
     </div>
   </div>
@@ -266,6 +399,97 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
 .q-match__select:disabled {
   cursor: default;
   opacity: 0.8;
+}
+
+ /* grouped ("Lückentext") mode — option cards, ChoiceControl's language */
+.q-match__inline-choices {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.q-match__inline-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--q-border-2);
+  border-radius: 11px;
+  background: var(--q-card);
+  color: var(--q-ink);
+  font: 400 14px 'Public Sans', system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+.q-match__inline-choice:hover {
+  border-color: var(--q-accent);
+}
+.q-match__inline-choice:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.q-match__inline-choice--on {
+  border: 2px solid var(--q-accent);
+  background: var(--q-accent-bg);
+  padding: 11px 13px;
+  box-shadow: 0 0 0 3px var(--q-accent-ring);
+}
+.q-match__inline-choice--ok {
+  border: 1.5px solid var(--q-ok);
+  background: var(--q-ok-bg);
+  padding: 11.5px 13.5px;
+  cursor: default;
+}
+.q-match__inline-choice--err {
+  border: 1.5px solid var(--q-err);
+  background: var(--q-err-bg);
+  padding: 11.5px 13.5px;
+  cursor: default;
+}
+.q-match__inline-choice--missed {
+  border: 1.5px dashed var(--q-ok);
+  padding: 11.5px 13.5px;
+  cursor: default;
+}
+.q-match__inline-choice[aria-disabled='true'] {
+  cursor: default;
+}
+.q-match__oc-radio {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--q-check-border);
+  background: var(--q-card);
+  flex: none;
+  box-sizing: border-box;
+}
+.q-match__oc-radio--on {
+  border: 6px solid var(--q-accent-strong);
+}
+.q-match__oc-content {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: break-word;
+}
+.q-match__oc-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex: none;
+}
+.q-match__oc-label--ok,
+.q-match__oc-label--missed {
+  color: var(--q-ok);
+}
+.q-match__oc-label--err {
+  color: var(--q-err);
+}
+.q-match__inline-choice .q-match__pool-letter {
+  margin-right: 0;
+  color: var(--q-check-border);
 }
 
 .q-match__echo {
@@ -344,6 +568,18 @@ const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.p
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+.q-match__pool-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+}
+.q-match__pool-group-title {
+  font: 800 12px ui-monospace, Menlo, monospace;
+  color: var(--q-accent-strong);
+  padding: 0 2px;
 }
 .q-match__pool-item {
   display: inline-flex;

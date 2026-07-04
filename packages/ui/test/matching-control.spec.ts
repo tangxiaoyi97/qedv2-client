@@ -23,6 +23,27 @@ const answer: MatchingAnswer = {
   ],
 };
 
+const groupedAnswer: MatchingAnswer = {
+  kind: 'matching',
+  left: [[{ t: 'text', v: '①' }], [{ t: 'text', v: '②' }]],
+  right: [
+    [{ t: 'math', v: 'a<b' }],
+    [{ t: 'math', v: 'a=b' }],
+    [{ t: 'math', v: 'a>b' }],
+    [{ t: 'math', v: 'b<c' }],
+    [{ t: 'math', v: 'b=c' }],
+    [{ t: 'math', v: 'b>c' }],
+  ],
+  pairs: [
+    [0, 0],
+    [1, 4],
+  ],
+  candidateGroups: [
+    { leftIndices: [0], rightIndices: [0, 1, 2], label: [{ t: 'text', v: '①' }] },
+    { leftIndices: [1], rightIndices: [3, 4, 5], label: [{ t: 'text', v: '②' }] },
+  ],
+};
+
 describe('MatchingControl', () => {
   it('renders a lettered select per left row plus the Optionen pool', () => {
     const wrapper = mount(MatchingControl, {
@@ -121,5 +142,90 @@ describe('MatchingControl', () => {
     // review is form-free and pool-free — no dead controls, less noise
     expect(wrapper.findAll('select')).toHaveLength(0);
     expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+  });
+
+  it('uses v3 candidateGroups to render isolated option groups', async () => {
+    const wrapper = mount(MatchingControl, {
+      props: { answer: groupedAnswer, modelValue: [null, null] },
+    });
+
+    expect(wrapper.findAll('select')).toHaveLength(0);
+    // grouped mode is two independent single-choice groups — the redundant
+    // Optionen pool must NOT render (options live inline as cards).
+    expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+
+    const rows = wrapper.findAll('.q-match__row');
+    const firstChoices = rows[0]!.findAll('.q-match__inline-choice');
+    const secondChoices = rows[1]!.findAll('.q-match__inline-choice');
+    expect(firstChoices.map((node) => node.find('.q-match__pool-letter').text())).toEqual([
+      'A ·',
+      'B ·',
+      'C ·',
+    ]);
+    expect(secondChoices.map((node) => node.find('.q-match__pool-letter').text())).toEqual([
+      'D ·',
+      'E ·',
+      'F ·',
+    ]);
+
+    await rows[0]!.findAll('.q-match__inline-choice')[1]!.trigger('click');
+    expect(wrapper.emitted('update:modelValue')![0]![0]).toEqual([1, null]);
+  });
+
+  it('grouped review marks options in place like ChoiceControl', () => {
+    const wrapper = mount(MatchingControl, {
+      props: {
+        answer: groupedAnswer,
+        modelValue: [1, 4], // gap 1 wrong (B, correct A); gap 2 correct (E)
+        result: {
+          verdict: 'partial',
+          correct: false,
+          awardedPoints: 0.5,
+          maxPoints: 1,
+          breakdown: [
+            { ref: '0', correct: false },
+            { ref: '1', correct: true },
+          ],
+        },
+      },
+    });
+    const rows = wrapper.findAll('.q-match__row');
+    const first = rows[0]!.findAll('.q-match__inline-choice');
+    // chosen-wrong (B) marked err, expected (A) dashed-missed, in place
+    expect(first[1]!.classes()).toContain('q-match__inline-choice--err');
+    expect(first[1]!.text()).toContain('Falsch · gewählt');
+    expect(first[0]!.classes()).toContain('q-match__inline-choice--missed');
+    expect(first[0]!.text()).toContain('Richtig');
+    const second = rows[1]!.findAll('.q-match__inline-choice');
+    expect(second[1]!.classes()).toContain('q-match__inline-choice--ok');
+    // no classic comparison lines, no pool in grouped review
+    expect(wrapper.find('.q-match__cmp').exists()).toBe(false);
+    expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+  });
+
+  it('rejects cross-group drag/drop assignments for v3 matching', async () => {
+    const wrapper = mount(MatchingControl, {
+      props: { answer: groupedAnswer, modelValue: [null, null] },
+    });
+
+    await wrapper.findAll('.q-match__row')[0]!.trigger('drop', {
+      dataTransfer: { getData: () => '3' },
+    });
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
+  it('keeps 2x6 matching without candidateGroups on the v2 full-option select path', () => {
+    const plainTwoBySix: MatchingAnswer = {
+      ...groupedAnswer,
+      candidateGroups: undefined,
+    };
+    const wrapper = mount(MatchingControl, {
+      props: { answer: plainTwoBySix, modelValue: [null, null] },
+    });
+
+    const selects = wrapper.findAll('select');
+    expect(selects).toHaveLength(2);
+    expect(selects[0]!.findAll('option')).toHaveLength(7);
+    expect(selects[0]!.text()).toContain('F · b>c');
   });
 });

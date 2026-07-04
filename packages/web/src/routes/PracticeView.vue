@@ -21,20 +21,21 @@ import type {
   ExamPart,
 } from '@qed2/core-logic';
 import {
-  GradingMenu,
   PartPlayer,
   QButton,
   QChip,
-  ResultPill,
   RichTextView,
-  SolutionSheet,
-  StarButton,
   StateIcon,
   type PartPlayerState,
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useAuthStore } from '../stores/auth.js';
+import { historyLog } from '../services.js';
+import PracticeBottomBar from './practice/PracticeBottomBar.vue';
+import PracticeQuestionHeader from './practice/PracticeQuestionHeader.vue';
+import PracticeSessionDrawer from './practice/PracticeSessionDrawer.vue';
+import PracticeSessionRail from './practice/PracticeSessionRail.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -63,8 +64,13 @@ const playerState = ref<PartPlayerState>({
   result: null,
   indeterminate: false,
   unplayable: false,
+  answerPreview: null,
+  selfAssessment: null,
 });
 const solutionOpen = ref(false);
+const mobileRailOpen = ref(false);
+const exitArmed = ref(false);
+const exitButton = ref<HTMLButtonElement | null>(null);
 
 function onPlayerState(state: PartPlayerState): void {
   const wasSelfAssessing = playerState.value.phase === 'self-assessing';
@@ -79,10 +85,12 @@ async function onGraded(payload: {
   result: GradeResult;
   submission: Submission;
   selfAssessed: boolean;
+  manualGrading?: Grading;
 }): Promise<void> {
   const part: QuestionPart | undefined = current.value?.part;
   if (!part || part.id !== payload.partId) return;
   await practice.recordGraded({ part, result: payload.result, submission: payload.submission });
+  if (payload.manualGrading) await practice.overrideGrading(payload.partId, payload.manualGrading);
 }
 
 function primaryAction(): void {
@@ -112,8 +120,23 @@ const primaryLabel = computed(() => {
 });
 
 const primaryDisabled = computed(
-  () => playerState.value.phase === 'answering' && !playerState.value.canSubmit,
+  () => {
+    if (playerState.value.phase === 'answering') return !playerState.value.canSubmit;
+    if (playerState.value.phase === 'self-assessing') {
+      const self = playerState.value.selfAssessment;
+      return self?.selectedPoints == null || self.grading == null;
+    }
+    return false;
+  },
 );
+
+function onSelfScoreSelect(points: number): void {
+  playerRef.value?.setSelfAssessmentScore(points);
+}
+
+function onSelfGradingSelect(grading: Grading): void {
+  playerRef.value?.setSelfAssessmentGrading(grading);
+}
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
 const currentGrading = computed(
@@ -138,6 +161,10 @@ async function onStarToggle(): Promise<void> {
 /* --- session lifecycle --- */
 function start(): void {
   const q = route.query;
+  if (q.source === 'history') {
+    void startHistoryProgram();
+    return;
+  }
   if (typeof q.questions === 'string' && q.questions.length > 0) {
     void practice.startQuestions(q.questions.split(',').filter(Boolean));
     return;
@@ -152,8 +179,28 @@ function start(): void {
   void practice.startSmart(opts);
 }
 
+async function startHistoryProgram(): Promise<void> {
+  const q = route.query;
+  const focusQuestionId = typeof q.focus === 'string' ? q.focus : undefined;
+  let questionIds =
+    typeof q.questions === 'string' && q.questions.length > 0
+      ? q.questions.split(',').filter(Boolean)
+      : [];
+
+  if (questionIds.length === 0) {
+    const recent = await historyLog.list(80, 0);
+    questionIds = [...new Set(recent.map((entry) => entry.questionId))];
+  }
+  if (focusQuestionId && !questionIds.includes(focusQuestionId)) questionIds.unshift(focusQuestionId);
+  await practice.startQuestions(questionIds);
+  if (focusQuestionId) {
+    const idx = practice.items.findIndex((item) => item.questionId === focusQuestionId);
+    if (idx > 0) practice.jumpTo(idx);
+  }
+}
+
 onMounted(() => {
-  const hasQuery = typeof route.query.questions === 'string' || typeof route.query.year === 'string'
+  const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
     || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
   // Explicit deep links always (re)start; otherwise respect a session the
   // browse page already seeded in the store (loading/running handoff).
@@ -164,16 +211,41 @@ watch(
   () => practice.index,
   () => {
     solutionOpen.value = false;
+    mobileRailOpen.value = false;
+    exitArmed.value = false;
     window.scrollTo({ top: 0 });
   },
 );
 
-function exit(): void {
-  if (practice.phase === 'running' && practice.graded.length < practice.total) {
-    if (!window.confirm('Sitzung beenden? Dein Fortschritt bleibt gespeichert.')) return;
-  }
+function localReturnPath(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/practice')) return undefined;
+  return value;
+}
+
+function returnTarget(): string {
+  const queryReturn = Array.isArray(route.query.returnTo) ? route.query.returnTo[0] : route.query.returnTo;
+  return localReturnPath(queryReturn) ?? localReturnPath(router.options.history.state.back) ?? '/';
+}
+
+function exitNow(): void {
   practice.abort();
-  void router.push('/');
+  void router.replace(returnTarget());
+}
+
+function exit(): void {
+  if (!exitArmed.value) {
+    exitArmed.value = true;
+    return;
+  }
+  exitNow();
+}
+
+function onDocumentPointerDown(ev: PointerEvent): void {
+  if (!exitArmed.value) return;
+  const target = ev.target;
+  if (target instanceof Node && exitButton.value?.contains(target)) return;
+  exitArmed.value = false;
 }
 
 function onKeydown(ev: KeyboardEvent): void {
@@ -183,10 +255,15 @@ function onKeydown(ev: KeyboardEvent): void {
   }
 }
 onMounted(() => window.addEventListener('keydown', onKeydown));
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown);
+  document.removeEventListener('pointerdown', onDocumentPointerDown);
+});
 
 const multiPart = computed(() => (current.value?.question.parts.length ?? 0) > 1);
 const summaryStats = computed(() => practice.summary);
+const showProgramRail = computed(() => practice.total > 1);
 
 /* --- session rail (left sidebar): the session's items + current position --- */
 interface RailItem {
@@ -216,30 +293,74 @@ const railItems = computed<RailItem[]>(() => {
   });
 });
 
+function jumpToSessionItem(index: number): void {
+  practice.jumpTo(index);
+  mobileRailOpen.value = false;
+}
+
 const gradedCount = computed(() => practice.graded.length);
 const sourceLine = computed(() => {
   const q = current.value?.question;
   if (!q) return '';
   return `${TERM_LABELS[q.source.term]} ${q.source.year} · ${q.source.part === 't1' ? 'Teil 1' : 'Teil 2'}`;
 });
+const officialAufgabenpoolUrl = computed(() => {
+  const refs = current.value?.question.externalRefs ?? [];
+  for (const ref of refs) {
+    if (
+      ref &&
+      typeof ref === 'object' &&
+      'system' in ref &&
+      'url' in ref &&
+      ref.system === 'aufgabenpool' &&
+      typeof ref.url === 'string' &&
+      ref.url.length > 0
+    ) {
+      return ref.url;
+    }
+  }
+  return null;
+});
+const currentCompetencyCodes = computed(() =>
+  [...new Set(current.value?.part.competencies.map((x) => x.code) ?? [])],
+);
 </script>
 
 <template>
-  <div class="practice q-app">
+  <div class="practice q-app" :class="{ 'practice--no-rail': !showProgramRail }">
     <!-- top bar -->
     <div class="practice__topbar">
-      <button type="button" class="practice__close" aria-label="Sitzung beenden" @click="exit">✕</button>
+      <button
+        ref="exitButton"
+        type="button"
+        class="practice__close"
+        :class="{ 'practice__close--armed': exitArmed }"
+        :aria-label="exitArmed ? 'Programm verlassen bestätigen' : 'Programm verlassen'"
+        @click.stop="exit"
+      >
+        <span class="practice__close-mark" aria-hidden="true">✕</span>
+        <span v-if="exitArmed" class="practice__close-text">exit?</span>
+      </button>
       <div class="practice__progress">
         <div class="practice__progress-label">
           <template v-if="practice.phase === 'running'">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
-          <template v-else-if="practice.phase === 'summary'">Sitzung abgeschlossen</template>
+          <template v-else-if="practice.phase === 'summary'">Programm abgeschlossen</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
         <div class="practice__progress-track">
           <div class="practice__progress-fill" :style="{ width: `${practice.phase === 'summary' ? 100 : progressPct}%` }" />
         </div>
       </div>
-      <span class="practice__spacer" />
+      <button
+        v-if="practice.phase === 'running' && showProgramRail"
+        type="button"
+        class="practice__session-button"
+        aria-label="Programmliste öffnen"
+        @click="mobileRailOpen = true"
+      >
+        ☰
+      </button>
+      <span v-else class="practice__spacer" />
     </div>
 
     <!-- loading -->
@@ -261,7 +382,7 @@ const sourceLine = computed(() => {
           {{ practice.error }} — ist der Inhalts-Server erreichbar? (Einstellungen → Serveradressen)
         </div>
         <div class="practice__actions-row">
-          <QButton variant="secondary" @click="exit">Zurück</QButton>
+          <QButton variant="secondary" @click="exitNow">Zurück</QButton>
           <QButton @click="start">Erneut versuchen</QButton>
         </div>
       </div>
@@ -270,7 +391,7 @@ const sourceLine = computed(() => {
     <!-- summary -->
     <div v-else-if="practice.phase === 'summary'" class="practice__center">
       <div class="practice__summary">
-        <h2 class="practice__summary-title">Sitzung abgeschlossen</h2>
+        <h2 class="practice__summary-title">Programm abgeschlossen</h2>
         <div v-if="summaryStats.count === 0" class="practice__error-text">
           Keine passenden Aufgaben gefunden — andere Filter probieren?
         </div>
@@ -301,8 +422,8 @@ const sourceLine = computed(() => {
           </div>
         </template>
         <div class="practice__actions-row">
-          <QButton variant="secondary" @click="start">Noch eine Sitzung</QButton>
-          <QButton @click="router.push('/')">Zur Startseite</QButton>
+          <QButton variant="secondary" @click="start">Noch ein Programm</QButton>
+          <QButton @click="exitNow">Zurück</QButton>
         </div>
       </div>
     </div>
@@ -310,57 +431,37 @@ const sourceLine = computed(() => {
     <!-- running -->
     <template v-else-if="practice.phase === 'running' && current">
       <div class="practice__body">
-        <!-- session rail: this session's questions + current position -->
-        <aside class="practice__rail" aria-label="Sitzungsübersicht">
-          <div class="practice__rail-head">
-            <span class="practice__rail-title">Sitzung</span>
-            <span class="practice__rail-count">{{ gradedCount }}/{{ practice.total }}</span>
-          </div>
-          <ol class="practice__rail-list">
-            <li v-for="item in railItems" :key="item.partId">
-              <button
-                type="button"
-                class="practice__rail-item"
-                :class="{
-                  'practice__rail-item--current': item.state === 'current',
-                  'practice__rail-item--done': item.state === 'correct' || item.state === 'partial' || item.state === 'incorrect',
-                }"
-                :disabled="!item.jumpable && item.state !== 'current'"
-                :title="item.state === 'current' ? 'Aktuelle Aufgabe' : item.jumpable ? 'Zu dieser Aufgabe springen' : 'Bereits beantwortet'"
-                @click="item.jumpable && practice.jumpTo(item.index)"
-              >
-                <span class="practice__rail-icon" aria-hidden="true">
-                  <StateIcon
-                    v-if="item.state === 'correct' || item.state === 'partial' || item.state === 'incorrect'"
-                    :state="item.state"
-                    :size="15"
-                  />
-                  <span v-else-if="item.state === 'current'" class="practice__rail-now">→</span>
-                  <span v-else class="practice__rail-pending" />
-                </span>
-                <span class="practice__rail-nr">{{ item.index + 1 }}</span>
-                <span class="practice__rail-label">
-                  {{ item.title }}<template v-if="item.partLabel"> · {{ item.partLabel }}</template>
-                </span>
-              </button>
-            </li>
-          </ol>
-        </aside>
+        <PracticeSessionRail
+          v-if="showProgramRail"
+          :items="railItems"
+          :graded-count="gradedCount"
+          :total="practice.total"
+          @jump="jumpToSessionItem"
+        />
+
+        <PracticeSessionDrawer
+          v-if="showProgramRail"
+          :open="mobileRailOpen"
+          :items="railItems"
+          :graded-count="gradedCount"
+          :total="practice.total"
+          @close="mobileRailOpen = false"
+          @jump="jumpToSessionItem"
+        />
 
         <div class="practice__content">
-        <!-- big inline header (feedback #3) -->
-        <header class="practice__qheader">
-          <div class="practice__qtitle-row">
-            <h1 class="practice__qtitle">{{ current.question.title }}</h1>
-            <StarButton :starred="currentStarred" @toggle="onStarToggle" />
-          </div>
-          <div class="practice__qmeta">
-            <QChip v-for="c in [...new Set(current.part.competencies.map((x) => x.code))]" :key="c">{{ c }}</QChip>
-            <GradingMenu :grading="currentGrading" @select="onGradingSelect" />
-            <span class="practice__qsource">{{ sourceLine }}</span>
-            <span v-if="current.part.points != null" class="practice__qpoints">{{ current.part.points }} P</span>
-          </div>
-        </header>
+        <PracticeQuestionHeader
+          :title="current.question.title"
+          :competency-codes="currentCompetencyCodes"
+          :grading="currentGrading"
+          :source-line="sourceLine"
+          :points="current.part.points"
+          :format="current.part.format"
+          :starred="currentStarred"
+          :official-url="officialAufgabenpoolUrl"
+          @grading-select="onGradingSelect"
+          @star-toggle="onStarToggle"
+        />
 
         <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
           <RichTextView :nodes="current.question.prompt" />
@@ -378,41 +479,17 @@ const sourceLine = computed(() => {
         </div>
       </div>
 
-      <!-- sticky bottom bar: solution sheet + nav row (feedback #2) -->
-      <div
-        class="practice__bottombar"
-        :class="{
-          'practice__bottombar--ok': playerState.result?.verdict === 'correct',
-          'practice__bottombar--err': playerState.result != null && playerState.result.verdict === 'incorrect',
-          'practice__bottombar--part': playerState.result?.verdict === 'partial' || playerState.phase === 'self-assessing',
-        }"
-      >
-        <SolutionSheet v-model:open="solutionOpen" :solution="current.part.solution" content-max-width="860px" />
-
-        <div class="practice__navrow">
-          <div class="practice__navrow-left">
-            <ResultPill v-if="playerState.result" :result="playerState.result" />
-            <span v-else-if="playerState.phase === 'self-assessing'" class="practice__nav-hint">
-              Mit der Lösung vergleichen und selbst bewerten
-            </span>
-            <span v-else class="practice__nav-hint practice__nav-hint--quiet">Antwort oben eintragen …</span>
-          </div>
-
-          <div class="practice__navrow-right">
-            <button
-              v-if="playerState.phase !== 'answering'"
-              type="button"
-              class="practice__solution-toggle"
-              :class="{ 'practice__solution-toggle--on': solutionOpen }"
-              :aria-expanded="solutionOpen"
-              @click="solutionOpen = !solutionOpen"
-            >
-              Lösung <span aria-hidden="true">{{ solutionOpen ? '▾' : '▴' }}</span>
-            </button>
-            <QButton :disabled="primaryDisabled" @click="primaryAction">{{ primaryLabel }}</QButton>
-          </div>
-        </div>
-      </div>
+      <PracticeBottomBar
+        v-model:solution-open="solutionOpen"
+        :state="playerState"
+        :answer-preview="playerState.answerPreview"
+        :solution="current.part.solution"
+        :primary-label="primaryLabel"
+        :primary-disabled="primaryDisabled"
+        @score-select="onSelfScoreSelect"
+        @grading-select="onSelfGradingSelect"
+        @primary="primaryAction"
+      />
 
       <div v-if="practice.warning" class="practice__warning">{{ practice.warning }}</div>
       <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
@@ -424,11 +501,14 @@ const sourceLine = computed(() => {
 
 <style scoped>
 .practice {
-  --practice-rail-width: 240px;
+  --practice-rail-width: var(--q-sidebar-width);
   min-height: 100vh;
   background: var(--q-card);
   display: flex;
   flex-direction: column;
+}
+.practice--no-rail {
+  --practice-rail-width: 0px;
 }
 .practice__topbar {
   height: 56px;
@@ -451,9 +531,35 @@ const sourceLine = computed(() => {
   color: var(--q-mut-2);
   font-size: 17px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  overflow: hidden;
+  transition:
+    width 0.16s ease,
+    color 0.16s ease,
+    background 0.16s ease;
 }
 .practice__close:hover {
   background: var(--q-panel);
+}
+.practice__close--armed {
+  width: 88px;
+  background: var(--q-err-bg);
+  color: var(--q-err);
+  font-weight: 800;
+}
+.practice__close--armed:hover {
+  background: var(--q-err-bg);
+}
+.practice__close-mark {
+  flex: none;
+}
+.practice__close-text {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
 }
 .practice__progress {
   flex: 1;
@@ -486,117 +592,29 @@ const sourceLine = computed(() => {
 .practice__spacer {
   width: 34px;
 }
+.practice__session-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  color: var(--q-mut-2);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  visibility: hidden;
+}
+.practice__session-button:hover {
+  background: var(--q-panel);
+}
 
 .practice__body {
   display: flex;
   flex: 1;
   min-height: 0;
   align-items: stretch;
-}
-
-/* session rail — replaces the app nav while practicing (desktop) */
-.practice__rail {
-  width: var(--practice-rail-width);
-  flex: none;
-  background: var(--q-panel);
-  border-right: 1px solid var(--q-border);
-  padding: 16px 10px;
-  overflow-y: auto;
-  position: sticky;
-  top: 56px;
-  height: calc(100vh - 56px);
-}
-.practice__rail-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 0 8px 10px;
-}
-.practice__rail-title {
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--q-faint);
-}
-.practice__rail-count {
-  font: 700 11px ui-monospace, Menlo, monospace;
-  color: var(--q-mut-2);
-}
-.practice__rail-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.practice__rail-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 8px;
-  border: none;
-  border-radius: 8px;
-  background: none;
-  color: var(--q-mut);
-  font: 500 12px 'Public Sans', system-ui, sans-serif;
-  text-align: left;
-  cursor: pointer;
-}
-.practice__rail-item:disabled {
-  cursor: default;
-}
-.practice__rail-item--done {
-  color: var(--q-faint);
-}
-.practice__rail-item--current {
-  background: var(--q-accent-bg);
-  color: var(--q-ink);
-  font-weight: 700;
-}
-.practice__rail-item:not(:disabled):hover {
-  background: var(--q-panel-2);
-}
-.practice__rail-item--current:hover {
-  background: var(--q-accent-bg);
-}
-.practice__rail-icon {
-  width: 16px;
-  display: inline-flex;
-  justify-content: center;
-  flex: none;
-}
-.practice__rail-now {
-  color: var(--q-accent-strong);
-  font-weight: 800;
-}
-.practice__rail-pending {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  border: 1.5px solid var(--q-btn-border);
-  display: inline-block;
-}
-.practice__rail-nr {
-  font: 600 10.5px ui-monospace, Menlo, monospace;
-  color: var(--q-faint);
-  width: 20px;
-  flex: none;
-  text-align: right;
-}
-.practice__rail-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-@media (max-width: 1023px) {
-  .practice__rail {
-    display: none;
-  }
 }
 
 .practice__content {
@@ -608,136 +626,12 @@ const sourceLine = computed(() => {
   min-width: 0;
 }
 
-/* big inline header */
-.practice__qheader {
-  border-bottom: 1px solid var(--q-border);
-  padding-bottom: 18px;
-  margin-bottom: 20px;
-}
-.practice__qtitle-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-}
-.practice__qtitle {
-  font-size: 34px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  margin: 0;
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: break-word;
-}
-.practice__qmeta {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
-  margin-top: 12px;
-}
-.practice__qsource {
-  font-size: 12.5px;
-  color: var(--q-mut-2);
-  font-weight: 500;
-}
-.practice__qpoints {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--q-mut-2);
-  background: var(--q-panel);
-  border: 1px solid var(--q-border-soft);
-  padding: 3px 10px;
-  border-radius: 20px;
-  white-space: nowrap;
-}
 .practice__qprompt {
   font-size: 15.5px;
   line-height: 1.65;
   margin-bottom: 18px;
 }
 
-/* sticky bottom bar */
-.practice__bottombar {
-  position: fixed;
-  bottom: 0;
-  left: var(--practice-rail-width);
-  right: 0;
-  z-index: 40;
-  background: var(--q-card);
-  border-top: 1px solid var(--q-border);
-  border-left: 1px solid var(--q-border);
-  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.25s ease;
-}
-.practice__bottombar--ok {
-  border-top-color: var(--q-ok-border);
-  background: color-mix(in srgb, var(--q-ok-bg) 35%, var(--q-card));
-}
-.practice__bottombar--err {
-  border-top-color: var(--q-err-border);
-  background: color-mix(in srgb, var(--q-err-bg) 35%, var(--q-card));
-}
-.practice__bottombar--part {
-  border-top-color: var(--q-part-border);
-  background: color-mix(in srgb, var(--q-part-bg) 35%, var(--q-card));
-}
-.practice__navrow {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  min-height: 68px;
-  flex-wrap: wrap;
-}
-.practice__navrow-left {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  min-width: 0;
-}
-.practice__navrow-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-}
-.practice__nav-hint {
-  font-size: 12.5px;
-  color: var(--q-part-ink);
-  font-weight: 600;
-}
-.practice__nav-hint--quiet {
-  color: var(--q-hint);
-  font-weight: 400;
-  font-style: italic;
-}
-.practice__solution-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 42px;
-  padding: 0 16px;
-  border-radius: 9px;
-  border: 1px solid var(--q-border-2);
-  background: var(--q-card);
-  color: var(--q-mut);
-  font: 700 11.5px 'Public Sans', system-ui, sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-}
-.practice__solution-toggle:hover {
-  color: var(--q-ink);
-  border-color: var(--q-border-3);
-}
-.practice__solution-toggle--on {
-  border-color: var(--q-accent);
-  color: var(--q-accent-strong);
-  background: var(--q-accent-bg);
-}
 .practice__warning {
   position: fixed;
   bottom: calc(76px + env(safe-area-inset-bottom));
@@ -885,25 +779,13 @@ const sourceLine = computed(() => {
 
 @media (max-width: 640px) {
   .practice__content {
-    padding: 18px 16px 230px;
-  }
-  .practice__qtitle {
-    font-size: 24px;
-  }
-  .practice__navrow {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-  .practice__navrow-right {
-    width: 100%;
-    justify-content: flex-end;
+    padding: 18px 16px 300px;
   }
 }
 
 @media (max-width: 1023px) {
-  .practice__bottombar {
-    left: 0;
-    border-left: none;
+  .practice__session-button {
+    visibility: visible;
   }
 }
 </style>

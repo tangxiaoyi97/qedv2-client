@@ -23,6 +23,8 @@ const SIZE = computed(() => props.size ?? 260);
 const CX = computed(() => SIZE.value / 2);
 const CY = computed(() => SIZE.value / 2);
 const R = computed(() => SIZE.value * 0.34);
+const LABEL_EDGE = computed(() => Math.max(18, SIZE.value * 0.07));
+const LABEL_OFFSET = computed(() => Math.max(26, SIZE.value * 0.1));
 const RINGS = [0.25, 0.5, 0.75, 1];
 
 function point(index: number, radius: number): { x: number; y: number } {
@@ -56,16 +58,37 @@ const valuePath = computed(() => {
 
 const labels = computed(() =>
   props.axes.map((a, i) => {
-    const p = point(i, R.value + 26);
-    const anchor = Math.abs(p.x - CX.value) < 4 ? 'middle' : p.x > CX.value ? 'start' : 'end';
-    return { ...a, x: p.x, y: p.y, anchor, dot: point(i, R.value * Math.min(1, Math.max(0, a.value))) };
+    const p = point(i, R.value + LABEL_OFFSET.value);
+    let x = p.x;
+    let y = p.y;
+    let anchor: 'start' | 'middle' | 'end' = 'middle';
+
+    if (p.x < CX.value - 4) {
+      x = LABEL_EDGE.value;
+      anchor = 'start';
+    } else if (p.x > CX.value + 4) {
+      x = SIZE.value - LABEL_EDGE.value;
+      anchor = 'end';
+    }
+
+    if (p.y < CY.value - 4) {
+      y = Math.max(y, LABEL_EDGE.value + 10);
+    } else if (p.y > CY.value + 4) {
+      y = Math.min(y, SIZE.value - LABEL_EDGE.value - 15);
+    }
+
+    return { ...a, x, y, anchor, dot: point(i, R.value * Math.min(1, Math.max(0, a.value))) };
   }),
 );
 </script>
 
 <template>
   <div class="q-radar" role="img" :aria-label="axes.map((a) => `${a.label}: ${Math.round(a.value * 100)} %`).join(', ')">
-    <svg :viewBox="`0 0 ${SIZE} ${SIZE}`" class="q-radar__svg">
+    <svg
+      :viewBox="`0 0 ${SIZE} ${SIZE}`"
+      class="q-radar__svg"
+      :style="{ '--q-radar-size': `${SIZE}px` }"
+    >
       <path
         v-for="ring in RINGS"
         :key="ring"
@@ -113,7 +136,7 @@ const labels = computed(() =>
 }
 .q-radar__svg {
   width: 100%;
-  max-width: 320px;
+  max-width: var(--q-radar-size, 320px);
   height: auto;
 }
 .q-radar__ring {

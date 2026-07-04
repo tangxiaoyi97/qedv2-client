@@ -78,6 +78,10 @@
   --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.05);
   --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.07);
   --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.22);
+  --q-backdrop-filter: blur(8px) saturate(0.9);
+
+  /* layout */
+  --q-sidebar-width: 240px;
 }
 
 [data-theme='dark'] {
@@ -152,6 +156,7 @@
   --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
   --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.45);
   --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --q-backdrop-filter: blur(10px) saturate(0.86);
 }
 
 /* base */
@@ -162,4 +167,9 @@
   -webkit-font-smoothing: antialiased;
   font-size: 14px;
   line-height: 1.55;
+}
+
+:where(.authm, .achoice, .conflict, .fdlg, .prog-modal, .practice-session-drawer__backdrop) {
+  -webkit-backdrop-filter: var(--q-backdrop-filter);
+  backdrop-filter: var(--q-backdrop-filter);
 }

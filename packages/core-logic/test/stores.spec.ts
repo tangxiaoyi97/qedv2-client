@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StoragePort } from '../src/ports/index.js';
 import { STORAGE } from '../src/ports/index.js';
-import { ArchiveStore, AuthStore, ConfigStore, QuestionCache, HistoryLog } from '../src/store/index.js';
+import { ArchiveStore, AuthStore, ConfigStore, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
 import { DEFAULT_CONFIG } from '../src/config/index.js';
 import { archiveChecksum } from '../src/sync/index.js';
 import { EXCLUDED_DUE_SENTINEL } from '../src/fsrs/index.js';
@@ -409,5 +409,23 @@ describe('QuestionCache', () => {
     const q2 = { ...question, id: 'q2' };
     await cache.putMany([question, q2]);
     expect(await storage.keys(STORAGE.questions)).toEqual(['q1', 'q2']);
+  });
+
+  it('hashes cached questions like the core manifest and ignores runtime-only fields', () => {
+    const hash = questionContentHash(question);
+    const withPlayable = { ...question, playable: true };
+    const reordered = {
+      title: question.title,
+      source: question.source,
+      status: question.status,
+      schemaVersion: question.schemaVersion,
+      parts: question.parts,
+      lang: question.lang,
+      id: question.id,
+    } as unknown as Question;
+
+    expect(questionContentHash(withPlayable)).toBe(hash);
+    expect(questionContentHash(reordered)).toBe(hash);
+    expect(questionContentHash({ ...question, title: 'Andere Frage' })).not.toBe(hash);
   });
 });

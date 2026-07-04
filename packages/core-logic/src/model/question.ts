@@ -1,6 +1,6 @@
 /**
  * Question model — mirrors the bank's authoritative Zod schema
- * (srdpmppr `schema/question.ts`, schemaVersion 2) as consumed through the
+ * (srdpmppr `schema/question.ts`, schemaVersion 2/3) as consumed through the
  * qed2-core API (contract §1.1 / §3.1). The client never redefines semantics;
  * these types describe what the wire actually carries.
  */
@@ -52,6 +52,17 @@ export interface MatchingAnswer {
   right: RichText[];
   /** Correct pairs as [leftIndex, rightIndex]. */
   pairs: [number, number][];
+  /**
+   * v3 display/answer constraint: each left item can only choose from the
+   * right indices in its candidate group. Grading still uses only `pairs`.
+   */
+  candidateGroups?: MatchingCandidateGroup[];
+}
+
+export interface MatchingCandidateGroup {
+  leftIndices: number[];
+  rightIndices: number[];
+  label?: RichText;
 }
 
 export interface NumericBlank {

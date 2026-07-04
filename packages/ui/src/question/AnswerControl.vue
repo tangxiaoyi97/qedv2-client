@@ -24,6 +24,7 @@ const props = defineProps<{
   modelValue: Submission;
   result?: GradeResult | null;
   indeterminate?: boolean;
+  showPreview?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: Submission] }>();
@@ -60,6 +61,7 @@ function up(value: Submission): void {
     :answer="answer"
     :model-value="modelValue as IntervalSubmission"
     :result="result"
+    :show-preview="showPreview !== false"
     @update:model-value="(v: IntervalSubmission) => up(v)"
   />
   <ExpressionControl

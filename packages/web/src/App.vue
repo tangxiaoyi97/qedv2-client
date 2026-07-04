@@ -146,7 +146,7 @@ function isActive(to: string): boolean {
 
 /* sidebar (desktop) */
 .app__sidebar {
-  width: 212px;
+  width: var(--q-sidebar-width);
   flex: none;
   background: var(--q-panel);
   border-right: 1px solid var(--q-border);

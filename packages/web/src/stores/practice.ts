@@ -9,6 +9,7 @@
  */
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
+import { questionContentHash } from '@qed2/core-logic';
 import type {
   FsrsState,
   GradeResult,
@@ -92,10 +93,26 @@ export const usePracticeStore = defineStore('practice', () => {
     const unique = [...new Set(ids)];
     const missing: string[] = [];
     const map = new Map<string, Question>();
+    const stale = new Map<string, Question>();
+    let manifest: Awaited<ReturnType<typeof app.coreClient.manifest>> | undefined;
+    try {
+      manifest = await app.coreClient.manifest();
+    } catch {
+      manifest = undefined;
+    }
     for (const id of unique) {
       const cached = await questionCache.get(id);
-      if (cached) map.set(id, cached);
-      else missing.push(id);
+      if (!cached) {
+        missing.push(id);
+        continue;
+      }
+      const expectedHash = manifest?.items[id];
+      if (!manifest || (expectedHash && questionContentHash(cached) === expectedHash)) {
+        map.set(id, cached);
+      } else {
+        stale.set(id, cached);
+        missing.push(id);
+      }
     }
     if (missing.length > 0) {
       try {
@@ -103,8 +120,11 @@ export const usePracticeStore = defineStore('practice', () => {
         for (const q of res.questions) map.set(q.id, q);
         await questionCache.putMany(res.questions);
       } catch (e) {
+        for (const [id, q] of stale) {
+          if (!map.has(id)) map.set(id, q);
+        }
         if (map.size === 0) throw e;
-        warning.value = `${missing.length} Aufgaben konnten nicht geladen werden — Sitzung läuft mit ${map.size} gespeicherten weiter.`;
+        warning.value = `${missing.length} Aufgaben konnten nicht geladen werden — Programm läuft mit ${map.size} gespeicherten weiter.`;
       }
     }
     questions.value = map;

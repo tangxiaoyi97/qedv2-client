@@ -201,7 +201,7 @@ export const useProgressStore = defineStore('progress', () => {
       if (e instanceof NetworkError) {
         syncStatus.value = { state: 'offline', at: new Date() };
       } else if (e instanceof ApiError && e.status === 401) {
-        syncStatus.value = { state: 'error', message: 'Sitzung abgelaufen — bitte neu anmelden.', at: new Date() };
+        syncStatus.value = { state: 'error', message: 'Anmeldung abgelaufen — bitte neu anmelden.', at: new Date() };
       } else {
         syncStatus.value = { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
         if (!opts.quiet) throw e;

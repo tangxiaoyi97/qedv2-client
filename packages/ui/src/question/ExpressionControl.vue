@@ -91,11 +91,7 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
     <div v-if="!review" class="q-expr__hint">^ Potenz · * Mal · / Bruch · sqrt() Wurzel · Komma oder Punkt</div>
 
     <template v-if="review">
-      <div v-if="indeterminate" class="q-expr__indet-note">
-        <StateIcon state="partial" :size="20" />
-        <span>Automatische Prüfung nicht möglich — bitte selbst vergleichen.</span>
-      </div>
-      <div v-else-if="result" class="q-expr__verdict-note">
+      <div v-if="result" class="q-expr__verdict-note">
         <StateIcon :state="result.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
         <span>{{ result.verdict === 'correct' ? 'Richtig' : 'Falsch' }}</span>
       </div>
@@ -187,7 +183,6 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
   font: 500 11px ui-monospace, Menlo, monospace;
   color: var(--q-hint);
 }
-.q-expr__indet-note,
 .q-expr__verdict-note {
   margin-top: 12px;
   display: flex;

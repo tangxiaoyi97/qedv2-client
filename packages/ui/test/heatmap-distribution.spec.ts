@@ -84,19 +84,18 @@ describe('GradingDistribution', () => {
     expect(segs).toHaveLength(2); // zero states skipped
     expect(segs[0]!.classes()).toContain('q-dist__seg--good');
     expect(segs[1]!.classes()).toContain('q-dist__seg--baffled');
-    const widthOf = (s: (typeof segs)[number]) =>
-      Number.parseFloat(/width:\s*([\d.]+)%/.exec(s.attributes('style') ?? '')?.[1] ?? '0');
-    const good = widthOf(segs[0]!);
-    const baffled = widthOf(segs[1]!);
+    const lengthOf = (s: (typeof segs)[number]) =>
+      Number.parseFloat((s.attributes('stroke-dasharray') ?? '').split(' ')[0] ?? '0');
+    const good = lengthOf(segs[0]!);
+    const baffled = lengthOf(segs[1]!);
     expect(good).toBeGreaterThan(baffled); // 2 good vs 1 baffled
-    expect(good).toBeCloseTo((2 / 3) * 100, 3);
-    expect(baffled).toBeCloseTo((1 / 3) * 100, 3);
+    expect(good / (good + baffled)).toBeCloseTo(2 / 3, 3);
+    expect(baffled / (good + baffled)).toBeCloseTo(1 / 3, 3);
   });
 
-  it('renders a full track bar when the total is 0', () => {
+  it('renders a full track donut when the total is 0', () => {
     const w = mount(GradingDistribution, { props: { counts: counts() } });
-    expect(w.find('.q-dist__bar').exists()).toBe(true);
-    expect(w.find('.q-dist__bar').classes()).toContain('q-dist__bar--empty');
+    expect(w.find('.q-dist__track').exists()).toBe(true);
     expect(w.findAll('.q-dist__seg')).toHaveLength(0);
   });
 
@@ -109,7 +108,7 @@ describe('GradingDistribution', () => {
     expect(w.findAll('.q-grading-dot')).toHaveLength(5);
     expect(w.text()).toContain('Gut');
     expect(w.text()).toContain('Ausgeschlossen');
-    expect(w.text()).not.toContain('Ungesehen');
+    expect(w.text()).not.toContain('Neu');
     expect(items[0]!.text()).toContain('2');
     expect(items[3]!.text()).toContain('1');
   });
@@ -120,13 +119,48 @@ describe('GradingDistribution', () => {
     });
     const items = w.findAll('.q-dist__item');
     expect(items).toHaveLength(6);
-    expect(items[5]!.text()).toContain('Ungesehen');
+    expect(items[5]!.text()).toContain('Neu');
     expect(items[5]!.text()).toContain('3');
     const segs = w.findAll('.q-dist__seg');
     expect(segs).toHaveLength(2);
     expect(segs[1]!.classes()).toContain('q-dist__seg--unseen');
-    expect(segs[0]!.attributes('style')).toContain('width: 25%');
-    expect(segs[1]!.attributes('style')).toContain('width: 75%');
+    const lengths = segs.map((s) =>
+      Number.parseFloat((s.attributes('stroke-dasharray') ?? '').split(' ')[0] ?? '0'),
+    );
+    expect(lengths[0]! / (lengths[0]! + lengths[1]!)).toBeCloseTo(0.25, 3);
+    expect(lengths[1]! / (lengths[0]! + lengths[1]!)).toBeCloseTo(0.75, 3);
+  });
+
+  it('emits selected state from chart and legend', async () => {
+    const w = mount(GradingDistribution, {
+      props: { counts: counts({ good: 2, baffled: 1 }) },
+    });
+    await w.find('.q-dist__seg--good').trigger('click');
+    await w.findAll('.q-dist__item-button')[3]!.trigger('click');
+    expect(w.emitted('select')).toEqual([['good'], ['baffled']]);
+  });
+
+  it('links chart hover/focus with legend hover/focus highlighting', async () => {
+    const w = mount(GradingDistribution, {
+      props: { counts: counts({ good: 2, baffled: 1 }) },
+    });
+    const goodSeg = w.find('.q-dist__seg--good');
+    const baffledSeg = w.find('.q-dist__seg--baffled');
+    const buttons = w.findAll('.q-dist__item-button');
+
+    await goodSeg.trigger('pointerenter');
+    expect(goodSeg.classes()).toContain('q-dist__seg--active');
+    expect(baffledSeg.classes()).toContain('q-dist__seg--dimmed');
+    expect(buttons[0]!.classes()).toContain('q-dist__item-button--active');
+    expect(buttons[3]!.classes()).toContain('q-dist__item-button--dimmed');
+
+    await goodSeg.trigger('pointerleave');
+    expect(w.find('.q-dist').classes()).not.toContain('q-dist--has-active');
+
+    await buttons[3]!.trigger('pointerenter');
+    expect(w.find('.q-dist__seg--baffled').classes()).toContain('q-dist__seg--active');
+    expect(w.find('.q-dist__seg--good').classes()).toContain('q-dist__seg--dimmed');
+    expect(buttons[3]!.classes()).toContain('q-dist__item-button--active');
   });
 });
 

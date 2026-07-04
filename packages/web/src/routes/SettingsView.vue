@@ -9,6 +9,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
+import { LOCALE_LABELS, type Locale } from '../i18n.js';
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -24,6 +25,11 @@ const THEMES: { value: ThemePref; label: string }[] = [
   { value: 'dark', label: 'Dunkel' },
   { value: 'system', label: 'System' },
 ];
+const LOCALES: Locale[] = ['de', 'en'];
+
+function onLocaleChange(ev: Event): void {
+  ui.setLocale((ev.target as HTMLSelectElement).value as Locale);
+}
 
 const form = reactive({
   coreBaseUrl: app.config.coreBaseUrl,
@@ -155,11 +161,18 @@ async function doLogout(): Promise<void> {
 
     <div class="settings__row">
       <div>
-        <div class="settings__row-title">Sprache</div>
-        <div class="settings__row-sub">Oberfläche</div>
+        <div class="settings__row-title">{{ ui.t('settingsLanguage') }}</div>
+        <div class="settings__row-sub">{{ ui.t('settingsLanguageHint') }}</div>
       </div>
-      <select class="settings__select" disabled aria-label="Sprache">
-        <option>Deutsch</option>
+      <select
+        class="settings__select"
+        aria-label="Sprache"
+        :value="ui.locale"
+        @change="onLocaleChange"
+      >
+        <option v-for="locale in LOCALES" :key="locale" :value="locale">
+          {{ LOCALE_LABELS[locale] }}
+        </option>
       </select>
     </div>
 

@@ -4,10 +4,16 @@
  * parts and for `expression` parts the CAS could not decide.
  *
  * rubric scoring → one checkbox per criterion (its points on the right);
- * anything else → segmented Nicht/Teilweise/Richtig mapping to none|partial|full.
+ * anything else → the exact point totals supported by the part's scoring.
  */
 import { computed } from 'vue';
 import type { RichText, Scoring, SelfAssessment } from '@qed2/core-logic';
+import {
+  formatScore,
+  sameScore,
+  selfAssessmentOverallForScore,
+  type SelfAssessmentScoreOption,
+} from '../practice/self-assessment.js';
 import RichTextView from '../shared/RichTextView.vue';
 
 const props = defineProps<{
@@ -15,6 +21,7 @@ const props = defineProps<{
   rubric?: RichText | null;
   maxPoints: number;
   modelValue: SelfAssessment;
+  scoreOptions?: SelfAssessmentScoreOption[];
   disabled?: boolean;
 }>();
 
@@ -22,12 +29,23 @@ const emit = defineEmits<{ 'update:modelValue': [value: SelfAssessment] }>();
 
 const rubricMode = computed(() => props.scoring?.mode === 'rubric');
 const criteria = computed(() => (props.scoring?.mode === 'rubric' ? props.scoring.criteria : []));
+const scoreOptions = computed<SelfAssessmentScoreOption[]>(() =>
+  props.scoreOptions && props.scoreOptions.length > 0
+    ? props.scoreOptions
+    : [
+        { points: 0, label: formatScore(0) },
+        { points: props.maxPoints, label: formatScore(props.maxPoints) },
+      ],
+);
 
 const met = computed(() =>
   criteria.value.map((_, i) => props.modelValue.criteriaMet?.[i] === true),
 );
 
 const points = computed(() => {
+  if (typeof props.modelValue.awardedPoints === 'number' && Number.isFinite(props.modelValue.awardedPoints)) {
+    return props.modelValue.awardedPoints;
+  }
   if (rubricMode.value) {
     let sum = 0;
     criteria.value.forEach((c, i) => {
@@ -47,16 +65,23 @@ function toggleCriterion(i: number): void {
   emit('update:modelValue', { ...props.modelValue, criteriaMet: next });
 }
 
-function setOverall(v: 'none' | 'partial' | 'full'): void {
+function setPoints(value: number): void {
   if (props.disabled) return;
-  emit('update:modelValue', { ...props.modelValue, overall: v });
+  emit('update:modelValue', {
+    ...props.modelValue,
+    awardedPoints: value,
+    overall: selfAssessmentOverallForScore(value, props.maxPoints),
+  });
 }
 
-const OVERALL = [
-  { value: 'none', label: 'Nicht' },
-  { value: 'partial', label: 'Teilweise' },
-  { value: 'full', label: 'Richtig' },
-] as const;
+function scoreTone(value: number): 'none' | 'partial' | 'full' {
+  const overall = selfAssessmentOverallForScore(value, props.maxPoints);
+  return overall === 'none' ? 'none' : overall === 'full' ? 'full' : 'partial';
+}
+
+function isSelectedScore(value: number): boolean {
+  return sameScore(props.modelValue.awardedPoints, value);
+}
 </script>
 
 <template>
@@ -90,23 +115,23 @@ const OVERALL = [
     </div>
 
     <div v-else class="q-selfassess__overall">
-      <span class="q-selfassess__overall-label">Meine Wertung:</span>
+      <span class="q-selfassess__overall-label">Meine Punkte:</span>
       <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung">
         <button
-          v-for="o in OVERALL"
-          :key="o.value"
+          v-for="option in scoreOptions"
+          :key="option.points"
           type="button"
           class="q-selfassess__segment"
           :class="{
-            'q-selfassess__segment--on': modelValue.overall === o.value,
-            [`q-selfassess__segment--${o.value}`]: modelValue.overall === o.value,
+            'q-selfassess__segment--on': isSelectedScore(option.points),
+            [`q-selfassess__segment--${scoreTone(option.points)}`]: isSelectedScore(option.points),
           }"
           role="radio"
-          :aria-checked="modelValue.overall === o.value"
+          :aria-checked="isSelectedScore(option.points)"
           :disabled="disabled"
-          @click="setOverall(o.value)"
+          @click="setPoints(option.points)"
         >
-          {{ o.label }}
+          {{ option.label }}
         </button>
       </div>
     </div>

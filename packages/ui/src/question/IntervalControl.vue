@@ -8,11 +8,13 @@ import { computed } from 'vue';
 import type { GradeResult, IntervalAnswer } from '@qed2/core-logic';
 import type { IntervalSubmission } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
+import { formatIntervalSubmissionPreview } from './submission-preview.js';
 
 const props = defineProps<{
   answer: IntervalAnswer;
   modelValue: IntervalSubmission;
   result?: GradeResult | null;
+  showPreview?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: IntervalSubmission] }>();
@@ -28,21 +30,7 @@ function fmtNum(n: number): string {
   return n.toLocaleString('de-AT', { maximumFractionDigits: 6 });
 }
 
-/** Preview text of a bound: raw input, or ∞ glyphs when empty/inf. */
-function boundText(raw: string, side: 'lower' | 'upper'): string {
-  const t = raw.trim().toLowerCase();
-  if (t === '' || t === 'inf' || t === '-inf' || t === 'oo' || t === '-oo' || t === '∞' || t === '-∞') {
-    return side === 'lower' ? '−∞' : '∞';
-  }
-  return raw.trim();
-}
-
-const preview = computed(() => {
-  const m = props.modelValue;
-  const lb = m.lowerClosed && !isUnbounded(m.lower) ? '[' : '(';
-  const ub = m.upperClosed && !isUnbounded(m.upper) ? ']' : ')';
-  return `${lb} ${boundText(m.lower, 'lower')} ; ${boundText(m.upper, 'upper')} ${ub}`;
-});
+const preview = computed(() => formatIntervalSubmissionPreview(props.modelValue));
 
 function isUnbounded(raw: string): boolean {
   const t = raw.trim().toLowerCase();
@@ -111,32 +99,32 @@ const correctNotation = computed(() => {
           <button
             type="button"
             class="q-interval__bracket"
-            :class="{ 'q-interval__bracket--on': !modelValue.upperClosed }"
-            :disabled="review"
-            @click="patch({ upperClosed: false })"
-          >
-            )
-          </button>
-          <button
-            type="button"
-            class="q-interval__bracket"
             :class="{ 'q-interval__bracket--on': modelValue.upperClosed }"
             :disabled="review"
             @click="patch({ upperClosed: true })"
           >
             ]
           </button>
+          <button
+            type="button"
+            class="q-interval__bracket"
+            :class="{ 'q-interval__bracket--on': !modelValue.upperClosed }"
+            :disabled="review"
+            @click="patch({ upperClosed: false })"
+          >
+            )
+          </button>
         </div>
         <span class="q-interval__toggle-label">{{ modelValue.upperClosed ? 'geschl.' : 'offen' }}</span>
       </div>
     </div>
 
-    <div v-if="!review" class="q-interval__preview">
+    <div v-if="!review && showPreview !== false" class="q-interval__preview">
       Ergebnis: <b class="q-interval__preview-val">{{ preview }}</b>
       <span class="q-interval__hint">leer oder ∞ = unbeschränkt · Komma oder Punkt</span>
     </div>
 
-    <div v-else class="q-interval__review">
+    <div v-else-if="review" class="q-interval__review">
       <div
         class="q-interval__verdict"
         :class="result!.verdict === 'correct' ? 'q-interval__verdict--ok' : 'q-interval__verdict--err'"

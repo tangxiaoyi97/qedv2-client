@@ -9,6 +9,26 @@ import type { OpenAnswer, Scoring } from '../model/question.js';
 import type { BreakdownItem, GradeResult, OpenSubmission } from './types.js';
 import { applyScoring, resolveVerdict } from './scoring.js';
 
+const EPS = 1e-9;
+
+function roundPoints(points: number): number {
+  return Math.round(points * 100) / 100;
+}
+
+function maxPointsFor(scoring: Scoring | undefined, fallbackPoints: number | undefined): number {
+  if (scoring === undefined) return fallbackPoints ?? 1;
+  switch (scoring.mode) {
+    case 'allOrNothing':
+      return scoring.points;
+    case 'perBlank':
+      return scoring.max;
+    case 'tiered':
+      return scoring.tiers.reduce((max, tier) => Math.max(max, tier.points), 0);
+    case 'rubric':
+      return scoring.criteria.reduce((sum, criterion) => sum + criterion.points, 0);
+  }
+}
+
 export function gradeOpen(
   answer: OpenAnswer,
   submission: OpenSubmission,
@@ -16,6 +36,14 @@ export function gradeOpen(
   points: number | undefined,
 ): GradeResult {
   void answer; // rubric RichText + grader flag are presentation-only in v1
+  const manualPoints = submission.selfAssessment.awardedPoints;
+  if (typeof manualPoints === 'number' && Number.isFinite(manualPoints)) {
+    const maxPoints = maxPointsFor(scoring, points);
+    const awardedPoints = roundPoints(Math.min(Math.max(manualPoints, 0), maxPoints));
+    const full = awardedPoints >= maxPoints - EPS;
+    const verdict = resolveVerdict(awardedPoints, maxPoints, full);
+    return { verdict, correct: verdict === 'correct', awardedPoints, maxPoints };
+  }
 
   if (scoring?.mode === 'rubric') {
     const met = submission.selfAssessment.criteriaMet ?? [];

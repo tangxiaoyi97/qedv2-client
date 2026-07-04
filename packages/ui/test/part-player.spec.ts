@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import type { GradeResult, Question, QuestionPart, Submission } from '@qed2/core-logic';
+import type { GradeResult, Grading, Question, QuestionPart, Submission } from '@qed2/core-logic';
 import PartPlayer from '../src/practice/PartPlayer.vue';
 import type { PartPlayerState } from '../src/practice/part-player-types.js';
 import fixture from '../../core-logic/test/fixtures/sample-questions.json';
@@ -16,10 +16,16 @@ function partOf(questionId: string): QuestionPart {
 
 // choice "2 aus 5", correct [1, 3], allOrNothing 1 P
 const choicePart = partOf('2019-ht-t1-01');
+const intervalPart = partOf('2019-ht-t1-03');
 // open (Konstruktionsformat) with rubric, allOrNothing 1 P
 const openPart = partOf('2019-ht-t1-04');
 
-type Exposed = { submit: () => void; confirmSelfAssessment: () => void };
+type Exposed = {
+  submit: () => void;
+  confirmSelfAssessment: () => void;
+  setSelfAssessmentScore: (points: number) => void;
+  setSelfAssessmentGrading: (grading: Grading) => void;
+};
 
 function exposed(wrapper: ReturnType<typeof mount>): Exposed {
   return wrapper.vm as unknown as Exposed;
@@ -29,7 +35,13 @@ function states(wrapper: ReturnType<typeof mount>): PartPlayerState[] {
   return (wrapper.emitted('state') ?? []).map((args) => args[0] as PartPlayerState);
 }
 
-type GradedPayload = { partId: string; result: GradeResult; submission: Submission; selfAssessed: boolean };
+type GradedPayload = {
+  partId: string;
+  result: GradeResult;
+  submission: Submission;
+  selfAssessed: boolean;
+  manualGrading?: Grading;
+};
 
 describe('PartPlayer (chromeless shell contract)', () => {
   it('emits state on mount and tracks canSubmit while the user answers', async () => {
@@ -48,10 +60,10 @@ describe('PartPlayer (chromeless shell contract)', () => {
       unplayable: false,
     });
 
-    // part head unchanged: label + format chip + points chip
+    // chromeless practice owns format + points in the surrounding header.
     expect(wrapper.text()).toContain('Teil a');
-    expect(wrapper.text()).toContain('2 aus 5');
-    expect(wrapper.text()).toContain('1 P');
+    expect(wrapper.find('.q-part__head .q-chip').exists()).toBe(false);
+    expect(wrapper.find('.q-part__points').exists()).toBe(false);
 
     // one pick of two → still incomplete
     const options = wrapper.findAll('button.q-choice__opt');
@@ -108,6 +120,27 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(wrapper.find('.q-part__key-hint').exists()).toBe(false);
   });
 
+  it('exposes interval previews to the shell instead of rendering them in chromeless mode', async () => {
+    const wrapper = mount(PartPlayer, {
+      props: { part: intervalPart, chromeless: true },
+    });
+
+    expect(wrapper.find('.q-interval__preview').exists()).toBe(false);
+    expect(states(wrapper).at(-1)!.answerPreview).toEqual({
+      label: 'Ergebnis',
+      value: '( −∞ ; ∞ )',
+      hint: 'leer oder ∞ = unbeschränkt · Komma oder Punkt',
+    });
+
+    const inputs = wrapper.findAll('input.q-interval__input');
+    expect(inputs).toHaveLength(2);
+    await inputs[0]!.setValue('-12');
+    await inputs[1]!.setValue('-8');
+    await nextTick();
+
+    expect(states(wrapper).at(-1)!.answerPreview?.value).toBe('[ -12 ; -8 ]');
+  });
+
   it('open part: submit() → self-assessing (no grade yet), confirmSelfAssessment() emits selfAssessed:true', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: openPart, label: 'Teil a', chromeless: true },
@@ -125,17 +158,17 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(selfState.phase).toBe('self-assessing');
     expect(selfState.result).toBeNull();
 
-    // SelfAssessmentPanel incl. the open part's rubric is inside the player…
-    expect(wrapper.find('.q-selfassess').exists()).toBe(true);
-    expect(wrapper.text()).toContain('Bewertungsraster');
-    // …but the solution + confirm button belong to the shell (SolutionSheet auto-opens there)
+    // The shell owns self-assessment controls in chromeless mode.
+    expect(wrapper.find('.q-selfassess').exists()).toBe(false);
+    expect(selfState.selfAssessment?.scoreOptions.map((option) => option.points)).toEqual([0, 1]);
+    expect(selfState.selfAssessment?.selectedPoints).toBeNull();
+    // The solution + confirm button belong to the shell (SolutionSheet auto-opens there)
     expect(wrapper.find('.q-solution').exists()).toBe(false);
     expect(wrapper.find('.q-part__actions').exists()).toBe(false);
 
-    // pick "Richtig" (overall: full) in the panel, then the shell confirms
-    const segments = wrapper.findAll('button.q-selfassess__segment');
-    expect(segments).toHaveLength(3);
-    await segments[2]!.trigger('click');
+    // The shell picks the score/mastery controls, then confirms.
+    exposed(wrapper).setSelfAssessmentScore(1);
+    exposed(wrapper).setSelfAssessmentGrading('good');
     exposed(wrapper).confirmSelfAssessment();
     await nextTick();
 
@@ -146,8 +179,10 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(payload.selfAssessed).toBe(true);
     expect(payload.result.verdict).toBe('correct');
     expect(payload.result.awardedPoints).toBe(1);
+    expect(payload.manualGrading).toBe('good');
     expect(payload.submission.kind).toBe('open');
-    expect((payload.submission as { selfAssessment: { overall?: string } }).selfAssessment.overall).toBe('full');
+    expect((payload.submission as { selfAssessment: { awardedPoints?: number; overall?: string } }).selfAssessment.awardedPoints).toBe(1);
+    expect((payload.submission as { selfAssessment: { awardedPoints?: number; overall?: string } }).selfAssessment.overall).toBe('full');
 
     expect(states(wrapper).at(-1)!.phase).toBe('reviewed');
   });

@@ -40,7 +40,7 @@ describe('GradingDot', () => {
 
     const unseen = mount(GradingDot, { props: { grading: 'unseen' } });
     expect(unseen.find('circle').attributes('stroke')).toBe('var(--q-btn-border)');
-    expect(unseen.attributes('aria-label')).toBe('Ungesehen');
+    expect(unseen.attributes('aria-label')).toBe('Neu');
   });
 
   it('sizes via the size prop (default 14) and takes a custom title', () => {
@@ -65,7 +65,7 @@ describe('GradingCapsule', () => {
 
     const unseen = mount(GradingCapsule, { props: { grading: 'unseen' } });
     expect(unseen.classes()).toContain('q-grading-capsule--neutral');
-    expect(unseen.text()).toContain('Ungesehen');
+    expect(unseen.text()).toContain('Neu');
   });
 
   it('renders as a button with caret and emits click when interactive', async () => {
@@ -94,7 +94,7 @@ describe('GradingMenu', () => {
     for (const g of ['good', 'careless', 'meh', 'baffled', 'excluded'] as const) {
       expect(text).toContain(GRADING_LABELS[g]);
     }
-    expect(text).not.toContain('Ungesehen');
+    expect(text).not.toContain('Neu');
     // hint texts present
     expect(text).toContain('Eigentlich gekonnt');
     expect(text).toContain('Nie wieder üben');

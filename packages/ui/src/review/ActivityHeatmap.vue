@@ -16,7 +16,11 @@ const props = defineProps<{
   weeks?: number;
   /** Last day shown, LOCAL 'YYYY-MM-DD' (default: today). */
   endDate?: string;
+  /** Selected LOCAL day key. */
+  selectedDate?: string | null;
 }>();
+
+const emit = defineEmits<{ select: [date: string] }>();
 
 const CELL = 11;
 const GAP = 2;
@@ -181,6 +185,12 @@ const svgHeight = TOP + 7 * PITCH - GAP;
             :key="cell.key"
             class="q-heat__cell"
             :class="`q-heat__cell--b${cell.bucket}`"
+            role="button"
+            tabindex="0"
+            :aria-label="cell.title"
+            @click="emit('select', cell.key)"
+            @keydown.enter.prevent="emit('select', cell.key)"
+            @keydown.space.prevent="emit('select', cell.key)"
           >
             <title>{{ cell.title }}</title>
             <rect
@@ -255,6 +265,12 @@ const svgHeight = TOP + 7 * PITCH - GAP;
 }
 .q-heat__base {
   fill: var(--q-track);
+}
+.q-heat__cell {
+  cursor: pointer;
+}
+.q-heat__cell:focus {
+  outline: none;
 }
 .q-heat__fill {
   fill: var(--q-accent);

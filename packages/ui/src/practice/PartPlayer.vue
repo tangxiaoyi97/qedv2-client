@@ -18,10 +18,10 @@
  *    existing consumer keeps working unchanged.
  *  - chromeless=true (practice page): the shell owns the feedback pill, the
  *    solution sheet and the primary action button (sticky bottom bar).
- *    PartPlayer renders only the part head, prompt, AnswerControl and — while
- *    self-assessing — the SelfAssessmentPanel (incl. the open part's rubric).
- *    It reports every phase/canSubmit/result change via the `state` event and
- *    exposes submit()/confirmSelfAssessment() for the shell to trigger.
+ *    PartPlayer renders only the part head, prompt and AnswerControl. It
+ *    reports every phase/canSubmit/result/self-assessment change via the
+ *    `state` event and exposes submit()/confirmSelfAssessment() for the shell
+ *    to trigger.
  *    During 'self-assessing' the user must compare against the official
  *    solution: the SHELL auto-opens its SolutionSheet when it sees that state.
  */
@@ -30,6 +30,7 @@ import {
   grade,
   isIndeterminate,
   type GradeResult,
+  type Grading,
   type QuestionPart,
   type SelfAssessment,
   type Submission,
@@ -38,6 +39,16 @@ import type { PartPlayerState } from './part-player-types.js';
 import { emptySubmission, isSubmissionComplete } from '../question/submission-defaults.js';
 import AnswerControl from '../question/AnswerControl.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
+import { answerPreview } from '../question/submission-preview.js';
+import {
+  defaultGradingForScore,
+  gradeResultFromScore,
+  maxPointsForScoring,
+  sameScore,
+  scoreOptionsForPart,
+  selectedPointsFromAssessment,
+  selfAssessmentOverallForScore,
+} from './self-assessment.js';
 import RichTextView from '../shared/RichTextView.vue';
 import QButton from '../shared/QButton.vue';
 import QChip from '../shared/QChip.vue';
@@ -51,7 +62,13 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  graded: [payload: { partId: string; result: GradeResult; submission: Submission; selfAssessed: boolean }];
+  graded: [payload: {
+    partId: string;
+    result: GradeResult;
+    submission: Submission;
+    selfAssessed: boolean;
+    manualGrading?: Grading;
+  }];
   state: [payload: PartPlayerState];
 }>();
 
@@ -62,21 +79,38 @@ const result = ref<GradeResult | null>(null);
 const indeterminate = ref(false);
 const indeterminateMax = ref(1);
 const selfAssessment = ref<SelfAssessment>({});
+const selfAssessmentPoints = ref<number | null>(null);
+const selfAssessmentGrading = ref<Grading | null>(null);
 
 const answer = computed(() => props.part.answer);
 const submission = ref<Submission | null>(answer.value ? emptySubmission(answer.value) : null);
+const currentAnswerPreview = computed(() =>
+  answer.value && submission.value ? answerPreview(answer.value, submission.value) : null,
+);
+const showPartHead = computed(() =>
+  props.label != null || (!props.chromeless && (props.part.format != null || props.part.points != null)),
+);
 
 const canSubmit = computed(
   () => answer.value != null && submission.value != null && isSubmissionComplete(answer.value, submission.value),
 );
 
 const maxPointsForSelf = computed(() => {
-  if (props.part.scoring?.mode === 'rubric') {
-    return props.part.scoring.criteria.reduce((s, c) => s + c.points, 0);
-  }
-  if (props.part.scoring?.mode === 'allOrNothing') return props.part.scoring.points;
-  return indeterminate.value ? indeterminateMax.value : (props.part.points ?? 1);
+  if (indeterminate.value) return indeterminateMax.value;
+  return maxPointsForScoring(props.part.scoring, props.part.points);
 });
+const selfScoreOptions = computed(() => scoreOptionsForPart(props.part, indeterminate.value ? indeterminateMax.value : undefined));
+const canConfirmSelfAssessment = computed(() => selfAssessmentPoints.value != null);
+const selfAssessmentState = computed(() =>
+  phase.value === 'self-assessing'
+    ? {
+        maxPoints: maxPointsForSelf.value,
+        scoreOptions: selfScoreOptions.value,
+        selectedPoints: selfAssessmentPoints.value,
+        grading: selfAssessmentGrading.value,
+      }
+    : null,
+);
 
 // Shell contract: emit the full state on mount and on every phase /
 // canSubmit / result change (canSubmit re-evaluates whenever the AnswerControl
@@ -88,6 +122,8 @@ watchEffect(() => {
     result: result.value,
     indeterminate: indeterminate.value,
     unplayable: !answer.value,
+    answerPreview: currentAnswerPreview.value,
+    selfAssessment: selfAssessmentState.value,
   });
 });
 
@@ -111,23 +147,58 @@ function submit(): void {
   emit('graded', { partId: props.part.id, result: outcome, submission: submission.value, selfAssessed: false });
 }
 
+function setSelfAssessmentScore(points: number): void {
+  if (phase.value !== 'self-assessing') return;
+  const option = selfScoreOptions.value.find((o) => sameScore(o.points, points));
+  if (!option) return;
+  selfAssessmentPoints.value = option.points;
+  const max = maxPointsForSelf.value;
+  selfAssessment.value = {
+    ...selfAssessment.value,
+    awardedPoints: option.points,
+    overall: selfAssessmentOverallForScore(option.points, max),
+  };
+  selfAssessmentGrading.value ??= defaultGradingForScore(option.points, max);
+}
+
+function setSelfAssessmentGrading(grading: Grading): void {
+  if (phase.value !== 'self-assessing') return;
+  selfAssessmentGrading.value = grading;
+}
+
+function onSelfAssessmentUpdate(value: SelfAssessment): void {
+  selfAssessment.value = value;
+  const selected = selectedPointsFromAssessment(value, maxPointsForSelf.value);
+  selfAssessmentPoints.value = selected;
+  if (selected != null) selfAssessmentGrading.value ??= defaultGradingForScore(selected, maxPointsForSelf.value);
+}
+
 function confirmSelfAssessment(): void {
   if (phase.value !== 'self-assessing') return;
   if (!submission.value) return;
+  if (!canConfirmSelfAssessment.value) return;
+  const awardedPoints = selfAssessmentPoints.value;
+  if (awardedPoints == null) return;
+  const max = maxPointsForSelf.value;
+  const manualGrading = selfAssessmentGrading.value ?? defaultGradingForScore(awardedPoints, max);
   let final: GradeResult;
   if (submission.value.kind === 'open') {
-    const withAssessment: Submission = { ...submission.value, selfAssessment: { ...selfAssessment.value } };
+    const withAssessment: Submission = {
+      ...submission.value,
+      selfAssessment: {
+        ...selfAssessment.value,
+        awardedPoints,
+        overall: selfAssessmentOverallForScore(awardedPoints, max),
+      },
+    };
     submission.value = withAssessment;
     const outcome = grade(props.part, withAssessment);
     if (isIndeterminate(outcome)) return; // open never yields indeterminate
     final = outcome;
   } else {
-    // expression fell back to self-assessment: map overall → points
-    const max = indeterminateMax.value;
-    const overall = selfAssessment.value.overall ?? 'none';
-    const awarded = overall === 'full' ? max : overall === 'partial' ? Math.round((max / 2) * 100) / 100 : 0;
-    const verdict = overall === 'full' ? 'correct' : overall === 'partial' ? 'partial' : 'incorrect';
-    final = { verdict, correct: verdict === 'correct', awardedPoints: awarded, maxPoints: max };
+    // expression fell back to self-assessment: use the exact supported score
+    // selected by the user, not a hard-coded half-point mapping.
+    final = gradeResultFromScore(awardedPoints, max);
   }
   result.value = final;
   phase.value = 'reviewed';
@@ -136,6 +207,7 @@ function confirmSelfAssessment(): void {
     result: final,
     submission: submission.value,
     selfAssessed: true,
+    manualGrading,
   });
 }
 
@@ -149,15 +221,15 @@ function onKeydown(ev: KeyboardEvent): void {
   }
 }
 
-defineExpose({ submit, confirmSelfAssessment });
+defineExpose({ submit, confirmSelfAssessment, setSelfAssessmentScore, setSelfAssessmentGrading });
 </script>
 
 <template>
   <div class="q-part" @keydown="onKeydown">
-    <div v-if="label || part.points != null" class="q-part__head">
+    <div v-if="showPartHead" class="q-part__head">
       <span v-if="label" class="q-part__label">{{ label }}</span>
-      <QChip v-if="part.format" tone="neutral">{{ part.format }}</QChip>
-      <span v-if="part.points != null" class="q-part__points">{{ part.points }} P</span>
+      <QChip v-if="!chromeless && part.format" tone="neutral">{{ part.format }}</QChip>
+      <span v-if="!chromeless && part.points != null" class="q-part__points">{{ part.points }} P</span>
     </div>
 
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
@@ -181,20 +253,23 @@ defineExpose({ submit, confirmSelfAssessment });
         :answer="answer"
         :result="phase === 'reviewed' ? result : null"
         :indeterminate="indeterminate && phase !== 'answering'"
+        :show-preview="!chromeless"
         class="q-part__control"
       />
 
-      <div v-if="phase === 'self-assessing'" class="q-part__selfassess">
+      <div v-if="phase === 'self-assessing' && !chromeless" class="q-part__selfassess">
         <!-- chromeless: the shell auto-opens its SolutionSheet for comparison -->
-        <SolutionPanel v-if="!chromeless" :solution="part.solution" :default-open="true" />
+        <SolutionPanel :solution="part.solution" :default-open="true" />
         <SelfAssessmentPanel
-          v-model="selfAssessment"
+          :model-value="selfAssessment"
           :scoring="part.scoring"
           :rubric="answer.kind === 'open' ? answer.rubric : undefined"
           :max-points="maxPointsForSelf"
+          :score-options="selfScoreOptions"
+          @update:model-value="onSelfAssessmentUpdate"
         />
-        <div v-if="!chromeless" class="q-part__actions">
-          <QButton @click="confirmSelfAssessment">Bewertung übernehmen</QButton>
+        <div class="q-part__actions">
+          <QButton :disabled="!canConfirmSelfAssessment" @click="confirmSelfAssessment">Bewertung übernehmen</QButton>
         </div>
       </div>
 

@@ -26,6 +26,7 @@ export { default as ExpressionControl } from './question/ExpressionControl.vue';
 export { default as OpenControl } from './question/OpenControl.vue';
 export { default as AnswerControl } from './question/AnswerControl.vue';
 export { default as SelfAssessmentPanel } from './question/SelfAssessmentPanel.vue';
+export type { AnswerPreview } from './question/submission-preview.js';
 
 // practice flow
 export { default as ResultBanner } from './practice/ResultBanner.vue';
@@ -34,6 +35,13 @@ export { default as SolutionPanel } from './practice/SolutionPanel.vue';
 export { default as SolutionSheet } from './practice/SolutionSheet.vue';
 export { default as PartPlayer } from './practice/PartPlayer.vue';
 export type { PartPlayerState } from './practice/part-player-types.js';
+export {
+  SELF_ASSESSMENT_GRADING_OPTIONS,
+  formatScore,
+  sameScore,
+  type SelfAssessmentScoreOption,
+  type SelfAssessmentUiState,
+} from './practice/self-assessment.js';
 export { default as QuestionHeader } from './practice/QuestionHeader.vue';
 
 // review / progress

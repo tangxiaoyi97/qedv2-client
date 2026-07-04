@@ -169,7 +169,16 @@ function fmtPoints(r: Row): string {
 }
 
 function redo(questionId: string): void {
-  void router.push({ path: '/practice', query: { questions: questionId } });
+  const questionIds = [...new Set(rows.value.map((r) => r.questionId))];
+  void router.push({
+    path: '/practice',
+    query: {
+      source: 'history',
+      questions: questionIds.join(','),
+      focus: questionId,
+      returnTo: router.currentRoute.value.fullPath,
+    },
+  });
 }
 </script>
 

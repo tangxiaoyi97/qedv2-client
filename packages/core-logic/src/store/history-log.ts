@@ -49,6 +49,16 @@ export class HistoryLog {
     return entries.slice(offset, offset + limit);
   }
 
+  /** Newest-first entries for one LOCAL day, keyed as `YYYY-MM-DD`. */
+  async listByLocalDay(dayKey: string): Promise<HistoryEntry[]> {
+    const entries = await this.read();
+    return entries.filter((e) => {
+      const t = new Date(e.gradedAt);
+      const key = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+      return key === dayKey;
+    });
+  }
+
   async count(): Promise<number> {
     return (await this.read()).length;
   }

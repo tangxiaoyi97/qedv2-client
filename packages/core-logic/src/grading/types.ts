@@ -49,10 +49,13 @@ export interface ExpressionSubmission {
  * to self-assessment. Exactly one of the fields is used:
  *  - `criteriaMet` when scoring.mode === 'rubric' (one flag per criterion)
  *  - `overall` otherwise (maps to full / half / zero points)
+ *  - `awardedPoints` when the UI lets the user pick one of the part's
+ *    supported point totals directly.
  */
 export interface SelfAssessment {
   criteriaMet?: boolean[];
   overall?: 'full' | 'partial' | 'none';
+  awardedPoints?: number;
 }
 
 export interface OpenSubmission {

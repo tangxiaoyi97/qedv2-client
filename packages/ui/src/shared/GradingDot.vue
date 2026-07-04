@@ -11,7 +11,7 @@ export const GRADING_LABELS: Record<GradingOrUnseen, string> = {
   meh: 'Halb verstanden',
   baffled: 'Keine Ahnung',
   excluded: 'Ausgeschlossen',
-  unseen: 'Ungesehen',
+  unseen: 'Neu',
 };
 </script>
 

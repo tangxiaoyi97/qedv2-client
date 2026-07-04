@@ -109,6 +109,16 @@ describe('gradeOpen — overall self-assessment (non-rubric)', () => {
     expect(r).toMatchObject({ verdict: 'incorrect', awardedPoints: 0 });
   });
 
+  it('explicit awardedPoints wins over overall and maps to the exact selected score', () => {
+    const r = gradeOpen(answer, sub({ awardedPoints: 1, overall: 'full' }), allOrNothing, undefined);
+    expect(r).toMatchObject({ verdict: 'partial', correct: false, awardedPoints: 1, maxPoints: 2 });
+  });
+
+  it('explicit awardedPoints is clamped to the supported max', () => {
+    const r = gradeOpen(answer, sub({ awardedPoints: 4 }), allOrNothing, undefined);
+    expect(r).toMatchObject({ verdict: 'correct', correct: true, awardedPoints: 2, maxPoints: 2 });
+  });
+
   it('no scoring: falls back to points ?? 1; partial gives 0.5', () => {
     const r = gradeOpen(answer, sub({ overall: 'partial' }), undefined, undefined);
     expect(r).toMatchObject({ verdict: 'partial', awardedPoints: 0.5, maxPoints: 1 });
