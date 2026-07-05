@@ -181,7 +181,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
 <template>
   <div class="q-match">
-    <div class="q-match__rows">
+    <div class="q-match__rows" :class="{ 'q-match__rows--grouped': groupedOptionMode }">
       <div
         v-for="(leftItem, i) in answer.left"
         :key="i"
@@ -200,25 +200,27 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
           <span class="q-match__left">
             <RichTextView :nodes="leftItem" inline-only />
           </span>
-          <select
-            v-if="!review && !groupedOptionMode"
-            class="q-match__select"
-            :class="{ 'q-match__select--assigned': chosen(i) !== null }"
-            :value="chosen(i) === null ? '' : String(chosen(i))"
-            :disabled="review"
-            :aria-label="`Zuordnung für „${richTextToPlain(leftItem)}“`"
-            @change="onSelect(i, $event)"
-          >
-            <option value="">zuordnen …</option>
-            <option
-              v-for="(rightItem, j) in answer.right"
-              :key="j"
-              :value="String(j)"
-              :disabled="j !== chosen(i) && usedRight.has(j)"
+          <span v-if="!review && !groupedOptionMode" class="q-match__select-wrap">
+            <select
+              class="q-match__select"
+              :class="{ 'q-match__select--assigned': chosen(i) !== null }"
+              :value="chosen(i) === null ? '' : String(chosen(i))"
+              :disabled="review"
+              :aria-label="`Zuordnung für „${richTextToPlain(leftItem)}“`"
+              @change="onSelect(i, $event)"
             >
-              {{ letter(j) }} · {{ richTextToPlain(rightItem) }}
-            </option>
-          </select>
+              <option value="">zuordnen …</option>
+              <option
+                v-for="(rightItem, j) in answer.right"
+                :key="j"
+                :value="String(j)"
+                :disabled="j !== chosen(i) && usedRight.has(j)"
+              >
+                {{ letter(j) }} · {{ richTextToPlain(rightItem) }}
+              </option>
+            </select>
+            <span class="q-match__select-arrow" aria-hidden="true">⌄</span>
+          </span>
         </div>
 
         <!-- grouped ("Lückentext") mode: the gap IS a single-choice question —
@@ -340,6 +342,17 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   flex-direction: column;
   gap: 9px;
 }
+/* grouped ("2 aus 3" / Lückentext) mode: gaps sit side by side once the
+   screen is wide enough — each gap behaves like its own mini question, so
+   there is no reason to force them into a single column. */
+@media (min-width: 640px) {
+  .q-match__rows--grouped {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    align-items: start;
+    gap: 12px;
+  }
+}
 
 .q-match__row {
   padding: 10px 12px;
@@ -374,31 +387,56 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   overflow-wrap: break-word;
 }
 
-.q-match__select {
+/* flat, underline-style dropdown — no boxed/nested-card look; the row
+   itself is already the only "box" on screen. */
+.q-match__select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   flex: none;
   max-width: 55%;
-  padding: 6px 9px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  background: var(--q-card);
+}
+.q-match__select {
+  width: 100%;
+  max-width: 100%;
+  padding: 4px 18px 4px 2px;
+  border: none;
+  border-bottom: 1.5px solid var(--q-border-3);
+  border-radius: 0;
+  background: transparent;
   color: var(--q-mut-2);
   font: 600 13px 'Public Sans', system-ui, sans-serif;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .q-match__select--assigned {
-  border: 2px solid var(--q-accent);
-  background: var(--q-accent-bg);
+  border-bottom: 1.5px solid var(--q-accent);
   color: var(--q-accent-strong);
-  padding: 5px 8px;
+  font-weight: 700;
 }
 .q-match__select:focus-visible {
   outline: 2px solid var(--q-accent);
-  outline-offset: 0;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 .q-match__select:disabled {
   cursor: default;
   opacity: 0.8;
+}
+.q-match__select-arrow {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-45%);
+  font-size: 13px;
+  line-height: 1;
+  color: var(--q-faint);
+  pointer-events: none;
 }
 
  /* grouped ("Lückentext") mode — option cards, ChoiceControl's language */

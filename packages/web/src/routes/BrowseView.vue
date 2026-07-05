@@ -739,6 +739,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   text-align: left;
   width: 100%;
 }
+.browse__row--selected {
+  background: var(--q-accent-bg);
+  border-color: var(--q-accent);
+}
 @media (hover: hover) and (pointer: fine) {
   .browse__row:hover:not(:disabled) {
     border-color: var(--q-accent);

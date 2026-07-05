@@ -61,7 +61,7 @@ function drawIcon(size) {
   // Geometry in fractions of the size.
   const cx = size * 0.5;
   const cy = size * 0.5;
-  const half = size * 0.24; // theme square half-edge (sharp corners)
+  const half = size * 0.2; // theme square half-edge (sharp corners)
 
   const inSquare = (x, y) => Math.abs(x - cx) <= half && Math.abs(y - cy) <= half;
 
@@ -97,3 +97,10 @@ for (const size of [192, 512]) {
   writeFileSync(join(OUT, `icon-${size}.png`), drawIcon(size));
   console.log(`icon-${size}.png written`);
 }
+
+// iOS home-screen icon (Add to Home Screen). iOS ignores the web manifest for
+// this and instead reads a <link rel="apple-touch-icon"> pointing at a plain
+// 180x180 PNG; iOS applies its own rounded-mask + shadow, so this reuses the
+// exact same flat square design (opaque background, no transparency).
+writeFileSync(join(OUT, 'apple-touch-icon.png'), drawIcon(180));
+console.log('apple-touch-icon.png written');

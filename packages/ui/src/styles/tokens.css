@@ -162,6 +162,10 @@
 /* base */
 html, body {
   overscroll-behavior-y: none;
+  /* Prevent double-tap-to-zoom on tappable UI (nav/tabs/buttons) without
+   * disabling pinch-zoom (accessibility requirement) — pinch/pan gestures
+   * are explicitly preserved by "manipulation". */
+  touch-action: manipulation;
 }
 .q-app {
   background: var(--q-page);

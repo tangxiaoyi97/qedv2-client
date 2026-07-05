@@ -1,6 +1,6 @@
-# QED2 1.1 - mobile update
+# QED2 1.2 - mobile update II
 
-update for mobile & touchscreen users
+disabled double tap zoom & added pwa / add to home screen support
 
-enjoy!
+enjoy!  
 tangxy, 2026.07.05
