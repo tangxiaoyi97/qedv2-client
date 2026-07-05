@@ -375,9 +375,15 @@ function isActive(to: string): boolean {
   }
   .app__main {
     padding-bottom: 84px;
+    /* clears the iOS status bar / notch in standalone PWA mode; the
+       practice route reserves this itself via .practice__topbar instead
+       (see the --hidden override below), since it has no tabbar/sidebar
+       chrome to hang the padding off of. */
+    padding-top: env(safe-area-inset-top);
   }
   .app__tabbar--hidden ~ .app__main {
     padding-bottom: 0;
+    padding-top: 0;
   }
 }
 </style>

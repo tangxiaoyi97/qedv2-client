@@ -514,10 +514,10 @@ const currentCompetencyCodes = computed(() =>
   --practice-rail-width: 0px;
 }
 .practice__topbar {
-  height: 56px;
+  height: calc(56px + env(safe-area-inset-top));
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: env(safe-area-inset-top) 16px 0;
   border-bottom: 1px solid var(--q-border);
   gap: 16px;
   position: sticky;

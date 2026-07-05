@@ -537,15 +537,17 @@ function firstCode(q: QuestionSummary): string | undefined {
         </template>
         <span v-else class="browse__state browse__state--new">Neu</span>
 
-        <span
-          v-if="selectedIds.has(q.id) && selectedIds.size === 1"
-          role="button"
-          class="browse__single-btn"
-          title="Diese Aufgabe üben"
-          @click.stop="practiceSingle(q.id)"
-        >
-          →
-        </span>
+        <Transition name="pop-in">
+          <span
+            v-if="selectedIds.has(q.id) && selectedIds.size === 1"
+            role="button"
+            class="browse__single-btn"
+            title="Diese Aufgabe üben"
+            @click.stop="practiceSingle(q.id)"
+          >
+            →
+          </span>
+        </Transition>
       </button>
     </div>
 
@@ -570,7 +572,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   z-index: 10;
   background: var(--q-page);
   margin: -26px -20px 10px;
-  padding: 26px 20px 10px;
+  padding: calc(26px + env(safe-area-inset-top)) 20px 10px;
   border-bottom: 1px solid var(--q-border-soft);
 }
 .browse__head {
@@ -837,6 +839,15 @@ function firstCode(q: QuestionSummary): string | undefined {
   flex: none;
   cursor: pointer;
   transition: transform 0.15s ease, background 0.15s ease;
+}
+.pop-in-enter-active,
+.pop-in-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.pop-in-enter-from,
+.pop-in-leave-to {
+  opacity: 0;
+  transform: scale(0.6) translateX(-10px);
 }
 @media (hover: hover) and (pointer: fine) {
   .browse__single-btn:hover {
