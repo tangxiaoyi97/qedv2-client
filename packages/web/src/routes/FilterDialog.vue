@@ -280,7 +280,7 @@ const countText = computed(() =>
   align-items: center;
   justify-content: center;
   z-index: 100;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
 .fdlg__card {
   width: 100%;
@@ -376,6 +376,15 @@ const countText = computed(() =>
   background: var(--q-accent-bg);
   color: var(--q-ink);
   font-weight: 700;
+}
+@media (pointer: coarse) {
+  .fdlg__chips {
+    gap: 8px;
+  }
+  .fdlg__chip {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
 }
 .fdlg__tick {
   color: var(--q-accent-strong);

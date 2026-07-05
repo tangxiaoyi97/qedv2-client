@@ -2,9 +2,11 @@
 /**
  * numeric control — one text input per blank (prototype 2b).
  *
- * Inputs are type="text" + inputmode="decimal" so the German decimal comma
- * stays typable; the control passes raw strings through unchanged — locale
- * parsing/normalization is the grader's job. Single blank: full-width input
+ * Inputs are type="text" with the DEFAULT (full) keyboard: mobile numeric
+ * keypads lack the minus sign and math symbols entirely (iOS "decimal" has
+ * only digits + comma), so answers like -3 would be untypable. The control
+ * passes raw strings through unchanged — locale parsing/normalization is
+ * the grader's job. Single blank: full-width input
  * without a label; multiple blanks: "{id} =" label per row. Unit chip after
  * the input when the blank declares one.
  *
@@ -68,7 +70,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
             'q-numeric__input--err': markOf(blank.id)?.correct === false,
           }"
           type="text"
-          inputmode="decimal"
+          inputmode="text"
           autocomplete="off"
           spellcheck="false"
           :value="modelValue[blank.id] ?? ''"

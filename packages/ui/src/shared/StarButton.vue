@@ -56,6 +56,13 @@ const title = computed(() => (props.starred ? 'Gemerkt' : 'Merken'));
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
+@media (pointer: coarse) {
+  /* ~44px hit area; negative margin keeps the visual footprint */
+  .q-star-btn {
+    padding: 12px;
+    margin: -8px;
+  }
+}
 .q-star-btn__glyph {
   transition: transform 0.08s ease;
 }

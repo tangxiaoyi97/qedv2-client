@@ -568,11 +568,14 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__sticky-header {
   position: sticky;
-  top: 0;
+  /* .app__main already carries the safe-area inset as padding; resting the
+     header at that offset (instead of padding it in again) avoids a double
+     inset — the app-shell scrim covers the status-bar strip when stuck. */
+  top: env(safe-area-inset-top);
   z-index: 10;
   background: var(--q-page);
   margin: -26px -20px 10px;
-  padding: calc(26px + env(safe-area-inset-top)) 20px 10px;
+  padding: 26px 20px 10px;
   border-bottom: 1px solid var(--q-border-soft);
 }
 .browse__head {

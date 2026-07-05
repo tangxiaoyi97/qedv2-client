@@ -17,7 +17,7 @@ const singleAnswer: NumericAnswer = {
 };
 
 describe('NumericControl', () => {
-  it('renders one decimal text input per blank with labels and unit chip', () => {
+  it('renders one text input per blank with labels and unit chip', () => {
     const wrapper = mount(NumericControl, {
       props: { answer: multiAnswer, modelValue: { x1: '', x2: '' } },
     });
@@ -25,7 +25,8 @@ describe('NumericControl', () => {
     expect(inputs).toHaveLength(2);
     for (const input of inputs) {
       expect(input.attributes('type')).toBe('text'); // NOT type=number
-      expect(input.attributes('inputmode')).toBe('decimal');
+      // full keyboard — mobile numeric keypads can't type minus/math symbols
+      expect(input.attributes('inputmode')).toBe('text');
     }
     // labels only in multi-blank mode
     const labels = wrapper.findAll('label');

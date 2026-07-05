@@ -732,6 +732,10 @@ function closeDetail(): void {
 .prog__activity-chart {
   padding: 4px 2px 0;
   flex: none;
+  /* clamp to the card interior so the heatmap's own scroll wrapper engages
+     on narrow screens instead of overflowing the card */
+  min-width: 0;
+  max-width: 100%;
 }
 .prog__activity-panel {
   display: flex;
@@ -894,7 +898,7 @@ function closeDetail(): void {
   z-index: 120;
   display: grid;
   place-items: center;
-  padding: 18px;
+  padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
   background: rgba(0, 0, 0, 0.42);
 }
 .prog-modal__card {

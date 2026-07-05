@@ -256,6 +256,11 @@ function clearActiveState(state: GradingOrUnseen): void {
   cursor: pointer;
   text-align: left;
 }
+@media (pointer: coarse) {
+  .q-dist__item-button {
+    min-height: 40px;
+  }
+}
 .q-dist__item-button:not(:disabled):hover,
 .q-dist__item-button:focus-visible {
   outline: none;

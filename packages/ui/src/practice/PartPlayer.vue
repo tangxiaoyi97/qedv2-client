@@ -308,6 +308,8 @@ defineExpose({ submit, confirmSelfAssessment, setSelfAssessmentScore, setSelfAss
   font-size: 15px;
   line-height: 1.65;
   margin-bottom: 14px;
+  /* wide inline KaTeX scrolls here instead of panning the whole page */
+  overflow-x: auto;
 }
 .q-part__unplayable {
   padding: 14px;

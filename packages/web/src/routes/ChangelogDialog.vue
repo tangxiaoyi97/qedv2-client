@@ -46,7 +46,7 @@ const ui = useUiStore();
   align-items: center;
   justify-content: center;
   z-index: 100;
-  padding: 16px;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
 }
 .modal-fade-enter-active,
 .modal-fade-leave-active {

@@ -7,7 +7,7 @@
  * Monday on top). Intensity = accent overlay with fill-opacity buckets over a
  * track-colored base rect, so both themes ride on the same two tokens.
  */
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 
 const props = defineProps<{
   /** Answer events per LOCAL day, keys 'YYYY-MM-DD'. */
@@ -148,11 +148,22 @@ const monthLabels = computed(() => {
 
 const svgWidth = computed(() => LEFT + weekCount.value * PITCH - GAP);
 const svgHeight = TOP + 7 * PITCH - GAP;
+
+/** Scroll container — keep the most recent weeks (right end) in view. */
+const scrollEl = ref<HTMLDivElement | null>(null);
+
+function scrollToEnd(): void {
+  const el = scrollEl.value;
+  if (el) el.scrollLeft = el.scrollWidth - el.clientWidth;
+}
+
+onMounted(scrollToEnd);
+watch(() => [props.data, props.weeks, props.endDate], scrollToEnd, { flush: 'post' });
 </script>
 
 <template>
   <div class="q-heat">
-    <div class="q-heat__scroll">
+    <div ref="scrollEl" class="q-heat__scroll">
       <svg
         class="q-heat__svg"
         :width="svgWidth"
@@ -253,6 +264,7 @@ const svgHeight = TOP + 7 * PITCH - GAP;
   overflow-x: auto;
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
 }
 .q-heat__svg {
   display: block;

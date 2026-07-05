@@ -101,7 +101,7 @@ const emit = defineEmits<{
   background: var(--q-card);
   border-left: 1px solid var(--q-border);
   box-shadow: -16px 0 40px rgba(0, 0, 0, 0.14);
-  padding: 16px 12px calc(16px + env(safe-area-inset-bottom));
+  padding: calc(16px + env(safe-area-inset-top)) 12px calc(16px + env(safe-area-inset-bottom));
   overflow-y: auto;
 }
 

@@ -645,6 +645,8 @@ const currentCompetencyCodes = computed(() =>
   font-size: 15.5px;
   line-height: 1.65;
   margin-bottom: 18px;
+  /* wide inline KaTeX scrolls here instead of panning the whole page */
+  overflow-x: auto;
 }
 
 .practice__warning {
@@ -801,6 +803,17 @@ const currentCompetencyCodes = computed(() =>
 @media (max-width: 1023px) {
   .practice__session-button {
     visibility: visible;
+  }
+}
+
+@media (pointer: coarse) {
+  /* 44px touch targets in the always-visible chrome (fits the 56px topbar);
+     min-width so the armed close button keeps its 88px width. */
+  .practice__close,
+  .practice__session-button,
+  .practice__spacer {
+    min-width: 44px;
+    height: 44px;
   }
 }
 </style>

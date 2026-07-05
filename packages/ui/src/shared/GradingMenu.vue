@@ -28,11 +28,21 @@ const HINTS: Record<Grading, string> = {
   excluded: 'Nie wieder üben',
 };
 
+/** Matches the popover's CSS min-width — used for the overflow check. */
+const POPOVER_WIDTH = 232;
+
 const root = ref<HTMLElement | null>(null);
 const open = ref(false);
+const alignRight = ref(false);
 
 function toggle(): void {
   if (props.disabled) return;
+  if (!open.value && root.value) {
+    // Flip to right-anchored when a left-anchored popover would poke past
+    // the viewport edge (narrow screens, chips before the trigger).
+    const rect = root.value.getBoundingClientRect();
+    alignRight.value = rect.left + POPOVER_WIDTH > window.innerWidth - 12;
+  }
   open.value = !open.value;
 }
 
@@ -73,7 +83,13 @@ onBeforeUnmount(() => {
       @click="toggle"
     />
 
-    <div v-if="open" class="q-grading-menu__popover" role="menu" aria-label="Bewertung">
+    <div
+      v-if="open"
+      class="q-grading-menu__popover"
+      :class="{ 'q-grading-menu__popover--right': alignRight }"
+      role="menu"
+      aria-label="Bewertung"
+    >
       <button
         v-for="g in SELECTABLE"
         :key="g"
@@ -106,6 +122,7 @@ onBeforeUnmount(() => {
   left: 0;
   z-index: 50;
   min-width: 232px;
+  max-width: calc(100vw - 24px);
   padding: 6px;
   background: var(--q-card);
   border: 1px solid var(--q-border-2);
@@ -114,6 +131,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+.q-grading-menu__popover--right {
+  left: auto;
+  right: 0;
 }
 .q-grading-menu__option {
   display: flex;

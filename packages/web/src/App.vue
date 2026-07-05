@@ -134,6 +134,11 @@ function isActive(to: string): boolean {
         </RouterLink>
       </nav>
 
+    <!-- opaque strip under the transparent iOS status bar (standalone PWA);
+         fades out with the tabbar on focus routes, in sync with the
+         .app__main padding transition (sibling selector below). -->
+    <div class="app__scrim" aria-hidden="true" />
+
     <main class="app__main">
       <RouterView v-slot="{ Component }">
         <transition name="page-fade" mode="out-in">
@@ -307,9 +312,10 @@ function isActive(to: string): boolean {
   transform: scale(0.97);
 }
 
-/* bottom tab bar + gear (mobile only) */
+/* bottom tab bar + gear + status-bar scrim (mobile only) */
 .app__tabbar,
-.app__gear {
+.app__gear,
+.app__scrim {
   display: none;
 }
 
@@ -384,6 +390,23 @@ function isActive(to: string): boolean {
   .app__tabbar--hidden ~ .app__main {
     padding-bottom: 0;
     padding-top: 0;
+  }
+  .app__scrim {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: env(safe-area-inset-top);
+    background: var(--q-page);
+    /* above the sticky route headers (z10/z30), below drawer (z80) and
+       modals (z100+) */
+    z-index: 45;
+    pointer-events: none;
+    transition: opacity var(--q-transition-normal);
+  }
+  .app__tabbar--hidden ~ .app__scrim {
+    opacity: 0;
   }
 }
 </style>

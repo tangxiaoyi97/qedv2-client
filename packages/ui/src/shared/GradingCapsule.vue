@@ -74,8 +74,17 @@ const label = computed(() => GRADING_LABELS[props.grading]);
   color: var(--q-mut);
 }
 .q-grading-capsule--interactive {
+  position: relative;
   cursor: pointer;
   transition: box-shadow 0.12s ease;
+}
+@media (pointer: coarse) {
+  /* invisible hit-area extension to ~44px height; keeps the pill visual */
+  .q-grading-capsule--interactive::after {
+    content: '';
+    position: absolute;
+    inset: -10px -6px;
+  }
 }
 @media (hover: hover) and (pointer: fine) {
   .q-grading-capsule--interactive:not(:disabled):hover {
