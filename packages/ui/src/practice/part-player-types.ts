@@ -1,9 +1,9 @@
 /**
  * PartPlayer ⇄ shell contract for chromeless mode: the shell (PracticeView's
  * sticky bottom bar) renders the primary action, feedback pill and solution
- * sheet; PartPlayer reports its state and exposes imperative triggers.
+ * sheet; PartPlayer reports its state and accepts explicit shell commands.
  */
-import type { GradeResult } from '@qed2/core-logic';
+import type { GradeResult, Grading, SelfAssessment } from '@qed2/core-logic';
 import type { AnswerPreview } from '../question/submission-preview.js';
 import type { SelfAssessmentUiState } from './self-assessment.js';
 
@@ -22,3 +22,10 @@ export interface PartPlayerState {
   /** Supported manual assessment choices while phase === 'self-assessing'. */
   selfAssessment: SelfAssessmentUiState | null;
 }
+
+export type PartPlayerCommand =
+  | { id: number; type: 'submit' }
+  | { id: number; type: 'confirm-self-assessment' }
+  | { id: number; type: 'set-score'; points: number }
+  | { id: number; type: 'set-grading'; grading: Grading }
+  | { id: number; type: 'set-assessment'; assessment: SelfAssessment };

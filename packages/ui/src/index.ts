@@ -1,6 +1,7 @@
 // shared foundation
 export { default as MathText } from './shared/MathText.vue';
 export { default as RichTextView } from './shared/RichTextView.vue';
+export { default as FigureList } from './shared/FigureList.vue';
 export { default as StateIcon } from './shared/StateIcon.vue';
 export { default as QButton } from './shared/QButton.vue';
 export { default as QChip } from './shared/QChip.vue';
@@ -37,7 +38,7 @@ export { default as ResultPill } from './practice/ResultPill.vue';
 export { default as SolutionPanel } from './practice/SolutionPanel.vue';
 export { default as SolutionSheet } from './practice/SolutionSheet.vue';
 export { default as PartPlayer } from './practice/PartPlayer.vue';
-export type { PartPlayerState } from './practice/part-player-types.js';
+export type { PartPlayerCommand, PartPlayerState } from './practice/part-player-types.js';
 export {
   SELF_ASSESSMENT_GRADING_OPTIONS,
   formatScore,

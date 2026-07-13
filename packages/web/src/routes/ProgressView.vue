@@ -312,14 +312,7 @@ function closeDetail(): void {
 
 <template>
   <div class="prog">
-    <div class="prog__head">
-      <h1 class="prog__title">Übersicht</h1>
-      <div class="prog__legend">
-        <span class="prog__legend-item"><span class="prog__sq prog__sq--ok" />hoch</span>
-        <span class="prog__legend-item"><span class="prog__sq prog__sq--part" />mittel</span>
-        <span class="prog__legend-item"><span class="prog__sq prog__sq--low" />gering</span>
-      </div>
-    </div>
+    <h1 class="prog__title">Übersicht</h1>
 
     <div class="prog__stats">
       <div class="prog__stat">
@@ -400,8 +393,14 @@ function closeDetail(): void {
     </section>
 
     <section v-if="categoryRows.length > 0" class="prog__section">
-      <div class="prog__section-head">
+      <div class="prog__section-head prog__section-head--legend">
         <h2 class="prog__section-title">Nach Bereich</h2>
+        <!-- legend for the MasteryBar colors used in this section's rows -->
+        <div class="prog__legend">
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--ok" />hoch</span>
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--part" />mittel</span>
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--low" />gering</span>
+        </div>
         <button type="button" class="prog__detail-btn" @click="openDetail('category')">Details</button>
       </div>
       <div class="prog__table-scroll">
@@ -611,14 +610,11 @@ function closeDetail(): void {
   margin: 0 auto;
   padding: 26px 20px 40px;
 }
-.prog__head {
-  margin-bottom: 16px;
-}
 .prog__title {
   font-weight: 800;
   font-size: 22px;
   letter-spacing: -0.01em;
-  margin: 0 0 10px;
+  margin: 0 0 16px;
 }
 .prog__legend {
   display: flex;
@@ -691,6 +687,14 @@ function closeDetail(): void {
   text-transform: uppercase;
   color: var(--q-faint);
   margin: 0;
+}
+/* "Nach Bereich" head carries the MasteryBar color legend: title left,
+   legend + Details right; on narrow screens the legend wraps below. */
+.prog__section-head--legend {
+  flex-wrap: wrap;
+}
+.prog__section-head--legend .prog__legend {
+  margin-left: auto;
 }
 .prog__detail-btn {
   border: 1px solid var(--q-border-2);

@@ -4,7 +4,7 @@ import type { Scoring, RubricCriterion } from '../src/model/question.js';
 
 const base = { correctCount: 0, totalCount: 0, allCorrect: false, fallbackPoints: undefined };
 
-const criterion = (points: number): RubricCriterion => ({ desc: [{ t: 'text', v: 'c' }], points });
+const criterion = (points: number): RubricCriterion => ({ desc: 'c', points });
 
 describe('applyScoring — no scoring given (allOrNothing fallback)', () => {
   it('uses fallbackPoints when all correct', () => {

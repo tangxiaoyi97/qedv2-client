@@ -16,16 +16,20 @@ import type {
   Grading,
   QuestionsFilter,
   Submission,
+  SelfAssessment,
   QuestionPart,
   Term,
   ExamPart,
 } from '@qed2/core-logic';
 import {
   PartPlayer,
+  FigureList,
   QButton,
   QChip,
   RichTextView,
+  SelfAssessmentPanel,
   StateIcon,
+  type PartPlayerCommand,
   type PartPlayerState,
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
@@ -57,7 +61,6 @@ const progressPct = computed(() =>
 );
 
 /* --- PartPlayer shell contract --- */
-const playerRef = ref<InstanceType<typeof PartPlayer> | null>(null);
 const playerState = ref<PartPlayerState>({
   phase: 'answering',
   canSubmit: false,
@@ -67,6 +70,8 @@ const playerState = ref<PartPlayerState>({
   answerPreview: null,
   selfAssessment: null,
 });
+const playerCommand = ref<PartPlayerCommand | null>(null);
+let playerCommandId = 0;
 const solutionOpen = ref(false);
 const mobileRailOpen = ref(false);
 const exitArmed = ref(false);
@@ -96,10 +101,10 @@ async function onGraded(payload: {
 function primaryAction(): void {
   switch (playerState.value.phase) {
     case 'answering':
-      playerRef.value?.submit();
+      playerCommand.value = { id: ++playerCommandId, type: 'submit' };
       break;
     case 'self-assessing':
-      playerRef.value?.confirmSelfAssessment();
+      playerCommand.value = { id: ++playerCommandId, type: 'confirm-self-assessment' };
       break;
     case 'reviewed':
       practice.next();
@@ -131,11 +136,15 @@ const primaryDisabled = computed(
 );
 
 function onSelfScoreSelect(points: number): void {
-  playerRef.value?.setSelfAssessmentScore(points);
+  playerCommand.value = { id: ++playerCommandId, type: 'set-score', points };
 }
 
 function onSelfGradingSelect(grading: Grading): void {
-  playerRef.value?.setSelfAssessmentGrading(grading);
+  playerCommand.value = { id: ++playerCommandId, type: 'set-grading', grading };
+}
+
+function onSelfAssessmentUpdate(value: SelfAssessment): void {
+  playerCommand.value = { id: ++playerCommandId, type: 'set-assessment', assessment: value };
 }
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
@@ -213,6 +222,7 @@ watch(
     solutionOpen.value = false;
     mobileRailOpen.value = false;
     exitArmed.value = false;
+    playerCommand.value = null;
     window.scrollTo({ top: 0 });
   },
 );
@@ -340,7 +350,7 @@ const currentCompetencyCodes = computed(() =>
         @click.stop="exit"
       >
         <span class="practice__close-mark" aria-hidden="true">✕</span>
-        <span v-if="exitArmed" class="practice__close-text">exit?</span>
+        <span v-if="exitArmed" class="practice__close-text">Beenden?</span>
       </button>
       <div class="practice__progress">
         <div class="practice__progress-label">
@@ -468,15 +478,31 @@ const currentCompetencyCodes = computed(() =>
             <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
               <RichTextView :nodes="current.question.prompt" />
             </div>
+            <FigureList :figures="current.question.figures" />
 
             <PartPlayer
               :key="current.part.id"
-              ref="playerRef"
               :part="current.part"
               :label="multiPart ? `Teil ${current.part.label}` : undefined"
+              :command="playerCommand"
               chromeless
               @graded="onGraded"
               @state="onPlayerState"
+            />
+
+            <SelfAssessmentPanel
+              v-if="
+                playerState.phase === 'self-assessing' &&
+                playerState.selfAssessment &&
+                current.part.scoring?.mode === 'rubric'
+              "
+              class="practice__rubric-assessment"
+              :model-value="playerState.selfAssessment.assessment"
+              :scoring="current.part.scoring"
+              :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
+              :max-points="playerState.selfAssessment.maxPoints"
+              :score-options="playerState.selfAssessment.scoreOptions"
+              @update:model-value="onSelfAssessmentUpdate"
             />
           </div>
         </div>
@@ -485,6 +511,8 @@ const currentCompetencyCodes = computed(() =>
           v-model:solution-open="solutionOpen"
           :state="playerState"
           :answer-preview="playerState.answerPreview"
+          :answer-kind="current.part.answer?.kind"
+          :rubric-mode="current.part.scoring?.mode === 'rubric'"
           :solution="current.part.solution"
           :primary-label="primaryLabel"
           :primary-disabled="primaryDisabled"
@@ -639,6 +667,9 @@ const currentCompetencyCodes = computed(() =>
   width: 100%;
   flex: 1;
   min-width: 0;
+}
+.practice__rubric-assessment {
+  margin-top: 18px;
 }
 
 .practice__qprompt {

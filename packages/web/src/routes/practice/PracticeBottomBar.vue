@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { Grading, SolutionEntry } from '@qed2/core-logic';
+import { computed } from 'vue';
+import type { AnswerKind, Grading, SolutionEntry } from '@qed2/core-logic';
 import {
   QButton,
   ResultPill,
@@ -9,14 +10,31 @@ import {
 } from '@qed2/ui';
 import type { AnswerPreview, PartPlayerState } from '@qed2/ui';
 
-defineProps<{
+const props = defineProps<{
   state: PartPlayerState;
   answerPreview: AnswerPreview | null;
+  /** Current part's answer kind — the idle hint's verb depends on it. */
+  answerKind?: AnswerKind;
+  /** Rubric criteria are rendered in the question body, not as total buttons. */
+  rubricMode?: boolean;
   solution?: SolutionEntry[];
   solutionOpen: boolean;
   primaryLabel: string;
   primaryDisabled: boolean;
 }>();
+
+/** Selection questions are picked, not typed — match the hint's verb. */
+const idleHint = computed(() => {
+  switch (props.answerKind) {
+    case 'choice':
+    case 'matching':
+      return 'Antwort oben auswählen …';
+    case 'open':
+      return 'Antwort oben bearbeiten …';
+    default:
+      return 'Antwort oben eintragen …';
+  }
+});
 
 const emit = defineEmits<{
   'update:solutionOpen': [open: boolean];
@@ -51,7 +69,7 @@ function onMasteryChange(ev: Event): void {
       <div class="practice-bar__left">
         <ResultPill v-if="state.result" :result="state.result" />
         <div v-else-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-bar__assessment">
-          <div class="practice-bar__assessment-group">
+          <div v-if="!rubricMode" class="practice-bar__assessment-group">
             <span class="practice-bar__assessment-label">Punkte</span>
             <div class="practice-bar__score-options" role="radiogroup" aria-label="Punkte">
               <button
@@ -68,6 +86,8 @@ function onMasteryChange(ev: Event): void {
               </button>
             </div>
           </div>
+
+          <span v-else class="practice-bar__rubric-hint">Bewertungsraster oben ausfüllen</span>
 
           <div class="practice-bar__assessment-group practice-bar__assessment-group--mastery">
             <span class="practice-bar__assessment-label">Beherrschung</span>
@@ -95,7 +115,7 @@ function onMasteryChange(ev: Event): void {
           </span>
           <span v-if="answerPreview.hint" class="practice-bar__preview-hint">{{ answerPreview.hint }}</span>
         </div>
-        <span v-else class="practice-bar__hint practice-bar__hint--quiet">Antwort oben eintragen …</span>
+        <span v-else class="practice-bar__hint practice-bar__hint--quiet">{{ idleHint }}</span>
       </div>
 
       <div class="practice-bar__right">
@@ -181,6 +201,10 @@ function onMasteryChange(ev: Event): void {
   color: var(--q-hint);
   font-weight: 400;
   font-style: italic;
+}
+.practice-bar__rubric-hint {
+  font-size: 12.5px;
+  color: var(--q-mut);
 }
 
 .practice-bar__preview {

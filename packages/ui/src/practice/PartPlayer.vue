@@ -25,7 +25,7 @@
  *    During 'self-assessing' the user must compare against the official
  *    solution: the SHELL auto-opens its SolutionSheet when it sees that state.
  */
-import { computed, ref, watchEffect } from 'vue';
+import { computed, ref, watch, watchEffect } from 'vue';
 import {
   grade,
   isIndeterminate,
@@ -35,7 +35,7 @@ import {
   type SelfAssessment,
   type Submission,
 } from '@qed2/core-logic';
-import type { PartPlayerState } from './part-player-types.js';
+import type { PartPlayerCommand, PartPlayerState } from './part-player-types.js';
 import { emptySubmission, isSubmissionComplete } from '../question/submission-defaults.js';
 import AnswerControl from '../question/AnswerControl.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
@@ -50,6 +50,7 @@ import {
   selfAssessmentOverallForScore,
 } from './self-assessment.js';
 import RichTextView from '../shared/RichTextView.vue';
+import FigureList from '../shared/FigureList.vue';
 import QButton from '../shared/QButton.vue';
 import QChip from '../shared/QChip.vue';
 import ResultBanner from './ResultBanner.vue';
@@ -59,6 +60,7 @@ const props = defineProps<{
   part: QuestionPart;
   label?: string;
   chromeless?: boolean;
+  command?: PartPlayerCommand | null;
 }>();
 
 const emit = defineEmits<{
@@ -108,6 +110,7 @@ const selfAssessmentState = computed(() =>
         scoreOptions: selfScoreOptions.value,
         selectedPoints: selfAssessmentPoints.value,
         grading: selfAssessmentGrading.value,
+        assessment: selfAssessment.value,
       }
     : null,
 );
@@ -168,10 +171,41 @@ function setSelfAssessmentGrading(grading: Grading): void {
 
 function onSelfAssessmentUpdate(value: SelfAssessment): void {
   selfAssessment.value = value;
-  const selected = selectedPointsFromAssessment(value, maxPointsForSelf.value);
+  const selected = selectedPointsFromAssessment(value, maxPointsForSelf.value, props.part.scoring);
   selfAssessmentPoints.value = selected;
   if (selected != null) selfAssessmentGrading.value ??= defaultGradingForScore(selected, maxPointsForSelf.value);
 }
+
+/** Chromeless shells render their own SelfAssessmentPanel and feed changes
+ * back through this method so grading still has one authoritative state. */
+function setSelfAssessment(value: SelfAssessment): void {
+  if (phase.value !== 'self-assessing') return;
+  onSelfAssessmentUpdate(value);
+}
+
+watch(
+  () => props.command,
+  (command) => {
+    if (!command) return;
+    switch (command.type) {
+      case 'submit':
+        submit();
+        break;
+      case 'confirm-self-assessment':
+        confirmSelfAssessment();
+        break;
+      case 'set-score':
+        setSelfAssessmentScore(command.points);
+        break;
+      case 'set-grading':
+        setSelfAssessmentGrading(command.grading);
+        break;
+      case 'set-assessment':
+        setSelfAssessment(command.assessment);
+        break;
+    }
+  },
+);
 
 function confirmSelfAssessment(): void {
   if (phase.value !== 'self-assessing') return;
@@ -221,7 +255,13 @@ function onKeydown(ev: KeyboardEvent): void {
   }
 }
 
-defineExpose({ submit, confirmSelfAssessment, setSelfAssessmentScore, setSelfAssessmentGrading });
+defineExpose({
+  submit,
+  confirmSelfAssessment,
+  setSelfAssessmentScore,
+  setSelfAssessmentGrading,
+  setSelfAssessment,
+});
 </script>
 
 <template>
@@ -235,6 +275,7 @@ defineExpose({ submit, confirmSelfAssessment, setSelfAssessmentScore, setSelfAss
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
       <RichTextView :nodes="part.prompt" />
     </div>
+    <FigureList :figures="part.figures" />
 
     <div v-if="!answer" class="q-part__unplayable">
       Diese Teilaufgabe ist noch nicht beantwortbar (Inhalt in Umwandlung).

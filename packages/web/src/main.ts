@@ -27,7 +27,7 @@ async function boot(): Promise<void> {
   await progress.init();
   const auth = useAuthStore();
   await auth.init();
-  if (auth.isLoggedIn) void progress.syncNow({ quiet: true });
+  if (auth.isLoggedIn) void progress.syncNow({ quiet: true, compareChecksum: true });
 
   app.mount('#app');
 

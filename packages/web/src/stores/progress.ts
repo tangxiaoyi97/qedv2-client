@@ -41,6 +41,15 @@ export interface SyncStatus {
   at?: Date;
 }
 
+export type SyncRunResult =
+  | 'guest'
+  | 'in-sync'
+  | 'synced'
+  | 'conflict'
+  | 'blocked'
+  | 'offline'
+  | 'error';
+
 export interface PartStateView {
   grading: GradingOrUnseen;
   starred: boolean;
@@ -65,6 +74,24 @@ export const useProgressStore = defineStore('progress', () => {
   const loaded = ref(false);
   /** Bumped when the history log changes so views can re-query it. */
   const historyVersion = ref(0);
+
+  /**
+   * Every archive mutation is serialized through one queue. IndexedDB writes,
+   * grading, manual overrides and network syncs are all asynchronous; without
+   * a queue an older sync response can overwrite a grade recorded while the
+   * request was in flight. Keeping the queue alive after failures also means a
+   * transient network/storage error cannot permanently block later progress.
+   */
+  let archiveMutationTail: Promise<void> = Promise.resolve();
+
+  function enqueueArchiveMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const run = archiveMutationTail.then(mutation, mutation);
+    archiveMutationTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
 
   const practicedParts = computed(
     () => archive.value.content.perPart.filter((p) => isPracticed(p)).length,
@@ -131,28 +158,31 @@ export const useProgressStore = defineStore('progress', () => {
     result: GradeResult;
     elapsedMs?: number;
   }): Promise<{ grading: Grading; previousFsrs: FsrsState | undefined }> {
-    const res = await archiveStore.applyGrade({
-      partId: input.partId,
-      competencyCodes: input.competencyCodes,
-      verdict: input.result.verdict,
-      awardedPoints: input.result.awardedPoints,
-      maxPoints: input.result.maxPoints,
-      now: new Date(),
+    return enqueueArchiveMutation(async () => {
+      const now = new Date();
+      const res = await archiveStore.applyGrade({
+        partId: input.partId,
+        competencyCodes: input.competencyCodes,
+        verdict: input.result.verdict,
+        awardedPoints: input.result.awardedPoints,
+        maxPoints: input.result.maxPoints,
+        now,
+      });
+      archive.value = res.archive;
+      const entry: HistoryEntry = {
+        partId: input.partId,
+        questionId: input.questionId,
+        verdict: input.result.verdict,
+        awardedPoints: input.result.awardedPoints,
+        maxPoints: input.result.maxPoints,
+        grading: res.grading,
+        gradedAt: now.toISOString(),
+      };
+      if (input.elapsedMs !== undefined) entry.elapsedMs = input.elapsedMs;
+      await historyLog.append(entry);
+      historyVersion.value += 1;
+      return { grading: res.grading, previousFsrs: res.previousFsrs };
     });
-    archive.value = res.archive;
-    const entry: HistoryEntry = {
-      partId: input.partId,
-      questionId: input.questionId,
-      verdict: input.result.verdict,
-      awardedPoints: input.result.awardedPoints,
-      maxPoints: input.result.maxPoints,
-      grading: res.grading,
-      gradedAt: new Date().toISOString(),
-    };
-    if (input.elapsedMs !== undefined) entry.elapsedMs = input.elapsedMs;
-    await historyLog.append(entry);
-    historyVersion.value += 1;
-    return { grading: res.grading, previousFsrs: res.previousFsrs };
   }
 
   /** Manual grading (menu) — always overrides; see ArchiveStore.setGrading. */
@@ -161,16 +191,20 @@ export const useProgressStore = defineStore('progress', () => {
     grading: Grading;
     baseFsrs?: FsrsState | undefined;
   }): Promise<void> {
-    archive.value = await archiveStore.setGrading({
-      partId: input.partId,
-      grading: input.grading,
-      now: new Date(),
-      baseFsrs: input.baseFsrs,
+    await enqueueArchiveMutation(async () => {
+      archive.value = await archiveStore.setGrading({
+        partId: input.partId,
+        grading: input.grading,
+        now: new Date(),
+        baseFsrs: input.baseFsrs,
+      });
     });
   }
 
   async function setStarred(partId: string, starred: boolean): Promise<void> {
-    archive.value = await archiveStore.setStarred(partId, starred, new Date());
+    await enqueueArchiveMutation(async () => {
+      archive.value = await archiveStore.setStarred(partId, starred, new Date());
+    });
   }
 
   async function toUserState(): Promise<RecommendUserState> {
@@ -182,31 +216,64 @@ export const useProgressStore = defineStore('progress', () => {
    * On conflict the dialog state is populated; resolution happens via
    * resolveConflict().
    */
-  async function syncNow(opts: { quiet: boolean }): Promise<void> {
+  async function runSyncRound(opts: { quiet: boolean; compareChecksum?: boolean }): Promise<SyncRunResult> {
     const auth = useAuthStore();
     const app = useAppStore();
-    if (!auth.isLoggedIn) return;
+    if (!auth.isLoggedIn) return 'guest';
     syncStatus.value = { state: 'syncing' };
     try {
-      const { outcome, archive: next } = await performSync(app.serverClient, archive.value);
+      const serverState = opts.compareChecksum ? await app.serverClient.getState() : undefined;
+      const { outcome, archive: next } = await performSync(
+        app.serverClient,
+        archive.value,
+        serverState
+          ? {
+              serverChecksumHint: serverState.checksum,
+              serverVersionHint: serverState.archiveVersion,
+            }
+          : undefined,
+      );
       if (outcome.type === 'conflict') {
         conflict.value = outcome.conflict;
         syncStatus.value = { state: 'conflict', at: new Date() };
-        return;
+        return 'conflict';
       }
       archive.value = next;
       await archiveStore.save(next);
       syncStatus.value = { state: 'synced', at: new Date() };
+      return outcome.type === 'in-sync' ? 'in-sync' : 'synced';
     } catch (e) {
       if (e instanceof NetworkError) {
         syncStatus.value = { state: 'offline', at: new Date() };
+        return 'offline';
       } else if (e instanceof ApiError && e.status === 401) {
         syncStatus.value = { state: 'error', message: 'Anmeldung abgelaufen — bitte neu anmelden.', at: new Date() };
+        return 'error';
       } else {
         syncStatus.value = { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
         if (!opts.quiet) throw e;
+        return 'error';
       }
     }
+  }
+
+  async function syncNow(opts: { quiet: boolean; compareChecksum?: boolean }): Promise<SyncRunResult> {
+    return enqueueArchiveMutation(() => runSyncRound(opts));
+  }
+
+  /**
+   * Contract §8.2: recommendations may use the local archive only after its
+   * checksum has been compared with the cloud. A pending archive choice or
+   * true conflict blocks recommendation; offline/error states deliberately do
+   * not, because local practice remains available without the user server.
+   */
+  async function syncBeforeRecommendation(): Promise<SyncRunResult> {
+    return enqueueArchiveMutation(async () => {
+      const auth = useAuthStore();
+      if (!auth.isLoggedIn) return 'guest';
+      if (archiveChoice.value || conflict.value) return 'blocked';
+      return runSyncRound({ quiet: true, compareChecksum: true });
+    });
   }
 
   /**
@@ -214,7 +281,7 @@ export const useProgressStore = defineStore('progress', () => {
    * silently; only "both sides differ" opens the choice dialog. Network
    * failure degrades to the offline state — the user continues locally.
    */
-  async function reconcileOnLogin(): Promise<void> {
+  async function reconcileOnLoginUnlocked(): Promise<void> {
     const app = useAppStore();
     syncStatus.value = { state: 'syncing' };
     try {
@@ -259,6 +326,10 @@ export const useProgressStore = defineStore('progress', () => {
           ? { state: 'offline', at: new Date() }
           : { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
     }
+  }
+
+  async function reconcileOnLogin(): Promise<void> {
+    await enqueueArchiveMutation(reconcileOnLoginUnlocked);
   }
 
   /** The user's pick in the archive-choice dialog (§2.3). */
@@ -319,22 +390,24 @@ export const useProgressStore = defineStore('progress', () => {
 
   /** User picked sides in the conflict dialog. */
   async function resolveConflict(choices: Record<string, 'server' | 'local'>): Promise<void> {
-    const app = useAppStore();
-    const current = conflict.value;
-    if (!current) return;
-    const resolved: ArchiveContent = buildResolvedArchive(current, choices);
-    const { outcome, archive: next } = await submitResolution(app.serverClient, current, resolved);
-    if (outcome.type === 'conflict') {
-      // Another device wrote while the user was choosing — new round.
-      conflict.value = outcome.conflict;
-      return;
-    }
-    conflict.value = undefined;
-    if (next) {
-      archive.value = next;
-      await archiveStore.save(next);
-    }
-    syncStatus.value = { state: 'synced', at: new Date() };
+    await enqueueArchiveMutation(async () => {
+      const app = useAppStore();
+      const current = conflict.value;
+      if (!current) return;
+      const resolved: ArchiveContent = buildResolvedArchive(current, choices);
+      const { outcome, archive: next } = await submitResolution(app.serverClient, current, resolved);
+      if (outcome.type === 'conflict') {
+        // Another device wrote while the user was choosing — new round.
+        conflict.value = outcome.conflict;
+        return;
+      }
+      conflict.value = undefined;
+      if (next) {
+        archive.value = next;
+        await archiveStore.save(next);
+      }
+      syncStatus.value = { state: 'synced', at: new Date() };
+    });
   }
 
   function dismissConflict(): void {
@@ -372,6 +445,7 @@ export const useProgressStore = defineStore('progress', () => {
     setStarred,
     toUserState,
     syncNow,
+    syncBeforeRecommendation,
     resolveConflict,
     dismissConflict,
     localChecksum,

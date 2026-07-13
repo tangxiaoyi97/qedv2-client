@@ -63,9 +63,12 @@ function findFigSrc(node: unknown): string | undefined {
 describe.skipIf(!coreUp)(`core integration (${CORE_URL})`, () => {
   const core = new CoreClient(CORE_URL);
 
-  it('info reports schemaVersionSupported {min:2, max:2}', async () => {
+  it('info reports a schemaVersionSupported range covering v2', async () => {
     const info = await core.info();
-    expect(info.schemaVersionSupported).toEqual({ min: 2, max: 2 });
+    // The bank schema evolves (v3 added candidateGroups); the client supports
+    // 2..3, so pin only what we rely on instead of the service's exact max.
+    expect(info.schemaVersionSupported.min).toBe(2);
+    expect(info.schemaVersionSupported.max).toBeGreaterThanOrEqual(3);
     expect(info.service).toBe('qed2-core');
   });
 
@@ -84,6 +87,14 @@ describe.skipIf(!coreUp)(`core integration (${CORE_URL})`, () => {
     const q = await core.getQuestion('2019-ht-t1-01');
     expect(q.id).toBe('2019-ht-t1-01');
     expect(q.parts[0]?.answer?.kind).toBe('choice');
+  });
+
+  it('rubric criteria follow the preview bank schema (plain desc strings)', async () => {
+    const q = await core.getQuestion('2019-nt1-t1-11');
+    const scoring = q.parts[0]?.scoring;
+    expect(scoring?.mode).toBe('rubric');
+    if (scoring?.mode !== 'rubric') throw new Error('expected rubric scoring');
+    expect(typeof scoring.criteria[0]?.desc).toBe('string');
   });
 
   it('batch reports unknown ids in missing and returns the rest', async () => {

@@ -62,7 +62,8 @@ describe('web shell boot (guest, offline)', () => {
     await router.isReady();
     await nextTick();
 
-    expect(host.textContent).toContain('Intelligent üben');
+    expect(host.textContent).toContain('Empfohlen für heute');
+    expect(host.textContent).toContain('Programm starten');
     expect(host.textContent).toContain('Als Gast unterwegs');
     expect(auth.isLoggedIn).toBe(false);
     expect(progress.loaded).toBe(true);

@@ -53,9 +53,9 @@ describe('gradeOpen — multi-criterion rubric sums', () => {
   const rubric: Scoring = {
     mode: 'rubric',
     criteria: [
-      { desc: [{ t: 'text', v: 'Ansatz' }], points: 2 },
-      { desc: [{ t: 'text', v: 'Rechnung' }], points: 1 },
-      { desc: [{ t: 'text', v: 'Interpretation' }], points: 1 },
+      { desc: 'Ansatz', points: 2 },
+      { desc: 'Rechnung', points: 1 },
+      { desc: 'Interpretation', points: 1 },
     ],
   };
 

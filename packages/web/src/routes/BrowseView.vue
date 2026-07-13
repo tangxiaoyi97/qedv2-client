@@ -743,6 +743,11 @@ function firstCode(q: QuestionSummary): string | undefined {
   color: var(--q-ink);
   text-align: left;
   width: 100%;
+  /* 644 rows render at once — skip layout/paint for off-screen rows. The
+     `auto` keyword remembers the real rendered size after first paint; the
+     fallback matches the one-line desktop row height. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 50px;
 }
 .browse__row--selected {
   background: var(--q-accent-bg);
@@ -891,16 +896,78 @@ function firstCode(q: QuestionSummary): string | undefined {
   align-items: center;
 }
 @media (max-width: 640px) {
-  .browse__qtitle {
-    display: none;
+  /* Two-line row (search hits keep their own layout):
+       line 1: dots · title (ellipsis) · star
+       line 2: Nr · Kompetenz-chip · due/points/state (muted, smaller)
+     The ::after break is a zero-height 100%-width flex item — everything
+     ordered after it wraps onto the second line. */
+  .browse__row:not(.browse__hit) {
+    flex-wrap: wrap;
+    gap: 3px 9px;
+    contain-intrinsic-size: auto 72px;
+  }
+  .browse__row:not(.browse__hit)::after {
+    content: '';
+    order: 4;
+    width: 100%;
+    height: 0;
+  }
+  .browse__row:not(.browse__hit) .browse__dots {
+    order: 1;
+  }
+  .browse__row:not(.browse__hit) .browse__qtitle {
+    order: 2;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--q-ink);
+  }
+  .browse__row:not(.browse__hit) .browse__star {
+    order: 3;
+  }
+  .browse__row:not(.browse__hit) .browse__nr {
+    order: 5;
+    min-width: 0;
+    font-size: 11.5px;
+    color: var(--q-mut);
+  }
+  .browse__row:not(.browse__hit) .browse__chip {
+    order: 5;
+  }
+  .browse__row:not(.browse__hit) .browse__excl {
+    order: 5;
+    font-size: 11.5px;
+  }
+  .browse__row:not(.browse__hit) .browse__due {
+    order: 6;
+  }
+  .browse__row:not(.browse__hit) .browse__points {
+    order: 6;
+    font-size: 11.5px;
+    color: var(--q-mut);
+  }
+  .browse__row:not(.browse__hit) .browse__state {
+    order: 6;
+  }
+  .browse__row:not(.browse__hit) .browse__single-btn {
+    order: 7;
   }
 }
-@media (max-width: 420px) {
-  .browse__chip {
-    display: none;
+@media (pointer: coarse) {
+  /* Invisible ≥44px hit-area extensions, keeping the compact visuals —
+     same trick as GradingCapsule/StarButton in @qed2/ui. */
+  .browse__active-x,
+  .browse__single-btn {
+    position: relative;
   }
-  .browse__row {
-    gap: 9px;
+  .browse__active-x::after,
+  .browse__single-btn::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
   }
 }
 </style>

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
-import type { GradeResult, Grading, Question, QuestionPart, Submission } from '@qed2/core-logic';
+import type {
+  GradeResult,
+  Grading,
+  Question,
+  QuestionPart,
+  SelfAssessment,
+  Submission,
+} from '@qed2/core-logic';
 import PartPlayer from '../src/practice/PartPlayer.vue';
 import type { PartPlayerState } from '../src/practice/part-player-types.js';
 import fixture from '../../core-logic/test/fixtures/sample-questions.json';
@@ -25,6 +32,7 @@ type Exposed = {
   confirmSelfAssessment: () => void;
   setSelfAssessmentScore: (points: number) => void;
   setSelfAssessmentGrading: (grading: Grading) => void;
+  setSelfAssessment: (value: SelfAssessment) => void;
 };
 
 function exposed(wrapper: ReturnType<typeof mount>): Exposed {
@@ -120,6 +128,20 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(wrapper.find('.q-part__key-hint').exists()).toBe(false);
   });
 
+  it('accepts explicit shell commands without relying on a component ref', async () => {
+    const wrapper = mount(PartPlayer, {
+      props: { part: openPart, chromeless: true, command: null },
+    });
+
+    await wrapper.setProps({ command: { id: 1, type: 'submit' } });
+    expect(states(wrapper).at(-1)!.phase).toBe('self-assessing');
+
+    await wrapper.setProps({ command: { id: 2, type: 'set-score', points: 1 } });
+    await wrapper.setProps({ command: { id: 3, type: 'set-grading', grading: 'good' } });
+    await wrapper.setProps({ command: { id: 4, type: 'confirm-self-assessment' } });
+    expect(wrapper.emitted('graded')).toHaveLength(1);
+  });
+
   it('exposes interval previews to the shell instead of rendering them in chromeless mode', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: intervalPart, chromeless: true },
@@ -185,6 +207,30 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect((payload.submission as { selfAssessment: { awardedPoints?: number; overall?: string } }).selfAssessment.overall).toBe('full');
 
     expect(states(wrapper).at(-1)!.phase).toBe('reviewed');
+  });
+
+  it('accepts criterion-by-criterion rubric state from a chromeless shell', async () => {
+    const rubricPart: QuestionPart = {
+      ...openPart,
+      scoring: {
+        mode: 'rubric',
+        criteria: [
+          { desc: 'Ansatz', points: 1 },
+          { desc: 'Begründung', points: 2 },
+        ],
+      },
+      points: 3,
+    };
+    const wrapper = mount(PartPlayer, { props: { part: rubricPart, chromeless: true } });
+
+    exposed(wrapper).submit();
+    exposed(wrapper).setSelfAssessment({ criteriaMet: [true, false] });
+    await nextTick();
+
+    const self = states(wrapper).at(-1)!.selfAssessment;
+    expect(self?.assessment.criteriaMet).toEqual([true, false]);
+    expect(self?.selectedPoints).toBe(1);
+    expect(self?.grading).toBe('meh');
   });
 });
 

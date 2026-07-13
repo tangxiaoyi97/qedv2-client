@@ -109,7 +109,7 @@ function isSelectedScore(value: number): boolean {
         <span class="q-selfassess__check" :class="{ 'q-selfassess__check--on': met[i] }" aria-hidden="true">
           <template v-if="met[i]">✓</template>
         </span>
-        <span class="q-selfassess__desc"><RichTextView :nodes="criterion.desc" inline-only /></span>
+        <span class="q-selfassess__desc">{{ criterion.desc }}</span>
         <span class="q-selfassess__pts">{{ criterion.points }}&nbsp;P</span>
       </button>
     </div>

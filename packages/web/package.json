@@ -1,6 +1,6 @@
 {
   "name": "@qed2/web",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "description": "QED2 web client (PWA) — browser shell over @qed2/core-logic and @qed2/ui. Static build deploys to GitHub Pages.",
   "type": "module",
   "private": true,

@@ -56,7 +56,7 @@ describe('MatchingControl', () => {
     expect(opts).toHaveLength(5);
     expect(opts[0]!.text()).toContain('zuordnen');
     expect(opts[1]!.text()).toBe('A · Exponentialfunktion');
-    expect(opts[2]!.text()).toBe('B · Parabel x^2'); // math projected to plain source
+    expect(opts[2]!.text()).toBe('B · Parabel x²'); // math projected to readable plain text
     expect(opts[4]!.text()).toBe('D · Hyperbel');
 
     // pool lists all right items with the same letters, rendered rich
@@ -201,6 +201,14 @@ describe('MatchingControl', () => {
     // no classic comparison lines, no pool in grouped review
     expect(wrapper.find('.q-match__cmp').exists()).toBe(false);
     expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+    // the outer row frame must NOT double the feedback with an ok/err wash —
+    // the option cards already carry it; only the small StateIcon remains
+    expect(rows[0]!.classes()).not.toContain('q-match__row--err');
+    expect(rows[0]!.classes()).not.toContain('q-match__row--ok');
+    expect(rows[1]!.classes()).not.toContain('q-match__row--ok');
+    expect(rows[1]!.classes()).not.toContain('q-match__row--err');
+    expect(rows[0]!.find('.q-match__main .q-state-icon--incorrect').exists()).toBe(true);
+    expect(rows[1]!.find('.q-match__main .q-state-icon--correct').exists()).toBe(true);
   });
 
   it('rejects cross-group drag/drop assignments for v3 matching', async () => {

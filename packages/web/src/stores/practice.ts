@@ -161,7 +161,17 @@ export const usePracticeStore = defineStore('practice', () => {
       const progress = useProgressStore();
       // Logged in: reconcile with the cloud archive before asking for
       // recommendations (contract §8.2 step 2 — checksum compare inside).
-      if (auth.isLoggedIn) await progress.syncNow({ quiet: true });
+      if (auth.isLoggedIn) {
+        const syncResult = await progress.syncBeforeRecommendation();
+        if (syncResult === 'conflict' || syncResult === 'blocked') {
+          throw new Error('Bitte löse zuerst den offenen Speicherkonflikt. Danach kann das Programm starten.');
+        }
+        if (syncResult === 'offline') {
+          warning.value = 'Cloud-Speicher nicht erreichbar — Empfehlungen basieren auf dem lokalen Fortschritt.';
+        } else if (syncResult === 'error') {
+          warning.value = 'Cloud-Abgleich fehlgeschlagen — Empfehlungen basieren auf dem lokalen Fortschritt.';
+        }
+      }
       const userState = await progress.toUserState();
       const req: Parameters<typeof app.coreClient.recommend>[0] = {
         userState,

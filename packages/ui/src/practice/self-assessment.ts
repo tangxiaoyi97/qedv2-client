@@ -12,6 +12,8 @@ export interface SelfAssessmentUiState {
   scoreOptions: SelfAssessmentScoreOption[];
   selectedPoints: number | null;
   grading: Grading | null;
+  /** Full rubric/overall selection so a chromeless shell can render it. */
+  assessment: SelfAssessment;
 }
 
 export interface SelfAssessmentGradingOption {
@@ -116,7 +118,18 @@ export function gradeResultFromScore(points: number, maxPoints: number): GradeRe
   return { verdict, correct: verdict === 'correct', awardedPoints, maxPoints };
 }
 
-export function selectedPointsFromAssessment(assessment: SelfAssessment, maxPoints: number): number | null {
+export function selectedPointsFromAssessment(
+  assessment: SelfAssessment,
+  maxPoints: number,
+  scoring?: Scoring,
+): number | null {
+  if (scoring?.mode === 'rubric' && assessment.criteriaMet) {
+    const total = scoring.criteria.reduce(
+      (sum, criterion, index) => sum + (assessment.criteriaMet?.[index] === true ? criterion.points : 0),
+      0,
+    );
+    return roundScore(Math.min(Math.max(total, 0), maxPoints));
+  }
   if (typeof assessment.awardedPoints === 'number' && Number.isFinite(assessment.awardedPoints)) {
     return roundScore(assessment.awardedPoints);
   }

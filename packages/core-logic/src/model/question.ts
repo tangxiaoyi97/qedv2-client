@@ -138,7 +138,8 @@ export interface TieredScoring {
 }
 
 export interface RubricCriterion {
-  desc: RichText;
+  /** Bank schema v2/v3: plain grader-facing criterion text. */
+  desc: string;
   points: number;
 }
 

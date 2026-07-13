@@ -181,14 +181,17 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
 <template>
   <div class="q-match">
+    <!-- grouped ("Lückentext") review: feedback lives ON the option cards
+         (ok/err/missed) — a second ok/err wash on the outer row frame would
+         double the signal, so grouped rows keep only the small StateIcon. -->
     <div class="q-match__rows" :class="{ 'q-match__rows--grouped': groupedOptionMode }">
       <div
         v-for="(leftItem, i) in answer.left"
         :key="i"
         class="q-match__row"
         :class="{
-          'q-match__row--ok': marks[i]?.correct === true,
-          'q-match__row--err': marks[i]?.correct === false,
+          'q-match__row--ok': !groupedOptionMode && marks[i]?.correct === true,
+          'q-match__row--err': !groupedOptionMode && marks[i]?.correct === false,
           'q-match__row--dragover': dragOverRow === i,
         }"
         @dragover.prevent="!review && !groupedOptionMode && (dragOverRow = i)"

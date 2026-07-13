@@ -22,7 +22,7 @@ import {
 import { WebStorage } from './platform/web-storage.js';
 import { WebCoreRuntime, WebNetwork, WebUpdate } from './platform/web-ports.js';
 
-export const APP_VERSION = '1.1';
+export const APP_VERSION = '1.4.0';
 
 /** Ports injected by a native shell, if any (see module header). */
 const injected: Partial<PlatformPorts> =
