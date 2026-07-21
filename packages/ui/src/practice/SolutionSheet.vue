@@ -39,6 +39,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
     class="q-ssheet"
     :class="{ 'q-ssheet--open': open }"
     :aria-hidden="!open"
+    :inert="!open"
     :tabindex="open ? 0 : -1"
     aria-label="Offizieller Lösungsweg"
     @keydown.esc="emit('update:open', false)"

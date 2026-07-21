@@ -6,7 +6,7 @@
  * (browse/filter/search). Practice routes (meta.focus) render without the
  * navigation chrome. Sync-conflict dialog + auth modal mount globally.
  */
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { provideAssetResolver } from '@qed2/ui';
 import { Calendar, Play, ListTodo, History, LineChart, Settings, UserCircle, Grid } from 'lucide-vue-next';
@@ -41,25 +41,37 @@ const otherItems = [
   { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
-/** Mobile tab bar — 5 slots; Einstellungen via the fixed gear button. */
+/** Mobile tab bar — 6 slots, Settings included so it is reachable everywhere. */
 const tabItems = [
   { to: '/', label: 'Heute', icon: Calendar },
   { to: '/practice', label: 'Üben', icon: Play },
   { to: '/questions', label: 'Aufgaben', icon: ListTodo },
   { to: '/history', label: 'Verlauf', icon: History },
   { to: '/progress', label: 'Übersicht', icon: LineChart },
+  { to: '/settings', label: 'Optionen', icon: Settings },
 ] as const;
 
 function isActive(to: string): boolean {
   return to === '/' ? route.path === '/' : route.path.startsWith(to);
 }
+
+/** Move focus into the content on every route change so keyboard/screen-
+ * reader users don't get dumped back on <body> when a view unmounts. */
+const mainEl = ref<HTMLElement | null>(null);
+watch(
+  () => route.fullPath,
+  async () => {
+    await nextTick();
+    mainEl.value?.focus({ preventScroll: true });
+  },
+);
 </script>
 
 <template>
   <div class="app q-app">
     <aside class="app__sidebar" :class="{ 'app__sidebar--hidden': focusMode }">
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
-        <nav class="app__nav">
+        <nav class="app__nav" aria-label="Hauptnavigation">
           <RouterLink
             to="/"
             class="app__nav-item"
@@ -121,7 +133,7 @@ function isActive(to: string): boolean {
         </div>
       </aside>
 
-      <nav class="app__tabbar" :class="{ 'app__tabbar--hidden': focusMode }">
+      <nav class="app__tabbar" :class="{ 'app__tabbar--hidden': focusMode }" aria-label="Hauptnavigation">
         <RouterLink
           v-for="item in tabItems"
           :key="item.to"
@@ -139,7 +151,7 @@ function isActive(to: string): boolean {
          .app__main padding transition (sibling selector below). -->
     <div class="app__scrim" aria-hidden="true" />
 
-    <main class="app__main">
+    <main ref="mainEl" class="app__main" tabindex="-1">
       <RouterView v-slot="{ Component }">
         <transition name="page-fade" mode="out-in">
           <component :is="Component" />
@@ -157,6 +169,7 @@ function isActive(to: string): boolean {
 <style scoped>
 .app {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
 }
 
@@ -169,9 +182,11 @@ function isActive(to: string): boolean {
   display: flex;
   flex-direction: column;
   padding: 18px 14px;
+  padding-left: calc(14px + env(safe-area-inset-left)); /* landscape notch/tablets */
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
   transition: margin-left var(--q-transition-normal), opacity var(--q-transition-normal);
 }
 .app__sidebar--hidden {
@@ -312,9 +327,8 @@ function isActive(to: string): boolean {
   transform: scale(0.97);
 }
 
-/* bottom tab bar + gear + status-bar scrim (mobile only) */
+/* bottom tab bar + status-bar scrim (mobile only) */
 .app__tabbar,
-.app__gear,
 .app__scrim {
   display: none;
 }
@@ -323,6 +337,9 @@ function isActive(to: string): boolean {
   flex: 1;
   min-width: 0;
   transition: padding var(--q-transition-normal);
+}
+.app__main:focus {
+  outline: none; /* programmatic focus target after route changes */
 }
 
 @media (max-width: 899px) {
@@ -336,7 +353,8 @@ function isActive(to: string): boolean {
     left: 0;
     right: 0;
     height: calc(64px + env(safe-area-inset-bottom));
-    padding: 8px 8px env(safe-area-inset-bottom);
+    padding: 8px calc(8px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
+      calc(8px + env(safe-area-inset-left));
     background: var(--q-card);
     border-top: 1px solid var(--q-border);
     z-index: 40;
@@ -353,8 +371,8 @@ function isActive(to: string): boolean {
     align-items: center;
     justify-content: center;
     gap: 3px;
-    color: var(--q-disabled);
-    font-size: 10.5px;
+    color: var(--q-mut-2);
+    font-size: 11px;
     font-weight: 500;
     text-decoration: none;
     padding-top: 2px;
@@ -363,7 +381,7 @@ function isActive(to: string): boolean {
     transition: color var(--q-transition-fast), transform 0.1s ease;
   }
   .app__tab:active {
-    background: rgba(0, 0, 0, 0.03);
+    background: var(--q-panel-2);
     border-radius: 6px;
     transform: scale(0.95);
   }
@@ -375,9 +393,6 @@ function isActive(to: string): boolean {
     width: 22px;
     height: 22px;
     stroke-width: 2.2px;
-  }
-  .app__main:not(.app__main--focus) {
-    padding-bottom: 84px;
   }
   .app__main {
     padding-bottom: 84px;

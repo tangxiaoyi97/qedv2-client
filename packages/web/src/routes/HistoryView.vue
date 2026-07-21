@@ -45,6 +45,9 @@ const titles = ref<Map<string, string>>(new Map());
 
 const cloudMode = computed(() => auth.isLoggedIn);
 
+/** Disambiguates duplicate local rows (see key construction below). */
+let rowSeq = 0;
+
 function verdictOf(correct: boolean, awarded: number): Verdict {
   return correct ? 'correct' : awarded > 0 ? 'partial' : 'incorrect';
 }
@@ -95,7 +98,9 @@ async function loadPage(reset: boolean): Promise<void> {
       const list = await historyLog.list(PAGE_SIZE, (target - 1) * PAGE_SIZE);
       total.value = await historyLog.count();
       batch = list.map((e) => ({
-        key: `${e.gradedAt}-${e.partId}`,
+        // gradedAt+partId alone can collide (same part graded twice within
+        // one second) — disambiguate with a load-local sequence number.
+        key: `${e.gradedAt}-${e.partId}-${rowSeq++}`,
         partId: e.partId,
         questionId: e.questionId,
         verdict: e.verdict,
@@ -195,9 +200,10 @@ function redo(questionId: string): void {
     <section class="hist__section">
       <h2 class="hist__section-title">Aktivität</h2>
       <ActivityHeatmap :data="activity" :weeks="52" />
+      <p v-if="cloudMode" class="hist__heatmap-note">Aktivität nur von diesem Gerät.</p>
     </section>
 
-    <div v-if="error" class="hist__error">
+    <div v-if="error && rows.length === 0" class="hist__error">
       {{ error }}
       <QButton variant="secondary" @click="loadPage(true)">Erneut versuchen</QButton>
     </div>
@@ -238,8 +244,9 @@ function redo(questionId: string): void {
       </section>
 
       <div v-if="hasMore" class="hist__more">
+        <p v-if="error" class="hist__more-error" role="alert">{{ error }}</p>
         <QButton variant="secondary" :disabled="loading" @click="loadPage(false)">
-          {{ loading ? 'Lade …' : 'Mehr laden' }}
+          {{ loading ? 'Lade …' : error ? 'Erneut versuchen' : 'Mehr laden' }}
         </QButton>
       </div>
     </template>
@@ -390,8 +397,20 @@ function redo(questionId: string): void {
 }
 .hist__more {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   padding: 14px 0;
+}
+.hist__more-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--q-err-ink);
+}
+.hist__heatmap-note {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--q-faint);
 }
 @media (max-width: 640px) {
   .hist__row-part {

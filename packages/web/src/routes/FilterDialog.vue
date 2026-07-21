@@ -59,21 +59,36 @@ export const GRADING_FILTER_LABELS: Record<GradingOrUnseen, string> = {
  * reactively; each toggle emits a fresh FilterState via update:modelValue.
  * Beherrschung includes `unseen` — "nur ungesehene" is a valid filter.
  */
-import { computed, onBeforeUnmount, onMounted } from 'vue';
+import { computed, ref } from 'vue';
 import { GradingDot, QButton } from '@qed2/ui';
+import { useModalA11y } from '../composables/useModalA11y.js';
 
-const props = defineProps<{
-  modelValue: FilterState;
-  /** Questions matching the current draft — computed by the parent. */
-  resultCount: number;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: FilterState;
+    /** Questions matching the current draft — computed by the parent. */
+    resultCount: number;
+    /** Years actually present in the question pool; defaults to every year
+     *  from 2014 (first SRDP exam) through the current one. */
+    years?: number[];
+  }>(),
+  { years: undefined },
+);
 
 const emit = defineEmits<{
   'update:modelValue': [f: FilterState];
   close: [];
 }>();
 
-const YEARS = Array.from({ length: 13 }, (_, i) => 2014 + i);
+/* Mount-based dialog: always "open" while it exists. */
+const card = ref<HTMLElement | null>(null);
+useModalA11y(card, ref(true), () => emit('close'));
+
+const YEARS = computed(() => {
+  if (props.years && props.years.length > 0) return [...props.years].sort((a, b) => b - a);
+  const current = new Date().getFullYear();
+  return Array.from({ length: current - 2014 + 1 }, (_, i) => current - i);
+});
 const TERMS: readonly Term[] = [
   'haupttermin',
   'nebentermin-1',
@@ -129,13 +144,6 @@ function onBackdropClick(ev: MouseEvent): void {
   if (ev.target === ev.currentTarget) emit('close');
 }
 
-function onDocumentKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape') emit('close');
-}
-
-onMounted(() => document.addEventListener('keydown', onDocumentKeydown));
-onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentKeydown));
-
 const countText = computed(() =>
   props.resultCount === 1 ? '1 Aufgabe entspricht' : `${props.resultCount} Aufgaben entsprechen`,
 );
@@ -144,10 +152,10 @@ const countText = computed(() =>
 <template>
   <Teleport to="body">
     <div class="fdlg" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
-      <div class="fdlg__card">
+      <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
           <h2 class="fdlg__title">Filter</h2>
-          <button type="button" class="fdlg__close" aria-label="Schließen" @click="emit('close')">
+          <button type="button" class="fdlg__close" aria-label="Schließen" data-autofocus @click="emit('close')">
             ✕
           </button>
         </div>

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Sync the root package.json version into packages/*/package.json so the
+# bump rides the same commit (see scripts/sync-version.mjs).
+node "$(git rev-parse --show-toplevel)/scripts/sync-version.mjs"

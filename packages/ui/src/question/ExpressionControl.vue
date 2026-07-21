@@ -49,6 +49,22 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
     el.setSelectionRange(pos, pos);
   });
 }
+
+/* mousedown.prevent keeps the input's focus/selection for pointer users;
+ * the click handler exists for keyboard activation (Enter/Space) — the flag
+ * stops a real click from inserting twice. */
+let pointerInsert = false;
+function onToolMousedown(tool: (typeof TOOLBAR)[number]): void {
+  pointerInsert = true;
+  insert(tool);
+  requestAnimationFrame(() => {
+    pointerInsert = false;
+  });
+}
+function onToolClick(tool: (typeof TOOLBAR)[number]): void {
+  if (pointerInsert) return;
+  insert(tool);
+}
 </script>
 
 <template>
@@ -60,7 +76,8 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
         type="button"
         class="q-expr__tool"
         :title="tool.insert"
-        @mousedown.prevent="insert(tool)"
+        @mousedown.prevent="onToolMousedown(tool)"
+        @click="onToolClick(tool)"
       >
         {{ tool.label }}
       </button>
@@ -79,6 +96,7 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
       spellcheck="false"
       autocapitalize="off"
       autocomplete="off"
+      enterkeyhint="done"
       placeholder="z. B. 2*x + 3"
       aria-label="Mathematischer Ausdruck"
       @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
@@ -132,6 +150,12 @@ function insert(tool: (typeof TOOLBAR)[number]): void {
 .q-expr__tool:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 1px;
+}
+@media (pointer: coarse) {
+  .q-expr__tool {
+    width: 44px;
+    height: 44px;
+  }
 }
 .q-expr__input {
   width: 100%;

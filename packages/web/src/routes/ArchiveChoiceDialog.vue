@@ -8,6 +8,7 @@
  */
 import { computed, ref } from 'vue';
 import { QButton } from '@qed2/ui';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useProgressStore } from '../stores/progress.js';
 
 const progress = useProgressStore();
@@ -16,6 +17,9 @@ const pick = ref<'merge' | 'server' | 'local'>('merge');
 const pending = ref(false);
 
 const choice = computed(() => progress.archiveChoice);
+
+const card = ref<HTMLElement | null>(null);
+useModalA11y(card, computed(() => choice.value != null), onEscape);
 
 const stampFmt = new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -66,9 +70,8 @@ function onEscape(): void {
       role="dialog"
       aria-modal="true"
       aria-label="Spielstand wählen"
-      @keydown.esc="onEscape"
     >
-      <div class="achoice__card">
+      <div ref="card" class="achoice__card">
         <div class="achoice__head">
           <span class="achoice__icon" aria-hidden="true">⇄</span>
           <div class="achoice__title">Zwei Spielstände gefunden</div>

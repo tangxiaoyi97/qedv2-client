@@ -20,9 +20,9 @@ const LABELS: Record<GradeResult['verdict'], string> = {
 const verdict = computed(() => props.result.verdict);
 const label = computed(() => LABELS[verdict.value]);
 
-/** German decimal comma for halves: 0.5 → "0,5". */
+/** German decimal comma + grouping, same as ResultPill: 0.5 → „0,5". */
 function fmt(n: number): string {
-  return String(n).replace('.', ',');
+  return n.toLocaleString('de-AT');
 }
 
 const points = computed(() => `${fmt(props.result.awardedPoints)} / ${fmt(props.result.maxPoints)}`);

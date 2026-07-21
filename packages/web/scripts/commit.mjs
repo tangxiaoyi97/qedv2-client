@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 /**
  * The commit that identifies THIS build. Injected into the bundle as
@@ -16,4 +17,13 @@ export function resolveCommit() {
   } catch {
     return 'dev';
   }
+}
+
+/**
+ * The app version injected as __APP_VERSION__ — read from this package's
+ * package.json so the settings page can never drift from the release tag.
+ */
+export function resolveVersion() {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  return pkg.version;
 }

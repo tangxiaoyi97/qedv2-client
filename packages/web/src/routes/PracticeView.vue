@@ -98,7 +98,17 @@ async function onGraded(payload: {
   if (payload.manualGrading) await practice.overrideGrading(payload.partId, payload.manualGrading);
 }
 
+/* Double-click / accidental second-tap protection: after „Prüfen" flips the
+ * phase synchronously, the same button instantly becomes „Weiter →" — a fast
+ * second click would skip the feedback entirely. Ignore repeated activations
+ * for a short window after every phase-changing click. */
+let lastPrimaryAt = 0;
+const PRIMARY_COOLDOWN_MS = 500;
+
 function primaryAction(): void {
+  const now = Date.now();
+  if (now - lastPrimaryAt < PRIMARY_COOLDOWN_MS) return;
+  lastPrimaryAt = now;
   switch (playerState.value.phase) {
     case 'answering':
       playerCommand.value = { id: ++playerCommandId, type: 'submit' };
@@ -260,7 +270,13 @@ function onDocumentPointerDown(ev: PointerEvent): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'ArrowRight' && playerState.value.phase === 'reviewed' && practice.phase === 'running') {
+  if (ev.key !== 'ArrowRight') return;
+  // Never steal arrows from native controls (selects, menus, text fields) —
+  // they need them for their own keyboard navigation.
+  const target = ev.target as HTMLElement | null;
+  if (target?.closest('input, select, textarea, [contenteditable="true"], [role="menu"], [role="listbox"]'))
+    return;
+  if (playerState.value.phase === 'reviewed' && practice.phase === 'running') {
     ev.preventDefault();
     practice.next();
   }
@@ -521,7 +537,7 @@ const currentCompetencyCodes = computed(() =>
           @primary="primaryAction"
         />
 
-        <div v-if="practice.warning" class="practice__warning">{{ practice.warning }}</div>
+        <div v-if="practice.warning" class="practice__warning" role="alert">{{ practice.warning }}</div>
         <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
           Offline — wird später synchronisiert
         </div>
@@ -534,6 +550,7 @@ const currentCompetencyCodes = computed(() =>
 .practice {
   --practice-rail-width: var(--q-sidebar-width);
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--q-card);
   display: flex;
   flex-direction: column;

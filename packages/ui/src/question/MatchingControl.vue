@@ -25,6 +25,7 @@ import type { BreakdownItem, GradeResult, MatchingAnswer, RichText } from '@qed2
 import { richTextToPlain } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
+import { onRadioGroupKeydown } from '../shared/radio-group.js';
 
 const props = defineProps<{
   answer: MatchingAnswer;
@@ -228,7 +229,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
         <!-- grouped ("Lückentext") mode: the gap IS a single-choice question —
              option cards like ChoiceControl, feedback in place, no pool. -->
-        <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="`Optionen für ${richTextToPlain(leftItem)}`">
+        <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="`Optionen für ${richTextToPlain(leftItem)}`" @keydown="onRadioGroupKeydown">
           <button
             v-for="option in optionsForLeft(i)"
             :key="option.idx"
@@ -310,7 +311,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
     <div v-if="!review && !groupedOptionMode" class="q-match__pool">
       <div class="q-match__pool-title">
         Optionen
-        <span v-if="!review" class="q-match__pool-hint">ziehen oder per Auswahl zuordnen</span>
+        <span v-if="!review" class="q-match__pool-hint q-match__pool-hint--fine">ziehen oder per Auswahl zuordnen</span>
+        <span v-if="!review" class="q-match__pool-hint q-match__pool-hint--coarse">per Auswahl zuordnen</span>
       </div>
       <div class="q-match__pool-items">
         <div
@@ -408,7 +410,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border-radius: 0;
   background: transparent;
   color: var(--q-mut-2);
-  font: 600 13px 'Public Sans', system-ui, sans-serif;
+  font: 600 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
@@ -416,6 +418,14 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+@media (pointer: coarse) {
+  .q-match__select-wrap {
+    min-height: 44px;
+  }
+  .q-match__select {
+    min-height: 44px;
+  }
 }
 .q-match__select--assigned {
   border-bottom: 1.5px solid var(--q-accent);
@@ -654,5 +664,17 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   letter-spacing: 0;
   color: var(--q-hint);
   margin-left: 8px;
+}
+/* drag & drop is mouse-only — on touch the hint must not promise it */
+.q-match__pool-hint--coarse {
+  display: none;
+}
+@media (pointer: coarse) {
+  .q-match__pool-hint--fine {
+    display: none;
+  }
+  .q-match__pool-hint--coarse {
+    display: inline;
+  }
 }
 </style>

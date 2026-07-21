@@ -26,7 +26,11 @@ export const useUiStore = defineStore('ui', () => {
 
   function setLocale(next: Locale): void {
     locale.value = next;
-    if (typeof window !== 'undefined') window.localStorage.setItem(LOCALE_KEY, next);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LOCALE_KEY, next);
+      // keep <html lang> honest — screen readers pick pronunciation from it
+      window.document.documentElement.lang = next;
+    }
   }
 
   function openAuthModal(mode: 'login' | 'register' = 'login'): void {

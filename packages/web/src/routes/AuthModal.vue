@@ -6,9 +6,10 @@
  * and the user stays where they are. No self-registration — accounts come
  * from invite codes (contract).
  */
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { ApiError, NetworkError } from '@qed2/core-logic';
 import { QButton } from '@qed2/ui';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useUiStore } from '../stores/ui.js';
 
@@ -25,8 +26,6 @@ const inviteUser = ref('');
 const invitePass = ref('');
 const invitePending = ref(false);
 const inviteError = ref('');
-
-const firstField = ref<HTMLInputElement | null>(null);
 
 function messageFor(e: unknown, kind: 'login' | 'invite'): string {
   if (e instanceof NetworkError) return 'Server nicht erreichbar — bitte später versuchen.';
@@ -79,9 +78,9 @@ function onBackdrop(): void {
   if (!loginPending.value && !invitePending.value) ui.closeAuthModal();
 }
 
-function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape') onBackdrop();
-}
+/* Focus trap + Esc + scroll-lock + focus restore (shared modal baseline). */
+const box = ref<HTMLElement | null>(null);
+useModalA11y(box, computed(() => ui.authModalOpen), onBackdrop);
 
 watch(
   () => ui.authModalOpen,
@@ -89,11 +88,17 @@ watch(
     if (open) {
       loginError.value = '';
       inviteError.value = '';
-      document.addEventListener('keydown', onKeydown);
-      void nextTick(() => firstField.value?.focus());
-    } else {
-      document.removeEventListener('keydown', onKeydown);
     }
+  },
+);
+
+/* login ↔ register redraws the same card in place — re-focus the first
+ * field after the face swap. */
+watch(
+  () => ui.authModalMode,
+  async () => {
+    await nextTick();
+    box.value?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
   },
 );
 </script>
@@ -103,6 +108,7 @@ watch(
     <transition name="modal-fade">
       <div
         v-if="ui.authModalOpen"
+      ref="box"
       class="authm"
       role="dialog"
       aria-modal="true"
@@ -117,7 +123,7 @@ watch(
 
         <label class="authm__field">
           <span class="authm__label">Benutzername</span>
-          <input ref="firstField" v-model="loginUser" class="authm__input" autocomplete="username" required />
+          <input v-model="loginUser" class="authm__input" autocomplete="username" data-autofocus required />
         </label>
         <label class="authm__field">
           <span class="authm__label">Passwort</span>
@@ -146,10 +152,10 @@ watch(
         <label class="authm__field">
           <span class="authm__label">Einladungscode</span>
           <input
-            ref="firstField"
             v-model="inviteCode"
             class="authm__input authm__input--mono"
             placeholder="QED2-XXXX-XXXX"
+            data-autofocus
             required
           />
         </label>

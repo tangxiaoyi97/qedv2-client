@@ -59,10 +59,10 @@ const groups = computed(() => {
   <div class="q-cgroups">
     <section v-for="group in groups" :key="group.cat" class="q-cgroups__card">
       <header class="q-cgroups__head">
-        <span class="q-cgroups__cat">{{ group.cat === 'other' ? '·' : group.cat }}</span>
+        <span class="q-cgroups__cat">{{ group.cat === 'other' ? 'Sonstige' : group.cat }}</span>
         <span class="q-cgroups__name">{{ group.name }}</span>
         <span class="q-cgroups__agg" :class="`q-cgroups__agg--${group.level}`">
-          {{ group.levelLabel }} · {{ group.percent }}%
+          {{ group.levelLabel }} · {{ group.percent }} %
         </span>
       </header>
       <div class="q-cgroups__rows">
@@ -122,10 +122,10 @@ const groups = computed(() => {
   color: var(--q-ok);
 }
 .q-cgroups__agg--medium {
-  color: var(--q-part);
+  color: var(--q-part-ink);
 }
 .q-cgroups__agg--low {
-  color: var(--q-mut-2);
+  color: var(--q-err);
 }
 .q-cgroups__rows {
   padding: 6px 16px 12px;

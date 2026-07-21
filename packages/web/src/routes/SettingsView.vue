@@ -49,8 +49,36 @@ watch(
 
 const saved = ref(false);
 const saving = ref(false);
+const urlError = ref('');
+
+/** Only absolute http(s) URLs are meaningful server addresses — catch typos
+ *  (missing scheme, stray spaces) before they wedge the whole app. */
+function validHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateUrls(): string {
+  const fields: [string, string][] = [
+    ['Core-Adresse', form.coreBaseUrl.trim()],
+    ['Server-Adresse', form.serverBaseUrl.trim()],
+    ['Core-Repository', form.coreRepoUrl.trim()],
+    ['Aufgabenbank-Repository', form.bankRepoUrl.trim()],
+  ];
+  for (const [label, value] of fields) {
+    if (value === '') return `${label} darf nicht leer sein.`;
+    if (!validHttpUrl(value)) return `${label}: „${value}“ ist keine gültige URL (https://…).`;
+  }
+  return '';
+}
 
 async function saveServers(): Promise<void> {
+  urlError.value = validateUrls();
+  if (urlError.value) return;
   saving.value = true;
   try {
     await app.updateConfig({
@@ -266,6 +294,7 @@ async function doLogout(): Promise<void> {
           <span class="settings__label">Aufgaben-Datenbank (Repository)</span>
           <input v-model="form.bankRepoUrl" class="settings__input" spellcheck="false" />
         </label>
+        <div v-if="urlError" class="settings__url-error" role="alert">{{ urlError }}</div>
         <div class="settings__adv-actions">
           <QButton variant="ghost" :disabled="saving" @click="resetServers">Zurücksetzen auf Standard</QButton>
           <QButton :disabled="saving" @click="saveServers">{{ saved ? '✓ Übernommen' : 'Übernehmen' }}</QButton>
@@ -306,6 +335,14 @@ async function doLogout(): Promise<void> {
   color: var(--q-faint);
   margin-top: 2px;
   max-width: 340px;
+}
+.settings__url-error {
+  font-size: 12.5px;
+  color: var(--q-err-ink);
+  background: var(--q-err-bg);
+  border: 1px solid var(--q-err-border);
+  border-radius: 8px;
+  padding: 9px 12px;
 }
 .settings__segments {
   display: flex;
@@ -383,7 +420,7 @@ async function doLogout(): Promise<void> {
   border: 1px solid var(--q-border-3);
   border-radius: 8px;
   padding: 9px 11px;
-  font: 500 12px ui-monospace, Menlo, monospace;
+  font: 500 16px ui-monospace, Menlo, monospace; /* ≥16px: no iOS focus-zoom */
   color: var(--q-ink);
   background: var(--q-panel);
 }
@@ -393,6 +430,15 @@ async function doLogout(): Promise<void> {
   padding: 8px 10px;
   box-shadow: 0 0 0 3px var(--q-accent-ring);
   background: var(--q-card);
+}
+@media (pointer: coarse) {
+  .settings__segment {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+  .settings__select {
+    min-height: 44px;
+  }
 }
 .settings__adv-actions {
   display: flex;

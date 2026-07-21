@@ -71,6 +71,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
           }"
           type="text"
           inputmode="text"
+          enterkeyhint="done"
           autocomplete="off"
           spellcheck="false"
           :value="modelValue[blank.id] ?? ''"
@@ -128,7 +129,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
   border-radius: 9px;
   background: var(--q-card);
   color: var(--q-ink);
-  font: 500 15px 'Public Sans', system-ui, sans-serif;
+  font: 500 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
   box-sizing: border-box;
 }
 .q-numeric__input:focus {
@@ -188,5 +189,11 @@ function markOf(blankId: string): BreakdownItem | undefined {
   margin-top: 4px;
   font: 500 11px ui-monospace, Menlo, monospace;
   color: var(--q-hint);
+}
+@media (pointer: coarse) {
+  /* „Tab wechselt Felder" is meaningless on touch keyboards */
+  .q-numeric__hint {
+    display: none;
+  }
 }
 </style>

@@ -8,6 +8,10 @@ import { createRouter, createWebHistory } from 'vue-router';
  */
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
+  // New pages open at the top; back/forward restores where the user was.
+  scrollBehavior(_to, _from, savedPosition) {
+    return savedPosition ?? { top: 0 };
+  },
   routes: [
     { path: '/', name: 'home', component: () => import('./routes/HomeView.vue') },
     {

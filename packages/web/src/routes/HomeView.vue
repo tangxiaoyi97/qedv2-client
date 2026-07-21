@@ -5,9 +5,8 @@
  * Zuletzt/Aktivität → Verlauf) and reuse the shared review components
  * (supplement §6/§8).
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Settings } from 'lucide-vue-next';
 import { competencyCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
 import { historyLog } from '../services.js';
@@ -20,12 +19,22 @@ const auth = useAuthStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 
+/** Ticking clock so greeting/date roll over at midnight instead of going
+ * stale in a long-lived PWA session. */
+const now = ref(new Date());
+const clock = setInterval(() => {
+  now.value = new Date();
+}, 60_000);
+onUnmounted(() => clearInterval(clock));
+
 const greeting = computed(() => {
-  const h = new Date().getHours();
+  const h = now.value.getHours();
   return h < 11 ? 'Guten Morgen' : h < 18 ? 'Guten Tag' : 'Guten Abend';
 });
-const dateLine = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' }).format(
-  new Date(),
+const dateLine = computed(() =>
+  new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' }).format(
+    now.value,
+  ),
 );
 
 const CATEGORY_ORDER = ['AG', 'FA', 'AN', 'WS'] as const;
@@ -51,11 +60,12 @@ const weakest = computed(() =>
 
 const heroText = computed(() => {
   const due = progress.dueCount;
-  const parts: string[] = [];
-  parts.push(due === 1 ? '1 fällige Wiederholung' : `${due} fällige Wiederholungen`);
-  if (weakest.value.length > 0) parts.push(`neue Aufgaben aus schwächeren Themen (${weakest.value.join(', ')})`);
-  else parts.push('neue Aufgaben zum Einstieg');
-  return parts.join(' + ') + '.';
+  const newPart =
+    weakest.value.length > 0
+      ? `neue Aufgaben aus schwächeren Themen (${weakest.value.join(', ')})`
+      : 'neue Aufgaben zum Einstieg';
+  if (due === 0) return `Keine fälligen Wiederholungen — Zeit für ${newPart}.`;
+  return `${due === 1 ? '1 fällige Wiederholung' : `${due} fällige Wiederholungen`} + ${newPart}.`;
 });
 
 /** Relative day for the „Zuletzt" rows — text, never color/icon-only. */
@@ -116,9 +126,6 @@ function openCategoryFilter(code: string): void {
         <h1 class="home__greeting">{{ greeting }} 👋</h1>
         <div class="home__date">{{ dateLine }} · Bereit für heute?</div>
       </div>
-      <RouterLink to="/settings" class="home__settings-btn" title="Einstellungen" aria-label="Einstellungen">
-        <Settings aria-hidden="true" />
-      </RouterLink>
     </div>
 
     <div class="home__hero">
@@ -240,31 +247,6 @@ function openCategoryFilter(code: string): void {
   justify-content: space-between;
   align-items: flex-start;
 }
-.home__settings-btn {
-  display: none;
-}
-@media (max-width: 860px) {
-  .home__settings-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--q-card);
-    border: 1px solid var(--q-border);
-    color: var(--q-mut);
-    text-decoration: none;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-  .home__settings-btn svg {
-    width: 18px;
-    height: 18px;
-  }
-  .home__settings-btn:active {
-    background: var(--q-panel-2);
-  }
-}
 .home__greeting {
   font-weight: 800;
   font-size: 23px;
@@ -367,8 +349,6 @@ function openCategoryFilter(code: string): void {
 }
 .home__card--click:focus-visible {
   border-color: var(--q-accent);
-}
-.home__card--click:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
@@ -503,16 +483,5 @@ function openCategoryFilter(code: string): void {
   color: var(--q-accent-strong);
   cursor: pointer;
   text-decoration: underline;
-}
-
-/* narrow phones (380px): single column, cards stack */
-@media (max-width: 480px) {
-  .home__cards {
-    flex-direction: column;
-  }
-  .home__card,
-  .home__card--wide {
-    min-width: 0;
-  }
 }
 </style>

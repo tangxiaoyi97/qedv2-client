@@ -4,10 +4,10 @@
  * chart + clickable legend with GradingDot, German label and count per state.
  * Reused by Fortschritt and the dashboard.
  *
- * Segment colors: good = ok green; the three orange states are opacity
- * steps of var(--q-part) (careless 1 / meh .7 / baffled .45) on solid
- * rects — shape order + legend carry the meaning, never color alone;
- * excluded = neutral grey; unseen = track (bar background).
+ * Segment colors: good = ok green; the three orange states are distinct
+ * token shades (careless --q-part / meh --q-part-ink-2 / baffled
+ * --q-part-ink) — shape order + legend carry the meaning, never color
+ * alone; excluded = neutral grey; unseen = hint (clearly above the track).
  */
 import { computed, ref } from 'vue';
 import type { Grading, GradingOrUnseen } from '@qed2/core-logic';
@@ -116,7 +116,10 @@ function clearActiveState(state: GradingOrUnseen): void {
           @keydown.space.prevent="emit('select', seg.state)"
         />
       </svg>
-      <div class="q-dist__center">
+      <div v-if="total === 0" class="q-dist__center q-dist__center--empty">
+        <span class="q-dist__total-label">Noch keine Daten</span>
+      </div>
+      <div v-else class="q-dist__center">
         <span class="q-dist__total">{{ total }}</span>
         <span class="q-dist__total-label">Teile</span>
       </div>
@@ -187,25 +190,27 @@ function clearActiveState(state: GradingOrUnseen): void {
 .q-dist__seg--good {
   stroke: var(--q-ok);
 }
+/* Three amber states as three DISTINCT token shades (not opacity steps —
+ * opacity washes out over the track color and detached these segments from
+ * the GradingDot shape language in the legend). */
 .q-dist__seg--careless {
   stroke: var(--q-part);
 }
 .q-dist__seg--meh {
-  stroke: var(--q-part);
-  opacity: 0.7;
+  stroke: var(--q-part-ink-2);
 }
 .q-dist__seg--baffled {
-  stroke: var(--q-part);
-  opacity: 0.45;
+  stroke: var(--q-part-ink);
 }
 .q-dist__seg--excluded {
   stroke: var(--q-neutral);
 }
 .q-dist__seg--unseen {
-  stroke: var(--q-btn-border);
+  /* hint sits clearly above the empty track in both themes */
+  stroke: var(--q-hint);
 }
 .q-dist__seg--dimmed {
-  opacity: 0.18;
+  opacity: 0.25;
 }
 .q-dist__seg--active,
 .q-dist__seg--active:hover,

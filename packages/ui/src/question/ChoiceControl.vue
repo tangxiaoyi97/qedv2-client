@@ -11,7 +11,7 @@
  * result.breakdown (ref = option index, note correct-pick|wrong-pick|missed).
  * Never color-only: StateIcon + text label per mark.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { BreakdownItem, ChoiceAnswer, GradeResult } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
@@ -79,6 +79,18 @@ const marks = computed<(Mark | null)[]>(() => {
   });
 });
 
+/** Brief nudge when the user taps an option that's blocked by the cap —
+ * otherwise the click dies silently and looks like a bug. */
+const capNotice = ref(false);
+let capNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+function nudgeCapNotice(): void {
+  capNotice.value = true;
+  clearTimeout(capNoticeTimer);
+  capNoticeTimer = setTimeout(() => {
+    capNotice.value = false;
+  }, 1600);
+}
+
 function toggle(i: number): void {
   if (review.value) return;
   const selected = isSelected(i);
@@ -94,7 +106,10 @@ function toggle(i: number): void {
     );
     return;
   }
-  if (full.value) return; // cap reached — ignore
+  if (full.value) {
+    nudgeCapNotice();
+    return;
+  }
   emit('update:modelValue', [...props.modelValue, i].sort((a, b) => a - b));
 }
 </script>
@@ -103,8 +118,9 @@ function toggle(i: number): void {
   <div class="q-choice">
     <div class="q-choice__head">
       <QChip>{{ answer.selectCount }} aus {{ answer.options.length }}</QChip>
-      <span v-if="!review" class="q-choice__hint">
-        {{ hint.what }} · <b>{{ hint.chosen }}</b>
+      <span v-if="!review" class="q-choice__hint" :class="{ 'q-choice__hint--nudge': capNotice }" role="status">
+        <template v-if="capNotice">Maximal {{ answer.selectCount }} — erst eine abwählen</template>
+        <template v-else>{{ hint.what }} · <b>{{ hint.chosen }}</b></template>
       </span>
     </div>
 
@@ -162,6 +178,20 @@ function toggle(i: number): void {
 .q-choice__hint {
   font-size: 12px;
   color: var(--q-mut-2);
+  transition: color 0.15s ease;
+}
+.q-choice__hint--nudge {
+  color: var(--q-err);
+  font-weight: 700;
+  animation: q-choice-nudge 0.3s ease;
+}
+@keyframes q-choice-nudge {
+  25% {
+    transform: translateX(-3px);
+  }
+  75% {
+    transform: translateX(3px);
+  }
 }
 .q-choice__hint b {
   color: var(--q-accent-strong);

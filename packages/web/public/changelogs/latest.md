@@ -1,5 +1,5 @@
-# QED2 1.4 - everything update!
+# QED2 1.5 - mobile update!
 
-everything.
+bigger tap targets. no double-tap accidents. dialogs behave. heatmap clickable. red means bad now.
 
-tangxy, 2026.07.13
+tangxy, 2026.07.21

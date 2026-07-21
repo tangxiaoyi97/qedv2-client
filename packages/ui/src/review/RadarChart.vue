@@ -25,6 +25,11 @@ const CY = computed(() => SIZE.value / 2);
 const R = computed(() => SIZE.value * 0.34);
 const LABEL_EDGE = computed(() => Math.max(18, SIZE.value * 0.07));
 const LABEL_OFFSET = computed(() => Math.max(26, SIZE.value * 0.1));
+/* Font sizes in viewBox units — the SVG scales down with the container, so
+ * bump them with SIZE: a 380px chart squeezed onto a 320px phone keeps its
+ * labels at an effective ~11px instead of shrinking below readability. */
+const LABEL_FS = computed(() => Math.max(12, SIZE.value * 0.036));
+const HINT_FS = computed(() => Math.max(10.5, LABEL_FS.value * 0.85));
 const RINGS = [0.25, 0.5, 0.75, 1];
 
 function point(index: number, radius: number): { x: number; y: number } {
@@ -121,9 +126,10 @@ const labels = computed(() =>
         :y="l.y"
         :text-anchor="l.anchor"
         class="q-radar__label"
+        :font-size="LABEL_FS"
       >
         {{ l.label }}
-        <tspan v-if="l.hint" :x="l.x" dy="13" class="q-radar__hint">{{ l.hint }}</tspan>
+        <tspan v-if="l.hint" :x="l.x" dy="13" class="q-radar__hint" :font-size="HINT_FS">{{ l.hint }}</tspan>
       </text>
     </svg>
   </div>
@@ -158,11 +164,13 @@ const labels = computed(() =>
   fill: var(--q-accent-strong);
 }
 .q-radar__label {
-  font: 700 12px 'Public Sans', system-ui, sans-serif;
+  font-family: 'Public Sans', system-ui, sans-serif;
+  font-weight: 700;
   fill: var(--q-mut);
 }
 .q-radar__hint {
-  font: 600 10.5px 'Public Sans', system-ui, sans-serif;
+  font-family: 'Public Sans', system-ui, sans-serif;
+  font-weight: 600;
   fill: var(--q-faint);
 }
 </style>

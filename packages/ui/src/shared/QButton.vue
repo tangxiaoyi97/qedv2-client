@@ -22,7 +22,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 <style scoped>
 .q-btn {
   font: 700 13.5px 'Public Sans', system-ui, sans-serif;
-  padding: 11px 22px;
+  padding: 11px 20px;
   border-radius: 9px;
   cursor: pointer;
   border: none;
@@ -52,7 +52,9 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   color: var(--q-ink-2);
   border: 1px solid var(--q-border-3);
   font-weight: 600;
-  padding: 10px 14px;
+  /* same box as primary: one padding/font-size across all variants so
+   * buttons line up when placed side by side */
+  padding: 10px 20px;
 }
 @media (hover: hover) and (pointer: fine) {
   .q-btn--secondary:not(:disabled):hover {
@@ -64,7 +66,6 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   background: transparent;
   color: var(--q-mut-2);
   font-weight: 600;
-  padding: 10px 12px;
 }
 @media (hover: hover) and (pointer: fine) {
   .q-btn--ghost:not(:disabled):hover {
@@ -76,9 +77,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   background: var(--q-card);
   color: var(--q-err);
   border: 1px solid var(--q-err-border);
-  font-weight: 700;
-  padding: 9px 15px;
-  font-size: 12.5px;
+  padding: 10px 20px;
 }
 .q-btn:focus-visible {
   outline: 2px solid var(--q-accent);

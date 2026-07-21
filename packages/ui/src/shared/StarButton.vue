@@ -64,6 +64,11 @@ const title = computed(() => (props.starred ? 'Gemerkt' : 'Merken'));
   }
 }
 .q-star-btn__glyph {
+  /* ★ and ☆ have different glyph widths — fix the slot so toggling never
+   * nudges neighbouring layout */
+  display: inline-block;
+  width: 1em;
+  text-align: center;
   transition: transform 0.08s ease;
 }
 .q-star-btn:active .q-star-btn__glyph {

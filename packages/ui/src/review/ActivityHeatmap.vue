@@ -7,7 +7,7 @@
  * Monday on top). Intensity = accent overlay with fill-opacity buckets over a
  * track-colored base rect, so both themes ride on the same two tokens.
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
 const props = defineProps<{
   /** Answer events per LOCAL day, keys 'YYYY-MM-DD'. */
@@ -22,9 +22,18 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [date: string] }>();
 
-const CELL = 11;
-const GAP = 2;
-const PITCH = CELL + GAP;
+/* Coarse pointers get bigger cells (18px pitch): 44px per cell is impossible
+ * for a density chart, but 18px + title tooltips cuts the mis-tap rate
+ * dramatically against the 13px desktop pitch. */
+const coarse = ref(false);
+let coarseMq: MediaQueryList | undefined;
+function syncCoarse(): void {
+  coarse.value = coarseMq?.matches ?? false;
+}
+
+const CELL = computed(() => (coarse.value ? 15 : 11));
+const GAP = computed(() => (coarse.value ? 3 : 2));
+const PITCH = computed(() => CELL.value + GAP.value);
 const LEFT = 26; // weekday-label gutter
 const TOP = 14; // month-label band
 
@@ -123,7 +132,7 @@ const columns = computed<HeatColumn[]>(() => {
         title: `${count === 1 ? '1 Aufgabe' : `${count} Aufgaben`} · ${formatDate(date)}`,
       });
     }
-    cols.push({ x: LEFT + w * PITCH, month: monday.getMonth(), cells });
+    cols.push({ x: LEFT + w * PITCH.value, month: monday.getMonth(), cells });
   }
   return cols;
 });
@@ -146,10 +155,13 @@ const monthLabels = computed(() => {
   return out;
 });
 
-const svgWidth = computed(() => LEFT + weekCount.value * PITCH - GAP);
-const svgHeight = TOP + 7 * PITCH - GAP;
+const svgWidth = computed(() => LEFT + weekCount.value * PITCH.value - GAP.value);
+const svgHeight = computed(() => TOP + 7 * PITCH.value - GAP.value);
 
-/** Scroll container — keep the most recent weeks (right end) in view. */
+/** Scroll container — keep the most recent weeks (right end) in view on
+ *  first render. Deliberately NOT re-run on data updates: a user scrolling
+ *  back through history must not be yanked to the front when a new answer
+ *  lands in the log. */
 const scrollEl = ref<HTMLDivElement | null>(null);
 
 function scrollToEnd(): void {
@@ -157,8 +169,82 @@ function scrollToEnd(): void {
   if (el) el.scrollLeft = el.scrollWidth - el.clientWidth;
 }
 
-onMounted(scrollToEnd);
-watch(() => [props.data, props.weeks, props.endDate], scrollToEnd, { flush: 'post' });
+/* Roving tabindex: exactly ONE cell is in the tab order (the most recent
+ * day by default); arrows move within the grid. 364 tabindex="0" cells
+ * made keyboard traversal effectively impossible. */
+const focusKey = ref<string | null>(null);
+
+const cellIndex = computed(() => {
+  const map = new Map<string, { col: number; row: number }>();
+  columns.value.forEach((col, ci) => {
+    for (const cell of col.cells) map.set(cell.key, { col: ci, row: cell.row });
+  });
+  return map;
+});
+
+function effectiveFocusKey(): string | null {
+  if (focusKey.value && cellIndex.value.has(focusKey.value)) return focusKey.value;
+  const cols = columns.value;
+  const lastCol = cols[cols.length - 1];
+  return lastCol?.cells[lastCol.cells.length - 1]?.key ?? null;
+}
+
+function cellTabindex(key: string): number {
+  return effectiveFocusKey() === key ? 0 : -1;
+}
+
+function moveFocus(dCol: number, dRow: number): void {
+  const cur = effectiveFocusKey();
+  const pos = cur ? cellIndex.value.get(cur) : undefined;
+  if (!pos) return;
+  const cols = columns.value;
+  let ci = pos.col + dCol;
+  let ri = pos.row + dRow;
+  // vertical wraps within the same week; horizontal clamps at both ends
+  if (ri < 0) ri = 6;
+  if (ri > 6) ri = 0;
+  ci = Math.max(0, Math.min(cols.length - 1, ci));
+  const target = cols[ci]?.cells.find((c) => c.row === ri) ?? cols[ci]?.cells[cols[ci]!.cells.length - 1];
+  if (!target) return;
+  focusKey.value = target.key;
+  requestAnimationFrame(() => {
+    scrollEl.value
+      ?.querySelector<SVGGElement>(`g[data-key="${target.key}"]`)
+      ?.focus();
+  });
+}
+
+function onCellKeydown(ev: KeyboardEvent): void {
+  switch (ev.key) {
+    case 'ArrowLeft':
+      ev.preventDefault();
+      moveFocus(-1, 0);
+      break;
+    case 'ArrowRight':
+      ev.preventDefault();
+      moveFocus(1, 0);
+      break;
+    case 'ArrowUp':
+      ev.preventDefault();
+      moveFocus(0, -1);
+      break;
+    case 'ArrowDown':
+      ev.preventDefault();
+      moveFocus(0, 1);
+      break;
+  }
+}
+
+onMounted(() => {
+  // jsdom (tests) has no matchMedia — coarse stays false there
+  if (typeof window.matchMedia === 'function') {
+    coarseMq = window.matchMedia('(pointer: coarse)');
+    syncCoarse();
+    coarseMq.addEventListener('change', syncCoarse);
+  }
+  scrollToEnd();
+});
+onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
 </script>
 
 <template>
@@ -195,15 +281,27 @@ watch(() => [props.data, props.weeks, props.endDate], scrollToEnd, { flush: 'pos
             v-for="cell in col.cells"
             :key="cell.key"
             class="q-heat__cell"
-            :class="`q-heat__cell--b${cell.bucket}`"
+            :class="[`q-heat__cell--b${cell.bucket}`, { 'q-heat__cell--selected': cell.key === selectedDate }]"
             role="button"
-            tabindex="0"
+            :tabindex="cellTabindex(cell.key)"
+            :data-key="cell.key"
             :aria-label="cell.title"
+            :aria-pressed="cell.key === selectedDate"
             @click="emit('select', cell.key)"
+            @keydown="onCellKeydown"
             @keydown.enter.prevent="emit('select', cell.key)"
             @keydown.space.prevent="emit('select', cell.key)"
           >
             <title>{{ cell.title }}</title>
+            <rect
+              v-if="cell.key === selectedDate"
+              class="q-heat__ring"
+              :x="col.x - 2"
+              :y="TOP + cell.row * PITCH - 2"
+              :width="CELL + 4"
+              :height="CELL + 4"
+              rx="3"
+            />
             <rect
               class="q-heat__base"
               :x="col.x"
@@ -265,6 +363,10 @@ watch(() => [props.data, props.weeks, props.endDate], scrollToEnd, { flush: 'pos
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
+  /* edge fades hint that older weeks live off-screen to the left (and more
+   * content to the right once scrolled back) */
+  mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
 }
 .q-heat__svg {
   display: block;
@@ -283,6 +385,15 @@ watch(() => [props.data, props.weeks, props.endDate], scrollToEnd, { flush: 'pos
 }
 .q-heat__cell:focus {
   outline: none;
+}
+.q-heat__cell:focus-visible .q-heat__base {
+  stroke: var(--q-accent-strong);
+  stroke-width: 2px;
+}
+.q-heat__ring {
+  fill: none;
+  stroke: var(--q-accent-strong);
+  stroke-width: 1.5px;
 }
 .q-heat__fill {
   fill: var(--q-accent);

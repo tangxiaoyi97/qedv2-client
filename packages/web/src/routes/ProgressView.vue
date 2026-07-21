@@ -24,6 +24,7 @@ import {
   type RadarAxis,
 } from '@qed2/ui';
 import { historyLog } from '../services.js';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useAppStore } from '../stores/app.js';
 import { useProgressStore } from '../stores/progress.js';
 
@@ -189,6 +190,9 @@ interface PartMeta {
 
 const partMeta = ref<Map<string, PartMeta>>(new Map());
 const partMetaLoaded = ref(false);
+/** Load failed (core offline) — the modal shows a hint instead of silently
+ *  degrading titles to raw part ids. */
+const partMetaFailed = ref(false);
 
 async function loadPartMeta(): Promise<void> {
   if (partMetaLoaded.value) return;
@@ -219,6 +223,7 @@ async function loadPartMeta(): Promise<void> {
     partMetaLoaded.value = true;
   } catch {
     partMetaLoaded.value = true;
+    partMetaFailed.value = true;
   }
 }
 
@@ -308,6 +313,10 @@ function openDetail(kind: Exclude<DetailKind, null>): void {
 function closeDetail(): void {
   detailKind.value = null;
 }
+
+/* Focus trap + Esc + scroll-lock + focus restore (shared modal baseline). */
+const detailCard = ref<HTMLElement | null>(null);
+useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail);
 </script>
 
 <template>
@@ -447,15 +456,19 @@ function closeDetail(): void {
     <Teleport to="body">
       <div v-if="detailKind" class="prog-modal" role="dialog" aria-modal="true" :aria-label="detailTitle" @click.self="closeDetail">
         <div
+          ref="detailCard"
           class="prog-modal__card"
           :class="{ 'prog-modal__card--wide': detailKind === 'status' || detailKind === 'radar' }"
         >
           <div class="prog-modal__head">
             <h3 class="prog-modal__title">{{ detailTitle }}</h3>
-            <button type="button" class="prog-modal__close" aria-label="Schließen" @click="closeDetail">✕</button>
+            <button type="button" class="prog-modal__close" aria-label="Schließen" data-autofocus @click="closeDetail">✕</button>
           </div>
 
           <div v-if="detailKind === 'status'" class="prog-modal__body">
+            <div v-if="partMetaFailed" class="prog-modal__metawarn" role="status">
+              Aufgaben-Titel konnten nicht geladen werden (Core nicht erreichbar) — IDs werden angezeigt.
+            </div>
             <div class="prog-modal__chart-grid">
               <section class="prog-modal__chart-card">
                 <div class="prog-modal__chart-title">
@@ -641,7 +654,7 @@ function closeDetail(): void {
   background: var(--q-part);
 }
 .prog__sq--low {
-  background: var(--q-mut-2);
+  background: var(--q-err);
 }
 .prog__stats {
   display: flex;
@@ -1174,6 +1187,18 @@ function closeDetail(): void {
   font-size: 11.5px;
   color: var(--q-mut-2);
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prog-modal__metawarn {
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--q-part-bg);
+  border: 1px solid var(--q-part-border);
+  color: var(--q-part-ink);
+  font-size: 12px;
 }
 .prog-modal__competencies {
   display: flex;
@@ -1199,6 +1224,25 @@ function closeDetail(): void {
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 560px) {
+  /* phone: the centered card becomes a bottom sheet */
+  .prog-modal {
+    place-items: end center;
+    padding: 0;
+  }
+  .prog-modal__card {
+    width: 100%;
+    max-height: 88vh;
+    max-height: 88dvh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: none;
+  }
+  .prog-modal__body {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+  .prog-modal__close {
+    width: 44px;
+    height: 44px;
+  }
   .prog-modal__competency {
     grid-template-columns: 1fr;
     gap: 5px;

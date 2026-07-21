@@ -53,7 +53,7 @@ function onInput(ev: Event): void {
   padding: 12px 13px;
   background: var(--q-card);
   color: var(--q-ink);
-  font-size: 13.5px;
+  font-size: 16px; /* ≥16px: no iOS focus-zoom */
   line-height: 1.6;
   font-family: inherit;
 }

@@ -72,7 +72,9 @@ const percent = computed(() => Math.round(Math.min(1, Math.max(0, props.mastery)
   background: var(--q-part);
 }
 .q-mastery__fill--low {
-  background: var(--q-mut-2);
+  /* red, not grey: low mastery means „needs attention", grey reads as
+   * „no data / inactive" */
+  background: var(--q-err);
 }
 .q-mastery__label {
   flex: none;
@@ -85,9 +87,9 @@ const percent = computed(() => Math.round(Math.min(1, Math.max(0, props.mastery)
   color: var(--q-ok);
 }
 .q-mastery__label--medium {
-  color: var(--q-part);
+  color: var(--q-part-ink);
 }
 .q-mastery__label--low {
-  color: var(--q-mut-2);
+  color: var(--q-err);
 }
 </style>

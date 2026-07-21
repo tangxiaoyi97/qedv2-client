@@ -3,10 +3,15 @@
  * Changelog-on-update dialog. Shown once per new build when an archived
  * changelog exists for the running commit (ui store owns the check/fetch).
  */
+import { computed, ref } from 'vue';
 import { MarkdownView, QButton } from '@qed2/ui';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useUiStore } from '../stores/ui.js';
 
 const ui = useUiStore();
+
+const card = ref<HTMLElement | null>(null);
+useModalA11y(card, computed(() => ui.changelogOpen), () => ui.closeChangelog());
 </script>
 
 <template>
@@ -18,9 +23,8 @@ const ui = useUiStore();
         role="dialog"
         aria-modal="true"
         aria-label="Was ist neu"
-        @keydown.esc="ui.closeChangelog()"
       >
-        <div class="clog__card">
+        <div ref="card" class="clog__card">
           <div class="clog__head">
             <span class="clog__spark" aria-hidden="true">✦</span>
             <div class="clog__title">Was ist neu</div>

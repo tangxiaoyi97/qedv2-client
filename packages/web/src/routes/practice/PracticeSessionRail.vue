@@ -68,6 +68,7 @@ const emit = defineEmits<{ jump: [index: number] }>();
   position: sticky;
   top: 56px;
   height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
 }
 
 .practice-rail__head {

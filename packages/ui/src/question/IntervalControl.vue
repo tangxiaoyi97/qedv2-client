@@ -56,6 +56,8 @@ const correctNotation = computed(() => {
             type="button"
             class="q-interval__bracket"
             :class="{ 'q-interval__bracket--on': !modelValue.lowerClosed }"
+            :aria-pressed="!modelValue.lowerClosed"
+            aria-label="Untere Grenze offen"
             :disabled="review"
             @click="patch({ lowerClosed: false })"
           >
@@ -65,6 +67,8 @@ const correctNotation = computed(() => {
             type="button"
             class="q-interval__bracket"
             :class="{ 'q-interval__bracket--on': modelValue.lowerClosed }"
+            :aria-pressed="modelValue.lowerClosed"
+            aria-label="Untere Grenze geschlossen"
             :disabled="review"
             @click="patch({ lowerClosed: true })"
           >
@@ -78,6 +82,7 @@ const correctNotation = computed(() => {
         class="q-interval__input"
         :value="modelValue.lower"
         inputmode="text"
+        enterkeyhint="done"
         placeholder="−∞"
         aria-label="Untere Grenze (leer = unbeschränkt)"
         :readonly="review"
@@ -88,6 +93,7 @@ const correctNotation = computed(() => {
         class="q-interval__input"
         :value="modelValue.upper"
         inputmode="text"
+        enterkeyhint="done"
         placeholder="∞"
         aria-label="Obere Grenze (leer = unbeschränkt)"
         :readonly="review"
@@ -100,6 +106,8 @@ const correctNotation = computed(() => {
             type="button"
             class="q-interval__bracket"
             :class="{ 'q-interval__bracket--on': modelValue.upperClosed }"
+            :aria-pressed="modelValue.upperClosed"
+            aria-label="Obere Grenze geschlossen"
             :disabled="review"
             @click="patch({ upperClosed: true })"
           >
@@ -109,6 +117,8 @@ const correctNotation = computed(() => {
             type="button"
             class="q-interval__bracket"
             :class="{ 'q-interval__bracket--on': !modelValue.upperClosed }"
+            :aria-pressed="!modelValue.upperClosed"
+            aria-label="Obere Grenze offen"
             :disabled="review"
             @click="patch({ upperClosed: false })"
           >
@@ -197,7 +207,7 @@ const correctNotation = computed(() => {
   border-radius: 8px;
   padding: 10px;
   text-align: center;
-  font-size: 15px;
+  font-size: 16px; /* ≥16px: no iOS focus-zoom */
   background: var(--q-card);
   color: var(--q-ink);
 }
@@ -255,5 +265,14 @@ const correctNotation = computed(() => {
 }
 .q-interval__correct {
   border: 1.5px dashed var(--q-ok);
+}
+@media (pointer: coarse) {
+  /* 44px touch targets for the bracket toggles */
+  .q-interval__toggle {
+    height: 48px;
+  }
+  .q-interval__bracket {
+    width: 44px;
+  }
 }
 </style>

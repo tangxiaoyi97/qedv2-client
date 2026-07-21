@@ -1,5 +1,7 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue';
 import { StateIcon } from '@qed2/ui';
+import { useModalA11y } from '../../composables/useModalA11y.js';
 
 interface PracticeRailItem {
   index: number;
@@ -10,7 +12,7 @@ interface PracticeRailItem {
   jumpable: boolean;
 }
 
-defineProps<{
+const props = defineProps<{
   open: boolean;
   items: PracticeRailItem[];
   gradedCount: number;
@@ -21,19 +23,24 @@ const emit = defineEmits<{
   close: [];
   jump: [index: number];
 }>();
+
+const isOpen = computed(() => props.open);
+const panel = ref<HTMLElement | null>(null);
+useModalA11y(panel, isOpen, () => emit('close'));
 </script>
 
 <template>
   <Transition name="practice-session-drawer">
-    <div v-if="open" class="practice-session-drawer">
+    <div v-if="open" class="practice-session-drawer" role="dialog" aria-modal="true" aria-label="Programmübersicht">
       <button
         type="button"
         class="practice-session-drawer__backdrop"
         aria-label="Programmliste schließen"
+        tabindex="-1"
         @click="emit('close')"
       />
 
-      <aside class="practice-session-drawer__panel" aria-label="Programmübersicht">
+      <aside ref="panel" class="practice-session-drawer__panel" aria-label="Programmübersicht">
         <div class="practice-session-drawer__head">
           <div>
             <span class="practice-session-drawer__title">Programm</span>

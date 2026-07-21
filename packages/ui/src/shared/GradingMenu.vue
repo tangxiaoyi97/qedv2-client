@@ -28,27 +28,65 @@ const HINTS: Record<Grading, string> = {
   excluded: 'Nie wieder üben',
 };
 
-/** Matches the popover's CSS min-width — used for the overflow check. */
+/** Matches the popover's CSS min-width / estimated height — used for the
+ *  overflow checks. */
 const POPOVER_WIDTH = 232;
+const POPOVER_HEIGHT = 5 * 44 + 12; // 5 options + padding
 
 const root = ref<HTMLElement | null>(null);
 const open = ref(false);
 const alignRight = ref(false);
+const openUp = ref(false);
+const popoverEl = ref<HTMLElement | null>(null);
 
 function toggle(): void {
   if (props.disabled) return;
   if (!open.value && root.value) {
     // Flip to right-anchored when a left-anchored popover would poke past
-    // the viewport edge (narrow screens, chips before the trigger).
+    // the viewport edge (narrow screens, chips before the trigger); flip
+    // UP when there is no room below (e.g. triggers near the bottom bar).
     const rect = root.value.getBoundingClientRect();
     alignRight.value = rect.left + POPOVER_WIDTH > window.innerWidth - 12;
+    openUp.value = rect.bottom + 6 + POPOVER_HEIGHT > window.innerHeight && rect.top > POPOVER_HEIGHT;
+    open.value = true;
+    // Menus focus their current item on open (WAI-ARIA menu pattern).
+    requestAnimationFrame(() => {
+      const el =
+        popoverEl.value?.querySelector<HTMLElement>('.q-grading-menu__option--current') ??
+        popoverEl.value?.querySelector<HTMLElement>('.q-grading-menu__option');
+      el?.focus();
+    });
+    return;
   }
-  open.value = !open.value;
+  open.value = false;
 }
 
 function pick(g: Grading): void {
   emit('select', g);
   open.value = false;
+  refocusTrigger();
+}
+
+/** Esc/blur closing returns focus to the capsule that opened the menu. */
+function refocusTrigger(): void {
+  root.value?.querySelector<HTMLElement>('button')?.focus();
+}
+
+function onPopoverKeydown(ev: KeyboardEvent): void {
+  if (!popoverEl.value) return;
+  const items = [...popoverEl.value.querySelectorAll<HTMLElement>('.q-grading-menu__option')];
+  const idx = items.indexOf(document.activeElement as HTMLElement);
+  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    ev.preventDefault();
+    const next = ev.key === 'ArrowDown' ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+    items[next]?.focus();
+  } else if (ev.key === 'Home') {
+    ev.preventDefault();
+    items[0]?.focus();
+  } else if (ev.key === 'End') {
+    ev.preventDefault();
+    items[items.length - 1]?.focus();
+  }
 }
 
 function onDocumentClick(ev: MouseEvent): void {
@@ -58,7 +96,10 @@ function onDocumentClick(ev: MouseEvent): void {
 }
 
 function onDocumentKeydown(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape' && open.value) open.value = false;
+  if (ev.key === 'Escape' && open.value) {
+    open.value = false;
+    refocusTrigger();
+  }
 }
 
 onMounted(() => {
@@ -85,10 +126,12 @@ onBeforeUnmount(() => {
 
     <div
       v-if="open"
+      ref="popoverEl"
       class="q-grading-menu__popover"
-      :class="{ 'q-grading-menu__popover--right': alignRight }"
+      :class="{ 'q-grading-menu__popover--right': alignRight, 'q-grading-menu__popover--up': openUp }"
       role="menu"
       aria-label="Bewertung"
+      @keydown="onPopoverKeydown"
     >
       <button
         v-for="g in SELECTABLE"
@@ -135,6 +178,10 @@ onBeforeUnmount(() => {
 .q-grading-menu__popover--right {
   left: auto;
   right: 0;
+}
+.q-grading-menu__popover--up {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 .q-grading-menu__option {
   display: flex;

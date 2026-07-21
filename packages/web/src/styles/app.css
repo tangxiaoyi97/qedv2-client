@@ -9,6 +9,7 @@ body {
 }
 #app {
   min-height: 100vh;
+  min-height: 100dvh; /* iOS Safari: 100vh includes the dynamic toolbar area */
 }
 
 body {
@@ -20,6 +21,12 @@ body {
   line-height: 1.55;
   /* no single wide element may pan the whole app sideways (mobile PWA) */
   overflow-x: hidden;
+}
+
+/* set by useModalA11y while a dialog is open — keeps the page behind
+ * the backdrop from scrolling */
+body.q-modal-open {
+  overflow: hidden;
 }
 
 /* form elements inherit the app font */

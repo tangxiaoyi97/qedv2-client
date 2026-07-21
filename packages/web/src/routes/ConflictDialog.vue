@@ -8,6 +8,7 @@
 import { computed, ref, watch } from 'vue';
 import { isPartConflict, type ConflictEntry } from '@qed2/core-logic';
 import { QButton } from '@qed2/ui';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useProgressStore } from '../stores/progress.js';
 
 const progress = useProgressStore();
@@ -19,6 +20,9 @@ const pending = ref(false);
 const rounds = ref(0);
 
 const conflict = computed(() => progress.conflict);
+
+const card = ref<HTMLElement | null>(null);
+useModalA11y(card, computed(() => conflict.value != null), onEscape);
 
 watch(conflict, (c, prev) => {
   if (c) {
@@ -92,8 +96,8 @@ function onEscape(): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="conflict" class="conflict" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt" @keydown.esc="onEscape">
-      <div class="conflict__card">
+    <div v-if="conflict" class="conflict" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
+      <div ref="card" class="conflict__card">
         <div class="conflict__head">
           <span class="conflict__icon" aria-hidden="true">⟳</span>
           <div class="conflict__title">Synchronisierungskonflikt</div>

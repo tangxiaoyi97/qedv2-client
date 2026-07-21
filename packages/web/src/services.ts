@@ -22,7 +22,9 @@ import {
 import { WebStorage } from './platform/web-storage.js';
 import { WebCoreRuntime, WebNetwork, WebUpdate } from './platform/web-ports.js';
 
-export const APP_VERSION = '1.4.0';
+/** Injected from package.json at build time (vite.config define) — the
+ *  fallback only covers dev/type-check contexts without the define. */
+export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
 
 /** Ports injected by a native shell, if any (see module header). */
 const injected: Partial<PlatformPorts> =

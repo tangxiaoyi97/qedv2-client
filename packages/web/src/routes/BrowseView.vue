@@ -207,6 +207,10 @@ async function runSearch(q: string): Promise<void> {
  *  the already-loaded summaries (search items carry identifiers only). */
 const summaryById = computed(() => new Map(allQuestions.value.map((q) => [q.id, q])));
 
+/** Years actually present in the pool — the FilterDialog offers exactly
+ *  these instead of a hard-coded range that silently goes stale. */
+const availableYears = computed(() => [...new Set(allQuestions.value.map((q) => q.source.year))]);
+
 function hitStarred(id: string): boolean {
   const q = summaryById.value.get(id);
   return q?.parts.some((p) => progress.partState.get(p.id)?.starred === true) ?? false;
@@ -437,9 +441,11 @@ function firstCode(q: QuestionSummary): string | undefined {
       <div class="browse__meta">
         <span v-if="searchBusy">Suche …</span>
         <span v-else-if="searchResult">{{ searchResult.total }} Treffer für „{{ searchResult.query }}“</span>
+        <span v-if="filterCount > 0" class="browse__meta-note">(Filter sind während der Suche pausiert)</span>
       </div>
       <div v-if="searchError" class="browse__error">
         Suche fehlgeschlagen: {{ searchError }}
+        <QButton variant="secondary" @click="runSearch(searchQuery.trim())">Erneut versuchen</QButton>
       </div>
       <div v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy" class="browse__empty">
         Keine Treffer — Tippfehler sind erlaubt, aber probier ein anderes Wort.
@@ -555,6 +561,7 @@ function firstCode(q: QuestionSummary): string | undefined {
       v-if="dialogOpen"
       v-model="filter"
       :result-count="filtered.length"
+      :years="availableYears"
       @close="dialogOpen = false"
     />
   </div>
@@ -656,6 +663,16 @@ function firstCode(q: QuestionSummary): string | undefined {
   outline: 2px solid var(--q-accent);
   outline-offset: 1px;
 }
+@media (pointer: coarse) {
+  .browse__filterbtn {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+  .browse__active-x {
+    min-width: 32px;
+    min-height: 32px;
+  }
+}
 .browse__funnel {
   flex: none;
   color: var(--q-mut-2);
@@ -725,6 +742,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   color: var(--q-mut-2);
   padding: 4px 2px 10px;
 }
+.browse__meta-note {
+  color: var(--q-faint);
+  font-size: 11.5px;
+}
 .browse__list {
   display: flex;
   flex-direction: column;
@@ -769,9 +790,16 @@ function firstCode(q: QuestionSummary): string | undefined {
   opacity: 0.55;
   cursor: default;
 }
-/* All parts excluded: greyed but still clickable (§1.4 — not deletion). */
+/* All parts excluded: greyed but still clickable (§1.4 — not deletion).
+ * Dashed border + struck title, so it reads differently from the merely
+ * disabled (unpublished) rows — 0.55 vs 0.5 opacity alone was invisible. */
 .browse__row--excluded {
-  opacity: 0.5;
+  opacity: 0.6;
+  border-style: dashed;
+}
+.browse__row--excluded .browse__qtitle {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
 }
 .browse__dots {
   display: inline-flex;

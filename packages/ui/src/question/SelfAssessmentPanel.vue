@@ -15,6 +15,7 @@ import {
   type SelfAssessmentScoreOption,
 } from '../practice/self-assessment.js';
 import RichTextView from '../shared/RichTextView.vue';
+import { onRadioGroupKeydown } from '../shared/radio-group.js';
 
 const props = defineProps<{
   scoring?: Scoring | null;
@@ -116,7 +117,7 @@ function isSelectedScore(value: number): boolean {
 
     <div v-else class="q-selfassess__overall">
       <span class="q-selfassess__overall-label">Meine Punkte:</span>
-      <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung">
+      <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung" @keydown="onRadioGroupKeydown">
         <button
           v-for="option in scoreOptions"
           :key="option.points"

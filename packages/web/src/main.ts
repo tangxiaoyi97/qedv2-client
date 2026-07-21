@@ -29,10 +29,51 @@ async function boot(): Promise<void> {
   await auth.init();
   if (auth.isLoggedIn) void progress.syncNow({ quiet: true, compareChecksum: true });
 
+  // After a deploy, long-lived sessions can hold a router that still points
+  // at the OLD hashed chunks (now replaced) — a lazy route import then 404s
+  // and the app dies on a blank screen. Reload once to fetch the new build.
+  router.onError((error) => {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/fetch dynamically imported module|Failed to fetch|dynamically imported/i.test(msg)) {
+      window.location.reload();
+    }
+  });
+
   app.mount('#app');
 
   // After mount: announce what changed if this is a new build (non-blocking).
   void useUiStore().checkForChangelog();
 }
 
-void boot();
+function showBootError(err: unknown): void {
+  console.error('[qed2] boot failed', err);
+  const root = document.getElementById('app');
+  if (!root) return;
+  // Replace the infinite spinner with an actionable error — a wedged
+  // IndexedDB or a broken port must never leave the user staring at a
+  // loading animation forever.
+  root.innerHTML = '';
+  const box = document.createElement('div');
+  box.style.cssText =
+    'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+    'min-height:100vh;min-height:100dvh;gap:12px;padding:24px;text-align:center;' +
+    'font-family:system-ui,sans-serif;color:#54564d;background:#f5f5f6';
+  const msg = document.createElement('p');
+  msg.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:#1a1a1a';
+  msg.textContent = 'QED2 konnte nicht gestartet werden.';
+  const detail = document.createElement('p');
+  detail.style.cssText = 'margin:0;font-size:13px;max-width:40ch';
+  detail.textContent =
+    'Beim Laden der lokalen Daten ist ein Fehler aufgetreten. Ein Neuladen behebt das Problem meist.';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Neu laden';
+  btn.style.cssText =
+    'padding:10px 22px;border-radius:9px;border:none;background:#5f6b2e;color:#fff;' +
+    'font:600 13.5px system-ui,sans-serif;cursor:pointer';
+  btn.addEventListener('click', () => location.reload());
+  box.append(msg, detail, btn);
+  root.append(box);
+}
+
+void boot().catch(showBootError);

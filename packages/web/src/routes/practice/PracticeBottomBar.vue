@@ -6,6 +6,7 @@ import {
   ResultPill,
   SELF_ASSESSMENT_GRADING_OPTIONS,
   SolutionSheet,
+  onRadioGroupKeydown,
   sameScore,
 } from '@qed2/ui';
 import type { AnswerPreview, PartPlayerState } from '@qed2/ui';
@@ -35,6 +36,15 @@ const idleHint = computed(() => {
       return 'Antwort oben eintragen …';
   }
 });
+
+/** Score-tone parity with SelfAssessmentPanel: 0 → error, max → ok,
+ *  anything between → accent. One „selected" language across both controls. */
+function scoreTone(points: number): 'zero' | 'full' | 'mid' {
+  const max = props.state.selfAssessment?.maxPoints ?? 0;
+  if (points <= 0) return 'zero';
+  if (max > 0 && points >= max) return 'full';
+  return 'mid';
+}
 
 const emit = defineEmits<{
   'update:solutionOpen': [open: boolean];
@@ -71,13 +81,17 @@ function onMasteryChange(ev: Event): void {
         <div v-else-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-bar__assessment">
           <div v-if="!rubricMode" class="practice-bar__assessment-group">
             <span class="practice-bar__assessment-label">Punkte</span>
-            <div class="practice-bar__score-options" role="radiogroup" aria-label="Punkte">
+            <div class="practice-bar__score-options" role="radiogroup" aria-label="Punkte" @keydown="onRadioGroupKeydown">
               <button
                 v-for="option in state.selfAssessment.scoreOptions"
                 :key="option.points"
                 type="button"
                 class="practice-bar__score-option"
-                :class="{ 'practice-bar__score-option--on': sameScore(state.selfAssessment.selectedPoints, option.points) }"
+                :class="[
+                  sameScore(state.selfAssessment.selectedPoints, option.points)
+                    ? `practice-bar__score-option--${scoreTone(option.points)}`
+                    : '',
+                ]"
                 role="radio"
                 :aria-checked="sameScore(state.selfAssessment.selectedPoints, option.points)"
                 @click="emit('scoreSelect', option.points)"
@@ -108,7 +122,7 @@ function onMasteryChange(ev: Event): void {
             </select>
           </div>
         </div>
-        <div v-else-if="answerPreview" class="practice-bar__preview" aria-live="polite">
+        <div v-else-if="answerPreview" class="practice-bar__preview">
           <span class="practice-bar__preview-main">
             <span class="practice-bar__preview-label">{{ answerPreview.label }}:</span>
             <b class="practice-bar__preview-value">{{ answerPreview.value }}</b>
@@ -127,7 +141,7 @@ function onMasteryChange(ev: Event): void {
           :aria-expanded="solutionOpen"
           @click="emit('update:solutionOpen', !solutionOpen)"
         >
-          Lösung <span aria-hidden="true">{{ solutionOpen ? '▾' : '▴' }}</span>
+          Lösung <span class="practice-bar__solution-chevron" aria-hidden="true">▴</span>
         </button>
         <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
       </div>
@@ -315,10 +329,39 @@ function onMasteryChange(ev: Event): void {
   outline-offset: 2px;
 }
 
-.practice-bar__score-option--on {
+.practice-bar__score-option--zero {
+  background: var(--q-err);
+  border-color: var(--q-err);
+  color: var(--q-on-err);
+}
+.practice-bar__score-option--full {
+  background: var(--q-ok);
+  border-color: var(--q-ok);
+  color: var(--q-on-ok);
+}
+.practice-bar__score-option--mid {
   background: var(--q-accent);
   border-color: var(--q-accent);
   color: var(--q-on-accent);
+}
+
+.practice-bar__solution-chevron {
+  display: inline-block;
+  transition: transform var(--q-transition-fast);
+}
+.practice-bar__solution-toggle--on .practice-bar__solution-chevron {
+  transform: rotate(180deg);
+}
+
+@media (pointer: coarse) {
+  /* 44px touch targets for the self-assessment controls */
+  .practice-bar__score-option {
+    min-height: 44px;
+    min-width: 48px;
+  }
+  .practice-bar__mastery-select {
+    min-height: 44px;
+  }
 }
 
 .practice-bar__solution-toggle {

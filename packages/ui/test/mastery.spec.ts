@@ -50,15 +50,15 @@ describe('CompetencyGroups', () => {
     expect(w.text()).not.toContain('Wahrscheinlichkeit & Statistik');
   });
 
-  it('shows the mean-mastery aggregate per group ("mittel · 45%")', () => {
+  it('shows the mean-mastery aggregate per group („mittel · 45 %")', () => {
     const w = mount(CompetencyGroups, { props: { entries } });
     const aggregates = w.findAll('.q-cgroups__agg').map((a) => a.text());
-    // FA: (0.5+0.4)/2 = 0.45 → mittel · 45%
-    expect(aggregates).toContain('mittel · 45%');
-    // AN: 0.28 → gering · 28%
-    expect(aggregates).toContain('gering · 28%');
-    // AG: 0.8 → hoch · 80%
-    expect(aggregates).toContain('hoch · 80%');
+    // FA: (0.5+0.4)/2 = 0.45 → mittel · 45 %
+    expect(aggregates).toContain('mittel · 45 %');
+    // AN: 0.28 → gering · 28 %
+    expect(aggregates).toContain('gering · 28 %');
+    // AG: 0.8 → hoch · 80 %
+    expect(aggregates).toContain('hoch · 80 %');
   });
 
   it('renders a MasteryBar per entry and a due dot only for due entries', () => {

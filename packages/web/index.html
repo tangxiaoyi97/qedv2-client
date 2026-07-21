@@ -4,8 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f6" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#161613" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="QED2" />
@@ -19,6 +22,7 @@
           align-items: center;
           justify-content: center;
           height: 100vh;
+          height: 100dvh; /* iOS: exclude the dynamic toolbar */
           width: 100vw;
           background: #f5f5f6; /* var(--q-page) fallback */
         }
@@ -37,9 +41,14 @@
           to { transform: rotate(360deg); }
         }
       </style>
-      <div class="initial-loading">
-        <div class="spinner"></div>
+      <div class="initial-loading" role="status" aria-label="QED2 wird geladen">
+        <div class="spinner" aria-hidden="true"></div>
       </div>
+      <noscript>
+        <p style="font-family: system-ui, sans-serif; padding: 2rem; text-align: center">
+          QED2 benötigt JavaScript. / QED2 requires JavaScript.
+        </p>
+      </noscript>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

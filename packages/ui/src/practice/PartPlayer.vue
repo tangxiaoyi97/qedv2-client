@@ -248,7 +248,11 @@ function confirmSelfAssessment(): void {
 function onKeydown(ev: KeyboardEvent): void {
   if (ev.key !== 'Enter') return;
   const target = ev.target as HTMLElement | null;
-  if (target?.tagName === 'TEXTAREA') return;
+  // Native interactive elements own their Enter behavior: buttons toggle/
+  // activate, selects open the dropdown, links navigate. Hijacking those to
+  // mean "submit" breaks keyboard and screen-reader interaction.
+  if (target?.closest('button, select, textarea, a, [role="button"], [role="radio"], [role="checkbox"]'))
+    return;
   if (phase.value === 'answering' && canSubmit.value) {
     ev.preventDefault();
     submit();

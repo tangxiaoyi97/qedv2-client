@@ -16,6 +16,7 @@ export { default as GradingDot } from './shared/GradingDot.vue';
 export { default as GradingCapsule } from './shared/GradingCapsule.vue';
 export { default as GradingMenu } from './shared/GradingMenu.vue';
 export { default as StarButton } from './shared/StarButton.vue';
+export { onRadioGroupKeydown } from './shared/radio-group.js';
 
 // search (search upgrade doc)
 export { default as SearchBox } from './shared/SearchBox.vue';
