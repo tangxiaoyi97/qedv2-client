@@ -117,7 +117,7 @@ watch(
     >
       <!-- login face -->
       <form v-if="ui.authModalMode === 'login'" class="authm__card" @submit.prevent="doLogin">
-        <button type="button" class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()">✕</button>
+        <button type="button" class="authm__close q-dialog-close" aria-label="Schließen" @click="ui.closeAuthModal()">✕</button>
         <div class="authm__brand">QED<span class="authm__brand-accent">2</span></div>
         <div class="authm__sub">Willkommen zurück</div>
 
@@ -234,24 +234,7 @@ watch(
   position: absolute;
   top: 12px;
   right: 12px;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--q-mut-2);
-  font-size: 13px;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  font-family: inherit;
   z-index: 1;
-}
-@media (hover: hover) and (pointer: fine) {
-  .authm__close:hover {
-    background: var(--q-panel-2);
-    color: var(--q-ink);
-  }
 }
 .authm__brand {
   font-weight: 800;

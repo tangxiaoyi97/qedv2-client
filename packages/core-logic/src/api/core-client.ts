@@ -100,9 +100,9 @@ export class CoreClient {
     return requestJson<ManifestResponse>(this.baseUrl, '/content/manifest');
   }
 
-  /** GET /health */
+  /** GET /content/health */
   health(): Promise<HealthResponse> {
-    return requestJson<HealthResponse>(this.baseUrl, '/health');
+    return requestJson<HealthResponse>(this.baseUrl, '/content/health');
   }
 
   /**

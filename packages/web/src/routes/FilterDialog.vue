@@ -12,11 +12,14 @@ export interface FilterState {
   teils: ExamPart[];
   categories: ('AG' | 'FA' | 'AN' | 'WS')[];
   gradings: GradingOrUnseen[];
+  /** Official Antwortformat strings (e.g. „Zuordnungsaufgabe") — the summary
+   *  carries them verbatim, so this filter is entirely client-side. */
+  formats: string[];
   starredOnly: boolean;
 }
 
 export function emptyFilterState(): FilterState {
-  return { years: [], terms: [], teils: [], categories: [], gradings: [], starredOnly: false };
+  return { years: [], terms: [], teils: [], categories: [], gradings: [], formats: [], starredOnly: false };
 }
 
 /** Total number of active picks — drives the badge and the summary chips. */
@@ -27,6 +30,7 @@ export function activeFilterCount(f: FilterState): number {
     f.teils.length +
     f.categories.length +
     f.gradings.length +
+    f.formats.length +
     (f.starredOnly ? 1 : 0)
   );
 }
@@ -71,8 +75,10 @@ const props = withDefaults(
     /** Years actually present in the question pool; defaults to every year
      *  from 2014 (first SRDP exam) through the current one. */
     years?: number[];
+    /** Aufgabenformat values present in the pool (from part summaries). */
+    formats?: string[];
   }>(),
-  { years: undefined },
+  { years: undefined, formats: undefined },
 );
 
 const emit = defineEmits<{
@@ -132,6 +138,12 @@ function toggleGrading(g: GradingOrUnseen): void {
     gradings: toggled(props.modelValue.gradings, g),
   });
 }
+function toggleFormat(f: string): void {
+  emit('update:modelValue', {
+    ...props.modelValue,
+    formats: toggled(props.modelValue.formats, f),
+  });
+}
 function toggleStarred(): void {
   emit('update:modelValue', { ...props.modelValue, starredOnly: !props.modelValue.starredOnly });
 }
@@ -155,7 +167,7 @@ const countText = computed(() =>
       <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
           <h2 class="fdlg__title">Filter</h2>
-          <button type="button" class="fdlg__close" aria-label="Schließen" data-autofocus @click="emit('close')">
+          <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="emit('close')">
             ✕
           </button>
         </div>
@@ -252,6 +264,24 @@ const countText = computed(() =>
             </div>
           </section>
 
+          <section v-if="formats && formats.length > 0" class="fdlg__section">
+            <div class="fdlg__label">Aufgabenformat</div>
+            <div class="fdlg__chips">
+              <button
+                v-for="f in formats"
+                :key="f"
+                type="button"
+                class="fdlg__chip"
+                :class="{ 'fdlg__chip--on': modelValue.formats.includes(f) }"
+                :aria-pressed="modelValue.formats.includes(f) ? 'true' : 'false'"
+                @click="toggleFormat(f)"
+              >
+                <span v-if="modelValue.formats.includes(f)" class="fdlg__tick" aria-hidden="true">✓</span>
+                {{ f }}
+              </button>
+            </div>
+          </section>
+
           <section class="fdlg__section">
             <div class="fdlg__label">Merkliste</div>
             <div class="fdlg__chips">
@@ -313,25 +343,6 @@ const countText = computed(() =>
   font-size: 17px;
   letter-spacing: -0.01em;
   margin: 0;
-}
-.fdlg__close {
-  border: none;
-  background: none;
-  color: var(--q-mut-2);
-  font-size: 15px;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
-  font-family: inherit;
-}
-@media (hover: hover) and (pointer: fine) {
-  .fdlg__close:hover {
-    color: var(--q-ink);
-    background: var(--q-panel);
-  }
-}
-.fdlg__close:focus-visible {
-  outline: 2px solid var(--q-accent);
 }
 .fdlg__body {
   overflow-y: auto;

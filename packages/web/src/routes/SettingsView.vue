@@ -9,7 +9,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
-import { LOCALE_LABELS, type Locale } from '../i18n.js';
+import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -160,6 +160,15 @@ const uploadStatus = computed(() => {
 async function doLogout(): Promise<void> {
   await auth.logout();
 }
+
+/** „Was ist neu" button — re-opens this build's changelog if one exists. */
+const changelogState = ref<'idle' | 'loading' | 'none'>('idle');
+async function openChangelog(): Promise<void> {
+  changelogState.value = 'loading';
+  const found = await ui.showCurrentChangelog();
+  changelogState.value = found ? 'idle' : 'none';
+  if (!found) setTimeout(() => (changelogState.value = 'idle'), 2500);
+}
 </script>
 
 <template>
@@ -201,7 +210,7 @@ async function doLogout(): Promise<void> {
           :value="ui.locale"
           @change="onLocaleChange"
         >
-          <option v-for="locale in LOCALES" :key="locale" :value="locale">
+          <option v-for="locale in LOCALES" :key="locale" :value="locale" :disabled="!LOCALE_ENABLED[locale]">
             {{ LOCALE_LABELS[locale] }}
           </option>
         </select>
@@ -221,6 +230,7 @@ async function doLogout(): Promise<void> {
       <div class="settings__versions">
         <div class="settings__version-line">
           Web-App {{ APP_VERSION }}
+          <span v-if="ui.appCommit !== 'dev'" class="settings__build">· {{ ui.appCommit.slice(0, 7) }}</span>
         </div>
         <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.coreInfo }">
           {{ coreLine }}
@@ -230,9 +240,14 @@ async function doLogout(): Promise<void> {
           {{ serverLine }}
           <span v-if="app.serverInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.serverInfo.buildTime) }}</span>
         </div>
-        <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
-          Nach Updates suchen
-        </QButton>
+        <div class="settings__versions-actions">
+          <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
+            {{ changelogState === 'none' ? 'Keine Hinweise für diesen Build' : 'Was ist neu' }}
+          </QButton>
+          <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
+            Nach Updates suchen
+          </QButton>
+        </div>
       </div>
     </section>
 
@@ -471,6 +486,11 @@ async function doLogout(): Promise<void> {
 }
 .settings__update-btn {
   align-self: flex-start;
+}
+.settings__versions-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-top: 8px;
 }
 .settings__account-sep {

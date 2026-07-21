@@ -1,5 +1,5 @@
-# QED2 1.5 - mobile update!
+# QED2 1.6 - smarter & sharper!
 
-bigger tap targets. no double-tap accidents. dialogs behave. heatmap clickable. red means bad now.
+new questions every day. grading where your thumb is. less noise, more signal. filter by Aufgabenformat.
 
-tangxy, 2026.07.21
+tangxy, 2026.07.22

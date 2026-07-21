@@ -462,7 +462,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
         >
           <div class="prog-modal__head">
             <h3 class="prog-modal__title">{{ detailTitle }}</h3>
-            <button type="button" class="prog-modal__close" aria-label="Schließen" data-autofocus @click="closeDetail">✕</button>
+            <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="closeDetail">✕</button>
           </div>
 
           <div v-if="detailKind === 'status'" class="prog-modal__body">
@@ -945,15 +945,6 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   font-size: 15px;
   font-weight: 800;
 }
-.prog-modal__close {
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 8px;
-  background: var(--q-panel);
-  color: var(--q-mut);
-  cursor: pointer;
-}
 .prog-modal__body {
   padding: 12px 16px 16px;
   overflow-y: auto;
@@ -1238,10 +1229,6 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   }
   .prog-modal__body {
     padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  }
-  .prog-modal__close {
-    width: 44px;
-    height: 44px;
   }
   .prog-modal__competency {
     grid-template-columns: 1fr;

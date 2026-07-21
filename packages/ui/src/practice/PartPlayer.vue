@@ -53,7 +53,7 @@ import RichTextView from '../shared/RichTextView.vue';
 import FigureList from '../shared/FigureList.vue';
 import QButton from '../shared/QButton.vue';
 import QChip from '../shared/QChip.vue';
-import ResultBanner from './ResultBanner.vue';
+import VerdictCard from './VerdictCard.vue';
 import SolutionPanel from './SolutionPanel.vue';
 
 const props = defineProps<{
@@ -286,9 +286,10 @@ defineExpose({
     </div>
 
     <template v-else>
-      <ResultBanner
+      <VerdictCard
         v-if="!chromeless && phase === 'reviewed' && result"
         :result="result"
+        :solution-link="false"
         class="q-part__banner"
       />
 

@@ -389,6 +389,19 @@ watch(
     color: var(--q-accent-strong);
     font-weight: 700;
   }
+  /* active pill: a soft tinted slab behind icon+label — much easier to
+   * spot the current tab at a glance than recolor alone */
+  .app__tab--active::before {
+    content: '';
+    position: absolute;
+    inset: 6px 8px;
+    background: var(--q-accent-bg);
+    border-radius: 10px;
+    z-index: -1;
+  }
+  .app__tab {
+    position: relative;
+  }
   .app__tab-icon {
     width: 22px;
     height: 22px;

@@ -96,6 +96,23 @@ export const useUiStore = defineStore('ui', () => {
     rememberCommit();
   }
 
+  /** Settings button: fetch THIS build's changelog regardless of the
+   *  last-seen marker. Returns false when the build ships no notes. */
+  async function showCurrentChangelog(): Promise<boolean> {
+    if (APP_COMMIT === 'dev') return false;
+    const base = import.meta.env.BASE_URL || '/';
+    try {
+      const res = await fetch(`${base}changelogs/${APP_COMMIT}.md`, { cache: 'no-store' });
+      if (!res.ok) return false;
+      const text = (await res.text()).trim();
+      if (text === '') return false;
+      changelogMarkdown.value = text;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return {
     authModalOpen,
     authModalMode,
@@ -109,5 +126,6 @@ export const useUiStore = defineStore('ui', () => {
     changelogOpen,
     checkForChangelog,
     closeChangelog,
+    showCurrentChangelog,
   };
 });

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { AnswerKind, Grading, SolutionEntry } from '@qed2/core-logic';
+import type { AnswerKind, Grading, GradingOrUnseen, SolutionEntry } from '@qed2/core-logic';
 import {
+  GradingMenu,
   QButton,
-  ResultPill,
   SELF_ASSESSMENT_GRADING_OPTIONS,
   SolutionSheet,
+  StateIcon,
   onRadioGroupKeydown,
   sameScore,
 } from '@qed2/ui';
@@ -20,6 +21,9 @@ const props = defineProps<{
   rubricMode?: boolean;
   solution?: SolutionEntry[];
   solutionOpen: boolean;
+  /** Manual grading override — the GradingMenu lives in the bar (thumb
+   *  reach) instead of the question header. */
+  grading: GradingOrUnseen;
   primaryLabel: string;
   primaryDisabled: boolean;
 }>();
@@ -46,28 +50,37 @@ function scoreTone(points: number): 'zero' | 'full' | 'mid' {
   return 'mid';
 }
 
+const VERDICT_LABELS = { correct: 'Richtig', partial: 'Teilweise richtig', incorrect: 'Falsch' } as const;
+const verdictLabel = computed(() =>
+  props.state.result ? VERDICT_LABELS[props.state.result.verdict] : '',
+);
+/** Points ride the verdict anchor — with the in-flow VerdictCard now limited
+ *  to open parts, this is the only place the score shows for most kinds. */
+const verdictPoints = computed(() => {
+  const r = props.state.result;
+  if (!r) return '';
+  const fmt = (n: number): string => n.toLocaleString('de-AT');
+  return `${fmt(r.awardedPoints)} / ${fmt(r.maxPoints)} P`;
+});
+
 const emit = defineEmits<{
   'update:solutionOpen': [open: boolean];
   scoreSelect: [points: number];
+  /** Self-assessment mastery dropdown (only while self-assessing). */
+  selfGradingSelect: [grading: Grading];
+  /** GradingMenu manual override (any other phase). */
   gradingSelect: [grading: Grading];
   primary: [];
 }>();
 
 function onMasteryChange(ev: Event): void {
   const value = (ev.target as HTMLSelectElement).value as Grading | '';
-  if (value) emit('gradingSelect', value);
+  if (value) emit('selfGradingSelect', value);
 }
 </script>
 
 <template>
-  <div
-    class="practice-bar"
-    :class="{
-      'practice-bar--ok': state.result?.verdict === 'correct',
-      'practice-bar--err': state.result != null && state.result.verdict === 'incorrect',
-      'practice-bar--part': state.result?.verdict === 'partial' || state.phase === 'self-assessing',
-    }"
-  >
+  <div class="practice-bar">
     <SolutionSheet
       :open="solutionOpen"
       :solution="solution"
@@ -77,7 +90,24 @@ function onMasteryChange(ev: Event): void {
 
     <div class="practice-bar__row">
       <div class="practice-bar__left">
-        <ResultPill v-if="state.result" :result="state.result" />
+        <!-- mastery override rides the INFO slot (left), not the action
+             cluster — and it shares the Lösung toggle's outlined geometry -->
+        <GradingMenu
+          v-if="state.phase !== 'self-assessing'"
+          :grading="grading"
+          class="practice-bar__grading"
+          @select="emit('gradingSelect', $event)"
+        />
+        <!-- compact verdict anchor; the authoritative card is in the flow -->
+        <div
+          v-if="state.result"
+          class="practice-bar__verdict"
+          :class="`practice-bar__verdict--${state.result.verdict}`"
+        >
+          <StateIcon :state="state.result.verdict" :size="18" />
+          <span>{{ verdictLabel }}</span>
+          <span class="practice-bar__verdict-points">{{ verdictPoints }}</span>
+        </div>
         <div v-else-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-bar__assessment">
           <div v-if="!rubricMode" class="practice-bar__assessment-group">
             <span class="practice-bar__assessment-label">Punkte</span>
@@ -160,22 +190,31 @@ function onMasteryChange(ev: Event): void {
   border-top: 1px solid var(--q-border);
   border-left: 1px solid var(--q-border);
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.25s ease;
 }
 
-.practice-bar--ok {
-  border-top-color: var(--q-ok-border);
-  background: color-mix(in srgb, var(--q-ok-bg) 35%, var(--q-card));
+/* compact verdict anchor in the left slot — the full feedback card lives
+ * in the content flow (VerdictCard); the bar itself stays neutral. */
+.practice-bar__verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
-
-.practice-bar--err {
-  border-top-color: var(--q-err-border);
-  background: color-mix(in srgb, var(--q-err-bg) 35%, var(--q-card));
+.practice-bar__verdict--correct {
+  color: var(--q-ok);
 }
-
-.practice-bar--part {
-  border-top-color: var(--q-part-border);
-  background: color-mix(in srgb, var(--q-part-bg) 35%, var(--q-card));
+.practice-bar__verdict--partial {
+  color: var(--q-part-ink);
+}
+.practice-bar__verdict--incorrect {
+  color: var(--q-err);
+}
+.practice-bar__verdict-points {
+  font: 700 12px ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }
 
 .practice-bar__row {
@@ -193,9 +232,22 @@ function onMasteryChange(ev: Event): void {
 .practice-bar__left {
   display: flex;
   align-items: center;
+  gap: 14px;
   min-height: 44px;
   min-width: 0;
   flex: 1;
+}
+
+/* the capsule keeps its state tint, but takes the Lösung toggle's outlined
+ * geometry so the bar reads as ONE control family */
+.practice-bar__grading :deep(.q-grading-capsule) {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 9px;
+  gap: 7px;
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .practice-bar__right {

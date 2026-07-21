@@ -36,6 +36,7 @@ export type { AnswerPreview } from './question/submission-preview.js';
 // practice flow
 export { default as ResultBanner } from './practice/ResultBanner.vue';
 export { default as ResultPill } from './practice/ResultPill.vue';
+export { default as VerdictCard } from './practice/VerdictCard.vue';
 export { default as SolutionPanel } from './practice/SolutionPanel.vue';
 export { default as SolutionSheet } from './practice/SolutionSheet.vue';
 export { default as PartPlayer } from './practice/PartPlayer.vue';

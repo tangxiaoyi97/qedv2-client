@@ -42,7 +42,7 @@ const progress = useProgressStore();
 const practice = usePracticeStore();
 
 const PAGE_SIZE = 100;
-const FILTER_QUERY_KEYS = new Set(['year', 'term', 'teil', 'kat', 'grading', 'starred']);
+const FILTER_QUERY_KEYS = new Set(['year', 'term', 'teil', 'kat', 'grading', 'fmt', 'starred']);
 const VALID_TERMS: readonly Term[] = [
   'haupttermin',
   'nebentermin-1',
@@ -117,6 +117,7 @@ function parseFilterQuery(): FilterState {
     teils: uniqueAllowed(route.query.teil, VALID_TEILS),
     categories: uniqueAllowed(route.query.kat, VALID_CATEGORIES),
     gradings: uniqueAllowed(route.query.grading, VALID_GRADINGS),
+    formats: queryStrings(route.query.fmt),
     starredOnly: queryStrings(route.query.starred).some((value) => value === '1' || value === 'true'),
   };
 }
@@ -131,6 +132,7 @@ function filterQuery(f: FilterState): LocationQueryRaw {
   if (f.teils.length > 0) query.teil = [...f.teils];
   if (f.categories.length > 0) query.kat = [...f.categories];
   if (f.gradings.length > 0) query.grading = [...f.gradings];
+  if (f.formats.length > 0) query.fmt = [...f.formats];
   if (f.starredOnly) query.starred = '1';
   return query;
 }
@@ -211,6 +213,17 @@ const summaryById = computed(() => new Map(allQuestions.value.map((q) => [q.id, 
  *  these instead of a hard-coded range that silently goes stale. */
 const availableYears = computed(() => [...new Set(allQuestions.value.map((q) => q.source.year))]);
 
+/** Aufgabenformat values present in the pool, most frequent first. */
+const availableFormats = computed(() => {
+  const counts = new Map<string, number>();
+  for (const q of allQuestions.value) {
+    for (const p of q.parts) {
+      if (p.format) counts.set(p.format, (counts.get(p.format) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f);
+});
+
 function hitStarred(id: string): boolean {
   const q = summaryById.value.get(id);
   return q?.parts.some((p) => progress.partState.get(p.id)?.starred === true) ?? false;
@@ -247,6 +260,9 @@ function matches(q: QuestionSummary, f: FilterState): boolean {
     return false;
   }
   if (f.gradings.length > 0 && !q.parts.some((p) => f.gradings.includes(partGrading(p.id)))) {
+    return false;
+  }
+  if (f.formats.length > 0 && !q.parts.some((p) => p.format != null && f.formats.includes(p.format))) {
     return false;
   }
   if (f.starredOnly && !q.parts.some((p) => progress.partState.get(p.id)?.starred === true)) {
@@ -302,6 +318,13 @@ const activeChips = computed<ActiveChip[]>(() => {
       key: `g${g}`,
       label: GRADING_FILTER_LABELS[g],
       remove: () => (filter.value = { ...f, gradings: f.gradings.filter((v) => v !== g) }),
+    });
+  }
+  for (const fmt of f.formats) {
+    out.push({
+      key: `f${fmt}`,
+      label: fmt,
+      remove: () => (filter.value = { ...f, formats: f.formats.filter((v) => v !== fmt) }),
     });
   }
   if (f.starredOnly) {
@@ -390,22 +413,24 @@ function firstCode(q: QuestionSummary): string | undefined {
         <QButton :disabled="playableIds.length === 0" @click="practiceAll">Auswahl üben →</QButton>
       </div>
 
-      <SearchBox
-        v-model="searchQuery"
-        class="browse__search"
-        placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
-        :busy="searchBusy"
-        @search="runSearch"
-      />
-
-      <div v-if="!searchMode" class="browse__filterbar">
+      <div class="browse__searchrow">
+        <SearchBox
+          v-model="searchQuery"
+          class="browse__search"
+          placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
+          :busy="searchBusy"
+          @search="runSearch"
+        />
         <button
           type="button"
           class="browse__filterbtn"
+          :class="{ 'browse__filterbtn--on': filterCount > 0 || dialogOpen }"
           :aria-expanded="dialogOpen ? 'true' : 'false'"
+          aria-label="Filter öffnen"
+          title="Filter"
           @click="dialogOpen = true"
         >
-          <svg class="browse__funnel" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <svg class="browse__funnel" width="16" height="16" viewBox="0 0 12 12" aria-hidden="true">
             <path
               d="M1 1.5h10L7.5 6v4L4.5 8.5V6L1 1.5Z"
               fill="none"
@@ -414,10 +439,11 @@ function firstCode(q: QuestionSummary): string | undefined {
               stroke-linejoin="round"
             />
           </svg>
-          Filter
           <span v-if="filterCount > 0" class="browse__badge">{{ filterCount }}</span>
         </button>
+      </div>
 
+      <div v-if="!searchMode && filterCount > 0" class="browse__filterbar">
         <span v-for="chip in activeChips" :key="chip.key" class="browse__active">
           {{ chip.label }}
           <button
@@ -430,7 +456,7 @@ function firstCode(q: QuestionSummary): string | undefined {
           </button>
         </span>
 
-        <button v-if="filterCount > 0" type="button" class="browse__reset" @click="resetFilters">
+        <button type="button" class="browse__reset" @click="resetFilters">
           Zurücksetzen
         </button>
       </div>
@@ -562,6 +588,7 @@ function firstCode(q: QuestionSummary): string | undefined {
       v-model="filter"
       :result-count="filtered.length"
       :years="availableYears"
+      :formats="availableFormats"
       @close="dialogOpen = false"
     />
   </div>
@@ -599,8 +626,65 @@ function firstCode(q: QuestionSummary): string | undefined {
   letter-spacing: -0.01em;
   margin: 0;
 }
-.browse__search {
+.browse__searchrow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
   margin-bottom: 12px;
+}
+.browse__search {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0; /* the row owns the spacing now */
+}
+/* filter = one-tap icon button glued to the search field — visible at all
+ * times, not a small text pill below the fold of the header */
+.browse__filterbtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  flex: none;
+  border-radius: 12px;
+  border: 1px solid var(--q-border-3);
+  background: var(--q-card);
+  color: var(--q-mut-2);
+  cursor: pointer;
+}
+.browse__filterbtn--on {
+  border-color: var(--q-accent);
+  color: var(--q-accent-strong);
+  background: var(--q-accent-bg);
+}
+@media (hover: hover) and (pointer: fine) {
+  .browse__filterbtn:hover {
+    border-color: var(--q-accent);
+  }
+}
+.browse__filterbtn:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 1px;
+}
+.browse__filterbtn .browse__badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+}
+.browse__funnel {
+  flex: none;
+}
+.browse__badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--q-accent-strong);
+  color: var(--q-on-accent);
+  font-size: 10.5px;
+  font-weight: 800;
+  display: inline-grid;
+  place-items: center;
 }
 .browse__star {
   color: var(--q-part);
@@ -642,52 +726,11 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 7px;
   margin-bottom: 10px;
 }
-.browse__filterbtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--q-border-3);
-  background: var(--q-card);
-  color: var(--q-ink-2);
-  font: 700 12.5px 'Public Sans', system-ui, sans-serif;
-  cursor: pointer;
-}
-@media (hover: hover) and (pointer: fine) {
-  .browse__filterbtn:hover {
-    border-color: var(--q-accent);
-  }
-}
-.browse__filterbtn:focus-visible {
-  outline: 2px solid var(--q-accent);
-  outline-offset: 1px;
-}
 @media (pointer: coarse) {
-  .browse__filterbtn {
-    min-height: 44px;
-    padding: 10px 16px;
-  }
   .browse__active-x {
     min-width: 32px;
     min-height: 32px;
   }
-}
-.browse__funnel {
-  flex: none;
-  color: var(--q-mut-2);
-}
-.browse__badge {
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: var(--q-accent-strong);
-  color: var(--q-on-accent);
-  font-size: 10.5px;
-  font-weight: 800;
-  display: inline-grid;
-  place-items: center;
 }
 .browse__active {
   display: inline-flex;

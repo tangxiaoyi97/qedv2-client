@@ -29,6 +29,7 @@ import {
   RichTextView,
   SelfAssessmentPanel,
   StateIcon,
+  VerdictCard,
   type PartPlayerCommand,
   type PartPlayerState,
 } from '@qed2/ui';
@@ -79,10 +80,21 @@ const exitButton = ref<HTMLButtonElement | null>(null);
 
 function onPlayerState(state: PartPlayerState): void {
   const wasSelfAssessing = playerState.value.phase === 'self-assessing';
+  const wasReviewed = playerState.value.phase === 'reviewed';
   playerState.value = state;
   // Comparing against the official solution is the whole point of
-  // self-assessment — open the sheet for the user.
+  // self-assessment — open the sheet for the user. Same for a wrong or
+  // half-right answer: the people who most need the solution shouldn't
+  // have to hunt for the toggle.
   if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionOpen.value = true;
+  if (
+    state.phase === 'reviewed' &&
+    !wasReviewed &&
+    state.result != null &&
+    state.result.verdict !== 'correct'
+  ) {
+    solutionOpen.value = true;
+  }
 }
 
 async function onGraded(payload: {
@@ -155,6 +167,31 @@ function onSelfGradingSelect(grading: Grading): void {
 
 function onSelfAssessmentUpdate(value: SelfAssessment): void {
   playerCommand.value = { id: ++playerCommandId, type: 'set-assessment', assessment: value };
+}
+
+/* The verdict lands in the content flow (VerdictCard below the answer
+ * control) — scroll it into view so the user actually SEES the feedback
+ * instead of discovering it below the fold. */
+const verdictAnchor = ref<HTMLElement | null>(null);
+watch(
+  () => playerState.value.phase,
+  (phase) => {
+    if (phase !== 'reviewed') return;
+    // Wait out the content-padding transition that the auto-opened
+    // SolutionSheet triggers (0.3s) — scrolling before the layout settles
+    // lands the card behind the sheet again.
+    window.setTimeout(() => {
+      const sheetH = solutionOpen.value ? Math.min(0.55 * window.innerHeight, 420) : 0;
+      verdictAnchor.value?.style.setProperty('scroll-margin-bottom', `${Math.round(sheetH) + 90}px`);
+      verdictAnchor.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 340);
+  },
+);
+
+function openSolutionFromVerdict(): void {
+  // The sheet is part of the fixed bottom bar — just open it, no scroll
+  // (scrolling a fixed element is meaningless).
+  solutionOpen.value = true;
 }
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
@@ -289,6 +326,17 @@ onBeforeUnmount(() => {
 });
 
 const multiPart = computed(() => (current.value?.question.parts.length ?? 0) > 1);
+/** The VerdictCard is only shown where the control's OWN review state does
+ *  not already spell out the verdict inline. Choice/matching/numeric/
+ *  interval/expression all render per-option/per-blank ok·err marks plus
+ *  the expected answer — a big card below would just repeat them. `open`
+ *  parts (self-assessed) have no inline verdict, so they keep the card. */
+const showVerdictCard = computed(
+  () =>
+    playerState.value.phase === 'reviewed' &&
+    playerState.value.result != null &&
+    current.value?.part.answer?.kind === 'open',
+);
 const summaryStats = computed(() => practice.summary);
 const showProgramRail = computed(() => practice.total > 1);
 
@@ -477,17 +525,15 @@ const currentCompetencyCodes = computed(() =>
             @jump="jumpToSessionItem"
           />
 
-          <div class="practice__content">
+          <div class="practice__content" :class="{ 'practice__content--sheet-open': solutionOpen }">
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
-              :grading="currentGrading"
               :source-line="sourceLine"
               :points="current.part.points"
               :format="current.part.format"
               :starred="currentStarred"
               :official-url="officialAufgabenpoolUrl"
-              @grading-select="onGradingSelect"
               @star-toggle="onStarToggle"
             />
 
@@ -505,6 +551,18 @@ const currentCompetencyCodes = computed(() =>
               @graded="onGraded"
               @state="onPlayerState"
             />
+
+            <!-- The authoritative grade feedback lives HERE, in the scroll
+                 flow under the answer — but only for kinds without inline
+                 verdict marks (open); everything else feeds back in place. -->
+            <div v-if="showVerdictCard" ref="verdictAnchor">
+              <VerdictCard
+                :key="current.part.id"
+                :result="playerState.result!"
+                class="practice__verdict"
+                @view-solution="openSolutionFromVerdict"
+              />
+            </div>
 
             <SelfAssessmentPanel
               v-if="
@@ -530,10 +588,12 @@ const currentCompetencyCodes = computed(() =>
           :answer-kind="current.part.answer?.kind"
           :rubric-mode="current.part.scoring?.mode === 'rubric'"
           :solution="current.part.solution"
+          :grading="currentGrading"
           :primary-label="primaryLabel"
           :primary-disabled="primaryDisabled"
           @score-select="onSelfScoreSelect"
-          @grading-select="onSelfGradingSelect"
+          @self-grading-select="onSelfGradingSelect"
+          @grading-select="onGradingSelect"
           @primary="primaryAction"
         />
 
@@ -684,9 +744,21 @@ const currentCompetencyCodes = computed(() =>
   width: 100%;
   flex: 1;
   min-width: 0;
+  transition: padding-bottom 0.3s ease;
+}
+/* SolutionSheet is fixed above the bar — while it's open, the content must
+ * clear sheet (min(55vh,420px)) + bar (~90px) or feedback hides behind it.
+ * (doubled class beats the ≤640px padding override below regardless of
+ * source order) */
+.practice__content.practice__content--sheet-open {
+  padding-bottom: calc(min(55vh, 420px) + 110px);
 }
 .practice__rubric-assessment {
   margin-top: 18px;
+}
+.practice__verdict {
+  margin-top: 16px;
+  scroll-margin-bottom: 140px; /* keep clear of the fixed bottom bar */
 }
 
 .practice__qprompt {

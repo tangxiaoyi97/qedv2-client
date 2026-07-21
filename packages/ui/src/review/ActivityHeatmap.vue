@@ -363,10 +363,10 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  /* edge fades hint that older weeks live off-screen to the left (and more
-   * content to the right once scrolled back) */
-  mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  /* subtle edge fades hint that older weeks live off-screen — 12px so the
+   * fade never eats into the cells themselves */
+  mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
 }
 .q-heat__svg {
   display: block;

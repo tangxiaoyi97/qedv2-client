@@ -235,7 +235,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
 });
 
 describe('PartPlayer (default, non-chromeless — legacy behavior)', () => {
-  it('keeps its own button, key hint, ResultBanner and SolutionPanel', async () => {
+  it('keeps its own button, key hint, VerdictCard and SolutionPanel', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: choicePart, label: 'Teil a' },
     });
@@ -251,10 +251,10 @@ describe('PartPlayer (default, non-chromeless — legacy behavior)', () => {
     await options[3]!.trigger('click');
     await wrapper.find('.q-part__actions button').trigger('click');
 
-    // banner + solution panel rendered by the player itself after grading
-    const banner = wrapper.find('.q-result-banner');
-    expect(banner.exists()).toBe(true);
-    expect(banner.text()).toContain('Richtig');
+    // verdict card + solution panel rendered by the player itself after grading
+    const verdict = wrapper.find('.q-verdict');
+    expect(verdict.exists()).toBe(true);
+    expect(verdict.text()).toContain('Richtig');
     expect(wrapper.find('.q-solution').exists()).toBe(true);
     expect(wrapper.emitted('graded')).toHaveLength(1);
   });

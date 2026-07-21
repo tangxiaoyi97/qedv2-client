@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import type { Grading, GradingOrUnseen } from '@qed2/core-logic';
-import { GradingMenu, QChip, StarButton } from '@qed2/ui';
+import { QChip, StarButton } from '@qed2/ui';
 import { ExternalLink } from 'lucide-vue-next';
 
 defineProps<{
   title: string;
   competencyCodes: string[];
-  grading: GradingOrUnseen;
   sourceLine: string;
   points?: number | null;
   format?: string;
@@ -15,7 +13,6 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  gradingSelect: [grading: Grading];
   starToggle: [];
 }>();
 </script>
@@ -29,9 +26,10 @@ const emit = defineEmits<{
 
     <div class="practice-qhead__meta">
       <QChip v-for="code in competencyCodes" :key="code">{{ code }}</QChip>
-      <GradingMenu :grading="grading" @select="emit('gradingSelect', $event)" />
       <QChip v-if="format" tone="neutral">{{ format }}</QChip>
-      <span class="practice-qhead__source">{{ sourceLine }}</span>
+    </div>
+    <div class="practice-qhead__subline">
+      <span class="practice-qhead__source">{{ sourceLine }}<template v-if="points != null"> · {{ points }} P</template></span>
       <a
         v-if="officialUrl"
         class="practice-qhead__official"
@@ -42,7 +40,6 @@ const emit = defineEmits<{
       >
         Originalaufgabe <ExternalLink class="practice-qhead__official-icon" aria-hidden="true" />
       </a>
-      <span v-if="points != null" class="practice-qhead__points">{{ points }} P</span>
     </div>
   </header>
 </template>
@@ -61,9 +58,10 @@ const emit = defineEmits<{
 }
 
 .practice-qhead__title {
-  font-size: 34px;
+  font-size: 26px;
+  line-height: 1.25;
   font-weight: 800;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
   margin: 0;
   flex: 1;
   min-width: 0;
@@ -78,9 +76,19 @@ const emit = defineEmits<{
   margin-top: 12px;
 }
 
+/* secondary info drops to a quieter line of its own — one glance separates
+ * labels (chips) from provenance (source/original/points) */
+.practice-qhead__subline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
 .practice-qhead__source {
-  font-size: 12.5px;
-  color: var(--q-mut-2);
+  font-size: 12px;
+  color: var(--q-faint);
   font-weight: 500;
 }
 
@@ -88,17 +96,23 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 26px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 7px;
-  background: var(--q-panel);
-  color: var(--q-accent-strong);
+  color: var(--q-mut-2);
   font-size: 12px;
-  font-weight: 750;
+  font-weight: 600;
   line-height: 1;
-  padding: 5px 9px;
   text-decoration: none;
   white-space: nowrap;
+}
+@media (hover: hover) and (pointer: fine) {
+  .practice-qhead__official:hover {
+    color: var(--q-accent-strong);
+    text-decoration: underline;
+  }
+}
+.practice-qhead__official:focus-visible {
+  color: var(--q-accent-strong);
+  outline: none;
+  text-decoration: underline;
 }
 
 .practice-qhead__official-icon {
@@ -107,32 +121,9 @@ const emit = defineEmits<{
   stroke-width: 2.2px;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .practice-qhead__official:hover {
-    border-color: var(--q-accent);
-    background: var(--q-accent-bg);
-  }
-}
-.practice-qhead__official:focus-visible {
-  border-color: var(--q-accent);
-  background: var(--q-accent-bg);
-  outline: none;
-}
-
-.practice-qhead__points {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--q-mut-2);
-  background: var(--q-panel);
-  border: 1px solid var(--q-border-soft);
-  padding: 3px 10px;
-  border-radius: 20px;
-  white-space: nowrap;
-}
-
 @media (max-width: 640px) {
   .practice-qhead__title {
-    font-size: 24px;
+    font-size: 21px;
   }
 }
 </style>

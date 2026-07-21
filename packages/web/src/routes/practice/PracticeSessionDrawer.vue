@@ -46,7 +46,7 @@ useModalA11y(panel, isOpen, () => emit('close'));
             <span class="practice-session-drawer__title">Programm</span>
             <span class="practice-session-drawer__count">{{ gradedCount }}/{{ total }}</span>
           </div>
-          <button type="button" class="practice-session-drawer__close" aria-label="Programmliste schließen" @click="emit('close')">
+          <button type="button" class="q-dialog-close" aria-label="Programmliste schließen" @click="emit('close')">
             ✕
           </button>
         </div>
@@ -132,16 +132,6 @@ useModalA11y(panel, isOpen, () => emit('close'));
 .practice-session-drawer__count {
   font: 700 12px ui-monospace, Menlo, monospace;
   color: var(--q-mut-2);
-}
-
-.practice-session-drawer__close {
-  width: 34px;
-  height: 34px;
-  border: none;
-  border-radius: 8px;
-  background: var(--q-panel);
-  color: var(--q-mut-2);
-  cursor: pointer;
 }
 
 .practice-session-drawer__list {

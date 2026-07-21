@@ -1,7 +1,7 @@
 {
   "name": "qed2-client",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "QED2 learning tracker client monorepo — web first, desktop/mobile shells later. Shared platform-agnostic logic lives in @qed2/core-logic, shared Vue UI in @qed2/ui.",
   "license": "MIT",
   "engines": {

@@ -211,6 +211,34 @@ html, body {
   border-radius: 4px;
 }
 
+/* One dialog close button for every overlay (was three competing styles). */
+.q-dialog-close {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: var(--q-panel);
+  color: var(--q-mut-2);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .q-dialog-close:hover {
+    background: var(--q-panel-2);
+    color: var(--q-ink);
+  }
+}
+@media (pointer: coarse) {
+  .q-dialog-close {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 /* Respect vestibular sensitivities: kill every transition/animation. */
 @media (prefers-reduced-motion: reduce) {
   *,
