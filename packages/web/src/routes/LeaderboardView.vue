@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { ApiError, type LeaderboardDetail, type LeaderboardPeriod, type LeaderboardResponse } from '@qed2/core-logic';
 import { QButton } from '@qed2/ui';
-import { LogOut, Pencil, Trophy } from 'lucide-vue-next';
+import { LogOut, Pencil, Trophy, UserRound } from 'lucide-vue-next';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useLeaderboardStore } from '../stores/leaderboard.js';
@@ -280,8 +280,13 @@ onMounted(() => {
       <section v-else class="leaderboard__profile leaderboard__profile--joined">
         <div v-if="!editingNickname" class="leaderboard__profile-actions">
           <div class="leaderboard__profile-identity">
-            <span>Dein Nickname</span>
-            <strong>{{ profile?.participating ? profile.nickname : '' }}</strong>
+            <span class="leaderboard__profile-avatar" aria-hidden="true">
+              <UserRound />
+            </span>
+            <span class="leaderboard__profile-copy">
+              <span>Dein Nickname</span>
+              <strong>{{ profile?.participating ? profile.nickname : '' }}</strong>
+            </span>
           </div>
           <div class="leaderboard__profile-buttons">
             <QButton variant="secondary" @click="editingNickname = true">
@@ -389,7 +394,7 @@ onMounted(() => {
 .leaderboard__columns {
   min-height: 34px;
   display: grid;
-  grid-template-columns: 64px minmax(170px, 1fr) 116px 96px 96px 24px;
+  grid-template-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
   align-items: center;
   gap: 14px;
   padding: 0 16px 7px;
@@ -399,6 +404,10 @@ onMounted(() => {
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+}
+
+.leaderboard__columns span {
+  min-width: 0;
 }
 
 .leaderboard__columns span:first-child {
@@ -411,6 +420,7 @@ onMounted(() => {
 
 .leaderboard__columns span:nth-child(3) {
   color: var(--q-accent-strong);
+  white-space: nowrap;
 }
 
 .leaderboard__rows {
@@ -495,22 +505,49 @@ onMounted(() => {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   margin-right: auto;
 }
 
-.leaderboard__profile-identity span {
-  color: var(--q-mut);
-  font-size: 11px;
+.leaderboard__profile-avatar {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--q-accent) 32%, var(--q-border));
+  border-radius: 50%;
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
 }
 
-.leaderboard__profile-identity strong {
+.leaderboard__profile-avatar svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 1.9;
+}
+
+.leaderboard__profile-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.leaderboard__profile-copy > span {
+  color: var(--q-faint);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.leaderboard__profile-copy strong {
   overflow: hidden;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: var(--q-accent-strong);
-  color: var(--q-on-accent);
-  font-size: 12px;
+  color: var(--q-ink-2);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { CalendarDays, CheckCircle2, Target, Trophy, X } from 'lucide-vue-next';
+import { CalendarCheck2, CalendarRange, CheckCircle2, Target, Trophy, X } from 'lucide-vue-next';
 import type { LeaderboardDetail } from '@qed2/core-logic';
 import { QButton } from '@qed2/ui';
 import { useModalA11y } from '../../composables/useModalA11y.js';
@@ -63,12 +63,12 @@ const accuracy = computed(() => {
                 <h3>Zeitraum</h3>
                 <div class="leader-detail__periods">
                   <div>
-                    <span><CalendarDays aria-hidden="true" /> Heute</span>
+                    <span><CalendarCheck2 aria-hidden="true" /> Heute</span>
                     <strong>{{ numberFormat.format(detail.todayPracticed) }}</strong>
                     <small>{{ numberFormat.format(detail.todayScore) }} Punkte</small>
                   </div>
                   <div>
-                    <span><CalendarDays aria-hidden="true" /> Diese Woche</span>
+                    <span><CalendarRange aria-hidden="true" /> Diese Woche</span>
                     <strong>{{ numberFormat.format(detail.weekPracticed) }}</strong>
                     <small>{{ numberFormat.format(detail.weekScore) }} Punkte</small>
                   </div>

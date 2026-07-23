@@ -34,7 +34,9 @@ function syncCoarse(): void {
 const CELL = computed(() => (coarse.value ? 15 : 11));
 const GAP = computed(() => (coarse.value ? 3 : 2));
 const PITCH = computed(() => CELL.value + GAP.value);
-const LEFT = 26; // weekday-label gutter
+const EDGE = 18; // keep labels/cells clear of the 12px scroll-edge fade
+const LEFT = EDGE + 26; // safe space + weekday-label gutter
+const RIGHT = EDGE;
 const TOP = 14; // month-label band
 
 /** de-AT short month names (Jänner!). */
@@ -155,7 +157,7 @@ const monthLabels = computed(() => {
   return out;
 });
 
-const svgWidth = computed(() => LEFT + weekCount.value * PITCH.value - GAP.value);
+const svgWidth = computed(() => LEFT + weekCount.value * PITCH.value - GAP.value + RIGHT);
 const svgHeight = computed(() => TOP + 7 * PITCH.value - GAP.value);
 
 /** Scroll container — keep the most recent weeks (right end) in view on
@@ -271,7 +273,7 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
           v-for="d in WEEKDAY_LABELS"
           :key="d.text"
           class="q-heat__weekday"
-          :x="0"
+          :x="EDGE"
           :y="TOP + d.row * PITCH + 9"
         >
           {{ d.text }}
@@ -363,8 +365,8 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
   max-width: 100%;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
-  /* subtle edge fades hint that older weeks live off-screen — 12px so the
-   * fade never eats into the cells themselves */
+  /* The SVG reserves 18px safe space on both sides, so this scroll hint
+   * fades only empty space and never clips labels, rings or cells. */
   mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
   -webkit-mask-image: linear-gradient(to right, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
 }

@@ -526,9 +526,10 @@ async function openChangelog(): Promise<void> {
   flex-wrap: wrap;
 }
 .settings__row--top {
-  flex: none;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
+  width: 100%;
 }
 .settings__row--top > div:first-child {
   max-width: none;
@@ -578,12 +579,13 @@ async function openChangelog(): Promise<void> {
 .settings__themes {
   flex: none;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+  width: 100%;
 }
 @media (max-width: 480px) {
   .settings__themes {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-auto-rows: max-content;
   }
   .settings__theme-preview {
@@ -594,6 +596,7 @@ async function openChangelog(): Promise<void> {
 .settings__theme {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   gap: 6px;
   padding: 6px;
   border: 1.5px solid var(--q-border);
@@ -618,7 +621,9 @@ async function openChangelog(): Promise<void> {
   outline-offset: 2px;
 }
 .settings__theme-preview {
+  box-sizing: border-box;
   display: flex;
+  width: 100%;
   border-radius: 8px;
   padding: 8px;
   aspect-ratio: 16 / 10;

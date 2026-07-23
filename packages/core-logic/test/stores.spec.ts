@@ -339,6 +339,7 @@ describe('HistoryLog', () => {
     const daily = await log.dailyActivity(30, new Date('2026-07-03T00:00:00.000Z'));
     expect(daily['2026-07-02']).toBe(2);
     expect(daily['2026-07-01']).toBe(1);
+    expect((await log.listByLocalDay('2026-07-02')).map((e) => e.partId)).toEqual(['p3', 'p2']);
   });
 });
 

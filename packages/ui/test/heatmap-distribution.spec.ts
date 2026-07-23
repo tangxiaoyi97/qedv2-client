@@ -64,6 +64,21 @@ describe('ActivityHeatmap', () => {
     expect(w.text()).toContain('Mehr');
     expect(w.findAll('.q-heat__swatch')).toHaveLength(5);
   });
+
+  it('keeps cells clear of both edge fades and emits the selected local day', async () => {
+    const w = mount(ActivityHeatmap, { props });
+    const svgWidth = Number(w.find('.q-heat__svg').attributes('width'));
+    const baseRects = w.findAll('.q-heat__cell .q-heat__base');
+    const firstX = Number(baseRects[0]!.attributes('x'));
+    const lastRect = baseRects[baseRects.length - 1]!;
+    const lastEdge = Number(lastRect.attributes('x')) + Number(lastRect.attributes('width'));
+
+    expect(firstX).toBeGreaterThan(12);
+    expect(svgWidth - lastEdge).toBeGreaterThan(12);
+
+    await w.find('[data-key="2026-07-02"]').trigger('click');
+    expect(w.emitted('select')).toEqual([['2026-07-02']]);
+  });
 });
 
 describe('GradingDistribution', () => {

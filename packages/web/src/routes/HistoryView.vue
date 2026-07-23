@@ -47,6 +47,8 @@ const page = ref(1);
 const loading = ref(false);
 const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
+const selectedDate = ref<string | null>(null);
+let loadRequest = 0;
 
 const cloudMode = computed(() => auth.isLoggedIn);
 
@@ -81,13 +83,25 @@ async function joinTitles(questionIds: string[]): Promise<void> {
 }
 
 async function loadPage(reset: boolean): Promise<void> {
+  const request = ++loadRequest;
+  if (reset) {
+    rows.value = [];
+    total.value = 0;
+    page.value = 1;
+  }
   loading.value = true;
   error.value = undefined;
   const target = reset ? 1 : page.value + 1;
   try {
     let batch: Row[] = [];
     if (cloudMode.value) {
-      const res = await app.serverClient.getHistory({ page: target, pageSize: PAGE_SIZE });
+      const range = selectedDate.value ? localDayRange(selectedDate.value) : {};
+      const res = await app.serverClient.getHistory({
+        page: target,
+        pageSize: PAGE_SIZE,
+        ...range,
+      });
+      if (request !== loadRequest) return;
       total.value = res.total;
       batch = res.items.map((i) => ({
         key: i.id,
@@ -100,8 +114,15 @@ async function loadPage(reset: boolean): Promise<void> {
         elapsedMs: i.elapsedMs ?? undefined,
       }));
     } else {
-      const list = await historyLog.list(PAGE_SIZE, (target - 1) * PAGE_SIZE);
-      total.value = await historyLog.count();
+      const offset = (target - 1) * PAGE_SIZE;
+      const allForDay = selectedDate.value
+        ? await historyLog.listByLocalDay(selectedDate.value)
+        : undefined;
+      const list = allForDay
+        ? allForDay.slice(offset, offset + PAGE_SIZE)
+        : await historyLog.list(PAGE_SIZE, offset);
+      if (request !== loadRequest) return;
+      total.value = allForDay?.length ?? await historyLog.count();
       batch = list.map((e) => ({
         // gradedAt+partId alone can collide (same part graded twice within
         // one second) — disambiguate with a load-local sequence number.
@@ -115,10 +136,12 @@ async function loadPage(reset: boolean): Promise<void> {
         elapsedMs: e.elapsedMs,
       }));
     }
+    if (request !== loadRequest) return;
     rows.value = reset ? batch : [...rows.value, ...batch];
     page.value = target;
     void joinTitles(batch.map((r) => r.questionId));
   } catch (e) {
+    if (request !== loadRequest) return;
     error.value =
       e instanceof NetworkError
         ? 'Server nicht erreichbar — Verlauf ist gerade nicht verfügbar.'
@@ -126,7 +149,7 @@ async function loadPage(reset: boolean): Promise<void> {
           ? e.message
           : String(e);
   } finally {
-    loading.value = false;
+    if (request === loadRequest) loading.value = false;
   }
 }
 
@@ -155,6 +178,38 @@ watch(
 /* group rows by local day for display */
 const dayFmt = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' });
 const timeFmt = new Intl.DateTimeFormat('de-AT', { hour: '2-digit', minute: '2-digit' });
+const selectedDayFmt = new Intl.DateTimeFormat('de-AT', {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+function parseLocalDay(dayKey: string): Date {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  return new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1);
+}
+
+function localDayRange(dayKey: string): { since: string; until: string } {
+  const start = parseLocalDay(dayKey);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, 0, 0, 0, -1);
+  return { since: start.toISOString(), until: end.toISOString() };
+}
+
+const selectedDateLabel = computed(() =>
+  selectedDate.value ? selectedDayFmt.format(parseLocalDay(selectedDate.value)) : '',
+);
+
+function selectDate(dayKey: string): void {
+  selectedDate.value = selectedDate.value === dayKey ? null : dayKey;
+  void loadPage(true);
+}
+
+function clearDateFilter(): void {
+  if (!selectedDate.value) return;
+  selectedDate.value = null;
+  void loadPage(true);
+}
 
 const groups = computed(() => {
   const byDay = new Map<string, { label: string; rows: Row[] }>();
@@ -195,7 +250,9 @@ function redo(questionId: string): void {
   <div class="hist">
     <div class="hist__head">
       <h1 class="hist__title">Verlauf</h1>
-      <span v-if="total > 0" class="hist__count">{{ total }} Antworten</span>
+      <span v-if="total > 0" class="hist__count">
+        {{ total }} {{ total === 1 ? 'Antwort' : 'Antworten' }}
+      </span>
     </div>
     <p class="hist__note">
       <template v-if="cloudMode">Verlauf aus deinem Konto (alle Geräte, ab Anmeldung).</template>
@@ -203,8 +260,26 @@ function redo(questionId: string): void {
     </p>
 
     <section class="hist__section">
-      <h2 class="hist__section-title">Aktivität</h2>
-      <ActivityHeatmap :data="activity" :weeks="52" />
+      <div class="hist__section-head">
+        <h2 class="hist__section-title">Aktivität</h2>
+        <button
+          v-if="selectedDate"
+          type="button"
+          class="hist__filter-clear"
+          @click="clearDateFilter"
+        >
+          Alle Tage
+        </button>
+      </div>
+      <ActivityHeatmap
+        :data="activity"
+        :weeks="52"
+        :selected-date="selectedDate"
+        @select="selectDate"
+      />
+      <p v-if="selectedDate" class="hist__filter-status" role="status">
+        Verlauf gefiltert: {{ selectedDateLabel }}
+      </p>
       <p v-if="cloudMode" class="hist__heatmap-note">Aktivität nur von diesem Gerät.</p>
     </section>
 
@@ -218,8 +293,14 @@ function redo(questionId: string): void {
     </div>
 
     <div v-else-if="rows.length === 0" class="hist__empty">
-      Noch keine Antworten aufgezeichnet.
-      <RouterLink to="/practice" class="hist__cta">Programm starten →</RouterLink>
+      <template v-if="selectedDate">
+        Keine Antworten an diesem Tag.
+        <QButton variant="secondary" @click="clearDateFilter">Alle Tage anzeigen</QButton>
+      </template>
+      <template v-else>
+        Noch keine Antworten aufgezeichnet.
+        <RouterLink to="/practice" class="hist__cta">Programm starten →</RouterLink>
+      </template>
     </div>
 
     <template v-else>
@@ -302,6 +383,34 @@ function redo(questionId: string): void {
   text-transform: uppercase;
   color: var(--q-faint);
   margin: 0 0 12px;
+}
+.hist__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hist__filter-clear {
+  margin: 0 0 12px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--q-accent-strong);
+  cursor: pointer;
+  font: 700 10.5px 'Public Sans', system-ui, sans-serif;
+}
+.hist__filter-clear:hover {
+  color: var(--q-ink);
+}
+.hist__filter-clear:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 3px;
+}
+.hist__filter-status {
+  margin: 10px 0 0;
+  color: var(--q-mut);
+  font-size: 11px;
+  font-weight: 650;
 }
 .hist__day {
   margin-bottom: 14px;

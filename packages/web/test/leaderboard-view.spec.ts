@@ -152,6 +152,8 @@ describe('LeaderboardView', () => {
       expect(host.textContent).toContain('tester');
       expect(host.querySelector('.leader-row--me')).not.toBeNull();
     });
+    expect(host.querySelector('.leaderboard__profile-avatar .lucide-user-round')).not.toBeNull();
+    expect(host.querySelector('.leaderboard__profile-copy strong')?.textContent).toBe('tester');
     const profileButtons = host.querySelectorAll<HTMLButtonElement>('.leaderboard__profile-buttons .q-btn');
     expect(profileButtons).toHaveLength(2);
     expect(profileButtons[0]?.classList.contains('q-btn--secondary')).toBe(true);
@@ -162,6 +164,8 @@ describe('LeaderboardView', () => {
       expect(document.body.textContent).toContain('Lösungsquote');
       expect(document.body.textContent).toContain('75 %');
     });
+    expect(document.body.querySelector('.leader-detail__periods .lucide-calendar-check-2')).not.toBeNull();
+    expect(document.body.querySelector('.leader-detail__periods .lucide-calendar-range')).not.toBeNull();
 
     app.unmount();
   });
