@@ -1,12 +1,13 @@
 {
   "name": "@qed2/ui",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Shared QED2 UI components (Vue 3, platform-free): RichText/KaTeX rendering, answer controls for all six kinds, practice flow, progress views, settings. Consumed by the web shell today, desktop/mobile shells later.",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./styles": "./src/styles/tokens.css"
+    "./styles": "./src/styles/tokens.css",
+    "./themes": "./src/styles/themes.css"
   },
   "scripts": {
     "test": "vitest run",

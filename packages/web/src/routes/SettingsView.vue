@@ -5,11 +5,13 @@
  * archive upload (supplement §9), logout. The disabled update button is the
  * reserved seam for the desktop shell's UpdatePort.
  */
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
+import { ACCENTS, currentAccent, setAccent, type AccentId } from '../platform/theme.js';
+import { useModalA11y } from '../composables/useModalA11y.js';
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -20,12 +22,81 @@ const auth = useAuthStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 
+/* ---- Versionen: rows are clickable, each opens a detail modal ---- */
+const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
+
+/** Server DB state from /health (only the sync server has one). */
+const serverDb = ref<'connected' | 'down' | null>(null);
+onMounted(() => {
+  app.serverClient
+    .health()
+    .then((h) => (serverDb.value = h.db === 'connected' ? 'connected' : 'down'))
+    .catch(() => (serverDb.value = null));
+});
+
+interface DetailRow {
+  label: string;
+  value: string;
+  link?: string;
+}
+const versionDetailRows = computed<DetailRow[]>(() => {
+  if (versionDetail.value === 'web') {
+    return [
+      { label: 'Dienst', value: 'qed2-client (Web-App)' },
+      { label: 'Version', value: APP_VERSION },
+      { label: 'Commit', value: ui.appCommit },
+      { label: 'Repository', value: 'github.com/tangxiaoyi97/qedv2-client', link: 'https://github.com/tangxiaoyi97/qedv2-client' },
+    ];
+  }
+  if (versionDetail.value === 'core') {
+    const i = app.coreInfo;
+    if (!i) return [{ label: 'Status', value: 'nicht erreichbar' }];
+    return [
+      { label: 'Dienst', value: i.service },
+      { label: 'Version', value: i.version },
+      { label: 'Schema unterstützt', value: `${i.schemaVersionSupported.min} – ${i.schemaVersionSupported.max}` },
+      { label: 'Bank-Commit', value: i.bank.commit },
+      { label: 'Aufgaben', value: `${i.bank.questionCount} (${i.bank.playableCount} available)` },
+      { label: 'Bank-Repo', value: i.bank.repo.replace('https://github.com/', 'github.com/'), link: i.bank.repo },
+      { label: 'Branch', value: i.bank.branch },
+      { label: 'Quell-Repo', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: 'Build', value: formatBuildTime(i.buildTime) },
+    ];
+  }
+  if (versionDetail.value === 'server') {
+    const i = app.serverInfo;
+    if (!i) return [{ label: 'Status', value: 'nicht erreichbar' }];
+    return [
+      { label: 'Dienst', value: i.service },
+      { label: 'Version', value: i.version },
+      { label: 'Datenbank', value: serverDb.value === 'connected' ? 'verbunden' : serverDb.value === 'down' ? 'getrennt' : 'unbekannt' },
+      { label: 'Auth', value: i.auth },
+      { label: 'Quell-Repo', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: 'Build', value: formatBuildTime(i.buildTime) },
+    ];
+  }
+  return [];
+});
+const versionDetailTitle = computed(() =>
+  versionDetail.value === 'web' ? 'Web-App' : versionDetail.value === 'core' ? 'Core' : 'Server',
+);
+
+const detailCard = ref<HTMLElement | null>(null);
+useModalA11y(detailCard, computed(() => versionDetail.value !== null), () => (versionDetail.value = null));
+
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: 'light', label: 'Hell' },
   { value: 'dark', label: 'Dunkel' },
   { value: 'system', label: 'System' },
 ];
 const LOCALES: Locale[] = ['de', 'en'];
+
+/* accent color — built-in overlay palettes (see platform/theme.ts) */
+const accent = ref<AccentId>(currentAccent());
+function pickAccent(id: AccentId): void {
+  accent.value = id;
+  setAccent(id);
+}
 
 function onLocaleChange(ev: Event): void {
   ui.setLocale((ev.target as HTMLSelectElement).value as Locale);
@@ -109,18 +180,6 @@ function formatBuildTime(iso: string): string {
   );
 }
 
-const coreLine = computed(() => {
-  const info = app.coreInfo;
-  if (!info) return 'Core nicht erreichbar';
-  return `Core ${info.version} · Aufgabenbank ${info.bank.commit.slice(0, 7)} · ${info.bank.questionCount} Aufgaben`;
-});
-
-const serverLine = computed(() => {
-  const info = app.serverInfo;
-  if (!info) return 'Server nicht erreichbar';
-  return `Server ${info.version}`;
-});
-
 /* manual archive upload (supplement §9) */
 const uploading = ref(false);
 const uploadTried = ref(false);
@@ -169,6 +228,7 @@ async function openChangelog(): Promise<void> {
   changelogState.value = found ? 'idle' : 'none';
   if (!found) setTimeout(() => (changelogState.value = 'idle'), 2500);
 }
+
 </script>
 
 <template>
@@ -193,6 +253,34 @@ async function openChangelog(): Promise<void> {
             @click="app.setTheme(t.value)"
           >
             {{ t.label }}
+          </button>
+        </div>
+      </div>
+
+      <div class="settings__row settings__row--top">
+        <div>
+          <div class="settings__row-title">Farbschema</div>
+          <div class="settings__row-sub">Oberflächen und Akzente im gleichen Farbton</div>
+        </div>
+        <div class="settings__themes" role="radiogroup" aria-label="Farbschema">
+          <button
+            v-for="a in ACCENTS"
+            :key="a.id"
+            type="button"
+            class="settings__theme"
+            :class="{ 'settings__theme--on': accent === a.id }"
+            role="radio"
+            :aria-checked="accent === a.id"
+            :title="a.label"
+            @click="pickAccent(a.id)"
+          >
+            <span class="settings__theme-preview" :style="{ background: a.preview.page }" aria-hidden="true">
+              <span class="settings__theme-card" :style="{ background: a.preview.card }">
+                <span class="settings__theme-line" :style="{ background: a.color }" />
+                <span class="settings__theme-line settings__theme-line--mut" />
+              </span>
+            </span>
+            <span class="settings__theme-name">{{ a.label }}</span>
           </button>
         </div>
       </div>
@@ -227,27 +315,60 @@ async function openChangelog(): Promise<void> {
           ⟳ Aktualisieren
         </QButton>
       </div>
-      <div class="settings__versions">
-        <div class="settings__version-line">
-          Web-App {{ APP_VERSION }}
-          <span v-if="ui.appCommit !== 'dev'" class="settings__build">· {{ ui.appCommit.slice(0, 7) }}</span>
-        </div>
-        <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.coreInfo }">
-          {{ coreLine }}
-          <span v-if="app.coreInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.coreInfo.buildTime) }}</span>
-        </div>
-        <div class="settings__version-line" :class="{ 'settings__version-line--dim': !app.serverInfo }">
-          {{ serverLine }}
-          <span v-if="app.serverInfo?.buildTime" class="settings__build">· Build {{ formatBuildTime(app.serverInfo.buildTime) }}</span>
-        </div>
-        <div class="settings__versions-actions">
-          <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
-            {{ changelogState === 'none' ? 'Keine Hinweise für diesen Build' : 'Was ist neu' }}
-          </QButton>
-          <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
-            Nach Updates suchen
-          </QButton>
-        </div>
+      <div class="settings__vlist">
+        <button type="button" class="settings__vrow" @click="versionDetail = 'web'">
+          <div class="settings__vmain">
+            <div class="settings__vname">Web-App</div>
+            <a
+              class="settings__vsub settings__vlink"
+              href="https://github.com/tangxiaoyi97/qedv2-client"
+              target="_blank"
+              rel="noopener noreferrer"
+              @click.stop
+            >github.com/tangxiaoyi97/qedv2-client</a>
+          </div>
+          <div class="settings__vver">
+            <b>{{ APP_VERSION }}</b>
+            <span v-if="ui.appCommit !== 'dev'" class="settings__vmeta">{{ ui.appCommit.slice(0, 7) }}</span>
+          </div>
+          <span class="settings__vchev" aria-hidden="true">›</span>
+        </button>
+        <button type="button" class="settings__vrow" @click="versionDetail = 'core'">
+          <div class="settings__vmain">
+            <div class="settings__vname">Core</div>
+            <div class="settings__vsub">
+              <template v-if="app.coreInfo">Inhalte · {{ app.coreInfo.bank.questionCount }} Aufgaben</template>
+              <template v-else>nicht erreichbar</template>
+            </div>
+          </div>
+          <div class="settings__vver">
+            <b>{{ app.coreInfo?.version ?? '—' }}</b>
+            <span v-if="app.coreInfo" class="settings__vmeta">{{ app.coreInfo.bank.commit.slice(0, 7) }}</span>
+          </div>
+          <span class="settings__vchev" aria-hidden="true">›</span>
+        </button>
+        <button type="button" class="settings__vrow" @click="versionDetail = 'server'">
+          <div class="settings__vmain">
+            <div class="settings__vname">Server</div>
+            <div class="settings__vsub">
+              <template v-if="serverDb">Datenbank: {{ serverDb === 'connected' ? 'verbunden' : 'getrennt' }}</template>
+              <template v-else>nicht erreichbar</template>
+            </div>
+          </div>
+          <div class="settings__vver">
+            <b>{{ app.serverInfo?.version ?? '—' }}</b>
+            <span v-if="app.serverInfo?.buildTime" class="settings__vmeta">{{ formatBuildTime(app.serverInfo.buildTime) }}</span>
+          </div>
+          <span class="settings__vchev" aria-hidden="true">›</span>
+        </button>
+      </div>
+      <div class="settings__versions-actions">
+        <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
+          {{ changelogState === 'none' ? 'Keine Hinweise für diesen Build' : 'Was ist neu' }}
+        </QButton>
+        <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
+          Nach Updates suchen
+        </QButton>
       </div>
     </section>
 
@@ -316,6 +437,38 @@ async function openChangelog(): Promise<void> {
         </div>
       </div>
     </CollapsePanel>
+
+    <!-- Versionen detail modal: the full info dump for one service -->
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div
+          v-if="versionDetail"
+          class="vdetail"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="versionDetailTitle"
+          @click.self="versionDetail = null"
+        >
+          <div ref="detailCard" class="vdetail__card">
+            <div class="vdetail__head">
+              <div class="vdetail__title">{{ versionDetailTitle }}</div>
+              <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="versionDetail = null">
+                ✕
+              </button>
+            </div>
+            <dl class="vdetail__list">
+              <div v-for="row in versionDetailRows" :key="row.label" class="vdetail__row">
+                <dt class="vdetail__dt">{{ row.label }}</dt>
+                <dd class="vdetail__dd">
+                  <a v-if="row.link" :href="row.link" target="_blank" rel="noopener noreferrer" class="vdetail__link">{{ row.value }}</a>
+                  <template v-else>{{ row.value }}</template>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
   </div>
 </template>
 
@@ -340,6 +493,13 @@ async function openChangelog(): Promise<void> {
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
+}
+.settings__row--top {
+  flex-direction: column;
+  align-items: stretch;
+}
+.settings__row--top > div:first-child {
+  max-width: none;
 }
 .settings__row-title {
   font-size: 13.5px;
@@ -382,6 +542,82 @@ async function openChangelog(): Promise<void> {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
   font-weight: 700;
+}
+.settings__themes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+@media (max-width: 480px) {
+  .settings__themes {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+.settings__theme {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1.5px solid var(--q-border);
+  border-radius: 12px;
+  background: var(--q-card);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings__theme:hover {
+    border-color: var(--q-accent);
+    transform: translateY(-1px);
+  }
+}
+.settings__theme--on {
+  border-color: var(--q-accent-strong);
+  box-shadow: 0 0 0 2px var(--q-accent-ring);
+}
+.settings__theme:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.settings__theme-preview {
+  display: block;
+  border-radius: 8px;
+  padding: 8px;
+  aspect-ratio: 16 / 10;
+}
+.settings__theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  height: 100%;
+  border-radius: 6px;
+  padding: 8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+.settings__theme-line {
+  height: 5px;
+  border-radius: 3px;
+  width: 70%;
+}
+.settings__theme-line--mut {
+  width: 45%;
+  background: var(--q-track);
+}
+.settings__theme-name {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--q-mut);
+  text-align: center;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+.settings__theme--on .settings__theme-name {
+  color: var(--q-ink);
+}
+@media (pointer: coarse) {
+  .settings__theme {
+    min-height: 44px;
+  }
 }
 .settings__select {
   padding: 8px 13px;
@@ -473,15 +709,84 @@ async function openChangelog(): Promise<void> {
   gap: 10px;
   flex-wrap: wrap;
 }
-.settings__version-line {
-  font-size: 12px;
-  color: var(--q-mut);
-  padding-left: 2px;
+.settings__vlist {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--q-border-soft);
+  border-radius: 10px;
+  overflow: hidden;
 }
-.settings__version-line--dim {
+.settings__vrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  background: var(--q-panel);
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings__vrow:hover {
+    background: var(--q-panel-2);
+  }
+}
+.settings__vrow:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: -2px;
+}
+.settings__vrow + .settings__vrow {
+  border-top: 1px solid var(--q-border-soft);
+}
+.settings__vmain {
+  flex: 1;
+  min-width: 0;
+}
+.settings__vname {
+  font-size: 13px;
+  font-weight: 700;
+}
+.settings__vsub {
+  font-size: 11.5px;
+  color: var(--q-mut-2);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings__vlink {
+  display: inline-block;
+  color: var(--q-mut-2);
+  text-decoration: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .settings__vlink:hover {
+    color: var(--q-accent-strong);
+    text-decoration: underline;
+  }
+}
+.settings__vchev {
+  flex: none;
   color: var(--q-faint);
+  font-size: 16px;
+  line-height: 1;
 }
-.settings__build {
+.settings__vver {
+  flex: none;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings__vver b {
+  font: 700 12.5px ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.settings__vmeta {
+  font: 500 10.5px ui-monospace, Menlo, monospace;
   color: var(--q-faint);
 }
 .settings__update-btn {
@@ -492,6 +797,88 @@ async function openChangelog(): Promise<void> {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+/* ---- Versionen detail modal ---- */
+.vdetail {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity var(--q-transition-fast, 0.16s);
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+.vdetail__card {
+  width: 100%;
+  max-width: 460px;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--q-card);
+  border-radius: 14px;
+  box-shadow: var(--q-shadow-modal);
+}
+.vdetail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 16px 10px 20px;
+}
+.vdetail__title {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.vdetail__list {
+  margin: 0;
+  padding: 0 20px 18px;
+  display: flex;
+  flex-direction: column;
+}
+.vdetail__row {
+  display: flex;
+  gap: 14px;
+  padding: 7px 0;
+  border-top: 1px solid var(--q-border-soft);
+}
+.vdetail__row:first-child {
+  border-top: none;
+}
+.vdetail__dt {
+  flex: none;
+  width: 128px;
+  font-size: 12px;
+  color: var(--q-mut-2);
+  padding-top: 1px;
+}
+.vdetail__dd {
+  margin: 0;
+  font: 500 12.5px ui-monospace, Menlo, monospace;
+  color: var(--q-ink);
+  word-break: break-all;
+  min-width: 0;
+}
+.vdetail__link {
+  color: var(--q-accent-strong);
+}
+@media (max-width: 480px) {
+  .vdetail__row {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .vdetail__dt {
+    width: auto;
+  }
 }
 .settings__account-sep {
   height: 1px;

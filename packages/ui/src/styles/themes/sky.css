@@ -1,0 +1,72 @@
+/*
+ * Theme: sky (#287f9d) — FULL overlay palette (not just accent).
+ * Neutrals are tinted toward the hue so surfaces, hints and muted text all
+ * belong to the same family. Loaded after tokens.css (later wins).
+ */
+
+[data-accent='sky'] {
+  /* surfaces */
+  --q-page: #f2f6f8;
+  --q-card: #ffffff;
+  --q-panel: #f5f8f9;
+  --q-panel-2: #e8f0f3;
+  --q-track: #dfe8ec;
+  --q-dot-off: #d8e2e6;
+  --q-cta-card: #1f3038;
+  --q-cta-card-label: #a8d4e2;
+  --q-cta-card-text: #aebbc0;
+
+  /* ink (cool-tinted greys) */
+  --q-ink: #152023;
+  --q-ink-2: #22333a;
+  --q-mut: #46585f;
+  --q-mut-2: #5f7076;
+  --q-faint: #7d8f94;
+  --q-disabled: #a4b2b6;
+  --q-hint: #adbabe;
+
+  --q-check-border: #b3c3c9;
+  --q-btn-border: #bfccd1;
+
+  /* accent */
+  --q-accent: #287f9d;
+  --q-accent-strong: #1d5f75;
+  --q-accent-bg: #ecf5f9;
+  --q-accent-ring: rgba(40, 127, 157, 0.14);
+  --q-on-accent: #ffffff;
+  --q-chip-bg: #e4f1f6;
+  --q-chip-border: #b3d5e2;
+  --q-chip-ink: #1d5f75;
+}
+
+[data-theme='dark'][data-accent='sky'] {
+  --q-page: #10181b;
+  --q-card: #162126;
+  --q-panel: #182327;
+  --q-panel-2: #1d2a2f;
+  --q-track: #26343a;
+  --q-dot-off: #2a383e;
+  --q-cta-card: #0b1417;
+  --q-cta-card-label: #a8d4e2;
+  --q-cta-card-text: #8fa2a8;
+
+  --q-ink: #e8ecec;
+  --q-ink-2: #d5dcda;
+  --q-mut: #a9b8ba;
+  --q-mut-2: #8b9b9e;
+  --q-faint: #6d7f83;
+  --q-disabled: #55656a;
+  --q-hint: #4c5c61;
+
+  --q-check-border: #44565d;
+  --q-btn-border: #3d4f56;
+
+  --q-accent: #4fa8c7;
+  --q-accent-strong: #287f9d;
+  --q-accent-bg: #122a33;
+  --q-accent-ring: rgba(79, 168, 199, 0.2);
+  --q-on-accent: #08171d;
+  --q-chip-bg: #17323d;
+  --q-chip-border: #2b5a6c;
+  --q-chip-ink: #8fcbe0;
+}

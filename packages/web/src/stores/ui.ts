@@ -17,6 +17,12 @@ function initialLocale(): Locale {
   return window.localStorage.getItem(LOCALE_KEY) === 'en' ? 'en' : 'de';
 }
 
+/** The service worker can answer a missing changelog with the app shell
+ *  (index.html, 200 OK) — HTML is NOT a changelog, drop it silently. */
+function looksLikeHtml(text: string): boolean {
+  return /^\s*</.test(text);
+}
+
 export const useUiStore = defineStore('ui', () => {
   const authModalOpen = ref(false);
   /** Which face of the modal is showing (switches in place, §10). */
@@ -83,7 +89,7 @@ export const useUiStore = defineStore('ui', () => {
     }
     if (!res.ok) return;
     const text = (await res.text()).trim();
-    if (text === '') {
+    if (text === '' || looksLikeHtml(text)) {
       rememberCommit();
       return;
     }
@@ -105,7 +111,7 @@ export const useUiStore = defineStore('ui', () => {
       const res = await fetch(`${base}changelogs/${APP_COMMIT}.md`, { cache: 'no-store' });
       if (!res.ok) return false;
       const text = (await res.text()).trim();
-      if (text === '') return false;
+      if (text === '' || looksLikeHtml(text)) return false;
       changelogMarkdown.value = text;
       return true;
     } catch {

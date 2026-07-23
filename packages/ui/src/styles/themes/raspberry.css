@@ -1,0 +1,68 @@
+/*
+ * Theme: raspberry (#c43b70) — FULL overlay palette.
+ * Warm berry-tinted neutrals throughout. Loaded after tokens.css.
+ */
+
+[data-accent='raspberry'] {
+  --q-page: #f9f4f6;
+  --q-card: #ffffff;
+  --q-panel: #faf6f7;
+  --q-panel-2: #f3eaee;
+  --q-track: #eadfe3;
+  --q-dot-off: #e3d8dc;
+  --q-cta-card: #2c1a22;
+  --q-cta-card-label: #e6aec6;
+  --q-cta-card-text: #c0adb4;
+
+  --q-ink: #221519;
+  --q-ink-2: #33222a;
+  --q-mut: #5c4750;
+  --q-mut-2: #755f67;
+  --q-faint: #947e86;
+  --q-disabled: #b7a5ab;
+  --q-hint: #c0b0b5;
+
+  --q-check-border: #ccb3bc;
+  --q-btn-border: #d3bcc4;
+
+  --q-accent: #c43b70;
+  --q-accent-strong: #96304f;
+  --q-accent-bg: #fbeef3;
+  --q-accent-ring: rgba(196, 59, 112, 0.13);
+  --q-on-accent: #ffffff;
+  --q-chip-bg: #f7e3ec;
+  --q-chip-border: #e3b3c9;
+  --q-chip-ink: #96304f;
+}
+
+[data-theme='dark'][data-accent='raspberry'] {
+  --q-page: #1a1216;
+  --q-card: #22171c;
+  --q-panel: #241a1f;
+  --q-panel-2: #2b1f25;
+  --q-track: #3a2a31;
+  --q-dot-off: #3e2e35;
+  --q-cta-card: #120b0f;
+  --q-cta-card-label: #e6aec6;
+  --q-cta-card-text: #a68f98;
+
+  --q-ink: #f0e6ea;
+  --q-ink-2: #dfd2d9;
+  --q-mut: #bda6b0;
+  --q-mut-2: #a28b95;
+  --q-faint: #7e6a73;
+  --q-disabled: #655159;
+  --q-hint: #5c4a52;
+
+  --q-check-border: #5c4550;
+  --q-btn-border: #553d48;
+
+  --q-accent: #e06f9d;
+  --q-accent-strong: #c43b70;
+  --q-accent-bg: #331521;
+  --q-accent-ring: rgba(224, 111, 157, 0.2);
+  --q-on-accent: #1f0a12;
+  --q-chip-bg: #3a1b2a;
+  --q-chip-border: #6b2f49;
+  --q-chip-ink: #eda3c2;
+}

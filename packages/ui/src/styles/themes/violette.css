@@ -1,0 +1,68 @@
+/*
+ * Theme: violette (#7c5acf) — FULL overlay palette.
+ * Cool violet-tinted neutrals throughout. Loaded after tokens.css.
+ */
+
+[data-accent='violette'] {
+  --q-page: #f5f3fa;
+  --q-card: #ffffff;
+  --q-panel: #f7f5fa;
+  --q-panel-2: #ece8f3;
+  --q-track: #e2ddef;
+  --q-dot-off: #ddd7e8;
+  --q-cta-card: #241d3a;
+  --q-cta-card-label: #c0aef0;
+  --q-cta-card-text: #b0a8c2;
+
+  --q-ink: #1b1626;
+  --q-ink-2: #2a2240;
+  --q-mut: #4e4661;
+  --q-mut-2: #675e7a;
+  --q-faint: #877d99;
+  --q-disabled: #aba2ba;
+  --q-hint: #b6aec4;
+
+  --q-check-border: #bfb4d4;
+  --q-btn-border: #c6bcdc;
+
+  --q-accent: #7c5acf;
+  --q-accent-strong: #5b3fa8;
+  --q-accent-bg: #f2eefb;
+  --q-accent-ring: rgba(124, 90, 207, 0.14);
+  --q-on-accent: #ffffff;
+  --q-chip-bg: #e9e2f7;
+  --q-chip-border: #c9b8ea;
+  --q-chip-ink: #5b3fa8;
+}
+
+[data-theme='dark'][data-accent='violette'] {
+  --q-page: #141119;
+  --q-card: #1b1724;
+  --q-panel: #1e1929;
+  --q-panel-2: #241e32;
+  --q-track: #322a47;
+  --q-dot-off: #362e4b;
+  --q-cta-card: #0e0a18;
+  --q-cta-card-label: #c0aef0;
+  --q-cta-card-text: #9990b0;
+
+  --q-ink: #e9e5f2;
+  --q-ink-2: #d9d3e6;
+  --q-mut: #b0a8c6;
+  --q-mut-2: #968cb0;
+  --q-faint: #756a8f;
+  --q-disabled: #5c5373;
+  --q-hint: #524a6b;
+
+  --q-check-border: #4a4166;
+  --q-btn-border: #453c61;
+
+  --q-accent: #a48ae6;
+  --q-accent-strong: #7c5acf;
+  --q-accent-bg: #221a38;
+  --q-accent-ring: rgba(164, 138, 230, 0.2);
+  --q-on-accent: #120c24;
+  --q-chip-bg: #2a2144;
+  --q-chip-border: #4b3a80;
+  --q-chip-ink: #c2b2ef;
+}

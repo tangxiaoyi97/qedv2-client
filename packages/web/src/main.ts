@@ -6,25 +6,42 @@ import '@fontsource/public-sans/600.css';
 import '@fontsource/public-sans/700.css';
 import '@fontsource/public-sans/800.css';
 import '@qed2/ui/styles';
+import '@qed2/ui/themes';
 import './styles/app.css';
 import App from './App.vue';
 import { router } from './router.js';
+import { initThemeEarly } from './platform/theme.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
 
+/** Drive the boot splash (index.html #boot-bar / #boot-label). */
+function bootProgress(pct: number, text: string): void {
+  const bar = document.getElementById('boot-bar');
+  const label = document.getElementById('boot-label');
+  if (bar) bar.style.width = `${pct}%`;
+  if (label) label.textContent = text;
+}
+
 async function boot(): Promise<void> {
+  // accent/external theme before ANY UI paints (no palette flash)
+  initThemeEarly();
+  bootProgress(12, 'Thema wird angewendet …');
+
   const app = createApp(App);
   app.use(createPinia());
   app.use(router);
 
   // Ports/config first, then local archive, then token validation — the app
   // is fully usable as a guest even if the network never comes up.
+  bootProgress(30, 'Einstellungen werden geladen …');
   const appStore = useAppStore();
   await appStore.init();
+  bootProgress(55, 'Fortschritt wird gelesen …');
   const progress = useProgressStore();
   await progress.init();
+  bootProgress(78, 'Konto wird geprüft …');
   const auth = useAuthStore();
   await auth.init();
   if (auth.isLoggedIn) void progress.syncNow({ quiet: true, compareChecksum: true });
@@ -39,6 +56,7 @@ async function boot(): Promise<void> {
     }
   });
 
+  bootProgress(100, 'Bereit');
   app.mount('#app');
 
   // After mount: announce what changed if this is a new build (non-blocking).
