@@ -7,3 +7,70 @@
 @import './themes/sky.css';
 @import './themes/raspberry.css';
 @import './themes/violette.css';
+
+/*
+ * The three alternate accents share one neutral foundation. Their identity
+ * comes from interactive accents and coordinated semantic colors, not from
+ * washing every page surface and line of text in the accent hue.
+ */
+[data-accent='sky'],
+[data-accent='raspberry'],
+[data-accent='violette'] {
+  /* surfaces */
+  --q-page: #f6f6f7;
+  --q-card: #ffffff;
+  --q-panel: #fafafa;
+  --q-panel-2: #f0f1f2;
+  --q-track: #e5e6e8;
+  --q-dot-off: #dde0e2;
+  --q-cta-card: #27282a;
+  --q-cta-card-text: #b9bbc0;
+
+  /* neutral ink */
+  --q-ink: #1c1d1f;
+  --q-ink-2: #2a2b2e;
+  --q-mut: #55575c;
+  --q-mut-2: #6c6e73;
+  --q-faint: #898b91;
+  --q-disabled: #afb1b6;
+  --q-hint: #b8bac0;
+
+  --q-check-border: #c4c6ca;
+  --q-btn-border: #ced0d4;
+
+  /* state: neutral / untouched */
+  --q-neutral: #6c6e73;
+  --q-neutral-bg: #eff0f2;
+  --q-neutral-border: #d8dade;
+}
+
+[data-theme='dark'][data-accent='sky'],
+[data-theme='dark'][data-accent='raspberry'],
+[data-theme='dark'][data-accent='violette'] {
+  /* surfaces */
+  --q-page: #171719;
+  --q-card: #1f1f22;
+  --q-panel: #232326;
+  --q-panel-2: #2a2a2e;
+  --q-track: #35353a;
+  --q-dot-off: #3c3c42;
+  --q-cta-card: #101012;
+  --q-cta-card-text: #a7a8ae;
+
+  /* neutral ink */
+  --q-ink: #eeeef0;
+  --q-ink-2: #dddde0;
+  --q-mut: #b6b7bb;
+  --q-mut-2: #9d9fa5;
+  --q-faint: #7f8188;
+  --q-disabled: #696b72;
+  --q-hint: #5f6168;
+
+  --q-check-border: #52545b;
+  --q-btn-border: #494b52;
+
+  /* state: neutral / untouched */
+  --q-neutral: #a3a4aa;
+  --q-neutral-bg: #2a2a2e;
+  --q-neutral-border: #414147;
+}

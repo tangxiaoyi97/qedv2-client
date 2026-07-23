@@ -260,7 +260,7 @@ async function openChangelog(): Promise<void> {
       <div class="settings__row settings__row--top">
         <div>
           <div class="settings__row-title">Farbschema</div>
-          <div class="settings__row-sub">Oberflächen und Akzente im gleichen Farbton</div>
+          <div class="settings__row-sub">Ruhige Flächen, abgestimmte Akzent- und Statusfarben</div>
         </div>
         <div class="settings__themes" role="radiogroup" aria-label="Farbschema">
           <button
@@ -277,7 +277,15 @@ async function openChangelog(): Promise<void> {
             <span class="settings__theme-preview" :style="{ background: a.preview.page }" aria-hidden="true">
               <span class="settings__theme-card" :style="{ background: a.preview.card }">
                 <span class="settings__theme-line" :style="{ background: a.color }" />
-                <span class="settings__theme-line settings__theme-line--mut" />
+                <span class="settings__theme-line settings__theme-line--mut" :style="{ background: a.preview.muted }" />
+                <span class="settings__theme-states">
+                  <span
+                    v-for="stateColor in a.preview.states"
+                    :key="stateColor"
+                    class="settings__theme-state"
+                    :style="{ background: stateColor }"
+                  />
+                </span>
               </span>
             </span>
             <span class="settings__theme-name">{{ a.label }}</span>
@@ -495,6 +503,7 @@ async function openChangelog(): Promise<void> {
   flex-wrap: wrap;
 }
 .settings__row--top {
+  flex: none;
   flex-direction: column;
   align-items: stretch;
 }
@@ -544,6 +553,7 @@ async function openChangelog(): Promise<void> {
   font-weight: 700;
 }
 .settings__themes {
+  flex: none;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 10px;
@@ -551,6 +561,11 @@ async function openChangelog(): Promise<void> {
 @media (max-width: 480px) {
   .settings__themes {
     grid-template-columns: repeat(2, 1fr);
+    grid-auto-rows: max-content;
+  }
+  .settings__theme-preview {
+    height: clamp(72px, 21.5vw, 84px);
+    aspect-ratio: auto;
   }
 }
 .settings__theme {
@@ -580,16 +595,17 @@ async function openChangelog(): Promise<void> {
   outline-offset: 2px;
 }
 .settings__theme-preview {
-  display: block;
+  display: flex;
   border-radius: 8px;
   padding: 8px;
   aspect-ratio: 16 / 10;
 }
 .settings__theme-card {
+  box-sizing: border-box;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 5px;
-  height: 100%;
   border-radius: 6px;
   padding: 8px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
@@ -601,7 +617,16 @@ async function openChangelog(): Promise<void> {
 }
 .settings__theme-line--mut {
   width: 45%;
-  background: var(--q-track);
+}
+.settings__theme-states {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+}
+.settings__theme-state {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
 }
 .settings__theme-name {
   font-size: 11.5px;

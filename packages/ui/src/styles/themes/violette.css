@@ -1,30 +1,10 @@
 /*
- * Theme: violette (#7c5acf) — FULL overlay palette.
- * Cool violet-tinted neutrals throughout. Loaded after tokens.css.
+ * Theme: violette (#7c5acf).
+ * A violet accent with teal/magenta/gold semantic companions.
+ * Neutral surfaces are shared in themes.css.
  */
 
 [data-accent='violette'] {
-  --q-page: #f5f3fa;
-  --q-card: #ffffff;
-  --q-panel: #f7f5fa;
-  --q-panel-2: #ece8f3;
-  --q-track: #e2ddef;
-  --q-dot-off: #ddd7e8;
-  --q-cta-card: #241d3a;
-  --q-cta-card-label: #c0aef0;
-  --q-cta-card-text: #b0a8c2;
-
-  --q-ink: #1b1626;
-  --q-ink-2: #2a2240;
-  --q-mut: #4e4661;
-  --q-mut-2: #675e7a;
-  --q-faint: #877d99;
-  --q-disabled: #aba2ba;
-  --q-hint: #b6aec4;
-
-  --q-check-border: #bfb4d4;
-  --q-btn-border: #c6bcdc;
-
   --q-accent: #7c5acf;
   --q-accent-strong: #5b3fa8;
   --q-accent-bg: #f2eefb;
@@ -33,36 +13,55 @@
   --q-chip-bg: #e9e2f7;
   --q-chip-border: #c9b8ea;
   --q-chip-ink: #5b3fa8;
+  --q-cta-card-label: #bba8ec;
+
+  --q-ok: #2f7664;
+  --q-ok-bg: #e9f2ef;
+  --q-ok-bg-2: #e3eee9;
+  --q-ok-border: #b8d8ce;
+  --q-ok-ink: #245b4d;
+  --q-on-ok: #ffffff;
+
+  --q-err: #b14058;
+  --q-err-bg: #f7e8ec;
+  --q-err-border: #e5bdc7;
+  --q-err-ink: #873044;
+  --q-on-err: #ffffff;
+
+  --q-part: #946924;
+  --q-part-bg: #f6efdf;
+  --q-part-border: #e1d0aa;
+  --q-part-ink: #704f1e;
+  --q-part-ink-2: #7d5b27;
 }
 
 [data-theme='dark'][data-accent='violette'] {
-  --q-page: #141119;
-  --q-card: #1b1724;
-  --q-panel: #1e1929;
-  --q-panel-2: #241e32;
-  --q-track: #322a47;
-  --q-dot-off: #362e4b;
-  --q-cta-card: #0e0a18;
-  --q-cta-card-label: #c0aef0;
-  --q-cta-card-text: #9990b0;
+  --q-accent: #ad96e7;
+  --q-accent-strong: #9b82dc;
+  --q-accent-bg: #29213d;
+  --q-accent-ring: rgba(173, 150, 231, 0.22);
+  --q-on-accent: #130d22;
+  --q-chip-bg: #302748;
+  --q-chip-border: #554489;
+  --q-chip-ink: #c9baf0;
+  --q-cta-card-label: #c4b3ef;
 
-  --q-ink: #e9e5f2;
-  --q-ink-2: #d9d3e6;
-  --q-mut: #b0a8c6;
-  --q-mut-2: #968cb0;
-  --q-faint: #756a8f;
-  --q-disabled: #5c5373;
-  --q-hint: #524a6b;
+  --q-ok: #57a890;
+  --q-ok-bg: #1e2d29;
+  --q-ok-bg-2: #223530;
+  --q-ok-border: #356356;
+  --q-ok-ink: #94d1bc;
+  --q-on-ok: #0c1b17;
 
-  --q-check-border: #4a4166;
-  --q-btn-border: #453c61;
+  --q-err: #dc6c83;
+  --q-err-bg: #341f26;
+  --q-err-border: #703745;
+  --q-err-ink: #eda8b6;
+  --q-on-err: #230b11;
 
-  --q-accent: #a48ae6;
-  --q-accent-strong: #7c5acf;
-  --q-accent-bg: #221a38;
-  --q-accent-ring: rgba(164, 138, 230, 0.2);
-  --q-on-accent: #120c24;
-  --q-chip-bg: #2a2144;
-  --q-chip-border: #4b3a80;
-  --q-chip-ink: #c2b2ef;
+  --q-part: #cca657;
+  --q-part-bg: #322a1a;
+  --q-part-border: #68592f;
+  --q-part-ink: #e4c583;
+  --q-part-ink-2: #cdb06a;
 }

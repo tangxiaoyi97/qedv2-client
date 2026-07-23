@@ -22,15 +22,60 @@ export interface AccentSpec {
   label: string;
   /** Swatch color shown in settings. */
   color: string;
-  /** Page/card surface colors for the picker preview. */
-  preview: { page: string; card: string };
+  /** Surface and semantic colors for the picker preview. */
+  preview: {
+    page: string;
+    card: string;
+    muted: string;
+    states: readonly [string, string, string];
+  };
 }
 
 export const ACCENTS: readonly AccentSpec[] = [
-  { id: 'weed', label: 'weed', color: '#8e9c49', preview: { page: '#f5f5f6', card: '#ffffff' } },
-  { id: 'sky', label: 'sky', color: '#287f9d', preview: { page: '#f2f6f8', card: '#ffffff' } },
-  { id: 'raspberry', label: 'raspberry', color: '#c43b70', preview: { page: '#f9f4f6', card: '#ffffff' } },
-  { id: 'violette', label: 'violette', color: '#7c5acf', preview: { page: '#f5f3fa', card: '#ffffff' } },
+  {
+    id: 'weed',
+    label: 'weed',
+    color: '#8e9c49',
+    preview: {
+      page: '#f5f5f6',
+      card: '#ffffff',
+      muted: '#eef0e6',
+      states: ['#2f7d54', '#b07d1f', '#b4462f'],
+    },
+  },
+  {
+    id: 'sky',
+    label: 'sky',
+    color: '#287f9d',
+    preview: {
+      page: '#f6f6f7',
+      card: '#ffffff',
+      muted: '#ecf5f9',
+      states: ['#28765b', '#96641d', '#b3483e'],
+    },
+  },
+  {
+    id: 'raspberry',
+    label: 'raspberry',
+    color: '#c43b70',
+    preview: {
+      page: '#f6f6f7',
+      card: '#ffffff',
+      muted: '#fbeef3',
+      states: ['#3b7655', '#94621f', '#b73d54'],
+    },
+  },
+  {
+    id: 'violette',
+    label: 'violette',
+    color: '#7c5acf',
+    preview: {
+      page: '#f6f6f7',
+      card: '#ffffff',
+      muted: '#f2eefb',
+      states: ['#2f7664', '#946924', '#b14058'],
+    },
+  },
 ] as const;
 
 const ACCENT_KEY = 'qed2.accent';
