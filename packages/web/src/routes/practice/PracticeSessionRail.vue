@@ -10,6 +10,14 @@ interface PracticeRailItem {
   jumpable: boolean;
 }
 
+const STATE_LABELS: Record<PracticeRailItem['state'], string> = {
+  correct: 'Richtig',
+  partial: 'Teilweise richtig',
+  incorrect: 'Falsch',
+  current: 'Aktuelle Aufgabe',
+  pending: 'Noch nicht beantwortet',
+};
+
 defineProps<{
   items: PracticeRailItem[];
   gradedCount: number;
@@ -36,6 +44,7 @@ const emit = defineEmits<{ jump: [index: number] }>();
           }"
           :disabled="!item.jumpable && item.state !== 'current'"
           :title="item.state === 'current' ? 'Aktuelle Aufgabe' : item.jumpable ? 'Zu dieser Aufgabe springen' : 'Bereits beantwortet'"
+          :aria-label="`${item.index + 1}. ${item.title}${item.partLabel ? ` · ${item.partLabel}` : ''}: ${STATE_LABELS[item.state]}`"
           @click="item.jumpable && emit('jump', item.index)"
         >
           <span class="practice-rail__icon" aria-hidden="true">

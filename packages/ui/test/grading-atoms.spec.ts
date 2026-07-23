@@ -10,6 +10,19 @@ import StateIcon from '../src/shared/StateIcon.vue';
 
 const ALL_STATES: GradingOrUnseen[] = ['good', 'careless', 'meh', 'baffled', 'excluded', 'unseen'];
 
+describe('StateIcon', () => {
+  it('is decorative by default and exposes an optional spoken label for icon-only contexts', () => {
+    const decorative = mount(StateIcon, { props: { state: 'correct' } });
+    expect(decorative.attributes('aria-hidden')).toBe('true');
+    expect(decorative.attributes('role')).toBeUndefined();
+
+    const labelled = mount(StateIcon, { props: { state: 'partial', label: 'Teilweise richtig' } });
+    expect(labelled.attributes('aria-hidden')).toBeUndefined();
+    expect(labelled.attributes('role')).toBe('img');
+    expect(labelled.attributes('aria-label')).toBe('Teilweise richtig');
+  });
+});
+
 describe('GradingDot', () => {
   it('renders a distinct SVG shape per state (shape carries meaning, not color)', () => {
     const svgs = ALL_STATES.map(

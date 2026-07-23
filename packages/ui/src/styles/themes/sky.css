@@ -37,7 +37,8 @@
   --q-part-ink-2: #805b22;
 }
 
-[data-theme='dark'][data-accent='sky'] {
+[data-theme='dark'][data-accent='sky'],
+[data-theme='dark'] [data-accent='sky'] {
   --q-accent: #64b5cf;
   --q-accent-strong: #4b9fba;
   --q-accent-bg: #18303a;

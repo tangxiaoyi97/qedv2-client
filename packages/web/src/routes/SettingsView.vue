@@ -274,17 +274,14 @@ async function openChangelog(): Promise<void> {
             :title="a.label"
             @click="pickAccent(a.id)"
           >
-            <span class="settings__theme-preview" :style="{ background: a.preview.page }" aria-hidden="true">
-              <span class="settings__theme-card" :style="{ background: a.preview.card }">
-                <span class="settings__theme-line" :style="{ background: a.color }" />
-                <span class="settings__theme-line settings__theme-line--mut" :style="{ background: a.preview.muted }" />
+            <span class="settings__theme-preview" :data-accent="a.id" aria-hidden="true">
+              <span class="settings__theme-card">
+                <span class="settings__theme-line" />
+                <span class="settings__theme-line settings__theme-line--mut" />
                 <span class="settings__theme-states">
-                  <span
-                    v-for="stateColor in a.preview.states"
-                    :key="stateColor"
-                    class="settings__theme-state"
-                    :style="{ background: stateColor }"
-                  />
+                  <span class="settings__theme-state settings__theme-state--ok" />
+                  <span class="settings__theme-state settings__theme-state--part" />
+                  <span class="settings__theme-state settings__theme-state--err" />
                 </span>
               </span>
             </span>
@@ -599,6 +596,7 @@ async function openChangelog(): Promise<void> {
   border-radius: 8px;
   padding: 8px;
   aspect-ratio: 16 / 10;
+  background: var(--q-page);
 }
 .settings__theme-card {
   box-sizing: border-box;
@@ -608,15 +606,18 @@ async function openChangelog(): Promise<void> {
   gap: 5px;
   border-radius: 6px;
   padding: 8px;
+  background: var(--q-card);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 .settings__theme-line {
   height: 5px;
   border-radius: 3px;
   width: 70%;
+  background: var(--q-accent);
 }
 .settings__theme-line--mut {
   width: 45%;
+  background: var(--q-accent-bg);
 }
 .settings__theme-states {
   display: flex;
@@ -627,6 +628,15 @@ async function openChangelog(): Promise<void> {
   width: 5px;
   height: 5px;
   border-radius: 50%;
+}
+.settings__theme-state--ok {
+  background: var(--q-ok);
+}
+.settings__theme-state--part {
+  background: var(--q-part);
+}
+.settings__theme-state--err {
+  background: var(--q-err);
 }
 .settings__theme-name {
   font-size: 11.5px;

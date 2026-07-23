@@ -6,6 +6,9 @@
 defineProps<{
   state: 'correct' | 'incorrect' | 'partial' | 'neutral' | 'missed';
   size?: number;
+  /** Optional spoken label for icon-only contexts. Omit when nearby text
+   * already names the state, so the label is not announced twice. */
+  label?: string;
 }>();
 </script>
 
@@ -14,7 +17,9 @@ defineProps<{
     class="q-state-icon"
     :class="`q-state-icon--${state}`"
     :style="{ width: `${size ?? 22}px`, height: `${size ?? 22}px`, fontSize: `${(size ?? 22) * 0.58}px` }"
-    aria-hidden="true"
+    :role="label ? 'img' : undefined"
+    :aria-label="label"
+    :aria-hidden="label ? undefined : 'true'"
   >
     <template v-if="state === 'correct' || state === 'missed'">✓</template>
     <template v-else-if="state === 'incorrect'">✕</template>

@@ -645,16 +645,21 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog__sq {
   width: 8px;
   height: 8px;
-  border-radius: 2px;
+  box-sizing: border-box;
 }
 .prog__sq--ok {
+  border-radius: 50%;
   background: var(--q-ok);
 }
 .prog__sq--part {
-  background: var(--q-part);
+  border: 1.5px solid var(--q-part);
+  border-radius: 50%;
+  background: linear-gradient(90deg, var(--q-part) 50%, transparent 50%);
 }
 .prog__sq--low {
-  background: var(--q-err);
+  border: 1.5px dashed var(--q-err);
+  border-radius: 2px;
+  background: transparent;
 }
 .prog__stats {
   display: flex;

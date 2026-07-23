@@ -46,7 +46,10 @@
 
 [data-theme='dark'][data-accent='sky'],
 [data-theme='dark'][data-accent='raspberry'],
-[data-theme='dark'][data-accent='violette'] {
+[data-theme='dark'][data-accent='violette'],
+[data-theme='dark'] [data-accent='sky'],
+[data-theme='dark'] [data-accent='raspberry'],
+[data-theme='dark'] [data-accent='violette'] {
   /* surfaces */
   --q-page: #171719;
   --q-card: #1f1f22;

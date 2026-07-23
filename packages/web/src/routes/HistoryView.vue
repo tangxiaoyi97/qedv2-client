@@ -24,6 +24,11 @@ const auth = useAuthStore();
 const progress = useProgressStore();
 
 const PAGE_SIZE = 50;
+const VERDICT_LABELS: Record<Verdict, string> = {
+  correct: 'Richtig',
+  partial: 'Teilweise richtig',
+  incorrect: 'Falsch',
+};
 
 interface Row {
   key: string;
@@ -229,7 +234,11 @@ function redo(questionId: string): void {
             :title="`${r.questionId} erneut üben`"
             @click="redo(r.questionId)"
           >
-            <StateIcon :state="r.verdict === 'correct' ? 'correct' : r.verdict === 'partial' ? 'partial' : 'incorrect'" :size="18" />
+            <StateIcon
+              :state="r.verdict === 'correct' ? 'correct' : r.verdict === 'partial' ? 'partial' : 'incorrect'"
+              :size="18"
+              :label="VERDICT_LABELS[r.verdict]"
+            />
             <span class="hist__row-title">{{ titles.get(r.questionId) ?? r.questionId }}</span>
             <span class="hist__row-part">{{ r.partId }}</span>
             <GradingDot

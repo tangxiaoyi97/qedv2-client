@@ -6,7 +6,8 @@
  */
 
 :root,
-[data-theme='light'] {
+[data-theme='light'],
+[data-accent='weed'] {
   color-scheme: light;
 
   /* surfaces */
@@ -84,7 +85,9 @@
   --q-sidebar-width: 240px;
 }
 
-[data-theme='dark'] {
+[data-theme='dark'],
+[data-theme='dark'][data-accent='weed'],
+[data-theme='dark'] [data-accent='weed'] {
   color-scheme: dark;
 
   /* surfaces */

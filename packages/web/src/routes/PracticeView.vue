@@ -484,9 +484,15 @@ const currentCompetencyCodes = computed(() =>
                 <div class="practice__stat-label">Punkte</div>
               </div>
               <div class="practice__stat practice__stat--verdicts">
-                <span class="practice__verdict"><StateIcon state="correct" :size="16" /> {{ summaryStats.byVerdict.correct }}</span>
-                <span class="practice__verdict"><StateIcon state="partial" :size="16" /> {{ summaryStats.byVerdict.partial }}</span>
-                <span class="practice__verdict"><StateIcon state="incorrect" :size="16" /> {{ summaryStats.byVerdict.incorrect }}</span>
+                <span class="practice__verdict" :aria-label="`Richtig: ${summaryStats.byVerdict.correct}`">
+                  <StateIcon state="correct" :size="16" /> {{ summaryStats.byVerdict.correct }}
+                </span>
+                <span class="practice__verdict" :aria-label="`Teilweise richtig: ${summaryStats.byVerdict.partial}`">
+                  <StateIcon state="partial" :size="16" /> {{ summaryStats.byVerdict.partial }}
+                </span>
+                <span class="practice__verdict" :aria-label="`Falsch: ${summaryStats.byVerdict.incorrect}`">
+                  <StateIcon state="incorrect" :size="16" /> {{ summaryStats.byVerdict.incorrect }}
+                </span>
               </div>
             </div>
             <div v-if="summaryStats.competencies.length > 0" class="practice__summary-comps">

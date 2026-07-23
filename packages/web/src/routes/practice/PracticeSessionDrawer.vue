@@ -12,6 +12,14 @@ interface PracticeRailItem {
   jumpable: boolean;
 }
 
+const STATE_LABELS: Record<PracticeRailItem['state'], string> = {
+  correct: 'Richtig',
+  partial: 'Teilweise richtig',
+  incorrect: 'Falsch',
+  current: 'Aktuelle Aufgabe',
+  pending: 'Noch nicht beantwortet',
+};
+
 const props = defineProps<{
   open: boolean;
   items: PracticeRailItem[];
@@ -61,6 +69,7 @@ useModalA11y(panel, isOpen, () => emit('close'));
                 'practice-session-drawer__item--done': item.state === 'correct' || item.state === 'partial' || item.state === 'incorrect',
               }"
               :disabled="!item.jumpable && item.state !== 'current'"
+              :aria-label="`${item.index + 1}. ${item.title}${item.partLabel ? ` · ${item.partLabel}` : ''}: ${STATE_LABELS[item.state]}`"
               @click="item.jumpable && emit('jump', item.index)"
             >
               <span class="practice-session-drawer__icon" aria-hidden="true">

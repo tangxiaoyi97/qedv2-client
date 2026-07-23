@@ -35,7 +35,8 @@
   --q-part-ink-2: #815a25;
 }
 
-[data-theme='dark'][data-accent='raspberry'] {
+[data-theme='dark'][data-accent='raspberry'],
+[data-theme='dark'] [data-accent='raspberry'] {
   --q-accent: #e479a4;
   --q-accent-strong: #d7628f;
   --q-accent-bg: #351a25;
