@@ -11,7 +11,12 @@ import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
-import { ACCENTS, currentAccent, setAccent, type AccentId } from '../platform/theme.js';
+import {
+  BUILTIN_THEME_EXTENSIONS,
+  currentBuiltinThemeId,
+  setBuiltinThemeExtension,
+  type BuiltinThemeId,
+} from '../platform/theme.js';
 import { useModalA11y } from '../composables/useModalA11y.js';
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -103,11 +108,11 @@ const THEMES: { value: ThemePref; label: string }[] = [
 ];
 const LOCALES: Locale[] = ['de', 'en'];
 
-/* accent color — built-in overlay palettes (see platform/theme.ts) */
-const accent = ref<AccentId>(currentAccent());
-function pickAccent(id: AccentId): void {
-  accent.value = id;
-  setAccent(id);
+/* Built-in CSS extensions; external records join this list next major. */
+const themeExtensionId = ref<BuiltinThemeId>(currentBuiltinThemeId());
+function pickThemeExtension(id: BuiltinThemeId): void {
+  themeExtensionId.value = id;
+  setBuiltinThemeExtension(id);
 }
 
 function onLocaleChange(ev: Event): void {
@@ -276,16 +281,16 @@ async function openChangelog(): Promise<void> {
         </div>
         <div class="settings__themes" role="radiogroup" aria-label="Farbschema">
           <button
-            v-for="a in ACCENTS"
-            :key="a.id"
+            v-for="extension in BUILTIN_THEME_EXTENSIONS"
+            :key="extension.id"
             type="button"
             class="settings__theme"
-            :class="{ 'settings__theme--on': accent === a.id }"
-            :data-accent="a.id"
+            :class="{ 'settings__theme--on': themeExtensionId === extension.id }"
+            :data-accent="extension.id"
             role="radio"
-            :aria-checked="accent === a.id"
-            :title="a.label"
-            @click="pickAccent(a.id)"
+            :aria-checked="themeExtensionId === extension.id"
+            :title="extension.label"
+            @click="pickThemeExtension(extension.id)"
           >
             <span class="settings__theme-preview" aria-hidden="true">
               <span class="settings__theme-card">
@@ -294,7 +299,7 @@ async function openChangelog(): Promise<void> {
                 <span class="settings__theme-action" />
               </span>
             </span>
-            <span class="settings__theme-name">{{ a.label }}</span>
+            <span class="settings__theme-name">{{ extension.label }}</span>
           </button>
         </div>
       </div>

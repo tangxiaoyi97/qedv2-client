@@ -1,10 +1,36 @@
 /*
- * Theme: violette (#7c5acf).
- * A violet accent with teal/magenta/gold semantic companions.
- * Neutral surfaces are shared in themes.css.
+ * QED2 theme extension: violette.
+ * Complete light/dark token contract; no palette values live elsewhere.
  */
 
 [data-accent='violette'] {
+  color-scheme: light;
+
+  --q-page: #f7f6f9;
+  --q-card: #ffffff;
+  --q-panel: #faf9fc;
+  --q-panel-2: #f0edf5;
+  --q-track: #e6e1ec;
+  --q-dot-off: #ded9e6;
+  --q-cta-card: #29272e;
+  --q-cta-card-label: #bba8ec;
+  --q-cta-card-text: #b9bbc0;
+
+  --q-ink: #1c1d1f;
+  --q-ink-2: #2a2b2e;
+  --q-mut: #55575c;
+  --q-mut-2: #6c6e73;
+  --q-faint: #898b91;
+  --q-disabled: #afb1b6;
+  --q-hint: #b8bac0;
+
+  --q-border: rgba(26, 26, 26, 0.1);
+  --q-border-2: rgba(26, 26, 26, 0.14);
+  --q-border-3: rgba(26, 26, 26, 0.18);
+  --q-border-soft: rgba(26, 26, 26, 0.07);
+  --q-check-border: #c4c6ca;
+  --q-btn-border: #ced0d4;
+
   --q-accent: #7c5acf;
   --q-accent-strong: #5b3fa8;
   --q-accent-bg: #f2eefb;
@@ -13,7 +39,6 @@
   --q-chip-bg: #e9e2f7;
   --q-chip-border: #c9b8ea;
   --q-chip-ink: #5b3fa8;
-  --q-cta-card-label: #bba8ec;
 
   --q-ok: #2f7664;
   --q-ok-bg: #e9f2ef;
@@ -33,10 +58,46 @@
   --q-part-border: #e1d0aa;
   --q-part-ink: #704f1e;
   --q-part-ink-2: #7d5b27;
+
+  --q-neutral: #6c6e73;
+  --q-neutral-bg: #f0edf5;
+  --q-neutral-border: #d9d3e1;
+
+  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.05);
+  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.07);
+  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.22);
+  --q-backdrop-filter: blur(8px) saturate(0.9);
 }
 
 [data-theme='dark'][data-accent='violette'],
 [data-theme='dark'] [data-accent='violette'] {
+  color-scheme: dark;
+
+  --q-page: #18171b;
+  --q-card: #211f24;
+  --q-panel: #252329;
+  --q-panel-2: #2c2931;
+  --q-track: #38343e;
+  --q-dot-off: #403b47;
+  --q-cta-card: #110f14;
+  --q-cta-card-label: #c4b3ef;
+  --q-cta-card-text: #a7a8ae;
+
+  --q-ink: #eeeef0;
+  --q-ink-2: #dddde0;
+  --q-mut: #b6b7bb;
+  --q-mut-2: #9d9fa5;
+  --q-faint: #7f8188;
+  --q-disabled: #696b72;
+  --q-hint: #5f6168;
+
+  --q-border: rgba(236, 235, 230, 0.1);
+  --q-border-2: rgba(236, 235, 230, 0.14);
+  --q-border-3: rgba(236, 235, 230, 0.2);
+  --q-border-soft: rgba(236, 235, 230, 0.07);
+  --q-check-border: #52545b;
+  --q-btn-border: #494b52;
+
   --q-accent: #ad96e7;
   --q-accent-strong: #9b82dc;
   --q-accent-bg: #29213d;
@@ -45,7 +106,6 @@
   --q-chip-bg: #302748;
   --q-chip-border: #554489;
   --q-chip-ink: #c9baf0;
-  --q-cta-card-label: #c4b3ef;
 
   --q-ok: #57a890;
   --q-ok-bg: #1e2d29;
@@ -65,4 +125,13 @@
   --q-part-border: #68592f;
   --q-part-ink: #e4c583;
   --q-part-ink-2: #cdb06a;
+
+  --q-neutral: #a3a4aa;
+  --q-neutral-bg: #2c2931;
+  --q-neutral-border: #46414f;
+
+  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --q-backdrop-filter: blur(10px) saturate(0.86);
 }

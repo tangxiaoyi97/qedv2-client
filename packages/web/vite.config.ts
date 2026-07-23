@@ -28,8 +28,6 @@ export default defineConfig({
         description: 'SRDP-Mathematik üben mit intelligenter Wiederholung',
         lang: 'de',
         display: 'standalone',
-        background_color: '#f5f5f6',
-        theme_color: '#5f6b2e',
         icons: [
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -72,5 +70,6 @@ export default defineConfig({
   test: {
     include: ['test/**/*.spec.ts'],
     environment: 'jsdom',
+    css: true,
   },
 });

@@ -14,6 +14,7 @@ import {
   type ServerInfo,
 } from '@qed2/core-logic';
 import { configStore, envConfigDefaults, ports, setCurrentCoreUrl } from '../services.js';
+import { syncThemeColorFromCss } from '../platform/theme.js';
 
 export type ThemePref = 'light' | 'dark' | 'system';
 
@@ -22,6 +23,7 @@ function applyThemeToDom(pref: ThemePref): void {
     pref === 'dark' ||
     (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  syncThemeColorFromCss();
 }
 
 export const useAppStore = defineStore('app', () => {

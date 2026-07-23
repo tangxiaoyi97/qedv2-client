@@ -1,0 +1,8 @@
+/*
+ * Parser-blocking theme-extension entrypoint.
+ *
+ * index.html loads this stylesheet before the boot UI and application entry,
+ * so both consume the exact same --q-* contract. Built-ins are bundled here;
+ * a cached external extension is appended after this link by theme-bootstrap.
+ */
+@import '@qed2/ui/themes';

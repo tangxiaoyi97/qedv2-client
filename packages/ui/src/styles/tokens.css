@@ -1,169 +1,10 @@
 /*
- * QED2 design tokens — single source of truth for both themes.
- * Light values come verbatim from the design prototype; dark values are
- * derived from the same hues (the prototype ships light only).
- * Never rely on color alone for state — pair with icon + text.
+ * Theme-independent UI contracts.
+ *
+ * Every color, surface and elevation value lives in one of themes/*.css.
+ * This file deliberately contains no palette fallback: a shell must load
+ * @qed2/ui/themes before rendering either its boot UI or the application.
  */
-
-:root,
-[data-theme='light'],
-[data-accent='weed'] {
-  color-scheme: light;
-
-  /* surfaces */
-  --q-page: #f5f5f6;
-  --q-card: #ffffff;
-  --q-panel: #faf9f4;
-  --q-panel-2: #eef0e6;
-  --q-track: #e5e7d9;
-  --q-dot-off: #dfe1d4;
-  --q-cta-card: #282828;
-  --q-cta-card-label: #c4cd95;
-  --q-cta-card-text: #b9bbb0;
-
-  /* ink */
-  --q-ink: #1a1a1a;
-  --q-ink-2: #282828;
-  --q-mut: #54564d;
-  --q-mut-2: #6b6d63;
-  --q-faint: #8a8c82;
-  --q-disabled: #a8aa9e;
-  --q-hint: #b0b2a6;
-
-  /* borders */
-  --q-border: rgba(26, 26, 26, 0.1);
-  --q-border-2: rgba(26, 26, 26, 0.14);
-  --q-border-3: rgba(26, 26, 26, 0.18);
-  --q-border-soft: rgba(26, 26, 26, 0.07);
-  --q-check-border: #c4c6ba;
-  --q-btn-border: #cfd1c4;
-
-  /* accent (olive) */
-  --q-accent: #8e9c49;
-  --q-accent-strong: #5f6b2e;
-  --q-accent-bg: #f7f9ee;
-  --q-accent-ring: rgba(142, 156, 73, 0.12);
-  --q-on-accent: #ffffff;
-  --q-chip-bg: #eef1df;
-  --q-chip-border: #d5dcae;
-  --q-chip-ink: #5f6b2e;
-
-  /* state: correct */
-  --q-ok: #2f7d54;
-  --q-ok-bg: #e9f2ec;
-  --q-ok-bg-2: #e3efe8;
-  --q-ok-border: #b9dcc7;
-  --q-ok-ink: #215c3d;
-  --q-on-ok: #ffffff;
-
-  /* state: wrong */
-  --q-err: #b4462f;
-  --q-err-bg: #f6e6e0;
-  --q-err-border: #e6bfb2;
-  --q-err-ink: #8a3423;
-  --q-on-err: #ffffff;
-
-  /* state: partial */
-  --q-part: #b07d1f;
-  --q-part-bg: #f6efdb;
-  --q-part-border: #e6d3a3;
-  --q-part-ink: #7f5a14;
-  --q-part-ink-2: #8a6a20;
-
-  /* state: neutral / untouched */
-  --q-neutral: #6b6d63;
-  --q-neutral-bg: #eef0e6;
-  --q-neutral-border: #d7dac6;
-
-  /* elevation */
-  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.05);
-  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.07);
-  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.22);
-  --q-backdrop-filter: blur(8px) saturate(0.9);
-
-  /* layout */
-  --q-sidebar-width: 240px;
-  --q-control-chevron-size: 16px;
-  --q-control-chevron-inset: 12px;
-  --q-control-chevron-padding-end: 36px;
-}
-
-[data-theme='dark'],
-[data-theme='dark'][data-accent='weed'],
-[data-theme='dark'] [data-accent='weed'] {
-  color-scheme: dark;
-
-  /* surfaces */
-  --q-page: #161613;
-  --q-card: #1f1f1b;
-  --q-panel: #23231e;
-  --q-panel-2: #282922;
-  --q-track: #34352b;
-  --q-dot-off: #3a3b31;
-  --q-cta-card: #111110;
-  --q-cta-card-label: #c4cd95;
-  --q-cta-card-text: #a3a599;
-
-  /* ink */
-  --q-ink: #ecebe6;
-  --q-ink-2: #dddcd4;
-  --q-mut: #b5b7aa;
-  --q-mut-2: #9d9f92;
-  --q-faint: #83857a;
-  --q-disabled: #6c6e64;
-  --q-hint: #5f6157;
-
-  /* borders */
-  --q-border: rgba(236, 235, 230, 0.1);
-  --q-border-2: rgba(236, 235, 230, 0.14);
-  --q-border-3: rgba(236, 235, 230, 0.2);
-  --q-border-soft: rgba(236, 235, 230, 0.07);
-  --q-check-border: #55574b;
-  --q-btn-border: #4a4c40;
-
-  /* accent (same olive family, tuned for dark) */
-  --q-accent: #9dab58;
-  --q-accent-strong: #8e9c49;
-  --q-accent-bg: #262a18;
-  --q-accent-ring: rgba(157, 171, 88, 0.18);
-  --q-on-accent: #15160d;
-  --q-chip-bg: #2b2e1d;
-  --q-chip-border: #4b512b;
-  --q-chip-ink: #c4cd95;
-
-  /* state: correct */
-  --q-ok: #4ca97a;
-  --q-ok-bg: #1c2b23;
-  --q-ok-bg-2: #203127;
-  --q-ok-border: #2f5c44;
-  --q-ok-ink: #8fd0ae;
-  --q-on-ok: #0f1a14;
-
-  /* state: wrong */
-  --q-err: #d4694f;
-  --q-err-bg: #33201a;
-  --q-err-border: #6b3626;
-  --q-err-ink: #e8a794;
-  --q-on-err: #1d0f0a;
-
-  /* state: partial */
-  --q-part: #d3a13f;
-  --q-part-bg: #322817;
-  --q-part-border: #6b5527;
-  --q-part-ink: #e4c078;
-  --q-part-ink-2: #cfa859;
-
-  /* state: neutral */
-  --q-neutral: #9d9f92;
-  --q-neutral-bg: #282922;
-  --q-neutral-border: #3f4136;
-
-  /* elevation */
-  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
-  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.45);
-  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
-  --q-backdrop-filter: blur(10px) saturate(0.86);
-}
 
 /* base */
 html, body {
@@ -191,8 +32,12 @@ html, body {
   backdrop-filter: var(--q-backdrop-filter);
 }
 
-/* Transitions & Animations */
+/* Layout, transitions and animations are not theme customization. */
 :root {
+  --q-sidebar-width: 240px;
+  --q-control-chevron-size: 16px;
+  --q-control-chevron-inset: 12px;
+  --q-control-chevron-padding-end: 36px;
   --q-transition-fast: 0.15s ease-out;
   --q-transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --q-transition-spring: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);

@@ -1,10 +1,36 @@
 /*
- * Theme: raspberry (#c43b70).
- * A warm berry accent with softened green/crimson/amber semantic colors.
- * Neutral surfaces are shared in themes.css.
+ * QED2 theme extension: raspberry.
+ * Complete light/dark token contract; no palette values live elsewhere.
  */
 
 [data-accent='raspberry'] {
+  color-scheme: light;
+
+  --q-page: #f8f6f7;
+  --q-card: #fffefe;
+  --q-panel: #fbf9fa;
+  --q-panel-2: #f3eef0;
+  --q-track: #eae2e5;
+  --q-dot-off: #e3dade;
+  --q-cta-card: #2b2729;
+  --q-cta-card-label: #e4aac1;
+  --q-cta-card-text: #b9bbc0;
+
+  --q-ink: #1c1d1f;
+  --q-ink-2: #2a2b2e;
+  --q-mut: #55575c;
+  --q-mut-2: #6c6e73;
+  --q-faint: #898b91;
+  --q-disabled: #afb1b6;
+  --q-hint: #b8bac0;
+
+  --q-border: rgba(26, 26, 26, 0.1);
+  --q-border-2: rgba(26, 26, 26, 0.14);
+  --q-border-3: rgba(26, 26, 26, 0.18);
+  --q-border-soft: rgba(26, 26, 26, 0.07);
+  --q-check-border: #c4c6ca;
+  --q-btn-border: #ced0d4;
+
   --q-accent: #c43b70;
   --q-accent-strong: #96304f;
   --q-accent-bg: #fbeef3;
@@ -13,7 +39,6 @@
   --q-chip-bg: #f7e3ec;
   --q-chip-border: #e3b3c9;
   --q-chip-ink: #96304f;
-  --q-cta-card-label: #e4aac1;
 
   --q-ok: #3b7655;
   --q-ok-bg: #ebf2ed;
@@ -33,10 +58,46 @@
   --q-part-border: #e4cfa8;
   --q-part-ink: #744d1e;
   --q-part-ink-2: #815a25;
+
+  --q-neutral: #6c6e73;
+  --q-neutral-bg: #f3eef0;
+  --q-neutral-border: #ded5d9;
+
+  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.05);
+  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.07);
+  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.22);
+  --q-backdrop-filter: blur(8px) saturate(0.9);
 }
 
 [data-theme='dark'][data-accent='raspberry'],
 [data-theme='dark'] [data-accent='raspberry'] {
+  color-scheme: dark;
+
+  --q-page: #191617;
+  --q-card: #221f20;
+  --q-panel: #262224;
+  --q-panel-2: #2e292b;
+  --q-track: #3a3336;
+  --q-dot-off: #423a3d;
+  --q-cta-card: #120f10;
+  --q-cta-card-label: #edabc6;
+  --q-cta-card-text: #a7a8ae;
+
+  --q-ink: #eeeef0;
+  --q-ink-2: #dddde0;
+  --q-mut: #b6b7bb;
+  --q-mut-2: #9d9fa5;
+  --q-faint: #7f8188;
+  --q-disabled: #696b72;
+  --q-hint: #5f6168;
+
+  --q-border: rgba(236, 235, 230, 0.1);
+  --q-border-2: rgba(236, 235, 230, 0.14);
+  --q-border-3: rgba(236, 235, 230, 0.2);
+  --q-border-soft: rgba(236, 235, 230, 0.07);
+  --q-check-border: #52545b;
+  --q-btn-border: #494b52;
+
   --q-accent: #e479a4;
   --q-accent-strong: #d7628f;
   --q-accent-bg: #351a25;
@@ -45,7 +106,6 @@
   --q-chip-bg: #3c1e2b;
   --q-chip-border: #71324c;
   --q-chip-ink: #efabc7;
-  --q-cta-card-label: #edabc6;
 
   --q-ok: #62a47e;
   --q-ok-bg: #202c26;
@@ -65,4 +125,13 @@
   --q-part-border: #6a542b;
   --q-part-ink: #e6c17f;
   --q-part-ink-2: #cfaa64;
+
+  --q-neutral: #a3a4aa;
+  --q-neutral-bg: #2e292b;
+  --q-neutral-border: #493f43;
+
+  --q-shadow-card: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --q-shadow-panel: 0 4px 18px rgba(0, 0, 0, 0.45);
+  --q-shadow-modal: 0 18px 50px rgba(0, 0, 0, 0.6);
+  --q-backdrop-filter: blur(10px) saturate(0.86);
 }

@@ -6,11 +6,10 @@ import '@fontsource/public-sans/600.css';
 import '@fontsource/public-sans/700.css';
 import '@fontsource/public-sans/800.css';
 import '@qed2/ui/styles';
-import '@qed2/ui/themes';
 import './styles/app.css';
 import App from './App.vue';
 import { router } from './router.js';
-import { initThemeEarly } from './platform/theme.js';
+import { prepareThemeBeforeMount } from './platform/theme.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -25,8 +24,8 @@ function bootProgress(pct: number, text: string): void {
 }
 
 async function boot(): Promise<void> {
-  // accent/external theme before ANY UI paints (no palette flash)
-  initThemeEarly();
+  // Revalidate/move the CSS theme extension before ANY UI paints.
+  await prepareThemeBeforeMount();
   bootProgress(12, 'Thema wird angewendet …');
 
   const app = createApp(App);
@@ -78,9 +77,9 @@ function showBootError(err: unknown): void {
   box.style.cssText =
     'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
     'min-height:100vh;min-height:100dvh;gap:12px;padding:24px;text-align:center;' +
-    'font-family:system-ui,sans-serif;color:#54564d;background:#f5f5f6';
+    'font-family:system-ui,sans-serif;color:var(--q-mut);background:var(--q-page)';
   const msg = document.createElement('p');
-  msg.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:#1a1a1a';
+  msg.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--q-ink)';
   msg.textContent = 'QED2 konnte nicht gestartet werden.';
   const detail = document.createElement('p');
   detail.style.cssText = 'margin:0;font-size:13px;max-width:40ch';
@@ -90,7 +89,8 @@ function showBootError(err: unknown): void {
   btn.type = 'button';
   btn.textContent = 'Neu laden';
   btn.style.cssText =
-    'padding:10px 22px;border-radius:9px;border:none;background:#5f6b2e;color:#fff;' +
+    'padding:10px 22px;border-radius:9px;border:none;' +
+    'background:var(--q-accent-strong);color:var(--q-on-accent);' +
     'font:600 13.5px system-ui,sans-serif;cursor:pointer';
   btn.addEventListener('click', () => location.reload());
   box.append(msg, detail, btn);
