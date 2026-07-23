@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * One mastery row (prototype 3a "Beherrschung" card): code · track/fill bar ·
+ * One mastery row (prototype 3a "Bewertung" card): code · track/fill bar ·
  * level text label (hoch / mittel / gering) — never color-only.
  */
 import { computed } from 'vue';

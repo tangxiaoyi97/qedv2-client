@@ -109,7 +109,7 @@ watch(
       <div
         v-if="ui.authModalOpen"
       ref="box"
-      class="authm"
+      class="authm q-modal-backdrop"
       role="dialog"
       aria-modal="true"
       :aria-label="ui.authModalMode === 'login' ? 'Anmelden' : 'Registrieren'"

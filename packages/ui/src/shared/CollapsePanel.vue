@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import ChevronDown from './ChevronDown.vue';
 
 const props = defineProps<{
   title: string;
@@ -15,7 +16,7 @@ const open = ref(props.defaultOpen ?? false);
     <button class="q-collapse__head" type="button" :aria-expanded="open" @click="open = !open">
       <span class="q-collapse__title">{{ title }}</span>
       <span v-if="subtitle" class="q-collapse__sub">{{ subtitle }}</span>
-      <span class="q-collapse__chev" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
+      <ChevronDown class="q-collapse__chev" />
     </button>
     <div v-if="open" class="q-collapse__body">
       <slot />
@@ -53,7 +54,7 @@ const open = ref(props.defaultOpen ?? false);
 .q-collapse__chev {
   margin-left: auto;
   color: var(--q-mut-2);
-  font-size: 13px;
+  font-size: 16px;
 }
 .q-collapse__body {
   padding: 16px 18px;

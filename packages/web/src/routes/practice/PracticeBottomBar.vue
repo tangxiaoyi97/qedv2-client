@@ -4,6 +4,7 @@ import type { AnswerKind, Grading, GradingOrUnseen, SolutionEntry } from '@qed2/
 import {
   GradingMenu,
   QButton,
+  ChevronDown,
   SELF_ASSESSMENT_GRADING_OPTIONS,
   SolutionSheet,
   StateIcon,
@@ -88,7 +89,10 @@ function onMasteryChange(ev: Event): void {
       @update:open="emit('update:solutionOpen', $event)"
     />
 
-    <div class="practice-bar__row">
+    <div
+      class="practice-bar__row"
+      :class="{ 'practice-bar__row--assessment': state.phase === 'self-assessing' }"
+    >
       <div class="practice-bar__left">
         <!-- mastery override rides the INFO slot (left), not the action
              cluster — and it shares the Lösung toggle's outlined geometry -->
@@ -131,25 +135,26 @@ function onMasteryChange(ev: Event): void {
             </div>
           </div>
 
-          <span v-else class="practice-bar__rubric-hint">Bewertungsraster oben ausfüllen</span>
-
           <div class="practice-bar__assessment-group practice-bar__assessment-group--mastery">
-            <span class="practice-bar__assessment-label">Beherrschung</span>
-            <select
-              class="practice-bar__mastery-select"
-              aria-label="Beherrschung"
-              :value="state.selfAssessment.grading ?? ''"
-              @change="onMasteryChange"
-            >
-              <option disabled value="">auswählen …</option>
-              <option
-                v-for="option in SELF_ASSESSMENT_GRADING_OPTIONS"
-                :key="option.grading"
-                :value="option.grading"
+            <span class="practice-bar__assessment-label">Bewertung</span>
+            <span class="practice-bar__mastery-select-wrap">
+              <select
+                class="practice-bar__mastery-select"
+                aria-label="Bewertung"
+                :value="state.selfAssessment.grading ?? ''"
+                @change="onMasteryChange"
               >
-                {{ option.label }} · {{ option.hint }}
-              </option>
-            </select>
+                <option disabled value="">auswählen …</option>
+                <option
+                  v-for="option in SELF_ASSESSMENT_GRADING_OPTIONS"
+                  :key="option.grading"
+                  :value="option.grading"
+                >
+                  {{ option.label }} · {{ option.hint }}
+                </option>
+              </select>
+              <ChevronDown class="practice-bar__select-chevron" />
+            </span>
           </div>
         </div>
         <div v-else-if="answerPreview" class="practice-bar__preview">
@@ -171,7 +176,7 @@ function onMasteryChange(ev: Event): void {
           :aria-expanded="solutionOpen"
           @click="emit('update:solutionOpen', !solutionOpen)"
         >
-          Lösung <span class="practice-bar__solution-chevron" aria-hidden="true">▴</span>
+          Lösung <ChevronDown class="practice-bar__solution-chevron" />
         </button>
         <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
       </div>
@@ -218,7 +223,7 @@ function onMasteryChange(ev: Event): void {
 }
 
 .practice-bar__row {
-  max-width: 860px;
+  max-width: 1040px;
   margin: 0 auto;
   padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
   display: flex;
@@ -227,6 +232,19 @@ function onMasteryChange(ev: Event): void {
   gap: 14px;
   min-height: 68px;
   flex-wrap: wrap;
+}
+
+.practice-bar__row--assessment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.practice-bar__row--assessment .practice-bar__left {
+  width: 100%;
+}
+
+.practice-bar__row--assessment .practice-bar__right {
+  margin-left: 0;
 }
 
 .practice-bar__left {
@@ -268,11 +286,6 @@ function onMasteryChange(ev: Event): void {
   font-weight: 400;
   font-style: italic;
 }
-.practice-bar__rubric-hint {
-  font-size: 12.5px;
-  color: var(--q-mut);
-}
-
 .practice-bar__preview {
   display: flex;
   flex-direction: column;
@@ -319,7 +332,7 @@ function onMasteryChange(ev: Event): void {
 }
 
 .practice-bar__assessment-group--mastery {
-  flex: 1;
+  flex: 1 1 280px;
 }
 
 .practice-bar__assessment-label {
@@ -356,16 +369,50 @@ function onMasteryChange(ev: Event): void {
   font-size: 12.5px;
 }
 
+.practice-bar__mastery-select-wrap {
+  position: relative;
+  display: inline-flex;
+  width: clamp(180px, 22vw, 260px);
+  max-width: 100%;
+}
+
 .practice-bar__mastery-select {
   min-height: 32px;
-  width: min(260px, 34vw);
+  width: 100%;
   border: 1px solid var(--q-part-border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--q-card) 88%, transparent);
   color: var(--q-part-ink);
   font: 750 12px 'Public Sans', system-ui, sans-serif;
-  padding: 0 10px;
+  padding: 0 var(--q-control-chevron-padding-end) 0 12px;
   cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.practice-bar__select-chevron {
+  position: absolute;
+  right: var(--q-control-chevron-inset);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--q-part-ink);
+  font-size: 16px;
+  pointer-events: none;
+}
+
+.practice-bar__row--assessment .practice-bar__score-option,
+.practice-bar__row--assessment .practice-bar__mastery-select,
+.practice-bar__row--assessment .practice-bar__solution-toggle {
+  box-sizing: border-box;
+  min-height: 42px;
+  height: 42px;
+}
+
+.practice-bar__row--assessment .practice-bar__right :deep(.q-btn) {
+  box-sizing: border-box;
+  min-height: 42px;
+  height: 42px;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -399,10 +446,6 @@ function onMasteryChange(ev: Event): void {
 
 .practice-bar__solution-chevron {
   display: inline-block;
-  transition: transform var(--q-transition-fast);
-}
-.practice-bar__solution-toggle--on .practice-bar__solution-chevron {
-  transform: rotate(180deg);
 }
 
 @media (pointer: coarse) {
@@ -414,14 +457,22 @@ function onMasteryChange(ev: Event): void {
   .practice-bar__mastery-select {
     min-height: 44px;
   }
+
+  .practice-bar__row--assessment .practice-bar__score-option,
+  .practice-bar__row--assessment .practice-bar__mastery-select,
+  .practice-bar__row--assessment .practice-bar__solution-toggle,
+  .practice-bar__row--assessment .practice-bar__right :deep(.q-btn) {
+    min-height: 44px;
+    height: 44px;
+  }
 }
 
 .practice-bar__solution-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   min-height: 42px;
-  padding: 0 16px;
+  padding: 0 var(--q-control-chevron-inset);
   border-radius: 9px;
   border: 1px solid var(--q-border-2);
   background: var(--q-card);
@@ -451,6 +502,10 @@ function onMasteryChange(ev: Event): void {
     padding-right: 16px;
   }
 
+  .practice-bar__row--assessment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .practice-bar__left,
   .practice-bar__assessment,
   .practice-bar__assessment-group {
@@ -466,11 +521,29 @@ function onMasteryChange(ev: Event): void {
     flex-direction: column;
   }
 
-  .practice-bar__mastery-select {
-    width: 100%;
+  .practice-bar__assessment-group--mastery {
+    align-items: center;
+    flex-direction: row;
   }
 
-  .practice-bar__right {
+  .practice-bar__mastery-select-wrap {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .practice-bar__row--assessment .practice-bar__right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 900px) {
+  .practice-bar__row--assessment {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .practice-bar__row--assessment .practice-bar__right {
     width: 100%;
     justify-content: flex-end;
   }

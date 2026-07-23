@@ -70,7 +70,7 @@ function entrySummary(e: ConflictEntry, side: 'server' | 'local'): string {
     const pts = entry.lastResult ? `${entry.lastResult.awardedPoints} P` : '—';
     return `${stamp} · ${pts} · fällig ${new Intl.DateTimeFormat('de-AT', { dateStyle: 'short' }).format(new Date(entry.fsrs.due))}`;
   }
-  return `${stamp} · Beherrschung ${Math.round(e[side].mastery * 100)} %`;
+  return `${stamp} · Bewertung ${Math.round(e[side].mastery * 100)} %`;
 }
 
 async function apply(): Promise<void> {
@@ -96,7 +96,7 @@ function onEscape(): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="conflict" class="conflict" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
+    <div v-if="conflict" class="conflict q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
       <div ref="card" class="conflict__card">
         <div class="conflict__head">
           <span class="conflict__icon" aria-hidden="true">⟳</span>

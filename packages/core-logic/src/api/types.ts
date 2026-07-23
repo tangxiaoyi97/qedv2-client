@@ -94,11 +94,14 @@ export interface RecommendResponse {
 export interface CoreInfo {
   service: string;
   version: string;
+  /** Full commit of the Core service build (not the question bank). */
+  commit?: string | null;
   schemaVersionSupported: { min: number; max: number };
   bank: {
     repo: string;
     branch: string;
-    commit: string;
+    /** Full commit of the mounted question-bank checkout. */
+    commit: string | null;
     questionCount: number;
     playableCount: number;
   };
@@ -330,9 +333,19 @@ export type LeaderboardProfile =
 export interface ServerInfo {
   service: string;
   version: string;
+  /** Full commit of the Server service build. */
+  commit?: string | null;
   sourceRepo: string;
   buildTime: string;
   auth: string;
+  database?: {
+    status: 'connected' | 'down';
+    provider: 'postgresql';
+    /** Number of successfully applied Prisma migrations. */
+    schemaVersion: number | null;
+    /** Exact name of the most recently applied migration. */
+    latestMigration: string | null;
+  };
 }
 
 export type { ServerArchiveState };

@@ -8,7 +8,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
-import { CollapsePanel, QButton } from '@qed2/ui';
+import { ChevronDown, CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import { ACCENTS, currentAccent, setAccent, type AccentId } from '../platform/theme.js';
@@ -18,6 +18,7 @@ import { useAuthStore } from '../stores/auth.js';
 import { useLeaderboardStore } from '../stores/leaderboard.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useUiStore } from '../stores/ui.js';
+import { databaseSchemaLabel, databaseStatusLabel, shortCommit } from '../version-info.js';
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -29,13 +30,7 @@ const router = useRouter();
 /* ---- Versionen: rows are clickable, each opens a detail modal ---- */
 const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
 
-/** Server DB state from /health (only the sync server has one). */
-const serverDb = ref<'connected' | 'down' | null>(null);
 onMounted(() => {
-  app.serverClient
-    .health()
-    .then((h) => (serverDb.value = h.db === 'connected' ? 'connected' : 'down'))
-    .catch(() => (serverDb.value = null));
   if (auth.isLoggedIn) void leaderboard.refreshProfile();
 });
 watch(
@@ -66,13 +61,14 @@ const versionDetailRows = computed<DetailRow[]>(() => {
     return [
       { label: 'Dienst', value: i.service },
       { label: 'Version', value: i.version },
-      { label: 'Schema unterstützt', value: `${i.schemaVersionSupported.min} – ${i.schemaVersionSupported.max}` },
-      { label: 'Bank-Commit', value: i.bank.commit },
-      { label: 'Aufgaben', value: `${i.bank.questionCount} (${i.bank.playableCount} available)` },
-      { label: 'Bank-Repo', value: i.bank.repo.replace('https://github.com/', 'github.com/'), link: i.bank.repo },
-      { label: 'Branch', value: i.bank.branch },
-      { label: 'Quell-Repo', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: 'Core-Commit', value: i.commit ?? 'unbekannt' },
+      { label: 'Core-Repository', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
       { label: 'Build', value: formatBuildTime(i.buildTime) },
+      { label: 'Unterstützte Bank-Schemas', value: `${i.schemaVersionSupported.min} – ${i.schemaVersionSupported.max}` },
+      { label: 'Bank-Commit', value: i.bank.commit ?? 'unbekannt' },
+      { label: 'Bank-Repository', value: i.bank.repo.replace('https://github.com/', 'github.com/'), link: i.bank.repo },
+      { label: 'Bank-Branch', value: i.bank.branch },
+      { label: 'Aufgaben', value: `${i.bank.questionCount} insgesamt · ${i.bank.playableCount} verfügbar` },
     ];
   }
   if (versionDetail.value === 'server') {
@@ -81,10 +77,14 @@ const versionDetailRows = computed<DetailRow[]>(() => {
     return [
       { label: 'Dienst', value: i.service },
       { label: 'Version', value: i.version },
-      { label: 'Datenbank', value: serverDb.value === 'connected' ? 'verbunden' : serverDb.value === 'down' ? 'getrennt' : 'unbekannt' },
-      { label: 'Auth', value: i.auth },
-      { label: 'Quell-Repo', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: 'Server-Commit', value: i.commit ?? 'unbekannt' },
+      { label: 'Server-Repository', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
       { label: 'Build', value: formatBuildTime(i.buildTime) },
+      { label: 'Datenbank-Status', value: databaseStatusLabel(i.database?.status) },
+      { label: 'Datenbank-System', value: 'PostgreSQL' },
+      { label: 'Schema-Version', value: i.database?.schemaVersion == null ? 'unbekannt' : `Schema ${i.database.schemaVersion}` },
+      { label: 'Letzte Migration', value: i.database?.latestMigration ?? 'unbekannt' },
+      { label: 'Auth', value: i.auth },
     ];
   }
   return [];
@@ -304,16 +304,19 @@ async function openChangelog(): Promise<void> {
           <div class="settings__row-title">{{ ui.t('settingsLanguage') }}</div>
           <div class="settings__row-sub">{{ ui.t('settingsLanguageHint') }}</div>
         </div>
-        <select
-          class="settings__select"
-          aria-label="Sprache"
-          :value="ui.locale"
-          @change="onLocaleChange"
-        >
-          <option v-for="locale in LOCALES" :key="locale" :value="locale" :disabled="!LOCALE_ENABLED[locale]">
-            {{ LOCALE_LABELS[locale] }}
-          </option>
-        </select>
+        <span class="settings__select-wrap">
+          <select
+            class="settings__select"
+            aria-label="Sprache"
+            :value="ui.locale"
+            @change="onLocaleChange"
+          >
+            <option v-for="locale in LOCALES" :key="locale" :value="locale" :disabled="!LOCALE_ENABLED[locale]">
+              {{ LOCALE_LABELS[locale] }}
+            </option>
+          </select>
+          <ChevronDown class="settings__select-chevron" />
+        </span>
       </div>
     </section>
 
@@ -355,7 +358,7 @@ async function openChangelog(): Promise<void> {
           </div>
           <div class="settings__vver">
             <b>{{ app.coreInfo?.version ?? '—' }}</b>
-            <span v-if="app.coreInfo" class="settings__vmeta">{{ app.coreInfo.bank.commit.slice(0, 7) }}</span>
+            <span v-if="app.coreInfo" class="settings__vmeta">{{ shortCommit(app.coreInfo.commit) }}</span>
           </div>
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
@@ -363,13 +366,13 @@ async function openChangelog(): Promise<void> {
           <div class="settings__vmain">
             <div class="settings__vname">Server</div>
             <div class="settings__vsub">
-              <template v-if="serverDb">Datenbank: {{ serverDb === 'connected' ? 'verbunden' : 'getrennt' }}</template>
+              <template v-if="app.serverInfo">{{ databaseSchemaLabel(app.serverInfo.database) }}</template>
               <template v-else>nicht erreichbar</template>
             </div>
           </div>
           <div class="settings__vver">
             <b>{{ app.serverInfo?.version ?? '—' }}</b>
-            <span v-if="app.serverInfo?.buildTime" class="settings__vmeta">{{ formatBuildTime(app.serverInfo.buildTime) }}</span>
+            <span v-if="app.serverInfo" class="settings__vmeta">{{ shortCommit(app.serverInfo.commit) }}</span>
           </div>
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
@@ -471,7 +474,7 @@ async function openChangelog(): Promise<void> {
       <transition name="modal-fade">
         <div
           v-if="versionDetail"
-          class="vdetail"
+          class="vdetail q-modal-backdrop"
           role="dialog"
           aria-modal="true"
           :aria-label="versionDetailTitle"
@@ -676,13 +679,29 @@ async function openChangelog(): Promise<void> {
     min-height: 44px;
   }
 }
+.settings__select-wrap {
+  position: relative;
+  display: inline-flex;
+}
 .settings__select {
-  padding: 8px 13px;
+  padding: 8px var(--q-control-chevron-padding-end) 8px 13px;
   border: 1px solid var(--q-border-3);
   border-radius: 8px;
   background: var(--q-card);
   font-size: 12.5px;
   font-weight: 600;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+.settings__select-chevron {
+  position: absolute;
+  right: var(--q-control-chevron-inset);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--q-mut);
+  font-size: 16px;
+  pointer-events: none;
 }
 .settings__section {
   display: flex;

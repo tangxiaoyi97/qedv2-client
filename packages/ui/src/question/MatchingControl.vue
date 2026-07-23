@@ -23,6 +23,7 @@
 import { computed, ref } from 'vue';
 import type { BreakdownItem, GradeResult, MatchingAnswer, RichText } from '@qed2/core-logic';
 import { richTextToPlain } from '@qed2/core-logic';
+import ChevronDown from '../shared/ChevronDown.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import { onRadioGroupKeydown } from '../shared/radio-group.js';
@@ -223,7 +224,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
                 {{ letter(j) }} · {{ richTextToPlain(rightItem) }}
               </option>
             </select>
-            <span class="q-match__select-arrow" aria-hidden="true">⌄</span>
+            <ChevronDown class="q-match__select-arrow" />
           </span>
         </div>
 
@@ -404,7 +405,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__select {
   width: 100%;
   max-width: 100%;
-  padding: 4px 18px 4px 2px;
+  padding: 4px var(--q-control-chevron-padding-end) 4px 2px;
   border: none;
   border-bottom: 1.5px solid var(--q-border-3);
   border-radius: 0;
@@ -443,10 +444,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 }
 .q-match__select-arrow {
   position: absolute;
-  right: 2px;
+  right: var(--q-control-chevron-inset);
   top: 50%;
-  transform: translateY(-45%);
-  font-size: 13px;
+  transform: translateY(-50%);
+  font-size: 16px;
   line-height: 1;
   color: var(--q-faint);
   pointer-events: none;

@@ -26,7 +26,7 @@ export interface ClientConfig {
 export const DEFAULT_CONFIG: ClientConfig = {
   coreBaseUrl: 'https://qedcore.barcarolle.studio',
   serverBaseUrl: 'https://qedsync.barcarolle.studio',
-  coreRepoUrl: 'https://github.com/tangxiaoyi97/qed2-core',
+  coreRepoUrl: 'https://github.com/tangxiaoyi97/qedv2-core',
   bankRepoUrl: 'https://github.com/tangxiaoyi97/srdpmppr',
 };
 

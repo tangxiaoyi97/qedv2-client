@@ -1,5 +1,5 @@
-# QED2 1.8 - leaderboard!
+# QED2 1.9 - polish
 
-opt in. pick a nickname. compare today, this week, and all-time. your login stays private.
+Bug fixing and polishing  
 
 tangxy, 2026.07.24

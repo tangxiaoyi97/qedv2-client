@@ -49,7 +49,7 @@ Erweitert · Serveradressen) and persisted in IndexedDB:
 |---|---|---|
 | Inhalts-Server (core) | `https://qedcore.barcarolle.studio` | all shells (HTTP) |
 | Nutzer-Server (sync) | `https://qedsync.barcarolle.studio` | all shells (HTTP) |
-| Core-Quellcode (Repository) | `https://github.com/tangxiaoyi97/qed2-core` | desktop clone/update (git) |
+| Core-Quellcode (Repository) | `https://github.com/tangxiaoyi97/qedv2-core` | desktop clone/update (git) |
 | Aufgaben-Datenbank (Repository) | `https://github.com/tangxiaoyi97/srdpmppr` | desktop clone/update (git) |
 
 Package-level defaults live in `packages/core-logic/src/config/index.ts`

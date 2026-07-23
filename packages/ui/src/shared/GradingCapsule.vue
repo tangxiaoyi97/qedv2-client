@@ -4,10 +4,11 @@
  * current mastery grading as GradingDot + German label. Tone by state:
  * good → ok tint, careless/meh/baffled → partial tint,
  * excluded/unseen → neutral tint. `interactive` renders a <button>
- * (hover ring + ▾) — used as the GradingMenu trigger.
+ * (hover ring + the shared chevron) — used as the GradingMenu trigger.
  */
 import { computed } from 'vue';
 import type { GradingOrUnseen } from '@qed2/core-logic';
+import ChevronDown from './ChevronDown.vue';
 import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
 
 const props = defineProps<{
@@ -40,7 +41,7 @@ const label = computed(() => GRADING_LABELS[props.grading]);
   >
     <GradingDot :grading="grading" :size="10" />
     <span class="q-grading-capsule__label">{{ label }}</span>
-    <span v-if="interactive" class="q-grading-capsule__caret" aria-hidden="true">▾</span>
+    <ChevronDown v-if="interactive" class="q-grading-capsule__caret" />
   </component>
 </template>
 
@@ -100,8 +101,7 @@ const label = computed(() => GRADING_LABELS[props.grading]);
   outline-offset: 2px;
 }
 .q-grading-capsule__caret {
-  font-size: 8.5px;
+  font-size: 13px;
   opacity: 0.75;
-  transform: translateY(0.5px);
 }
 </style>

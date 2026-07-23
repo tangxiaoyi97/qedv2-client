@@ -84,7 +84,7 @@ function clearActiveState(state: GradingOrUnseen): void {
     }"
   >
     <div class="q-dist__chart-wrap">
-      <svg class="q-dist__chart" viewBox="0 0 100 100" role="img" aria-label="Beherrschung nach Status">
+      <svg class="q-dist__chart" viewBox="0 0 100 100" role="img" aria-label="Bewertung nach Status">
         <circle class="q-dist__track" cx="50" cy="50" :r="RADIUS" />
         <circle
           v-for="seg in segments"

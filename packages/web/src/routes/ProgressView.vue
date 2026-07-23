@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Fortschritt / Beherrschung (prototype 3c, mobile 5d; supplement §5):
+ * Fortschritt / Bewertung (prototype 3c, mobile 5d; supplement §5):
  * stats band, grading-state distribution, activity heatmap, per-category
  * mastery table, then the full competency groups. All visualizations are
  * shared @qed2/ui components (dashboard reuses them, §8).
@@ -293,7 +293,7 @@ const detailKind = ref<DetailKind>(null);
 const detailTitle = computed(() => {
   switch (detailKind.value) {
     case 'status':
-      return 'Details · Beherrschung nach Status';
+      return 'Details · Bewertung nach Status';
     case 'activity':
       return `Details · Aktivität ${formatDayKey(selectedActivityDate.value)}`;
     case 'radar':
@@ -337,7 +337,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
       </div>
       <div class="prog__stat">
         <div class="prog__stat-num">{{ avgMastery }} %</div>
-        <div class="prog__stat-label">Ø Beherrschung</div>
+        <div class="prog__stat-label">Ø Bewertung</div>
       </div>
     </div>
 
@@ -346,7 +346,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
     <div class="prog__duo">
       <section class="prog__section">
         <div class="prog__section-head">
-          <h2 class="prog__section-title">Beherrschung nach Status</h2>
+          <h2 class="prog__section-title">Bewertung nach Status</h2>
           <button type="button" class="prog__detail-btn" @click="openDetail('status')">Details</button>
         </div>
         <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />
@@ -421,7 +421,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
             <tr>
               <th scope="col">Bereich</th>
               <th scope="col" class="prog__table-num">Kompetenzen</th>
-              <th scope="col" class="prog__table-num">Ø Beherrschung</th>
+              <th scope="col" class="prog__table-num">Ø Bewertung</th>
               <th scope="col" class="prog__table-bar">Verlauf</th>
             </tr>
           </thead>
@@ -457,7 +457,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
     </div>
 
     <Teleport to="body">
-      <div v-if="detailKind" class="prog-modal" role="dialog" aria-modal="true" :aria-label="detailTitle" @click.self="closeDetail">
+      <div v-if="detailKind" class="prog-modal q-modal-backdrop" role="dialog" aria-modal="true" :aria-label="detailTitle" @click.self="closeDetail">
         <div
           ref="detailCard"
           class="prog-modal__card"
@@ -539,7 +539,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
               </section>
               <section class="prog-modal__chart-card prog-modal__radar-card">
                 <div class="prog-modal__chart-title">
-                  <b>Beherrschung</b>
+                  <b>Bewertung</b>
                   <span>
                     <template v-if="partMetaLoaded">Statusverteilung inkl. Neu</template>
                     <template v-else>Statusverteilung</template>

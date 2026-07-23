@@ -84,7 +84,7 @@ describe('GradingCapsule', () => {
   it('renders as a button with caret and emits click when interactive', async () => {
     const w = mount(GradingCapsule, { props: { grading: 'baffled', interactive: true } });
     expect(w.element.tagName).toBe('BUTTON');
-    expect(w.text()).toContain('▾');
+    expect(w.find('.q-grading-capsule__caret').exists()).toBe(true);
     await w.trigger('click');
     expect(w.emitted('click')).toHaveLength(1);
   });

@@ -27,7 +27,7 @@ const accuracy = computed(() => {
 <template>
   <Teleport to="body">
     <transition name="leader-modal">
-      <div v-if="isOpen" class="leader-detail__backdrop" @click.self="$emit('close')">
+      <div v-if="isOpen" class="leader-detail__backdrop q-modal-backdrop" @click.self="$emit('close')">
         <section
           ref="dialog"
           class="leader-detail"
@@ -118,8 +118,6 @@ const accuracy = computed(() => {
   place-items: center;
   padding: 18px;
   background: rgba(12, 13, 10, 0.62);
-  -webkit-backdrop-filter: var(--q-backdrop-filter);
-  backdrop-filter: var(--q-backdrop-filter);
 }
 
 .leader-detail {

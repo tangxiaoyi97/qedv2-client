@@ -19,7 +19,7 @@ useModalA11y(card, computed(() => ui.changelogOpen), () => ui.closeChangelog());
     <transition name="modal-fade">
       <div
         v-if="ui.changelogOpen"
-        class="clog"
+        class="clog q-modal-backdrop"
         role="dialog"
         aria-modal="true"
         aria-label="Was ist neu"

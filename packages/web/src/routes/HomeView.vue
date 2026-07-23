@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Startseite „Heute" (prototype 3a) — the one-glance launchpad. Cards are
- * navigable teasers of their detail pages (Beherrschung/Status → Fortschritt,
+ * navigable teasers of their detail pages (Bewertung/Status → Fortschritt,
  * Zuletzt/Aktivität → Verlauf) and reuse the shared review components
  * (supplement §6/§8).
  */
@@ -154,7 +154,7 @@ function openCategoryFilter(code: string): void {
         @keydown.enter="go('/progress')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Beherrschung</div>
+          <div class="home__card-label">Bewertung</div>
           <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
         </div>
         <div v-if="categoryMastery.length > 0" class="home__mastery">
@@ -215,7 +215,7 @@ function openCategoryFilter(code: string): void {
         @keydown.enter="go('/progress')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Beherrschung nach Status</div>
+          <div class="home__card-label">Bewertung nach Status</div>
           <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
         </div>
         <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />

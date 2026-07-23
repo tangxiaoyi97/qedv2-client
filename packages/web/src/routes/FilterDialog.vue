@@ -61,7 +61,7 @@ export const GRADING_FILTER_LABELS: Record<GradingOrUnseen, string> = {
  * Filter modal for the Aufgaben list — every dimension is multi-select
  * (toggle chips). The parent owns the data and computes `resultCount`
  * reactively; each toggle emits a fresh FilterState via update:modelValue.
- * Beherrschung includes `unseen` — "nur ungesehene" is a valid filter.
+ * Bewertung includes `unseen` — "nur ungesehene" is a valid filter.
  */
 import { computed, ref } from 'vue';
 import { GradingDot, QButton } from '@qed2/ui';
@@ -163,7 +163,7 @@ const countText = computed(() =>
 
 <template>
   <Teleport to="body">
-    <div class="fdlg" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
+    <div class="fdlg q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
       <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
           <h2 class="fdlg__title">Filter</h2>
@@ -246,7 +246,7 @@ const countText = computed(() =>
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Beherrschung</div>
+            <div class="fdlg__label">Bewertung</div>
             <div class="fdlg__chips">
               <button
                 v-for="g in GRADINGS"

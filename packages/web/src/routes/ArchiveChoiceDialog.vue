@@ -31,7 +31,7 @@ function summaryLines(side: 'server' | 'local'): { label: string; value: string 
     { label: 'Kompetenzen', value: String(s.competencies) },
   ];
   if (s.lastUpdated) lines.push({ label: 'Zuletzt geändert', value: stampFmt.format(new Date(s.lastUpdated)) });
-  if (s.avgMastery !== undefined) lines.push({ label: 'Ø Beherrschung', value: `${Math.round(s.avgMastery * 100)} %` });
+  if (s.avgMastery !== undefined) lines.push({ label: 'Ø Bewertung', value: `${Math.round(s.avgMastery * 100)} %` });
   return lines;
 }
 
@@ -66,7 +66,7 @@ function onEscape(): void {
     <transition name="modal-fade">
       <div
         v-if="choice"
-      class="achoice"
+      class="achoice q-modal-backdrop"
       role="dialog"
       aria-modal="true"
       aria-label="Spielstand wählen"

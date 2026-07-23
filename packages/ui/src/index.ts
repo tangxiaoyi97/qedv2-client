@@ -3,6 +3,7 @@ export { default as MathText } from './shared/MathText.vue';
 export { default as RichTextView } from './shared/RichTextView.vue';
 export { default as FigureList } from './shared/FigureList.vue';
 export { default as StateIcon } from './shared/StateIcon.vue';
+export { default as ChevronDown } from './shared/ChevronDown.vue';
 export { default as QButton } from './shared/QButton.vue';
 export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';

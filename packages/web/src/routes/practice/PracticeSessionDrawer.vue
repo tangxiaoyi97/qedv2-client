@@ -42,7 +42,7 @@ useModalA11y(panel, isOpen, () => emit('close'));
     <div v-if="open" class="practice-session-drawer" role="dialog" aria-modal="true" aria-label="Programmübersicht">
       <button
         type="button"
-        class="practice-session-drawer__backdrop"
+        class="practice-session-drawer__backdrop q-modal-backdrop"
         aria-label="Programmliste schließen"
         tabindex="-1"
         @click="emit('close')"

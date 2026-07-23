@@ -83,6 +83,9 @@
 
   /* layout */
   --q-sidebar-width: 240px;
+  --q-control-chevron-size: 16px;
+  --q-control-chevron-inset: 12px;
+  --q-control-chevron-padding-end: 36px;
 }
 
 [data-theme='dark'],
@@ -183,7 +186,7 @@ html, body {
   line-height: 1.55;
 }
 
-:where(.authm, .achoice, .conflict, .fdlg, .prog-modal, .practice-session-drawer__backdrop) {
+.q-modal-backdrop {
   -webkit-backdrop-filter: var(--q-backdrop-filter);
   backdrop-filter: var(--q-backdrop-filter);
 }
