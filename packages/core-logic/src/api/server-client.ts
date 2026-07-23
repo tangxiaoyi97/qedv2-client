@@ -17,6 +17,10 @@ import type {
   HealthResponse,
   HistoryQuery,
   HistoryResponse,
+  LeaderboardDetail,
+  LeaderboardPeriod,
+  LeaderboardProfile,
+  LeaderboardResponse,
   RefreshResponse,
   ResolveRequest,
   ResolveResponse,
@@ -114,6 +118,59 @@ export class ServerClient {
           questionId: query.questionId,
         },
       }),
+    );
+  }
+
+  /** GET /leaderboard — authenticated, opt-in aggregate rankings. */
+  getLeaderboard(
+    query: { period?: LeaderboardPeriod; page?: number; pageSize?: number } = {},
+  ): Promise<LeaderboardResponse> {
+    return requestJson<LeaderboardResponse>(
+      this.baseUrl,
+      '/leaderboard',
+      this.authed({
+        query: {
+          period: query.period,
+          page: query.page,
+          pageSize: query.pageSize,
+        },
+      }),
+    );
+  }
+
+  /** GET /leaderboard/users/:profileId — public aggregates, still auth-only. */
+  getLeaderboardDetail(profileId: string): Promise<LeaderboardDetail> {
+    return requestJson<LeaderboardDetail>(
+      this.baseUrl,
+      `/leaderboard/users/${encodeURIComponent(profileId)}`,
+      this.authed({}),
+    );
+  }
+
+  /** GET /me/leaderboard-profile */
+  getLeaderboardProfile(): Promise<LeaderboardProfile> {
+    return requestJson<LeaderboardProfile>(
+      this.baseUrl,
+      '/me/leaderboard-profile',
+      this.authed({}),
+    );
+  }
+
+  /** PUT joins the leaderboard or updates the current public nickname. */
+  saveLeaderboardProfile(nickname: string): Promise<Extract<LeaderboardProfile, { participating: true }>> {
+    return requestJson<Extract<LeaderboardProfile, { participating: true }>>(
+      this.baseUrl,
+      '/me/leaderboard-profile',
+      this.authed({ method: 'PUT', body: { nickname } }),
+    );
+  }
+
+  /** DELETE immediately removes the current user from public rankings. */
+  leaveLeaderboard(): Promise<{ participating: false }> {
+    return requestJson<{ participating: false }>(
+      this.baseUrl,
+      '/me/leaderboard-profile',
+      this.authed({ method: 'DELETE' }),
     );
   }
 

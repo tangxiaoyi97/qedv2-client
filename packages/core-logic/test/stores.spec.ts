@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StoragePort } from '../src/ports/index.js';
 import { STORAGE } from '../src/ports/index.js';
-import { ArchiveStore, AuthStore, ConfigStore, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
+import { ArchiveStore, AttemptOutbox, AuthStore, ConfigStore, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
 import { DEFAULT_CONFIG } from '../src/config/index.js';
 import { archiveChecksum } from '../src/sync/index.js';
 import { EXCLUDED_DUE_SENTINEL } from '../src/fsrs/index.js';
@@ -37,6 +37,33 @@ class MemoryStorage implements StoragePort {
     this.coll(collection).clear();
   }
 }
+
+describe('AttemptOutbox', () => {
+  it('keeps retries durable, idempotent and isolated by account', async () => {
+    const storage = new MemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    const attempt = {
+      clientAttemptId: 'attempt-1',
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-07-23T12:00:00.000Z',
+    };
+
+    await outbox.enqueue('u1', attempt);
+    await outbox.enqueue('u1', attempt);
+    await outbox.enqueue('u2', { ...attempt, clientAttemptId: 'attempt-2' });
+
+    expect(await outbox.count('u1')).toBe(1);
+    expect(await outbox.count('u2')).toBe(1);
+    expect(await outbox.list('u1')).toEqual([attempt]);
+
+    await outbox.remove('u1', ['attempt-1']);
+    expect(await outbox.count('u1')).toBe(0);
+    expect(await outbox.count('u2')).toBe(1);
+  });
+});
 
 describe('ArchiveStore', () => {
   const now = new Date('2026-07-03T10:00:00.000Z');

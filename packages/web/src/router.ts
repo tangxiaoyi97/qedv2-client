@@ -23,6 +23,7 @@ export const router = createRouter({
     { path: '/questions', name: 'browse', component: () => import('./routes/BrowseView.vue') },
     { path: '/progress', name: 'progress', component: () => import('./routes/ProgressView.vue') },
     { path: '/history', name: 'history', component: () => import('./routes/HistoryView.vue') },
+    { path: '/leaderboard', name: 'leaderboard', component: () => import('./routes/LeaderboardView.vue') },
     { path: '/settings', name: 'settings', component: () => import('./routes/SettingsView.vue') },
     // Legacy German paths (v1) — permanent client-side redirects.
     { path: '/ueben', redirect: '/practice' },

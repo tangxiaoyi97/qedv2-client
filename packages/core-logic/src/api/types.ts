@@ -228,6 +228,8 @@ export interface ResolveOk {
 export type ResolveResponse = ResolveOk | SyncConflict;
 
 export interface AttemptRecord {
+  /** Stable across retries; old clients may omit it during rollout. */
+  clientAttemptId?: string;
   questionId: string;
   partId: string;
   correct: boolean;
@@ -269,6 +271,61 @@ export interface HistoryResponse {
   pageSize: number;
   total: number;
 }
+
+/* --- Authenticated opt-in leaderboard --- */
+
+export type LeaderboardPeriod = 'today' | 'week';
+
+export interface LeaderboardItem {
+  profileId: string;
+  nickname: string;
+  isMe: boolean;
+  rank: number;
+  totalPracticed: number;
+  todayPracticed: number;
+  weekPracticed: number;
+  /** One point per recorded answer event, including repeated practice. */
+  totalScore: number;
+}
+
+export type LeaderboardMe =
+  | { participating: false }
+  | { participating: true; profileId: string; nickname: string };
+
+export interface LeaderboardResponse {
+  period: LeaderboardPeriod;
+  timeZone: string;
+  generatedAt: string;
+  items: LeaderboardItem[];
+  page: number;
+  pageSize: number;
+  totalParticipants: number;
+  me: LeaderboardMe;
+}
+
+export interface LeaderboardDetail {
+  profileId: string;
+  nickname: string;
+  joinedAt: string;
+  totalPracticed: number;
+  todayPracticed: number;
+  weekPracticed: number;
+  totalScore: number;
+  todayScore: number;
+  weekScore: number;
+  correctAnswers: number;
+  accuracy: number | null;
+}
+
+export type LeaderboardProfile =
+  | { participating: false; suggestedNickname: string }
+  | {
+      participating: true;
+      profileId: string;
+      nickname: string;
+      createdAt: string;
+      updatedAt: string;
+    };
 
 export interface ServerInfo {
   service: string;

@@ -44,7 +44,10 @@ async function boot(): Promise<void> {
   bootProgress(78, 'Konto wird geprüft …');
   const auth = useAuthStore();
   await auth.init();
-  if (auth.isLoggedIn) void progress.syncNow({ quiet: true, compareChecksum: true });
+  if (auth.isLoggedIn) {
+    void progress.flushAttemptOutbox();
+    void progress.syncNow({ quiet: true, compareChecksum: true });
+  }
 
   // After a deploy, long-lived sessions can hold a router that still points
   // at the OLD hashed chunks (now replaced) — a lazy route import then 404s

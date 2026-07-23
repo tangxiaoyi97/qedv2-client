@@ -6,6 +6,7 @@
  * reserved seam for the desktop shell's UpdatePort.
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { CollapsePanel, QButton } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
@@ -14,13 +15,16 @@ import { ACCENTS, currentAccent, setAccent, type AccentId } from '../platform/th
 import { useModalA11y } from '../composables/useModalA11y.js';
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useLeaderboardStore } from '../stores/leaderboard.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useUiStore } from '../stores/ui.js';
 
 const app = useAppStore();
 const auth = useAuthStore();
+const leaderboard = useLeaderboardStore();
 const progress = useProgressStore();
 const ui = useUiStore();
+const router = useRouter();
 
 /* ---- Versionen: rows are clickable, each opens a detail modal ---- */
 const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
@@ -32,7 +36,15 @@ onMounted(() => {
     .health()
     .then((h) => (serverDb.value = h.db === 'connected' ? 'connected' : 'down'))
     .catch(() => (serverDb.value = null));
+  if (auth.isLoggedIn) void leaderboard.refreshProfile();
 });
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (loggedIn) void leaderboard.refreshProfile();
+    else leaderboard.clear();
+  },
+);
 
 interface DetailRow {
   label: string;
@@ -269,28 +281,23 @@ async function openChangelog(): Promise<void> {
             type="button"
             class="settings__theme"
             :class="{ 'settings__theme--on': accent === a.id }"
+            :data-accent="a.id"
             role="radio"
             :aria-checked="accent === a.id"
             :title="a.label"
             @click="pickAccent(a.id)"
           >
-            <span class="settings__theme-preview" :data-accent="a.id" aria-hidden="true">
+            <span class="settings__theme-preview" aria-hidden="true">
               <span class="settings__theme-card">
                 <span class="settings__theme-line" />
                 <span class="settings__theme-line settings__theme-line--mut" />
-                <span class="settings__theme-states">
-                  <span class="settings__theme-state settings__theme-state--ok" />
-                  <span class="settings__theme-state settings__theme-state--part" />
-                  <span class="settings__theme-state settings__theme-state--err" />
-                </span>
+                <span class="settings__theme-action" />
               </span>
             </span>
             <span class="settings__theme-name">{{ a.label }}</span>
           </button>
         </div>
       </div>
-
-      <div class="settings__account-sep" />
 
       <div class="settings__row">
         <div>
@@ -379,6 +386,22 @@ async function openChangelog(): Promise<void> {
 
     <section class="settings__section">
       <template v-if="auth.isLoggedIn">
+        <div class="settings__row">
+          <div>
+            <div class="settings__row-title">Leaderboard</div>
+            <div class="settings__row-sub">
+              <template v-if="leaderboard.loadingProfile">Status wird geladen …</template>
+              <template v-else-if="leaderboard.profile?.participating">
+                Öffentlich als {{ leaderboard.profile.nickname }}
+              </template>
+              <template v-else>Nicht öffentlich</template>
+            </div>
+          </div>
+          <QButton variant="secondary" @click="router.push('/leaderboard')">
+            {{ leaderboard.profile?.participating ? 'Verwalten' : 'Beitreten' }}
+          </QButton>
+        </div>
+        <div class="settings__account-sep" />
         <div class="settings__row">
           <div>
             <div class="settings__row-title">Archiv jetzt hochladen</div>
@@ -619,24 +642,23 @@ async function openChangelog(): Promise<void> {
   width: 45%;
   background: var(--q-accent-bg);
 }
-.settings__theme-states {
-  display: flex;
-  gap: 4px;
+.settings__theme-action {
+  position: relative;
+  align-self: flex-end;
+  width: 30%;
+  min-width: 22px;
+  height: 8px;
+  border-radius: 4px;
   margin-top: auto;
+  background: var(--q-accent-strong);
 }
-.settings__theme-state {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-}
-.settings__theme-state--ok {
-  background: var(--q-ok);
-}
-.settings__theme-state--part {
-  background: var(--q-part);
-}
-.settings__theme-state--err {
-  background: var(--q-err);
+.settings__theme-action::after {
+  content: '';
+  position: absolute;
+  inset: 3px 6px;
+  border-radius: 1px;
+  background: var(--q-on-accent);
+  opacity: 0.85;
 }
 .settings__theme-name {
   font-size: 11.5px;

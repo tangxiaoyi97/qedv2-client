@@ -16,7 +16,9 @@ Authoritative upstream documents, in priority order:
 - **Checksum must be byte-identical to the server's** (`qedv2-server/src/sync/checksum.ts` is the authority — reproduced below).
 - **Login/logout NEVER clears the local archive.**
 - **Web never spawns a local core** (that's the desktop shell's future job — the `CoreRuntimePort` interface already models it).
-- Progress writes go through **`POST /me/sync` only**; `/me/attempts` is optional audit-only.
+- Progress-state writes go through **`POST /me/sync` only**; `/me/attempts`
+  remains an archive-independent audit stream, now durably queued and used
+  for private history plus opt-in leaderboard aggregates.
 
 ## Repo layout
 
@@ -61,6 +63,9 @@ Test vectors in `packages/core-logic/test/fixtures/checksum-vectors.json` are ge
   - `merged` → replace local content with `mergedArchive`, update baseVersion; **user never notified**.
   - `conflict` → `{serverVersion, serverChecksum, conflicts: ConflictEntry[], autoMergeable}`; `ConflictEntry` is a **mixed array**: part conflicts `{partId, server, local}`, competency conflicts `{competencyCode, server, local}`. UI dialog lets the user pick per entry (or all-cloud / all-local); assemble `resolvedArchive` = autoMergeable + picks; `POST /me/sync/resolve {baseServerVersion: serverVersion, resolvedArchive}`. A resolve can conflict again (optimistic concurrency) → new round.
 - Sync triggers: after login, app start (if logged in), every N graded parts (N=3) and on session end.
+- Attempt audit uploads use a persistent per-account outbox and stable
+  `clientAttemptId`; retry acknowledgement removes the local queue entry while
+  the server's unique key makes ambiguous-response retries harmless.
 - Before requesting recommendations while logged in: compare local checksum to server checksum; equal → skip sync.
 - HTTP conflict semantics: **200 + `result` field** (never 409).
 

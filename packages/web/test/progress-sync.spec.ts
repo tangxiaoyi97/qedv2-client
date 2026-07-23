@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { archiveChecksum, type LocalArchive } from '@qed2/core-logic';
-import { archiveStore } from '../src/services.js';
+import { archiveStore, attemptOutbox } from '../src/services.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
 
@@ -85,5 +85,31 @@ describe('progress sync orchestration', () => {
     expect(progress.archive.baseVersion).toBe(1);
     expect(progress.archive.content.perPart.map((part) => part.partId)).toEqual(['q1-a']);
     expect(progress.archive.content.perPart[0]?.grading).toBe('good');
+  });
+
+  it('keeps audit attempts durably queued offline and removes them after an acknowledged retry', async () => {
+    const progress = await setup();
+    const attempt = {
+      clientAttemptId: 'durable-attempt-1',
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-07-23T12:00:00.000Z',
+    };
+
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+    await progress.queueAttempt(attempt);
+    expect(await attemptOutbox.count('u1')).toBe(1);
+
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body))).toEqual({ attempts: [attempt] });
+      return json({ recorded: 1 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await progress.flushAttemptOutbox();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await attemptOutbox.count('u1')).toBe(0);
   });
 });

@@ -21,6 +21,7 @@ import {
   NetworkError,
   type ArchiveContent,
   type ArchiveSideSummary,
+  type QueuedAttempt,
   type FsrsState,
   type GradeResult,
   type Grading,
@@ -31,7 +32,7 @@ import {
   type SyncConflict,
   type RecommendUserState,
 } from '@qed2/core-logic';
-import { archiveStore, historyLog } from '../services.js';
+import { archiveStore, attemptOutbox, historyLog } from '../services.js';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 
@@ -83,6 +84,7 @@ export const useProgressStore = defineStore('progress', () => {
    * transient network/storage error cannot permanently block later progress.
    */
   let archiveMutationTail: Promise<void> = Promise.resolve();
+  let attemptFlush: Promise<void> | undefined;
 
   function enqueueArchiveMutation<T>(mutation: () => Promise<T>): Promise<T> {
     const run = archiveMutationTail.then(mutation, mutation);
@@ -128,6 +130,49 @@ export const useProgressStore = defineStore('progress', () => {
 
   async function refresh(): Promise<void> {
     archive.value = await archiveStore.load();
+  }
+
+  /**
+   * Flush only the signed-in account's durable audit entries. Errors are
+   * deliberately retained in the outbox for the next boot/login/session-end
+   * retry; stable ids make an ambiguous response safe to resend.
+   */
+  async function flushAttemptOutbox(): Promise<void> {
+    if (attemptFlush) return attemptFlush;
+    const auth = useAuthStore();
+    const userId = auth.session?.user.id;
+    if (!userId) return;
+    const app = useAppStore();
+
+    const run = (async () => {
+      for (;;) {
+        const pending = await attemptOutbox.list(userId, 500);
+        if (pending.length === 0) return;
+        try {
+          await app.serverClient.recordAttempts(pending);
+          await attemptOutbox.remove(
+            userId,
+            pending.map((attempt) => attempt.clientAttemptId),
+          );
+        } catch {
+          return;
+        }
+      }
+    })();
+    attemptFlush = run;
+    try {
+      await run;
+    } finally {
+      if (attemptFlush === run) attemptFlush = undefined;
+    }
+  }
+
+  async function queueAttempt(attempt: QueuedAttempt): Promise<void> {
+    const auth = useAuthStore();
+    const userId = auth.session?.user.id;
+    if (!userId) return;
+    await attemptOutbox.enqueue(userId, attempt);
+    await flushAttemptOutbox();
   }
 
   /** Per-part progress lookup for browse/list views. */
@@ -440,6 +485,8 @@ export const useProgressStore = defineStore('progress', () => {
     partState,
     init,
     refresh,
+    queueAttempt,
+    flushAttemptOutbox,
     applyGrade,
     setGrading,
     setStarred,

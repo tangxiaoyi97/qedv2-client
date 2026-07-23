@@ -9,7 +9,7 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { provideAssetResolver } from '@qed2/ui';
-import { Calendar, Play, ListTodo, History, LineChart, Settings, UserCircle, Grid } from 'lucide-vue-next';
+import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid } from 'lucide-vue-next';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -38,6 +38,7 @@ const practiceItems = [
 const otherItems = [
   { to: '/history', label: 'Verlauf', icon: History },
   { to: '/progress', label: 'Übersicht', icon: LineChart },
+  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
   { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
@@ -53,6 +54,11 @@ const tabItems = [
 
 function isActive(to: string): boolean {
   return to === '/' ? route.path === '/' : route.path.startsWith(to);
+}
+
+function isTabActive(to: string): boolean {
+  if (to === '/progress' && route.path === '/leaderboard') return true;
+  return isActive(to);
 }
 
 /** Move focus into the content on every route change so keyboard/screen-
@@ -139,7 +145,7 @@ watch(
           :key="item.to"
           :to="item.to"
           class="app__tab"
-          :class="{ 'app__tab--active': isActive(item.to) }"
+          :class="{ 'app__tab--active': isTabActive(item.to) }"
         >
           <component :is="item.icon" class="app__tab-icon" aria-hidden="true" />
           <span>{{ item.label }}</span>

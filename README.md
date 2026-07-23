@@ -150,6 +150,11 @@ subset — unsafe link schemes are dropped).
   conflict UI in `packages/web/src/routes/ConflictDialog.vue`.
 - Ports: `packages/core-logic/src/ports/index.ts`; web adapters in
   `packages/web/src/platform/`.
+- Leaderboard: authenticated, opt-in aggregate list in
+  `packages/web/src/routes/LeaderboardView.vue`; wire types and requests stay
+  platform-independent in `packages/core-logic/src/api/`. Answer-audit uploads
+  use a durable per-account outbox and stable ids, so offline/retried events
+  neither disappear nor double-count.
 
 ## Mastery grading → FSRS mapping (why it is designed this way)
 

@@ -209,6 +209,33 @@ describe('ServerClient auth wiring', () => {
     expect(JSON.parse(calls[0]?.init.body ?? '')).toEqual({ attempts: [attempt] });
   });
 
+  it('supports the authenticated leaderboard list, detail and profile lifecycle', async () => {
+    const calls = stubFetch((call) => {
+      if (call.url.includes('/leaderboard/users/')) return { profileId: 'p/1', nickname: 'Mira' };
+      if (call.url.endsWith('/me/leaderboard-profile') && call.init.method === 'GET') {
+        return { participating: false, suggestedNickname: 'tester' };
+      }
+      if (call.init.method === 'PUT') return { participating: true, profileId: 'p1', nickname: 'Mira' };
+      if (call.init.method === 'DELETE') return { participating: false };
+      return { period: 'week', items: [], page: 2, pageSize: 25, totalParticipants: 0 };
+    });
+    const client = new ServerClient('http://server.test', () => 'tok');
+
+    await client.getLeaderboard({ period: 'week', page: 2, pageSize: 25 });
+    await client.getLeaderboardDetail('p/1');
+    await client.getLeaderboardProfile();
+    await client.saveLeaderboardProfile('Mira');
+    await client.leaveLeaderboard();
+
+    expect(calls[0]?.url).toBe('http://server.test/leaderboard?period=week&page=2&pageSize=25');
+    expect(calls[1]?.url).toBe('http://server.test/leaderboard/users/p%2F1');
+    expect(calls[2]?.url).toBe('http://server.test/me/leaderboard-profile');
+    expect(calls[3]?.init.method).toBe('PUT');
+    expect(JSON.parse(calls[3]?.init.body ?? '')).toEqual({ nickname: 'Mira' });
+    expect(calls[4]?.init.method).toBe('DELETE');
+    for (const call of calls) expect(call.init.headers.Authorization).toBe('Bearer tok');
+  });
+
   it('info and health hit the unprefixed service endpoints', async () => {
     const calls = stubFetch(() => ({ status: 'ok', uptime: 1 }));
     const client = new ServerClient('http://server.test/');

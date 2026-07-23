@@ -13,6 +13,7 @@
  */
 import {
   ArchiveStore,
+  AttemptOutbox,
   AuthStore,
   ConfigStore,
   HistoryLog,
@@ -36,6 +37,7 @@ export const authStore = new AuthStore(storage);
 export const archiveStore = new ArchiveStore(storage);
 export const questionCache = new QuestionCache(storage);
 export const historyLog = new HistoryLog(storage);
+export const attemptOutbox = new AttemptOutbox(storage);
 
 /** Env-provided dev defaults (fall back to production defaults otherwise). */
 export function envConfigDefaults(): Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> {

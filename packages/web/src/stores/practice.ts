@@ -19,7 +19,7 @@ import type {
   QuestionsFilter,
   RecommendReason,
   Submission,
-  AttemptRecord,
+  QueuedAttempt,
 } from '@qed2/core-logic';
 import { questionCache } from '../services.js';
 import { useAppStore } from './app.js';
@@ -36,14 +36,19 @@ export interface SessionItem {
 }
 
 export interface GradedRecord {
+  clientAttemptId: string;
   partId: string;
   questionId: string;
   result: GradeResult;
   reason: SessionItem['reason'];
   gradedAt: string;
   elapsedMs: number;
-  /** Whether this answer event has been appended to the server audit log. */
-  attemptRecorded?: boolean;
+}
+
+function createClientAttemptId(): string {
+  const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
+  if (randomUUID) return randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
 export const usePracticeStore = defineStore('practice', () => {
@@ -238,13 +243,13 @@ export const usePracticeStore = defineStore('practice', () => {
     const gradedAt = new Date().toISOString();
     const elapsedMs = Math.max(0, Date.now() - partShownAt.value);
     const record: GradedRecord = {
+      clientAttemptId: createClientAttemptId(),
       partId: payload.part.id,
       questionId: cur.question.id,
       result: payload.result,
       reason: cur.item.reason,
       gradedAt,
       elapsedMs,
-      attemptRecorded: false,
     };
     graded.value = [...graded.value, record];
     const { previousFsrs } = await progress.applyGrade({
@@ -255,7 +260,7 @@ export const usePracticeStore = defineStore('practice', () => {
       elapsedMs,
     });
     preAnswerFsrs.set(payload.part.id, previousFsrs);
-    if (auth.isLoggedIn) await recordAttemptAudit([record]);
+    if (auth.isLoggedIn) await progress.queueAttempt(toAttemptRecord(record));
     if (auth.isLoggedIn && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
       void progress.syncNow({ quiet: true });
     }
@@ -316,12 +321,12 @@ export const usePracticeStore = defineStore('practice', () => {
     const progress = useProgressStore();
     if (!auth.isLoggedIn) return;
     await progress.syncNow({ quiet: true });
-    // Optional audit trail (contract §4.2: append-only, never state).
-    await recordAttemptAudit(graded.value.filter((g) => !g.attemptRecorded));
+    await progress.flushAttemptOutbox();
   }
 
-  function toAttemptRecord(g: GradedRecord): AttemptRecord {
+  function toAttemptRecord(g: GradedRecord): QueuedAttempt {
     return {
+      clientAttemptId: g.clientAttemptId,
       questionId: g.questionId,
       partId: g.partId,
       correct: g.result.correct,
@@ -329,25 +334,6 @@ export const usePracticeStore = defineStore('practice', () => {
       elapsedMs: g.elapsedMs,
       gradedAt: g.gradedAt,
     };
-  }
-
-  function attemptKey(g: GradedRecord): string {
-    return `${g.partId}\u0000${g.gradedAt}`;
-  }
-
-  async function recordAttemptAudit(records: GradedRecord[]): Promise<void> {
-    const pending = records.filter((g) => !g.attemptRecorded);
-    if (pending.length === 0) return;
-    const app = useAppStore();
-    try {
-      await app.serverClient.recordAttempts(pending.map(toAttemptRecord));
-      const recorded = new Set(pending.map(attemptKey));
-      graded.value = graded.value.map((g) =>
-        recorded.has(attemptKey(g)) ? { ...g, attemptRecorded: true } : g,
-      );
-    } catch {
-      /* audit is best-effort by design; endOfSession retries pending rows */
-    }
   }
 
   async function finishSession(): Promise<void> {

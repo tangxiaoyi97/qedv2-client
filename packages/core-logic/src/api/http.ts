@@ -16,7 +16,7 @@ interface AbortSignal {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   token?: string;
   query?: Record<string, string | number | undefined>;

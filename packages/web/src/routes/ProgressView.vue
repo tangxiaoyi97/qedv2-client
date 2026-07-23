@@ -321,7 +321,10 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
 <template>
   <div class="prog">
-    <h1 class="prog__title">Übersicht</h1>
+    <div class="prog__title-row">
+      <h1 class="prog__title">Übersicht</h1>
+      <RouterLink to="/leaderboard" class="prog__leaderboard-link">Leaderboard</RouterLink>
+    </div>
 
     <div class="prog__stats">
       <div class="prog__stat">
@@ -627,7 +630,28 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   font-weight: 800;
   font-size: 22px;
   letter-spacing: -0.01em;
-  margin: 0 0 16px;
+  margin: 0;
+}
+.prog__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.prog__leaderboard-link {
+  color: var(--q-accent-strong);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.prog__leaderboard-link:hover {
+  text-decoration: underline;
+}
+.prog__leaderboard-link:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 3px;
+  border-radius: 3px;
 }
 .prog__legend {
   display: flex;

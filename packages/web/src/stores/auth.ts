@@ -64,6 +64,7 @@ export const useAuthStore = defineStore('auth', () => {
     // archive-choice dialog lets the user pick merge / cloud / local.
     const progress = useProgressStore();
     await progress.reconcileOnLogin();
+    await progress.flushAttemptOutbox();
   }
 
   async function login(usernameInput: string, password: string): Promise<void> {
@@ -82,6 +83,7 @@ export const useAuthStore = defineStore('auth', () => {
     const progress = useProgressStore();
     // Best-effort final sync so nothing is stranded locally-only.
     try {
+      await progress.flushAttemptOutbox();
       await progress.syncNow({ quiet: true });
     } catch {
       /* offline logout is fine */
