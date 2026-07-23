@@ -9,24 +9,17 @@
 @import './themes/violette.css';
 
 /*
- * The three alternate accents share one neutral foundation. Their identity
- * comes from interactive accents and coordinated semantic colors, not from
- * washing every page surface and line of text in the accent hue.
+ * The three alternate accents share one neutral contrast model, while each
+ * surface ladder carries a very restrained tint from its own color family.
+ * This keeps long reading sessions calm without making the themes feel like
+ * the same gray canvas with a different button color.
  */
 [data-accent='sky'],
 [data-accent='raspberry'],
 [data-accent='violette'] {
-  /* surfaces */
-  --q-page: #f6f6f7;
-  --q-card: #ffffff;
-  --q-panel: #fafafa;
-  --q-panel-2: #f0f1f2;
-  --q-track: #e5e6e8;
-  --q-dot-off: #dde0e2;
-  --q-cta-card: #27282a;
+  /* shared neutral ink */
   --q-cta-card-text: #b9bbc0;
 
-  /* neutral ink */
   --q-ink: #1c1d1f;
   --q-ink-2: #2a2b2e;
   --q-mut: #55575c;
@@ -38,10 +31,46 @@
   --q-check-border: #c4c6ca;
   --q-btn-border: #ced0d4;
 
-  /* state: neutral / untouched */
   --q-neutral: #6c6e73;
-  --q-neutral-bg: #eff0f2;
-  --q-neutral-border: #d8dade;
+}
+
+[data-accent='sky'] {
+  /* cool blue-gray surfaces */
+  --q-page: #f5f7f8;
+  --q-card: #ffffff;
+  --q-panel: #f8fafb;
+  --q-panel-2: #edf2f4;
+  --q-track: #e1e8eb;
+  --q-dot-off: #dae2e5;
+  --q-cta-card: #25292b;
+  --q-neutral-bg: #edf2f4;
+  --q-neutral-border: #d5dfe3;
+}
+
+[data-accent='raspberry'] {
+  /* warm rose-gray surfaces */
+  --q-page: #f8f6f7;
+  --q-card: #fffefe;
+  --q-panel: #fbf9fa;
+  --q-panel-2: #f3eef0;
+  --q-track: #eae2e5;
+  --q-dot-off: #e3dade;
+  --q-cta-card: #2b2729;
+  --q-neutral-bg: #f3eef0;
+  --q-neutral-border: #ded5d9;
+}
+
+[data-accent='violette'] {
+  /* soft violet-gray surfaces */
+  --q-page: #f7f6f9;
+  --q-card: #ffffff;
+  --q-panel: #faf9fc;
+  --q-panel-2: #f0edf5;
+  --q-track: #e6e1ec;
+  --q-dot-off: #ded9e6;
+  --q-cta-card: #29272e;
+  --q-neutral-bg: #f0edf5;
+  --q-neutral-border: #d9d3e1;
 }
 
 [data-theme='dark'][data-accent='sky'],
@@ -50,17 +79,9 @@
 [data-theme='dark'] [data-accent='sky'],
 [data-theme='dark'] [data-accent='raspberry'],
 [data-theme='dark'] [data-accent='violette'] {
-  /* surfaces */
-  --q-page: #171719;
-  --q-card: #1f1f22;
-  --q-panel: #232326;
-  --q-panel-2: #2a2a2e;
-  --q-track: #35353a;
-  --q-dot-off: #3c3c42;
-  --q-cta-card: #101012;
+  /* shared neutral ink */
   --q-cta-card-text: #a7a8ae;
 
-  /* neutral ink */
   --q-ink: #eeeef0;
   --q-ink-2: #dddde0;
   --q-mut: #b6b7bb;
@@ -72,8 +93,44 @@
   --q-check-border: #52545b;
   --q-btn-border: #494b52;
 
-  /* state: neutral / untouched */
   --q-neutral: #a3a4aa;
-  --q-neutral-bg: #2a2a2e;
-  --q-neutral-border: #414147;
+}
+
+[data-theme='dark'][data-accent='sky'],
+[data-theme='dark'] [data-accent='sky'] {
+  --q-page: #16191a;
+  --q-card: #1e2223;
+  --q-panel: #222627;
+  --q-panel-2: #282e30;
+  --q-track: #343b3d;
+  --q-dot-off: #3a4346;
+  --q-cta-card: #0f1213;
+  --q-neutral-bg: #282e30;
+  --q-neutral-border: #3e494c;
+}
+
+[data-theme='dark'][data-accent='raspberry'],
+[data-theme='dark'] [data-accent='raspberry'] {
+  --q-page: #191617;
+  --q-card: #221f20;
+  --q-panel: #262224;
+  --q-panel-2: #2e292b;
+  --q-track: #3a3336;
+  --q-dot-off: #423a3d;
+  --q-cta-card: #120f10;
+  --q-neutral-bg: #2e292b;
+  --q-neutral-border: #493f43;
+}
+
+[data-theme='dark'][data-accent='violette'],
+[data-theme='dark'] [data-accent='violette'] {
+  --q-page: #18171b;
+  --q-card: #211f24;
+  --q-panel: #252329;
+  --q-panel-2: #2c2931;
+  --q-track: #38343e;
+  --q-dot-off: #403b47;
+  --q-cta-card: #110f14;
+  --q-neutral-bg: #2c2931;
+  --q-neutral-border: #46414f;
 }
