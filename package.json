@@ -1,7 +1,7 @@
 {
   "name": "qed2-client",
   "private": true,
-  "version": "1.9.2",
+  "version": "1.9.4",
   "description": "QED2 learning tracker client ui",
   "license": "MIT",
   "engines": {
