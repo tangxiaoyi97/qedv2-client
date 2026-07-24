@@ -256,11 +256,19 @@ async function startHistoryProgram(): Promise<void> {
 }
 
 onMounted(() => {
-  const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
-    || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
-  // Explicit deep links always (re)start; otherwise respect a session the
-  // browse page already seeded in the store (loading/running handoff).
-  if (hasQuery || (practice.phase !== 'running' && practice.phase !== 'loading')) start();
+  void (async () => {
+    const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
+      || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
+    // Explicit deep links always (re)start; otherwise respect an in-memory or
+    // durable interrupted session before asking the core for a new program.
+    if (hasQuery) {
+      await start();
+      return;
+    }
+    if (practice.phase === 'loading') return;
+    if (await practice.restoreSession()) return;
+    await start();
+  })();
 });
 
 watch(
@@ -287,7 +295,6 @@ function returnTarget(): string {
 
 async function exitNow(): Promise<void> {
   await practice.finishSession();
-  practice.abort();
   void router.replace(returnTarget());
 }
 
