@@ -15,8 +15,14 @@ html, body {
   /* Prevent double-tap-to-zoom on tappable UI (nav/tabs/buttons).
    * NOTE: pinch-zoom is additionally disabled via the viewport meta tag
    * (maximum-scale=1, user-scalable=no) — a deliberate product decision to
-   * keep the fixed bottom bar stable while practicing. */
+   * keep the fixed bottom bar stable while practicing. Figures opt out of
+   * that lock through the FigureViewer overlay, which pans and zooms itself. */
   touch-action: manipulation;
+  /* Android/WebKit paint a system-blue slab on every tap, which clashes with
+   * the app's own press states. Tinting it with the theme accent keeps the
+   * press feedback (only 8 elements define a custom :active) while making it
+   * look like part of the app. */
+  -webkit-tap-highlight-color: var(--q-accent-ring);
 }
 .q-app {
   background: var(--q-page);
@@ -30,6 +36,19 @@ html, body {
 .q-modal-backdrop {
   -webkit-backdrop-filter: var(--q-backdrop-filter);
   backdrop-filter: var(--q-backdrop-filter);
+}
+
+/* Visual half of shared/scroll-lock.ts, which supplies the negative `top`.
+ * Taking the body out of flow is what actually stops iOS Safari from
+ * scrolling the page behind a backdrop; `overflow: hidden` alone does not.
+ * `height: auto` overrides the shell's `height: 100%` so the shifted body
+ * still covers the viewport at any scroll offset. */
+body.q-modal-open {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: auto;
+  overflow: hidden;
 }
 
 /* Layout, transitions and animations are not theme customization. */

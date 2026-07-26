@@ -23,11 +23,8 @@ body {
   overflow-x: hidden;
 }
 
-/* set by useModalA11y while a dialog is open — keeps the page behind
- * the backdrop from scrolling */
-body.q-modal-open {
-  overflow: hidden;
-}
+/* `body.q-modal-open` (set while any overlay is open) is styled by
+ * @qed2/ui's tokens.css, next to the scroll-lock helper that drives it. */
 
 /* form elements inherit the app font */
 button,

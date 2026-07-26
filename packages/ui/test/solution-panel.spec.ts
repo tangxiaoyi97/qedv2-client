@@ -34,7 +34,7 @@ describe('SolutionPanel', () => {
     expect(w.text()).toContain('Beurteilungshinweis');
     expect(w.text()).toContain('[0 / 1 Punkt]');
     // image figure via asset resolver (identity fallback)
-    const img = w.find('.q-solution__img');
+    const img = w.find('.q-zfig__img');
     expect(img.exists()).toBe(true);
     expect(img.attributes('src')).toBe('assets/fig/loesung.png');
     expect(img.attributes('alt')).toBe('Lösungsabbildung');
@@ -72,7 +72,7 @@ describe('SolutionPanel', () => {
       template: '<SolutionPanel :solution="solution" />',
     });
     const w = mount(Host);
-    expect(w.find('.q-solution__img').attributes('src')).toBe(
+    expect(w.find('.q-zfig__img').attributes('src')).toBe(
       'https://core.example/content/assets/assets/fig/loesung.png',
     );
   });

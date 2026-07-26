@@ -11,6 +11,7 @@
 import { computed } from 'vue';
 import type { SolutionEntry, ImageFigure } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
+import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
 
 const props = defineProps<{
@@ -62,12 +63,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
               <RichTextView class="q-ssheet__result" :nodes="entry.result" />
             </div>
             <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
-              <img
-                class="q-ssheet__img"
-                :src="resolveAsset(fig.src)"
-                :alt="fig.alt ?? ''"
-                loading="lazy"
-              />
+              <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
             </figure>
             <div v-if="entry.note" class="q-ssheet__note">
               <span class="q-ssheet__note-label">Beurteilungshinweis</span>
@@ -162,14 +158,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
 .q-ssheet__figure {
   margin: 0;
 }
-.q-ssheet__img {
-  max-width: 100%;
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
-  display: block;
-  margin: 0 auto;
-  background: #fff;
-}
+/* Image plate + zoom affordance come from ZoomableFigure. */
 .q-ssheet__note {
   display: flex;
   flex-direction: column;

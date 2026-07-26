@@ -187,7 +187,10 @@ function onMasteryChange(ev: Event): void {
 <style scoped>
 .practice-bar {
   position: fixed;
-  bottom: 0;
+  /* iOS Safari leaves fixed chrome anchored to the layout viewport, i.e.
+   * underneath the on-screen keyboard — which would bury the primary action
+   * the moment the user starts typing an answer. See useKeyboardInset. */
+  bottom: var(--q-keyboard-inset, 0px);
   left: var(--practice-rail-width);
   right: 0;
   z-index: 40;

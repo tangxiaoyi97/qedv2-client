@@ -11,3 +11,20 @@ declare module '*/commit.mjs' {
   export function resolveCommit(): string;
   export function resolveVersion(): string;
 }
+
+/** Web app manifest (see scripts/pwa-manifest.mjs) — typed for vite.config. */
+declare module '*/pwa-manifest.mjs' {
+  export const PWA_MANIFEST: {
+    id: string;
+    name: string;
+    short_name: string;
+    description: string;
+    lang: string;
+    display: 'standalone';
+    start_url: string;
+    scope: string;
+    background_color: string;
+    theme_color: string;
+    icons: { src: string; sizes: string; type: string; purpose: string }[];
+  };
+}

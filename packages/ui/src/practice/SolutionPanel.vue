@@ -8,6 +8,7 @@ import { computed } from 'vue';
 import type { SolutionEntry, ImageFigure } from '@qed2/core-logic';
 import CollapsePanel from '../shared/CollapsePanel.vue';
 import RichTextView from '../shared/RichTextView.vue';
+import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
 
 const props = withDefaults(
@@ -43,12 +44,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
         <div class="q-solution__entry">
           <RichTextView class="q-solution__result" :nodes="entry.result" />
           <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
-            <img
-              class="q-solution__img"
-              :src="resolveAsset(fig.src)"
-              :alt="fig.alt ?? ''"
-              loading="lazy"
-            />
+            <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
           </figure>
           <div v-if="entry.note" class="q-solution__note">
             <span class="q-solution__note-label">Beurteilungshinweis</span>
@@ -100,14 +96,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
 .q-solution__figure {
   margin: 0;
 }
-.q-solution__img {
-  max-width: 100%;
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
-  display: block;
-  margin: 0 auto;
-  background: #fff;
-}
+/* Image plate + zoom affordance come from ZoomableFigure. */
 .q-solution__note {
   display: flex;
   flex-direction: column;

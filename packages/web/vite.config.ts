@@ -5,6 +5,9 @@ import { VitePWA } from 'vite-plugin-pwa';
 // with the changelog archive step so the injected commit and the archived
 // file name always match.
 import { resolveCommit, resolveVersion } from './scripts/commit.mjs';
+// The manifest lives next to it so a test can assert its colors against the
+// theme — vite-plugin-pwa silently fills omitted fields with its own defaults.
+import { PWA_MANIFEST } from './scripts/pwa-manifest.mjs';
 
 // Static build deploys to GitHub Pages behind the custom domain
 // qed.barcarolle.studio, i.e. served from the root path.
@@ -22,18 +25,10 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      manifest: {
-        name: 'QED2 — Matura Mathematik',
-        short_name: 'QED2',
-        description: 'SRDP-Mathematik üben mit intelligenter Wiederholung',
-        lang: 'de',
-        display: 'standalone',
-        icons: [
-          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
-      },
+      // The manifest icons are precached automatically; these two are
+      // referenced only from index.html and would otherwise be missing offline.
+      includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
+      manifest: PWA_MANIFEST,
       workbox: {
         // App shell precached by default. Runtime caching for content so
         // previously loaded questions/figures stay readable offline.

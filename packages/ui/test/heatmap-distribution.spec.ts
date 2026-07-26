@@ -211,7 +211,7 @@ describe('SolutionSheet', () => {
     expect(w.find('.katex').exists()).toBe(true);
     expect(w.text()).toContain('Beurteilungshinweis');
     expect(w.text()).toContain('[0 / 1 Punkt]');
-    const img = w.find('.q-ssheet__img');
+    const img = w.find('.q-zfig__img');
     expect(img.exists()).toBe(true);
     expect(img.attributes('src')).toBe('assets/fig/loesung.png');
     expect(img.attributes('alt')).toBe('Lösungsabbildung');
@@ -230,7 +230,7 @@ describe('SolutionSheet', () => {
       template: '<SolutionSheet :solution="solution" :open="true" />',
     });
     const w = mount(Host);
-    expect(w.find('.q-ssheet__img').attributes('src')).toBe(
+    expect(w.find('.q-zfig__img').attributes('src')).toBe(
       'https://core.example/content/assets/assets/fig/loesung.png',
     );
   });

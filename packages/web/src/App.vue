@@ -14,6 +14,7 @@ import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
+import { useKeyboardInset } from './composables/useKeyboardInset.js';
 import ConflictDialog from './routes/ConflictDialog.vue';
 import AuthModal from './routes/AuthModal.vue';
 import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
@@ -26,6 +27,9 @@ const progress = useProgressStore();
 const ui = useUiStore();
 
 provideAssetResolver((src) => app.assetUrl(src));
+
+// One shell-level listener feeds --q-keyboard-inset to every fixed element.
+useKeyboardInset();
 
 const focusMode = computed(() => route.meta.focus === true);
 

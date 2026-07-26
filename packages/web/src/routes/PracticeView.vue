@@ -751,7 +751,9 @@ const currentCompetencyCodes = computed(() =>
 }
 
 .practice__content {
-  padding: 26px 28px 210px;
+  /* The keyboard inset is added to the bottom reserve, not just to the bar:
+   * once the bar lifts, the answer field under it needs the same room. */
+  padding: 26px 28px calc(210px + var(--q-keyboard-inset, 0px));
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
@@ -764,7 +766,7 @@ const currentCompetencyCodes = computed(() =>
  * (doubled class beats the ≤640px padding override below regardless of
  * source order) */
 .practice__content.practice__content--sheet-open {
-  padding-bottom: calc(min(55vh, 420px) + 110px);
+  padding-bottom: calc(min(55vh, 420px) + 110px + var(--q-keyboard-inset, 0px));
 }
 .practice__rubric-assessment {
   margin-top: 18px;
@@ -929,7 +931,7 @@ const currentCompetencyCodes = computed(() =>
 
 @media (max-width: 640px) {
   .practice__content {
-    padding: 18px 16px 300px;
+    padding: 18px 16px calc(300px + var(--q-keyboard-inset, 0px));
   }
 }
 

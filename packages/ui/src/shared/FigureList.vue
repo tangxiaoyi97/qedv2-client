@@ -3,6 +3,7 @@
 import { computed } from 'vue';
 import type { Figure, ImageFigure } from '@qed2/core-logic';
 import { useAssetResolver } from './assets.js';
+import ZoomableFigure from './ZoomableFigure.vue';
 
 const props = defineProps<{ figures?: Figure[] }>();
 const resolveAsset = useAssetResolver();
@@ -14,12 +15,7 @@ const images = computed(() =>
 <template>
   <div v-if="images.length > 0" class="q-figures">
     <figure v-for="(figure, index) in images" :key="`${figure.src}-${index}`" class="q-figures__item">
-      <img
-        class="q-figures__image"
-        :src="resolveAsset(figure.src)"
-        :alt="figure.alt ?? ''"
-        loading="lazy"
-      />
+      <ZoomableFigure :src="resolveAsset(figure.src)" :alt="figure.alt" />
     </figure>
   </div>
 </template>
@@ -34,13 +30,6 @@ const images = computed(() =>
 .q-figures__item {
   margin: 0;
 }
-.q-figures__image {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  margin: 0 auto;
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
-  background: #fff;
-}
+/* The image plate itself now lives in ZoomableFigure, so the thumbnail and
+ * its zoom affordance stay identical everywhere figures are rendered. */
 </style>

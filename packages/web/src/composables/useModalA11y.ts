@@ -3,7 +3,8 @@
  *
  *  - Tab / Shift+Tab cycle INSIDE the dialog (focus trap);
  *  - Escape closes (document-level, so it works no matter where focus is);
- *  - the page behind the backdrop stops scrolling (body.q-modal-open);
+ *  - the page behind the backdrop stops scrolling (@qed2/ui's scroll lock,
+ *    which is iOS-safe — plain `overflow: hidden` is not);
  *  - focus moves into the dialog on open and returns to the previously
  *    focused element on close.
  *
@@ -17,21 +18,13 @@
  * handles the event first and stops propagation for the ones below.
  */
 import { onBeforeUnmount, watch, type Ref } from 'vue';
+// Shared with @qed2/ui's own overlays (FigureViewer), so nesting a viewer
+// inside a dialog keeps one consistent lock count.
+import { lockBodyScroll, unlockBodyScroll } from '@qed2/ui';
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
-
-let openCount = 0;
-
-function lockScroll(): void {
-  openCount += 1;
-  document.body.classList.add('q-modal-open');
-}
-function unlockScroll(): void {
-  openCount = Math.max(0, openCount - 1);
-  if (openCount === 0) document.body.classList.remove('q-modal-open');
-}
 
 export function useModalA11y(
   container: Ref<HTMLElement | null>,
@@ -82,7 +75,7 @@ export function useModalA11y(
       if (open === wasOpen) return;
       if (open) {
         previousFocus = document.activeElement as HTMLElement | null;
-        lockScroll();
+        lockBodyScroll();
         document.addEventListener('keydown', onKeydown, true);
         requestAnimationFrame(() => {
           // Prefer an explicitly marked field, else the first focusable,
@@ -92,7 +85,7 @@ export function useModalA11y(
           (target ?? container.value)?.focus({ preventScroll: true });
         });
       } else {
-        unlockScroll();
+        unlockBodyScroll();
         document.removeEventListener('keydown', onKeydown, true);
         previousFocus?.focus({ preventScroll: true });
         previousFocus = null;
@@ -103,7 +96,7 @@ export function useModalA11y(
 
   onBeforeUnmount(() => {
     if (isOpen.value) {
-      unlockScroll();
+      unlockBodyScroll();
       previousFocus?.focus({ preventScroll: true });
     }
     document.removeEventListener('keydown', onKeydown, true);

@@ -3,9 +3,9 @@ import { ref } from 'vue';
 import type { QuestionSummary } from '@qed2/core-logic';
 
 /**
- * Module-level cache: ALL question summaries, fetched once per app session
- * (~7 pages à 100). Re-visits of the route skip the refetch; filtering is
- * entirely client-side, which is what enables multi-select filters.
+ * Module-level cache: ALL question summaries, fetched once per app session.
+ * Re-visits of the route skip the refetch; filtering is entirely client-side,
+ * which is what enables multi-select filters.
  */
 const allQuestions = ref<QuestionSummary[]>([]);
 let fetchedOnce = false;
@@ -13,7 +13,7 @@ let fetchedOnce = false;
 
 <script setup lang="ts">
 /** Aufgaben browse — client-side multi-select filtering (supplement §4). */
-import { computed, nextTick, onMounted, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router';
 import {
   competencyCategory,
@@ -41,7 +41,12 @@ const app = useAppStore();
 const progress = useProgressStore();
 const practice = usePracticeStore();
 
-const PAGE_SIZE = 100;
+/** The core caps pageSize at 200; asking for the maximum halves the round trips. */
+const PAGE_SIZE = 200;
+/** Guard against a bogus `total` fanning out into unbounded parallel requests. */
+const MAX_PAGES = 40;
+/** Rows rendered before the bottom sentinel grows the window (see `windowed`). */
+const ROW_WINDOW = 60;
 const FILTER_QUERY_KEYS = new Set(['year', 'term', 'teil', 'kat', 'grading', 'fmt', 'starred']);
 const VALID_TERMS: readonly Term[] = [
   'haupttermin',
@@ -72,16 +77,17 @@ async function load(force = false): Promise<void> {
   loading.value = true;
   error.value = undefined;
   try {
+    // Page 1 reports the total, so the remaining pages are known up front and
+    // go out concurrently — a sequential walk cost one full round trip each,
+    // which is what a mobile connection actually feels.
     const first = await app.coreClient.listQuestions({ page: 1, pageSize: PAGE_SIZE });
-    let items = first.items;
-    let page = 1;
-    while (items.length < first.total) {
-      page += 1;
-      const res = await app.coreClient.listQuestions({ page, pageSize: PAGE_SIZE });
-      if (res.items.length === 0) break; // defensive: never loop on a short page
-      items = items.concat(res.items);
-    }
-    allQuestions.value = items;
+    const pageCount = Math.min(Math.ceil(first.total / PAGE_SIZE) || 1, MAX_PAGES);
+    const rest = await Promise.all(
+      Array.from({ length: pageCount - 1 }, (_, i) =>
+        app.coreClient.listQuestions({ page: i + 2, pageSize: PAGE_SIZE }),
+      ),
+    );
+    allQuestions.value = [first, ...rest].flatMap((res) => res.items);
     fetchedOnce = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -272,6 +278,52 @@ function matches(q: QuestionSummary, f: FilterState): boolean {
 }
 
 const filtered = computed(() => allQuestions.value.filter((q) => matches(q, filter.value)));
+
+/* --- windowed rendering ---------------------------------------------------
+ * Unfiltered, `filtered` is the whole bank (>1000 rows, each with one dot per
+ * part). Committing that to the DOM up front is the single most expensive
+ * thing this route does on a phone. Rows are therefore revealed in blocks as
+ * a sentinel below the list scrolls into range; `filtered.length` still drives
+ * the "N Aufgaben" count, so the number the user reads stays the true total.
+ */
+const visibleCount = ref(ROW_WINDOW);
+const windowed = computed(() => filtered.value.slice(0, visibleCount.value));
+const listSentinel = ref<HTMLElement | null>(null);
+let rowObserver: IntersectionObserver | undefined;
+
+// A new result set always starts at the top again.
+watch(filtered, () => {
+  visibleCount.value = ROW_WINDOW;
+});
+
+function revealMoreRows(): void {
+  if (visibleCount.value < filtered.value.length) visibleCount.value += ROW_WINDOW;
+}
+
+onMounted(() => {
+  if (typeof IntersectionObserver === 'undefined') {
+    // No observer (old engine, non-DOM test env) — never strand rows offscreen.
+    visibleCount.value = Number.POSITIVE_INFINITY;
+    return;
+  }
+  rowObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) revealMoreRows();
+    },
+    // Grow before the user actually hits the end, so scrolling never stalls.
+    { rootMargin: '600px 0px' },
+  );
+  watch(
+    listSentinel,
+    (el, previous) => {
+      if (previous) rowObserver?.unobserve(previous);
+      if (el) rowObserver?.observe(el);
+    },
+    { immediate: true, flush: 'post' },
+  );
+});
+
+onBeforeUnmount(() => rowObserver?.disconnect());
 
 const filterCount = computed(() => activeFilterCount(filter.value));
 
@@ -530,7 +582,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 
     <div v-else-if="!searchMode" class="browse__list">
       <button
-        v-for="q in filtered"
+        v-for="q in windowed"
         :key="q.id"
         type="button"
         class="browse__row"
@@ -581,6 +633,14 @@ function firstCode(q: QuestionSummary): string | undefined {
           </span>
         </Transition>
       </button>
+      <div
+        v-if="windowed.length < filtered.length"
+        ref="listSentinel"
+        class="browse__more"
+        role="status"
+      >
+        Weitere {{ filtered.length - windowed.length }} Aufgaben …
+      </div>
     </div>
 
     <FilterDialog
@@ -952,6 +1012,14 @@ function firstCode(q: QuestionSummary): string | undefined {
   50% {
     opacity: 0.5;
   }
+}
+/* Bottom sentinel of the windowed list — also the "there is more" affordance
+ * for anyone who is not scrolling (screen readers, keyboard). */
+.browse__more {
+  padding: 14px;
+  text-align: center;
+  color: var(--q-mut-2);
+  font-size: 12px;
 }
 .browse__empty,
 .browse__error {
