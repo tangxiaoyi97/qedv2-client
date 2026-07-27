@@ -14,6 +14,14 @@ import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
 const props = defineProps<{
   grading: GradingOrUnseen;
   interactive?: boolean;
+  /**
+   * Drop to the dot alone once the viewport gets tight. „Schlampigkeitsfehler"
+   * is 22 characters — in the practice bottom bar it pushed the Lösung toggle
+   * and the primary button into each other. The dot is the same six-shape
+   * vocabulary used in the Aufgaben list and the progress views, so nothing
+   * is lost but the spelling.
+   */
+  dense?: boolean;
 }>();
 
 defineEmits<{ click: [ev: MouseEvent] }>();
@@ -35,8 +43,12 @@ const label = computed(() => GRADING_LABELS[props.grading]);
   <component
     :is="interactive ? 'button' : 'span'"
     class="q-grading-capsule"
-    :class="[`q-grading-capsule--${tone}`, { 'q-grading-capsule--interactive': interactive }]"
+    :class="[
+      `q-grading-capsule--${tone}`,
+      { 'q-grading-capsule--interactive': interactive, 'q-grading-capsule--dense': dense },
+    ]"
     :type="interactive ? 'button' : undefined"
+    :aria-label="`Bewertung: ${label}`"
     @click="interactive && $emit('click', $event)"
   >
     <GradingDot :grading="grading" :size="10" />
@@ -103,5 +115,21 @@ const label = computed(() => GRADING_LABELS[props.grading]);
 .q-grading-capsule__caret {
   font-size: 13px;
   opacity: 0.75;
+}
+
+/* Dot-only below the width where the label stops fitting next to the action
+ * buttons. The dot grows to stay a comfortable target on its own. */
+@media (max-width: 560px) {
+  .q-grading-capsule--dense .q-grading-capsule__label {
+    display: none;
+  }
+  .q-grading-capsule--dense {
+    gap: 3px;
+    padding: 6px 9px;
+  }
+  .q-grading-capsule--dense .q-grading-dot {
+    width: 15px;
+    height: 15px;
+  }
 }
 </style>

@@ -274,7 +274,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
               class="q-match__oc-label"
               :class="`q-match__oc-label--${gapOptionState(i, option.idx)}`"
             >
-              {{ gapOptionState(i, option.idx) === 'ok' ? 'Richtig · gewählt' : gapOptionState(i, option.idx) === 'err' ? 'Falsch · gewählt' : 'Richtig' }}
+              <!-- verdict only; picked vs. missed is already in the row style -->
+              {{ gapOptionState(i, option.idx) === 'err' ? 'Falsch' : 'Richtig' }}
             </span>
             <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
           </button>

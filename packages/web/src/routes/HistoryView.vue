@@ -12,7 +12,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { NetworkError, type Verdict } from '@qed2/core-logic';
-import { ActivityHeatmap, GradingDot, QButton, StateIcon } from '@qed2/ui';
+import { ActivityHeatmap, GradingDot, QButton, QSkeleton, StateIcon } from '@qed2/ui';
 import { historyLog, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -289,7 +289,7 @@ function redo(questionId: string): void {
     </div>
 
     <div v-else-if="loading && rows.length === 0" class="hist__list">
-      <div v-for="i in 6" :key="i" class="hist__skeleton" />
+      <QSkeleton :rows="6" height="42px" label="Verlauf wird geladen …" />
     </div>
 
     <div v-else-if="rows.length === 0" class="hist__empty">
@@ -483,17 +483,6 @@ function redo(questionId: string): void {
   flex: none;
   width: 38px;
   text-align: right;
-}
-.hist__skeleton {
-  height: 42px;
-  border-radius: 10px;
-  background: var(--q-panel);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.5;
-  }
 }
 .hist__error,
 .hist__empty {

@@ -22,7 +22,7 @@ import {
   type SearchResponse,
   type Term,
 } from '@qed2/core-logic';
-import { GradingDot, HighlightSnippet, QButton, QChip, SearchBox } from '@qed2/ui';
+import { GradingDot, HighlightSnippet, QButton, QChip, QSkeleton, SearchBox } from '@qed2/ui';
 import { useAppStore } from '../stores/app.js';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -434,14 +434,16 @@ function practiceAll(): void {
   const targets = selectedIds.value.size > 0 ? Array.from(selectedIds.value) : playableIds.value;
   if (targets.length === 0) return;
   // Store handoff instead of ?questions=<hundreds of ids>: the session is
-  // seeded here, /practice mounts onto it (PracticeView keeps loading/running).
+  // seeded here and `prepared` tells /practice to mount onto it. The marker
+  // is what separates "the set I just picked" from "a set left over from
+  // earlier" — without it the practice view had to guess from store phase.
   void practice.startPrepared(targets);
-  void router.push({ path: '/practice', query: practiceQuery() });
+  void router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
 }
 
 function practiceSingle(id: string): void {
   void practice.startPrepared([id]);
-  void router.push({ path: '/practice', query: practiceQuery() });
+  void router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
 }
 
 function toggleSelection(q: QuestionSummary): void {
@@ -574,9 +576,12 @@ function firstCode(q: QuestionSummary): string | undefined {
       <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
     </div>
 
-    <div v-else-if="!searchMode && loading && allQuestions.length === 0" class="browse__list">
-      <div v-for="i in 6" :key="i" class="browse__skeleton" />
-    </div>
+    <QSkeleton
+      v-else-if="!searchMode && loading && allQuestions.length === 0"
+      :rows="6"
+      height="44px"
+      label="Aufgaben werden geladen …"
+    />
 
     <div v-else-if="!searchMode && filtered.length === 0" class="browse__empty">Keine Aufgaben für diese Filter.</div>
 
@@ -1001,17 +1006,6 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__state--na {
   color: var(--q-faint);
   font-weight: 500;
-}
-.browse__skeleton {
-  height: 44px;
-  border-radius: 10px;
-  background: var(--q-panel);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.5;
-  }
 }
 /* Bottom sentinel of the windowed list — also the "there is more" affordance
  * for anyone who is not scrolling (screen readers, keyboard). */

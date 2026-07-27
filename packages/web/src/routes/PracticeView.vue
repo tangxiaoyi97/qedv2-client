@@ -28,6 +28,7 @@ import {
   QChip,
   RichTextView,
   SelfAssessmentPanel,
+  SessionProgressBar,
   StateIcon,
   VerdictCard,
   type PartPlayerCommand,
@@ -57,8 +58,9 @@ const TERM_LABELS: Record<Term, string> = {
 };
 
 const current = computed(() => practice.current);
-const progressPct = computed(() =>
-  practice.total === 0 ? 0 : Math.round((practice.index / practice.total) * 100),
+/** Verdict per graded part — the segmented top bar's only input besides items. */
+const progressGraded = computed(() =>
+  practice.graded.map((record) => ({ partId: record.partId, verdict: record.result.verdict })),
 );
 
 /* --- PartPlayer shell contract --- */
@@ -259,14 +261,22 @@ onMounted(() => {
   void (async () => {
     const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
       || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
-    // Explicit deep links always (re)start; otherwise respect an in-memory or
-    // durable interrupted session before asking the core for a new program.
+    // Explicit deep links always (re)start.
     if (hasQuery) {
       await start();
       return;
     }
-    if (practice.phase === 'loading') return;
-    if (await practice.restoreSession()) return;
+    // Bulk handoff from the Aufgaben list: the session is already seeded in
+    // the store, so adopt it whatever its origin.
+    if (route.query.prepared === '1') {
+      if (await practice.restoreSession()) return;
+      await start();
+      return;
+    }
+    // Plain /practice — the navigation's „Programm üben". Resume only a
+    // programme; a hand-picked set left over from the Aufgaben list is not
+    // what was asked for, so it yields to a fresh recommendation.
+    if (await practice.restoreSession('smart')) return;
     await start();
   })();
 });
@@ -429,9 +439,12 @@ const currentCompetencyCodes = computed(() =>
           <template v-else-if="practice.phase === 'summary'">Programm abgeschlossen</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
-        <div class="practice__progress-track">
-          <div class="practice__progress-fill" :style="{ width: `${practice.phase === 'summary' ? 100 : progressPct}%` }" />
-        </div>
+        <SessionProgressBar
+          :items="practice.items"
+          :graded="progressGraded"
+          :current-index="practice.index"
+          :active="practice.phase === 'running'"
+        />
       </div>
       <button
         v-if="practice.phase === 'running' && showProgramRail"
@@ -703,17 +716,7 @@ const currentCompetencyCodes = computed(() =>
 .practice__logo-accent {
   color: var(--q-accent);
 }
-.practice__progress-track {
-  height: 5px;
-  border-radius: 3px;
-  background: var(--q-track);
-  overflow: hidden;
-}
-.practice__progress-fill {
-  height: 100%;
-  background: var(--q-accent);
-  transition: width 0.3s ease;
-}
+/* The track itself is PracticeProgressBar's business now. */
 .practice__spacer {
   width: 34px;
 }

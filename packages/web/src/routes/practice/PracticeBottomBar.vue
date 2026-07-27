@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import type { AnswerKind, Grading, GradingOrUnseen, SolutionEntry } from '@qed2/core-logic';
 import {
   GradingMenu,
@@ -7,7 +7,6 @@ import {
   ChevronDown,
   SELF_ASSESSMENT_GRADING_OPTIONS,
   SolutionSheet,
-  StateIcon,
   onRadioGroupKeydown,
   sameScore,
 } from '@qed2/ui';
@@ -64,6 +63,42 @@ const verdictPoints = computed(() => {
   return `${fmt(r.awardedPoints)} / ${fmt(r.maxPoints)} P`;
 });
 
+/* --- verdict tint -----------------------------------------------------------
+ * The verdict itself now sits inside the solution sheet; the bar only carries
+ * its colour, so „right or wrong" is legible without reading anything. When
+ * the part advances the tint drains out to the LEFT, which reads as the old
+ * answer being swept away rather than blinking off.
+ */
+const DRAIN_MS = 450;
+
+const verdict = computed(() => props.state.result?.verdict ?? null);
+const drainingVerdict = ref<'correct' | 'partial' | 'incorrect' | null>(null);
+const draining = ref(false);
+let drainTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Whichever verdict the bar should currently be painted with, live or fading. */
+const tint = computed(() => verdict.value ?? drainingVerdict.value);
+
+watch(verdict, (next, previous) => {
+  clearTimeout(drainTimer);
+  if (next || !previous) {
+    drainingVerdict.value = null;
+    draining.value = false;
+    return;
+  }
+  // Verdict cleared → the user moved on. The tint element is not replaced
+  // here (it keeps rendering the previous verdict), so adding the class in
+  // this same update transitions from the clip-path it already has.
+  drainingVerdict.value = previous;
+  draining.value = true;
+  drainTimer = setTimeout(() => {
+    drainingVerdict.value = null;
+    draining.value = false;
+  }, DRAIN_MS + 60);
+});
+
+onBeforeUnmount(() => clearTimeout(drainTimer));
+
 const emit = defineEmits<{
   'update:solutionOpen': [open: boolean];
   scoreSelect: [points: number];
@@ -86,33 +121,35 @@ function onMasteryChange(ev: Event): void {
       :open="solutionOpen"
       :solution="solution"
       content-max-width="860px"
+      :handle="state.phase !== 'answering'"
+      :verdict="state.result?.verdict"
+      :verdict-label="verdictLabel"
+      :verdict-points="verdictPoints"
       @update:open="emit('update:solutionOpen', $event)"
     />
 
-    <div
-      class="practice-bar__row"
-      :class="{ 'practice-bar__row--assessment': state.phase === 'self-assessing' }"
-    >
+    <div class="practice-bar__actions">
+      <div
+        v-if="tint"
+        class="practice-bar__tint"
+        :class="[`practice-bar__tint--${tint}`, { 'practice-bar__tint--draining': draining }]"
+        aria-hidden="true"
+      />
+      <div
+        class="practice-bar__row"
+        :class="{ 'practice-bar__row--assessment': state.phase === 'self-assessing' }"
+      >
       <div class="practice-bar__left">
         <!-- mastery override rides the INFO slot (left), not the action
              cluster — and it shares the Lösung toggle's outlined geometry -->
         <GradingMenu
           v-if="state.phase !== 'self-assessing'"
           :grading="grading"
+          dense
           class="practice-bar__grading"
           @select="emit('gradingSelect', $event)"
         />
-        <!-- compact verdict anchor; the authoritative card is in the flow -->
-        <div
-          v-if="state.result"
-          class="practice-bar__verdict"
-          :class="`practice-bar__verdict--${state.result.verdict}`"
-        >
-          <StateIcon :state="state.result.verdict" :size="18" />
-          <span>{{ verdictLabel }}</span>
-          <span class="practice-bar__verdict-points">{{ verdictPoints }}</span>
-        </div>
-        <div v-else-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-bar__assessment">
+        <div v-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-bar__assessment">
           <div v-if="!rubricMode" class="practice-bar__assessment-group">
             <span class="practice-bar__assessment-label">Punkte</span>
             <div class="practice-bar__score-options" role="radiogroup" aria-label="Punkte" @keydown="onRadioGroupKeydown">
@@ -168,6 +205,9 @@ function onMasteryChange(ev: Event): void {
       </div>
 
       <div class="practice-bar__right">
+        <!-- Hidden on narrow screens: the sheet's grab handle is the control
+             there, so this button never has to fight the primary action for
+             the last few pixels. -->
         <button
           v-if="state.phase !== 'answering'"
           type="button"
@@ -179,6 +219,7 @@ function onMasteryChange(ev: Event): void {
           Lösung <ChevronDown class="practice-bar__solution-chevron" />
         </button>
         <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
+      </div>
       </div>
     </div>
   </div>
@@ -200,32 +241,36 @@ function onMasteryChange(ev: Event): void {
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
 }
 
-/* compact verdict anchor in the left slot — the full feedback card lives
- * in the content flow (VerdictCard); the bar itself stays neutral. */
-.practice-bar__verdict {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
+/* Full-bleed layer the tint paints on, so the colour spans the whole bar
+ * while the controls stay in the centred content column. */
+.practice-bar__actions {
+  position: relative;
 }
-.practice-bar__verdict--correct {
-  color: var(--q-ok);
+
+.practice-bar__tint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Fully painted; draining clips it away from the right edge inward, so the
+   * colour retreats leftwards instead of simply switching off. */
+  clip-path: inset(0 0 0 0);
 }
-.practice-bar__verdict--partial {
-  color: var(--q-part-ink);
+.practice-bar__tint--draining {
+  clip-path: inset(0 100% 0 0);
+  transition: clip-path 0.45s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.practice-bar__verdict--incorrect {
-  color: var(--q-err);
+.practice-bar__tint--correct {
+  background: var(--q-ok-bg);
 }
-.practice-bar__verdict-points {
-  font: 700 12px ui-monospace, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.8;
+.practice-bar__tint--partial {
+  background: var(--q-part-bg);
+}
+.practice-bar__tint--incorrect {
+  background: var(--q-err-bg);
 }
 
 .practice-bar__row {
+  position: relative; /* above the tint */
   max-width: 1040px;
   margin: 0 auto;
   padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
@@ -503,6 +548,14 @@ function onMasteryChange(ev: Event): void {
   .practice-bar__row {
     padding-left: 16px;
     padding-right: 16px;
+    /* No wrapping: the row is one line of controls that must all fit, which
+     * is what the dense grading capsule and the dropped Lösung button buy. */
+    flex-wrap: nowrap;
+  }
+
+  /* The sheet's grab handle does this job on a phone — see SolutionSheet. */
+  .practice-bar__solution-toggle {
+    display: none;
   }
 
   .practice-bar__row--assessment {

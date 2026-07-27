@@ -14,6 +14,8 @@ import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
 const props = defineProps<{
   grading: GradingOrUnseen;
   disabled?: boolean;
+  /** Forwarded to the capsule: dot-only trigger on narrow viewports. */
+  dense?: boolean;
 }>();
 
 const emit = defineEmits<{ select: [g: Grading] }>();
@@ -117,6 +119,7 @@ onBeforeUnmount(() => {
     <GradingCapsule
       :grading="grading"
       interactive
+      :dense="dense"
       :disabled="disabled || undefined"
       aria-haspopup="menu"
       :aria-expanded="open ? 'true' : 'false'"

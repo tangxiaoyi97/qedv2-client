@@ -6,5 +6,8 @@ export default defineConfig({
   test: {
     include: ['test/**/*.spec.ts'],
     environment: 'jsdom',
+    // Without this, `import css from '*.css?raw'` resolves to an empty string
+    // and any assertion about a stylesheet silently passes on nothing.
+    css: true,
   },
 });

@@ -193,7 +193,8 @@ describe('MatchingControl', () => {
     const first = rows[0]!.findAll('.q-match__inline-choice');
     // chosen-wrong (B) marked err, expected (A) dashed-missed, in place
     expect(first[1]!.classes()).toContain('q-match__inline-choice--err');
-    expect(first[1]!.text()).toContain('Falsch · gewählt');
+    expect(first[1]!.text()).toContain('Falsch');
+    expect(first[1]!.text()).not.toContain('gewählt');
     expect(first[0]!.classes()).toContain('q-match__inline-choice--missed');
     expect(first[0]!.text()).toContain('Richtig');
     const second = rows[1]!.findAll('.q-match__inline-choice');

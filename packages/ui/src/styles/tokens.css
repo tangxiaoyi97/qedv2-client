@@ -109,6 +109,36 @@ body.q-modal-open {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Loading placeholders.
+ *
+ * One surface + one animation for every "content is on its way" state in
+ * the app, so a list, a card and a page all shimmer identically instead of
+ * each view rolling its own pulse. QSkeleton and QLoadingPanel are the two
+ * consumers; this rule is the shared base they are tuned from.
+ * (The practice view keeps its own bespoke loader — it is the one screen
+ * where the wait is the experience.)
+ * ------------------------------------------------------------------ */
+.q-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--q-panel);
+  border-radius: 10px;
+}
+.q-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--q-panel-2), transparent);
+  animation: q-skeleton-sweep 1.5s ease-in-out infinite;
+}
+@keyframes q-skeleton-sweep {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 /* Respect vestibular sensitivities: kill every transition/animation. */
 @media (prefers-reduced-motion: reduce) {
   *,

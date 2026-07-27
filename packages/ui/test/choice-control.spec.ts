@@ -106,11 +106,16 @@ describe('ChoiceControl', () => {
     });
     const options = wrapper.findAll('button.q-choice__opt');
 
-    expect(options[0]!.text()).toContain('Richtig · gewählt');
+    // Verdict word only — picked vs. missed is carried by the row's own
+    // styling (solid/filled vs. dashed), so the label must not repeat it.
+    expect(options[0]!.text()).toContain('Richtig');
+    expect(options[0]!.text()).not.toContain('gewählt');
     expect(options[0]!.classes()).toContain('q-choice__opt--ok');
-    expect(options[4]!.text()).toContain('Falsch · gewählt');
+    expect(options[4]!.text()).toContain('Falsch');
+    expect(options[4]!.text()).not.toContain('gewählt');
     expect(options[4]!.classes()).toContain('q-choice__opt--err');
-    expect(options[3]!.text()).toContain('Richtig · verpasst');
+    expect(options[3]!.text()).toContain('Richtig');
+    expect(options[3]!.text()).not.toContain('verpasst');
     expect(options[3]!.classes()).toContain('q-choice__opt--missed');
     // untouched-incorrect options stay plain
     expect(options[1]!.classes()).not.toContain('q-choice__opt--ok');

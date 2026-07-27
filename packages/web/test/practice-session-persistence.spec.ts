@@ -136,3 +136,53 @@ describe('practice session persistence', () => {
     expect(restored.practice.phase).toBe('idle');
   });
 });
+
+/**
+ * „Programm üben" in the navigation means today's FSRS programme. A set the
+ * user hand-picked in the Aufgaben list is a different thing that happens to
+ * run on the same screen — resuming it there is the bug this guards.
+ */
+describe('session origin', () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+    await Promise.all([
+      storage.clear(STORAGE.app),
+      storage.clear(STORAGE.questions),
+      storage.clear(STORAGE.archive),
+    ]);
+    await archiveStore.save(EMPTY_ARCHIVE);
+    await questionCache.putMany([question('q1', 1), question('q2', 2)]);
+  });
+
+  it('tags a hand-picked set as manual and a recommendation as smart', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1']);
+    expect(practice.origin).toBe('manual');
+  });
+
+  it('refuses to hand a left-over manual set back to the programme entry', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.finishSession(); // leaving the screen persists, never aborts
+
+    // In memory (same tab, user tapped the nav entry right after leaving).
+    await expect(practice.restoreSession('smart')).resolves.toBe(false);
+
+    // And after a reload, from the durable snapshot.
+    const reloaded = await freshStores();
+    await expect(reloaded.practice.restoreSession('smart')).resolves.toBe(false);
+    expect(reloaded.practice.phase).toBe('idle');
+  });
+
+  it('still resumes that set for the Aufgaben handoff and for an unrestricted call', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.finishSession();
+
+    const reloaded = await freshStores();
+    await expect(reloaded.practice.restoreSession()).resolves.toBe(true);
+    expect(reloaded.practice.origin).toBe('manual');
+    expect(reloaded.practice.current?.part.id).toBe('q1-a');
+  });
+});

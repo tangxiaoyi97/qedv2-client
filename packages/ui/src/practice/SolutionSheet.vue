@@ -8,11 +8,14 @@
  * Controlled component: the parent owns `open`; Escape asks the parent to
  * close via update:open.
  */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import type { SolutionEntry, ImageFigure } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
+import StateIcon from '../shared/StateIcon.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
+
+export type SheetVerdict = 'correct' | 'partial' | 'incorrect';
 
 const props = defineProps<{
   solution: SolutionEntry[] | undefined;
@@ -20,6 +23,15 @@ const props = defineProps<{
   /** Constrain the inner content column (e.g. '860px') so the sheet aligns
    *  with the page's content width instead of spanning the whole viewport. */
   contentMaxWidth?: string;
+  /**
+   * Show the grab handle. False while the user is still answering — there is
+   * nothing to reveal yet, and the handle would invite spoiling the question.
+   */
+  handle?: boolean;
+  /** Result of the part, shown at the top of the sheet and used as its tint. */
+  verdict?: SheetVerdict;
+  verdictLabel?: string;
+  verdictPoints?: string;
 }>();
 
 const emit = defineEmits<{
@@ -33,19 +45,82 @@ const entries = computed(() => props.solution ?? []);
 function imageFigures(entry: SolutionEntry): ImageFigure[] {
   return (entry.figures ?? []).filter((f): f is ImageFigure => f.kind === 'image');
 }
+
+/* --- grab handle -----------------------------------------------------------
+ * The bottom bar ran out of room for a "Lösung" button on a phone, so the
+ * handle IS the control: it stays visible when the sheet is shut, takes a
+ * swipe in either direction, and still answers to a plain click for anyone on
+ * a mouse or a keyboard.
+ */
+const HANDLE_SWIPE_PX = 24;
+
+const dragStartY = ref<number | null>(null);
+const dragged = ref(false);
+
+function onHandleDown(event: PointerEvent): void {
+  (event.target as Element).setPointerCapture?.(event.pointerId);
+  dragStartY.value = event.clientY;
+  dragged.value = false;
+}
+
+function onHandleMove(event: PointerEvent): void {
+  if (dragStartY.value == null || dragged.value) return;
+  const dy = event.clientY - dragStartY.value;
+  if (Math.abs(dy) < HANDLE_SWIPE_PX) return;
+  // Up opens, down closes — the sheet grows upward out of the bar.
+  dragged.value = true;
+  emit('update:open', dy < 0);
+}
+
+function onHandleUp(): void {
+  dragStartY.value = null;
+}
+
+function onHandleClick(): void {
+  // A swipe already decided; don't let the trailing click undo it.
+  if (dragged.value) {
+    dragged.value = false;
+    return;
+  }
+  emit('update:open', !props.open);
+}
 </script>
 
 <template>
-  <section
-    class="q-ssheet"
-    :class="{ 'q-ssheet--open': open }"
-    :aria-hidden="!open"
-    :inert="!open"
-    :tabindex="open ? 0 : -1"
-    aria-label="Offizieller Lösungsweg"
-    @keydown.esc="emit('update:open', false)"
-  >
+  <div class="q-ssheet-wrap" :class="verdict ? `q-ssheet-wrap--${verdict}` : ''">
+    <button
+      v-if="handle"
+      type="button"
+      class="q-ssheet__handle"
+      :aria-expanded="open"
+      :aria-label="open ? 'Lösung einklappen' : 'Lösung anzeigen'"
+      @pointerdown="onHandleDown"
+      @pointermove="onHandleMove"
+      @pointerup="onHandleUp"
+      @pointercancel="onHandleUp"
+      @click="onHandleClick"
+    >
+      <span class="q-ssheet__grip" aria-hidden="true" />
+    </button>
+
+    <section
+      class="q-ssheet"
+      :class="{ 'q-ssheet--open': open }"
+      :aria-hidden="!open"
+      :inert="!open"
+      :tabindex="open ? 0 : -1"
+      aria-label="Offizieller Lösungsweg"
+      @keydown.esc="emit('update:open', false)"
+    >
     <div class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+      <!-- The verdict lives here, not in the action row: on a phone it was
+           colliding with the Lösung toggle and the primary button. -->
+      <div v-if="verdict" class="q-ssheet__verdict" :class="`q-ssheet__verdict--${verdict}`">
+        <StateIcon :state="verdict" :size="20" />
+        <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
+        <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
+      </div>
+
       <div class="q-ssheet__head">
         <span class="q-ssheet__tick" aria-hidden="true"></span>
         <h3 class="q-ssheet__title">Offizieller Lösungsweg</h3>
@@ -73,16 +148,86 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
         </template>
       </template>
     </div>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+/* The wrapper owns the verdict tint so it covers handle AND sheet as one
+ * surface — "did I get this right" readable without opening anything. */
+.q-ssheet-wrap {
+  background: var(--q-card);
+  transition: background var(--q-transition-normal);
+}
+.q-ssheet-wrap--correct {
+  background: var(--q-ok-bg);
+}
+.q-ssheet-wrap--partial {
+  background: var(--q-part-bg);
+}
+.q-ssheet-wrap--incorrect {
+  background: var(--q-err-bg);
+}
+
+/* Full-width hit area; the grip is only the visible part of it. */
+.q-ssheet__handle {
+  display: block;
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 9px 0 7px;
+  cursor: pointer;
+  /* The swipe is ours, not the browser's scroll. */
+  touch-action: none;
+}
+@media (pointer: coarse) {
+  .q-ssheet__handle {
+    padding: 12px 0 10px;
+  }
+}
+.q-ssheet__grip {
+  display: block;
+  width: 40px;
+  height: 4px;
+  margin: 0 auto;
+  border-radius: 2px;
+  background: var(--q-border-3);
+  transition: background var(--q-transition-fast), width var(--q-transition-fast);
+}
+.q-ssheet__handle:hover .q-ssheet__grip,
+.q-ssheet__handle:focus-visible .q-ssheet__grip {
+  background: var(--q-mut-2);
+  width: 52px;
+}
+
+.q-ssheet__verdict {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.q-ssheet__verdict--correct {
+  color: var(--q-ok-ink);
+}
+.q-ssheet__verdict--partial {
+  color: var(--q-part-ink);
+}
+.q-ssheet__verdict--incorrect {
+  color: var(--q-err-ink);
+}
+.q-ssheet__verdict-points {
+  margin-left: auto;
+  font: 700 12px ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
 .q-ssheet {
   max-height: 0;
   overflow-y: auto;
   transition: max-height 0.3s ease;
   border-bottom: 1px solid transparent;
-  background: var(--q-card);
   outline: none;
 }
 .q-ssheet--open {

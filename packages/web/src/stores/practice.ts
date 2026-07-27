@@ -29,7 +29,16 @@ import { useProgressStore } from './progress.js';
 /** Sync after every N graded parts while logged in (brief §5: sync eagerly). */
 const SYNC_EVERY_N_GRADES = 3;
 const SESSION_STORAGE_KEY = 'practice-session';
-const SESSION_STORAGE_VERSION = 1;
+const SESSION_STORAGE_VERSION = 2;
+
+/**
+ * Where a session came from. „Programm üben" in the navigation means the
+ * FSRS programme for today; a hand-picked set from the Aufgaben list is a
+ * different thing that happens to use the same screen. Without this tag the
+ * two are indistinguishable once the session is running, and the plain
+ * /practice entry silently resumed whichever set was last open.
+ */
+export type SessionOrigin = 'smart' | 'manual';
 
 export interface SessionItem {
   questionId: string;
@@ -49,6 +58,7 @@ export interface GradedRecord {
 
 interface PersistedPracticeSession {
   version: typeof SESSION_STORAGE_VERSION;
+  origin: SessionOrigin;
   items: SessionItem[];
   index: number;
   graded: GradedRecord[];
@@ -59,6 +69,7 @@ function isPersistedPracticeSession(value: unknown): value is PersistedPracticeS
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PersistedPracticeSession>;
   return candidate.version === SESSION_STORAGE_VERSION
+    && (candidate.origin === 'smart' || candidate.origin === 'manual')
     && Array.isArray(candidate.items)
     && candidate.items.every((item) =>
       item
@@ -95,6 +106,7 @@ export const usePracticeStore = defineStore('practice', () => {
   const items = ref<SessionItem[]>([]);
   const questions = shallowRef<Map<string, Question>>(new Map());
   const index = ref(0);
+  const origin = ref<SessionOrigin>('smart');
   const graded = ref<GradedRecord[]>([]);
   const phase = ref<'idle' | 'loading' | 'running' | 'summary' | 'error'>('idle');
   const error = ref<string | undefined>();
@@ -133,6 +145,7 @@ export const usePracticeStore = defineStore('practice', () => {
     const key = storageKey();
     const snapshot: PersistedPracticeSession = {
       version: SESSION_STORAGE_VERSION,
+      origin: origin.value,
       items: items.value.map((item) => ({ ...item })),
       index: index.value,
       graded: graded.value.map(cloneGradedRecord),
@@ -227,8 +240,9 @@ export const usePracticeStore = defineStore('practice', () => {
     questions.value = map;
   }
 
-  async function beginSession(list: SessionItem[]): Promise<void> {
+  async function beginSession(list: SessionItem[], from: SessionOrigin): Promise<void> {
     items.value = list;
+    origin.value = from;
     index.value = 0;
     graded.value = [];
     preAnswerFsrs.clear();
@@ -285,7 +299,7 @@ export const usePracticeStore = defineStore('practice', () => {
         const q = questions.value.get(i.questionId);
         return q?.parts.some((p) => p.id === i.partId && p.answer);
       });
-      await beginSession(list);
+      await beginSession(list, 'smart');
     } catch (e) {
       phase.value = 'error';
       error.value = e instanceof Error ? e.message : String(e);
@@ -316,7 +330,7 @@ export const usePracticeStore = defineStore('practice', () => {
           list.push({ questionId: id, partId: p.id, reason: 'manual' });
         }
       }
-      await beginSession(list);
+      await beginSession(list, 'manual');
     } catch (e) {
       phase.value = 'error';
       error.value = e instanceof Error ? e.message : String(e);
@@ -447,10 +461,17 @@ export const usePracticeStore = defineStore('practice', () => {
    * Rehydrate an interrupted program from IndexedDB. Questions themselves are
    * restored through the existing cache-first loader, keeping the snapshot
    * small and usable offline.
+   *
+   * `want` restricts what may be resumed. „Programm üben" passes 'smart', so
+   * a half-finished hand-picked set from the Aufgaben list is NOT what the
+   * user gets handed back — they asked for today's programme. Nothing is lost
+   * by declining: every grade is written to the archive as it happens, only
+   * the position inside that ad-hoc set goes away.
    */
-  async function restoreSession(): Promise<boolean> {
+  async function restoreSession(want?: SessionOrigin): Promise<boolean> {
     if (phase.value === 'loading') return true;
     if (phase.value === 'running') {
+      if (want && origin.value !== want) return false;
       if (current.value && gradedPartIds.value.has(current.value.item.partId)) {
         next();
         await sessionPersistenceTail;
@@ -464,6 +485,7 @@ export const usePracticeStore = defineStore('practice', () => {
       if (snapshot !== undefined) await clearPersistedSession();
       return false;
     }
+    if (want && snapshot.origin !== want) return false;
 
     phase.value = 'loading';
     error.value = undefined;
@@ -495,6 +517,7 @@ export const usePracticeStore = defineStore('practice', () => {
       if (restoredIndex < 0) restoredIndex = 0;
 
       items.value = validItems;
+      origin.value = snapshot.origin;
       graded.value = restoredGraded;
       preAnswerFsrs.clear();
       if (restoredGraded.length >= validItems.length) {
@@ -529,6 +552,7 @@ export const usePracticeStore = defineStore('practice', () => {
     phase.value = 'idle';
     warning.value = undefined;
     items.value = [];
+    origin.value = 'smart';
     graded.value = [];
     preAnswerFsrs.clear();
     index.value = 0;
@@ -539,6 +563,7 @@ export const usePracticeStore = defineStore('practice', () => {
     items,
     questions,
     index,
+    origin,
     graded,
     phase,
     error,

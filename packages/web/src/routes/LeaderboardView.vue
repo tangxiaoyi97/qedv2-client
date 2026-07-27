@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { ApiError, type LeaderboardDetail, type LeaderboardPeriod, type LeaderboardResponse } from '@qed2/core-logic';
-import { QButton } from '@qed2/ui';
+import { QButton, QLoadingPanel } from '@qed2/ui';
 import { LogOut, Pencil, Trophy, UserRound } from 'lucide-vue-next';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -237,9 +237,7 @@ onMounted(() => {
           <span />
         </div>
 
-        <div v-if="loading" class="leaderboard__loading" role="status">
-          Leaderboard wird geladen …
-        </div>
+        <QLoadingPanel v-if="loading" label="Leaderboard wird geladen …" class="leaderboard__loading" />
         <div v-else-if="response?.items.length === 0" class="leaderboard__empty">
           Noch keine Einträge.
         </div>
@@ -430,7 +428,9 @@ onMounted(() => {
   padding-top: 9px;
 }
 
-.leaderboard__loading,
+.leaderboard__loading {
+  margin-top: 9px;
+}
 .leaderboard__empty {
   margin-top: 9px;
   padding: 56px 20px;

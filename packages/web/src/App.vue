@@ -46,13 +46,17 @@ const otherItems = [
   { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
-/** Mobile tab bar — 6 slots, Settings included so it is reachable everywhere. */
+/**
+ * Mobile tab bar — five slots, with „Heute" in the middle where the thumb
+ * rests. Six labels did not survive a narrow phone; „Üben" is the one that
+ * could go, because Heute leads with a full-width „Programm starten" hero
+ * that starts exactly the same session.
+ */
 const tabItems = [
-  { to: '/', label: 'Heute', icon: Calendar },
-  { to: '/practice', label: 'Üben', icon: Play },
-  { to: '/questions', label: 'Aufgaben', icon: ListTodo },
-  { to: '/history', label: 'Verlauf', icon: History },
   { to: '/progress', label: 'Übersicht', icon: LineChart },
+  { to: '/history', label: 'Verlauf', icon: History },
+  { to: '/', label: 'Heute', icon: Calendar },
+  { to: '/questions', label: 'Aufgaben', icon: ListTodo },
   { to: '/settings', label: 'Optionen', icon: Settings },
 ] as const;
 
@@ -152,7 +156,7 @@ watch(
           :class="{ 'app__tab--active': isTabActive(item.to) }"
         >
           <component :is="item.icon" class="app__tab-icon" aria-hidden="true" />
-          <span>{{ item.label }}</span>
+          <span class="app__tab-label">{{ item.label }}</span>
         </RouterLink>
       </nav>
 
@@ -363,8 +367,9 @@ watch(
     left: 0;
     right: 0;
     height: calc(64px + env(safe-area-inset-bottom));
-    padding: 8px calc(8px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
-      calc(8px + env(safe-area-inset-left));
+    gap: 2px;
+    padding: 6px calc(6px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
+      calc(6px + env(safe-area-inset-left));
     background: var(--q-card);
     border-top: 1px solid var(--q-border);
     z-index: 40;
@@ -385,29 +390,34 @@ watch(
     font-size: 11px;
     font-weight: 500;
     text-decoration: none;
-    padding-top: 2px;
+    /* The tint is painted by this element, so its own box IS the pill — the
+     * previous inset pseudo-element was narrower than the cell and long
+     * labels ("Übersicht") spilled out of the highlight. */
+    padding: 5px 2px 4px;
+    border-radius: 12px;
     min-width: 0;
     min-height: 48px;
-    transition: color var(--q-transition-fast), transform 0.1s ease;
+    overflow: hidden;
+    transition: color var(--q-transition-fast), background var(--q-transition-fast),
+      transform 0.1s ease;
+  }
+  /* A label that cannot fit its slot is clipped, never drawn past the pill. */
+  .app__tab-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .app__tab:active {
-    background: var(--q-panel-2);
-    border-radius: 6px;
     transform: scale(0.95);
+  }
+  .app__tab:not(.app__tab--active):active {
+    background: var(--q-panel-2);
   }
   .app__tab--active {
     color: var(--q-accent-strong);
     font-weight: 700;
-  }
-  /* active pill: a soft tinted slab behind icon+label — much easier to
-   * spot the current tab at a glance than recolor alone */
-  .app__tab--active::before {
-    content: '';
-    position: absolute;
-    inset: 6px 8px;
     background: var(--q-accent-bg);
-    border-radius: 10px;
-    z-index: -1;
   }
   .app__tab {
     position: relative;

@@ -72,9 +72,12 @@ const marks = computed<(Mark | null)[]>(() => {
         : item?.correct && picked
           ? 'correct-pick'
           : undefined);
-    if (note === 'correct-pick') return { state: 'correct', label: 'Richtig · gewählt' };
-    if (note === 'wrong-pick') return { state: 'incorrect', label: 'Falsch · gewählt' };
-    if (note === 'missed') return { state: 'missed', label: 'Richtig · verpasst' };
+    // Verdict only. Whether the option was picked or missed is already told
+    // by the row itself — solid border + filled mark for a pick, dashed for a
+    // missed one — so spelling it out again just crowds a narrow row.
+    if (note === 'correct-pick') return { state: 'correct', label: 'Richtig' };
+    if (note === 'wrong-pick') return { state: 'incorrect', label: 'Falsch' };
+    if (note === 'missed') return { state: 'missed', label: 'Richtig' };
     return null;
   });
 });

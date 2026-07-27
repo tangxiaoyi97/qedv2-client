@@ -9,6 +9,8 @@ export { default as ChevronDown } from './shared/ChevronDown.vue';
 export { default as QButton } from './shared/QButton.vue';
 export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';
+export { default as QSkeleton } from './shared/QSkeleton.vue';
+export { default as QLoadingPanel } from './shared/QLoadingPanel.vue';
 export { default as MarkdownView } from './shared/MarkdownView.vue';
 export { parseMarkdown } from './shared/markdown.js';
 export { lockBodyScroll, unlockBodyScroll, bodyScrollLockDepth } from './shared/scroll-lock.js';
@@ -53,6 +55,8 @@ export {
   type SelfAssessmentUiState,
 } from './practice/self-assessment.js';
 export { default as QuestionHeader } from './practice/QuestionHeader.vue';
+export { default as SessionProgressBar } from './practice/SessionProgressBar.vue';
+export type { ProgressSegment } from './practice/SessionProgressBar.vue';
 
 // review / progress
 export { default as MasteryBar } from './review/MasteryBar.vue';
