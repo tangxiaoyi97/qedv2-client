@@ -26,6 +26,15 @@ describe('loading states', () => {
     expect(tokensCss).toContain('q-skeleton-sweep');
   });
 
+  it('pins the cross-fade column to the container width', () => {
+    // Regression: with the implicit `auto` column the track is sized to
+    // max-content, so every view's `max-width` turned into a demand rather
+    // than a cap and Übersicht/Verlauf overflowed the viewport on a phone.
+    const rule = /\.q-crossfade\s*\{[^}]*\}/.exec(tokensCss)?.[0] ?? '';
+    expect(rule).toContain('display: grid');
+    expect(rule).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  });
+
   it('leaves no per-view pulse animation behind, bar the practice loader', () => {
     const offenders = Object.entries(viewSources)
       .filter(([, source]) => /@keyframes\s+pulse\b/.test(source))

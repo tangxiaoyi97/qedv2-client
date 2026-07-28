@@ -77,6 +77,14 @@ body.q-modal-open {
  * ------------------------------------------------------------------ */
 .q-crossfade {
   display: grid;
+  /*
+   * NOT the implicit `auto` column. An `auto` track is sized to max-content,
+   * so a child with `max-width: 860px` would ask for 860px and overflow a
+   * phone — where as a block child the same rule is only a cap and the child
+   * simply fills the parent. `minmax(0, 1fr)` restores that: exactly the
+   * container's width, never wider.
+   */
+  grid-template-columns: minmax(0, 1fr);
 }
 .q-crossfade > * {
   grid-area: 1 / 1;
