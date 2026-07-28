@@ -27,12 +27,22 @@ describe('loading states', () => {
   });
 
   it('pins the cross-fade column to the container width', () => {
-    // Regression: with the implicit `auto` column the track is sized to
-    // max-content, so every view's `max-width` turned into a demand rather
-    // than a cap and Übersicht/Verlauf overflowed the viewport on a phone.
+    // With the implicit `auto` column the track is sized to max-content, so a
+    // view's `max-width` becomes a demand rather than a cap.
     const rule = /\.q-crossfade\s*\{[^}]*\}/.exec(tokensCss)?.[0] ?? '';
     expect(rule).toContain('display: grid');
     expect(rule).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+  });
+
+  it('makes cross-fade children fill their track', () => {
+    // Regression (Übersicht/Verlauf overflowed the viewport on a phone): every
+    // route root is `max-width: Npx; margin: 0 auto`, and an auto inline
+    // margin cancels `justify-self: stretch`. `width: auto` then resolves to
+    // fit-content, which the 995px heatmap drags up to the root's own
+    // max-width. Constraining the track alone does NOT prevent this.
+    const rule = /\.q-crossfade\s*>\s*\*\s*\{[^}]*\}/.exec(tokensCss)?.[0] ?? '';
+    expect(rule).toMatch(/width:\s*100%/);
+    expect(rule).toMatch(/min-width:\s*0/);
   });
 
   it('leaves no per-view pulse animation behind, bar the practice loader', () => {

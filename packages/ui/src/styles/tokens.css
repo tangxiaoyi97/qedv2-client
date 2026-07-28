@@ -89,6 +89,16 @@ body.q-modal-open {
 .q-crossfade > * {
   grid-area: 1 / 1;
   min-width: 0;
+  /*
+   * `width: 100%` is load-bearing, not tidiness. Every route root is
+   * `max-width: Npx; margin: 0 auto`, and an auto inline margin cancels a
+   * grid item's `justify-self: stretch`. `width: auto` then means
+   * fit-content — min(max-content, max(min-content, available)) — so a wide
+   * child (the 995px activity heatmap, the 460px progress table) pushes
+   * min-content up and the item settles at its own max-width, overflowing
+   * the phone. Stating the width restores what a block child always had.
+   */
+  width: 100%;
 }
 .q-crossfade-enter-active {
   transition: opacity 0.22s ease-out, transform 0.22s ease-out;
