@@ -11,15 +11,16 @@
  *
  * Controlled component: the parent owns `detent`.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SolutionEntry, ImageFigure } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
+import { resolveDetentHeights, type SheetDetent } from './sheet-detents.js';
 
 export type SheetVerdict = 'correct' | 'partial' | 'incorrect';
-export type SheetDetent = 'collapsed' | 'default' | 'full';
+export type { SheetDetent };
 
 const props = defineProps<{
   solution: SolutionEntry[] | undefined;
@@ -61,27 +62,82 @@ const handleLabel = computed(() => {
   return props.verdictLabel ? `${props.verdictLabel} — ${action}` : action;
 });
 
+/**
+ * Full screen turns the header into a result banner: at that size a 4px grip
+ * stranded above a separate verdict line reads as two unrelated strips, and
+ * the verdict would scroll away with the rest of the content.
+ */
+const bannerVerdict = computed(() => (props.detent === 'full' ? props.verdict : undefined));
+
 /* --- detents ---------------------------------------------------------------
  * Heights are resolved in pixels rather than left to CSS, because the drag
  * has to interpolate between them and CSS `min(55vh, 420px)` is not a number
- * this code can reason about.
+ * this code can reason about. The sizing RULES live in sheet-detents.ts so
+ * they can be exercised without a layout engine.
  */
-/** Room left for the practice top bar so full screen never hides it. */
-const FULL_SCREEN_RESERVE_PX = 96;
 /** Below this a pointer gesture was a tap, and the click handler owns it. */
 const TAP_SLOP_PX = 8;
 
 const viewportHeight = ref(typeof window === 'undefined' ? 800 : window.innerHeight);
+/** Height that shows verdict + title + answer. */
+const answerHeight = ref(0);
+/** Offset of the grading note, i.e. the first pixel the half detent must not
+ *  reach. 0 when the solution carries no note. */
+const noteOffset = ref(0);
 
 function readViewport(): void {
   viewportHeight.value = window.innerHeight;
 }
 
-const detentHeights = computed<Record<SheetDetent, number>>(() => ({
-  collapsed: 0,
-  default: Math.min(viewportHeight.value * 0.55, 420),
-  full: Math.max(0, viewportHeight.value - FULL_SCREEN_RESERVE_PX),
-}));
+const detentHeights = computed(() =>
+  resolveDetentHeights({
+    viewportHeight: viewportHeight.value,
+    answerHeight: answerHeight.value,
+    noteOffset: noteOffset.value,
+  }),
+);
+
+/* --- measuring the answer block -------------------------------------------- */
+
+const inner = ref<HTMLElement | null>(null);
+/**
+ * The first entry's answer (result card + figures), without its grading note.
+ * Declared inside a v-for, so Vue hands back an array even though the v-if
+ * leaves exactly one element in it.
+ */
+const answerBlock = ref<HTMLElement | HTMLElement[] | null>(null);
+/** The first entry's grading note, if it has one. */
+const noteBlock = ref<HTMLElement | HTMLElement[] | null>(null);
+let contentObserver: ResizeObserver | undefined;
+
+const firstOf = (r: HTMLElement | HTMLElement[] | null): HTMLElement | null =>
+  (Array.isArray(r) ? r[0] : r) ?? null;
+
+/**
+ * Sub-pixel noise is ignored on purpose. The observer watches the same
+ * element whose width the sheet's own scrollbar can change, so writing back
+ * every measurement lets a one-pixel wobble drive an endless
+ * measure → resize → measure loop.
+ */
+const MEASURE_DEAD_BAND_PX = 2;
+
+function measureAnswer(): void {
+  const innerEl = inner.value;
+  const blockEl = firstOf(answerBlock.value);
+  if (!innerEl || !blockEl || dragging.value) return;
+  const padBottom = parseFloat(getComputedStyle(innerEl).paddingBottom) || 0;
+  // Rect deltas rather than offsetTop: the two live in different offset
+  // parents once the sheet scrolls.
+  const innerTop = innerEl.getBoundingClientRect().top;
+  const height = blockEl.getBoundingClientRect().bottom - innerTop;
+  if (height <= 0) return;
+  const next = Math.ceil(height + padBottom);
+  if (Math.abs(next - answerHeight.value) > MEASURE_DEAD_BAND_PX) answerHeight.value = next;
+
+  const noteEl = firstOf(noteBlock.value);
+  const noteTop = noteEl ? Math.floor(noteEl.getBoundingClientRect().top - innerTop) : 0;
+  if (Math.abs(noteTop - noteOffset.value) > MEASURE_DEAD_BAND_PX) noteOffset.value = noteTop;
+}
 
 /* --- drag ------------------------------------------------------------------ */
 
@@ -138,26 +194,59 @@ function onHandleClick(): void {
   emit('update:detent', props.detent === 'collapsed' ? 'default' : 'collapsed');
 }
 
-onMounted(() => window.addEventListener('resize', readViewport));
-onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
+onMounted(() => {
+  window.addEventListener('resize', readViewport);
+  void nextTick(measureAnswer);
+  // Figures load late and change the answer's height under us.
+  if (typeof ResizeObserver !== 'undefined' && inner.value) {
+    contentObserver = new ResizeObserver(() => measureAnswer());
+    contentObserver.observe(inner.value);
+  }
+});
+
+watch(
+  () => props.solution,
+  () => void nextTick(measureAnswer),
+);
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', readViewport);
+  contentObserver?.disconnect();
+});
 </script>
 
 <template>
   <div class="q-ssheet-wrap">
-    <button
+    <!-- Maximised, the grip and the verdict stop being two strips stacked on
+         each other and become one banner carrying the result. -->
+    <div
       v-if="handle"
-      type="button"
-      class="q-ssheet__handle"
-      :aria-expanded="detent !== 'collapsed'"
-      :aria-label="handleLabel"
-      @pointerdown="onHandleDown"
-      @pointermove="onHandleMove"
-      @pointerup="onHandleUp"
-      @pointercancel="onHandleUp"
-      @click="onHandleClick"
+      class="q-ssheet__top"
+      :class="bannerVerdict ? `q-ssheet__top--${bannerVerdict}` : ''"
     >
-      <span class="q-ssheet__grip" :class="`q-ssheet__grip--${verdict ?? 'neutral'}`" aria-hidden="true" />
-    </button>
+      <button
+        type="button"
+        class="q-ssheet__handle"
+        :aria-expanded="detent !== 'collapsed'"
+        :aria-label="handleLabel"
+        @pointerdown="onHandleDown"
+        @pointermove="onHandleMove"
+        @pointerup="onHandleUp"
+        @pointercancel="onHandleUp"
+        @click="onHandleClick"
+      >
+        <span
+          class="q-ssheet__grip"
+          :class="`q-ssheet__grip--${bannerVerdict ? 'on-banner' : (verdict ?? 'neutral')}`"
+          aria-hidden="true"
+        />
+      </button>
+      <div v-if="bannerVerdict" class="q-ssheet__banner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+        <StateIcon :state="bannerVerdict" :size="20" />
+        <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
+        <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
+      </div>
+    </div>
 
     <section
       class="q-ssheet"
@@ -169,10 +258,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
       aria-label="Offizieller Lösungsweg"
       @keydown.esc="emit('update:detent', 'collapsed')"
     >
-    <div class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+    <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
       <!-- The verdict lives here, not in the action row: on a phone it was
-           colliding with the Lösung toggle and the primary button. -->
-      <div v-if="verdict" class="q-ssheet__verdict" :class="`q-ssheet__verdict--${verdict}`">
+           colliding with the Lösung toggle and the primary button. Maximised
+           it moves up into the banner instead. -->
+      <div v-if="verdict && !bannerVerdict" class="q-ssheet__verdict" :class="`q-ssheet__verdict--${verdict}`">
         <StateIcon :state="verdict" :size="20" />
         <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
         <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
@@ -191,13 +281,29 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
             <span class="q-ssheet__divider-label">Alternative</span>
           </div>
           <div class="q-ssheet__entry">
-            <div class="q-ssheet__card">
-              <RichTextView class="q-ssheet__result" :nodes="entry.result" />
+            <!-- Half-open stops at this block's bottom: the answer is
+                 complete, the grading note is for whoever opens further. -->
+            <div v-if="i === 0" ref="answerBlock" class="q-ssheet__answer">
+              <div class="q-ssheet__card">
+                <RichTextView class="q-ssheet__result" :nodes="entry.result" />
+              </div>
+              <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
+                <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
+              </figure>
             </div>
-            <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
-              <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
-            </figure>
-            <div v-if="entry.note" class="q-ssheet__note">
+            <template v-else>
+              <div class="q-ssheet__card">
+                <RichTextView class="q-ssheet__result" :nodes="entry.result" />
+              </div>
+              <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
+                <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
+              </figure>
+            </template>
+            <div
+              v-if="entry.note"
+              :ref="i === 0 ? (el) => (noteBlock = el as HTMLElement) : undefined"
+              class="q-ssheet__note"
+            >
               <span class="q-ssheet__note-label">Beurteilungshinweis</span>
               <span class="q-ssheet__note-text">{{ entry.note }}</span>
             </div>
@@ -212,6 +318,50 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
 <style scoped>
 .q-ssheet-wrap {
   background: var(--q-card);
+}
+
+/* Header strip. Neutral normally; maximised it takes the verdict tint and
+ * the grip + result read as one banner. */
+.q-ssheet__top {
+  transition: background var(--q-transition-normal);
+}
+.q-ssheet__top--correct {
+  background: var(--q-ok-bg);
+  border-bottom: 1px solid var(--q-ok-border);
+}
+.q-ssheet__top--partial {
+  background: var(--q-part-bg);
+  border-bottom: 1px solid var(--q-part-border);
+}
+.q-ssheet__top--incorrect {
+  background: var(--q-err-bg);
+  border-bottom: 1px solid var(--q-err-border);
+}
+
+.q-ssheet__banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 16px 12px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.q-ssheet__top--correct .q-ssheet__banner {
+  color: var(--q-ok-ink);
+}
+.q-ssheet__top--partial .q-ssheet__banner {
+  color: var(--q-part-ink);
+}
+.q-ssheet__top--incorrect .q-ssheet__banner {
+  color: var(--q-err-ink);
+}
+
+/* Measured block: everything the half-open detent should reveal. */
+.q-ssheet__answer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
 /* Full-width hit area; the grip is only the visible part of it. */
@@ -241,6 +391,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
 }
 .q-ssheet__grip--neutral {
   background: var(--q-border-3);
+}
+/* On the tinted banner the verdict colour would vanish into the background,
+ * so the grip goes back to being a plain affordance. */
+.q-ssheet__grip--on-banner {
+  background: currentColor;
+  opacity: 0.35;
 }
 /* A verdict grip is a signal, not just an affordance — give it enough body
  * to read as one from across the screen. */
@@ -300,6 +456,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
 .q-ssheet {
   height: 0;
   overflow-y: auto;
+  /* Without a reserved gutter the scrollbar appears as the sheet grows, the
+   * text re-wraps, and the measured answer height stops matching the open
+   * one — the content would visibly reflow mid-animation. */
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   transition: height var(--q-transition-normal);
   border-bottom: 1px solid transparent;
@@ -324,15 +484,16 @@ onBeforeUnmount(() => window.removeEventListener('resize', readViewport));
 }
 .q-ssheet__tick {
   width: 4px;
-  height: 15px;
+  height: 18px;
   border-radius: 2px;
   background: var(--q-accent);
   flex: none;
 }
 .q-ssheet__title {
   margin: 0;
-  font-size: 13px;
+  font-size: 15.5px;
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--q-ink);
 }
 .q-ssheet__empty {

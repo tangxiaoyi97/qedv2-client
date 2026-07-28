@@ -9,9 +9,14 @@ import SolutionSheet from '../src/practice/SolutionSheet.vue';
  * solution.
  */
 
-// jsdom reports 768px, which fixes the detents this spec reasons about.
+// jsdom reports 768px and has no layout, so the half detent falls back to its
+// ratio estimate instead of the measured answer height.
 const VIEWPORT = 768;
-const HEIGHTS = { collapsed: 0, default: 420, full: VIEWPORT - 96 };
+const HEIGHTS = {
+  collapsed: 0,
+  default: Math.round(Math.min(VIEWPORT * 0.55, 460)),
+  full: VIEWPORT - 96,
+};
 
 function mountSheet(props: Record<string, unknown> = {}) {
   return mount(SolutionSheet, {
@@ -147,6 +152,96 @@ describe('SolutionSheet drag', () => {
     await drag(wrapper, 500, 200);
     await wrapper.get('.q-ssheet__handle').trigger('click');
     expect(wrapper.emitted('update:detent')).toEqual([['default']]);
+  });
+});
+
+describe('SolutionSheet half-open size', () => {
+  /** Stub a viewport height and remount, since detents derive from it. */
+  function atViewport(height: number, props: Record<string, unknown> = {}) {
+    Object.defineProperty(window, 'innerHeight', { value: height, configurable: true });
+    return mountSheet(props);
+  }
+
+  it('never opens further than 60 % of a short viewport', () => {
+    const wrapper = atViewport(600, { detent: 'default' });
+    expect(heightOf(wrapper)).toBeLessThanOrEqual(Math.round(600 * 0.6));
+    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
+  });
+
+  it('is capped in absolute pixels on a tall viewport', () => {
+    // Without the cap a desktop-height window would hand the "half" detent
+    // most of the screen, which is what `full` is for.
+    const wrapper = atViewport(2000, { detent: 'default' });
+    expect(heightOf(wrapper)).toBe(460);
+    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
+  });
+
+  it('never grows past the full detent, however cramped the viewport', () => {
+    const wrapper = atViewport(200, { detent: 'default' });
+    const full = 200 - 96;
+    expect(heightOf(wrapper)).toBeLessThanOrEqual(full);
+    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
+  });
+
+  it('wraps the answer in a measurable block that excludes the grading note', () => {
+    // The block's bottom is what the measurement reads; jsdom cannot lay out,
+    // so this guards the structure rather than the resulting pixels — the
+    // numbers are covered in sheet-detents.spec.ts.
+    const wrapper = mountSheet({
+      detent: 'default',
+      solution: [
+        {
+          result: [{ t: 'text', v: 'Zutreffend: A' }],
+          note: 'Ein Punkt für vier richtige Zuordnungen.',
+        },
+      ],
+    });
+    const answer = wrapper.get('.q-ssheet__answer');
+    expect(answer.find('.q-ssheet__card').exists()).toBe(true);
+    expect(answer.find('.q-ssheet__note').exists()).toBe(false);
+
+    const html = wrapper.html();
+    expect(html.indexOf('q-ssheet__answer')).toBeLessThan(html.indexOf('q-ssheet__note'));
+  });
+});
+
+describe('SolutionSheet banner', () => {
+  const withVerdict = (detent: string) =>
+    mountSheet({ detent, verdict: 'incorrect', verdictLabel: 'Falsch', verdictPoints: '0 / 1 P' });
+
+  it('merges grip and result into one tinted banner at full screen', () => {
+    const wrapper = withVerdict('full');
+    expect(wrapper.get('.q-ssheet__top').classes()).toContain('q-ssheet__top--incorrect');
+    const banner = wrapper.get('.q-ssheet__banner');
+    expect(banner.text()).toContain('Falsch');
+    expect(banner.text()).toContain('0 / 1 P');
+    // Moved out of the scrolling body, so it cannot scroll away.
+    expect(wrapper.find('.q-ssheet__verdict').exists()).toBe(false);
+  });
+
+  it('keeps the header neutral and the verdict in the body below full screen', () => {
+    for (const detent of ['collapsed', 'default'] as const) {
+      const wrapper = withVerdict(detent);
+      expect(wrapper.get('.q-ssheet__top').classes(), detent).toEqual(['q-ssheet__top']);
+      expect(wrapper.find('.q-ssheet__banner').exists(), detent).toBe(false);
+      expect(wrapper.get('.q-ssheet__verdict').text(), detent).toContain('Falsch');
+    }
+  });
+
+  it('drops the grip’s own colour once the banner carries it', () => {
+    // Verdict-on-verdict would make the grip disappear into the banner.
+    expect(withVerdict('full').get('.q-ssheet__grip').classes()).toContain(
+      'q-ssheet__grip--on-banner',
+    );
+    expect(withVerdict('default').get('.q-ssheet__grip').classes()).toContain(
+      'q-ssheet__grip--incorrect',
+    );
+  });
+
+  it('shows no banner when there is no result to show', () => {
+    const wrapper = mountSheet({ detent: 'full' });
+    expect(wrapper.find('.q-ssheet__banner').exists()).toBe(false);
+    expect(wrapper.get('.q-ssheet__top').classes()).toEqual(['q-ssheet__top']);
   });
 });
 
