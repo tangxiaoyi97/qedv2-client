@@ -33,6 +33,7 @@ import {
   VerdictCard,
   type PartPlayerCommand,
   type PartPlayerState,
+  type SheetDetent,
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -75,7 +76,9 @@ const playerState = ref<PartPlayerState>({
 });
 const playerCommand = ref<PartPlayerCommand | null>(null);
 let playerCommandId = 0;
-const solutionOpen = ref(false);
+/** Solution drawer position. „full" is reachable by swipe only (SolutionSheet). */
+const solutionDetent = ref<SheetDetent>('collapsed');
+const solutionOpen = computed(() => solutionDetent.value !== 'collapsed');
 const mobileRailOpen = ref(false);
 const exitArmed = ref(false);
 const exitButton = ref<HTMLButtonElement | null>(null);
@@ -88,14 +91,14 @@ function onPlayerState(state: PartPlayerState): void {
   // self-assessment — open the sheet for the user. Same for a wrong or
   // half-right answer: the people who most need the solution shouldn't
   // have to hunt for the toggle.
-  if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionOpen.value = true;
+  if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionDetent.value = 'default';
   if (
     state.phase === 'reviewed' &&
     !wasReviewed &&
     state.result != null &&
     state.result.verdict !== 'correct'
   ) {
-    solutionOpen.value = true;
+    solutionDetent.value = 'default';
   }
 }
 
@@ -193,7 +196,7 @@ watch(
 function openSolutionFromVerdict(): void {
   // The sheet is part of the fixed bottom bar — just open it, no scroll
   // (scrolling a fixed element is meaningless).
-  solutionOpen.value = true;
+  solutionDetent.value = 'default';
 }
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
@@ -284,7 +287,7 @@ onMounted(() => {
 watch(
   () => practice.index,
   () => {
-    solutionOpen.value = false;
+    solutionDetent.value = 'collapsed';
     mobileRailOpen.value = false;
     exitArmed.value = false;
     playerCommand.value = null;
@@ -355,6 +358,33 @@ const showVerdictCard = computed(
     current.value?.part.answer?.kind === 'open',
 );
 const summaryStats = computed(() => practice.summary);
+
+/** Score as a percentage for the result meter (0 max points → empty, not NaN). */
+const scorePct = computed(() => {
+  const { points, maxPoints } = summaryStats.value;
+  return maxPoints > 0 ? Math.round((points / maxPoints) * 100) : 0;
+});
+
+/** Verdict counts, always all three, so the row keeps its shape. */
+const summaryVerdictRows = computed(() => {
+  const by = summaryStats.value.byVerdict;
+  return [
+    { state: 'correct' as const, count: by.correct, label: 'Richtig' },
+    { state: 'partial' as const, count: by.partial, label: 'Teilweise' },
+    { state: 'incorrect' as const, count: by.incorrect, label: 'Falsch' },
+  ];
+});
+
+const syncNote = computed(() => {
+  switch (progress.syncStatus.state) {
+    case 'synced':
+      return '✓ Synchronisiert';
+    case 'offline':
+      return 'Offline — wird später synchronisiert';
+    default:
+      return '';
+  }
+});
 const showProgramRail = computed(() => practice.total > 1);
 
 /* --- session rail (left sidebar): the session's items + current position --- */
@@ -458,7 +488,8 @@ const currentCompetencyCodes = computed(() =>
       <span v-else class="practice__spacer" />
     </div>
 
-    <transition name="page-fade" mode="out-in">
+    <div class="practice__stage q-crossfade">
+    <transition name="q-crossfade">
       <!-- loading -->
       <div v-if="practice.phase === 'loading'" key="loading" class="practice__center">
         <div class="practice__skeleton">
@@ -486,47 +517,47 @@ const currentCompetencyCodes = computed(() =>
 
       <!-- summary -->
       <div v-else-if="practice.phase === 'summary'" key="summary" class="practice__center">
-        <div class="practice__summary">
-          <h2 class="practice__summary-title">Programm abgeschlossen</h2>
-          <div v-if="summaryStats.count === 0" class="practice__error-text">
+        <div v-if="summaryStats.count === 0" class="practice__summary">
+          <p class="practice__summary-empty">
             Keine passenden Aufgaben gefunden — andere Filter probieren?
-          </div>
-          <template v-else>
-            <div class="practice__summary-grid">
-              <div class="practice__stat">
-                <div class="practice__stat-num">{{ summaryStats.count }}</div>
-                <div class="practice__stat-label">Aufgaben</div>
-              </div>
-              <div class="practice__stat">
-                <div class="practice__stat-num">
-                  {{ summaryStats.points.toLocaleString('de-AT') }}<span class="practice__stat-sub">/{{ summaryStats.maxPoints.toLocaleString('de-AT') }}</span>
-                </div>
-                <div class="practice__stat-label">Punkte</div>
-              </div>
-              <div class="practice__stat practice__stat--verdicts">
-                <span class="practice__verdict" :aria-label="`Richtig: ${summaryStats.byVerdict.correct}`">
-                  <StateIcon state="correct" :size="16" /> {{ summaryStats.byVerdict.correct }}
-                </span>
-                <span class="practice__verdict" :aria-label="`Teilweise richtig: ${summaryStats.byVerdict.partial}`">
-                  <StateIcon state="partial" :size="16" /> {{ summaryStats.byVerdict.partial }}
-                </span>
-                <span class="practice__verdict" :aria-label="`Falsch: ${summaryStats.byVerdict.incorrect}`">
-                  <StateIcon state="incorrect" :size="16" /> {{ summaryStats.byVerdict.incorrect }}
-                </span>
+          </p>
+          <QButton class="practice__summary-cta" @click="exitNow">Zurück</QButton>
+        </div>
+
+        <div v-else class="practice__summary">
+          <!-- One card instead of three floating boxes: the score is the
+               headline, everything else supports it. -->
+          <section class="practice__result">
+            <div class="practice__result-score">
+              <span class="practice__result-points">{{ summaryStats.points.toLocaleString('de-AT') }}</span>
+              <span class="practice__result-max">von {{ summaryStats.maxPoints.toLocaleString('de-AT') }} Punkten</span>
+            </div>
+            <div class="practice__result-meter" role="img" :aria-label="`${scorePct} Prozent erreicht`">
+              <span class="practice__result-meter-fill" :style="{ width: `${scorePct}%` }" />
+            </div>
+            <p class="practice__result-count">
+              {{ summaryStats.count }} {{ summaryStats.count === 1 ? 'Aufgabe' : 'Aufgaben' }} bearbeitet
+            </p>
+
+            <ul class="practice__result-verdicts">
+              <li v-for="row in summaryVerdictRows" :key="row.state" class="practice__result-verdict">
+                <StateIcon :state="row.state" :size="18" />
+                <span class="practice__result-verdict-num">{{ row.count }}</span>
+                <span class="practice__result-verdict-label">{{ row.label }}</span>
+              </li>
+            </ul>
+
+            <div v-if="summaryStats.competencies.length > 0" class="practice__result-section">
+              <h3 class="practice__result-section-title">Geübte Kompetenzen</h3>
+              <div class="practice__result-comps">
+                <QChip v-for="c in summaryStats.competencies" :key="c">{{ c }}</QChip>
               </div>
             </div>
-            <div v-if="summaryStats.competencies.length > 0" class="practice__summary-comps">
-              <QChip v-for="c in summaryStats.competencies" :key="c">{{ c }}</QChip>
-            </div>
-            <div v-if="auth.isLoggedIn" class="practice__sync-note">
-              <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
-              <template v-else-if="progress.syncStatus.state === 'offline'">Offline — wird später synchronisiert</template>
-            </div>
-          </template>
-          <div class="practice__actions-row">
-            <QButton variant="secondary" @click="start">Noch ein Programm</QButton>
-            <QButton @click="exitNow">Zurück</QButton>
-          </div>
+
+            <p v-if="auth.isLoggedIn && syncNote" class="practice__result-sync">{{ syncNote }}</p>
+          </section>
+
+          <QButton class="practice__summary-cta" @click="exitNow">Zurück</QButton>
         </div>
       </div>
 
@@ -608,10 +639,9 @@ const currentCompetencyCodes = computed(() =>
         </div>
 
         <PracticeBottomBar
-          v-model:solution-open="solutionOpen"
+          v-model:solution-detent="solutionDetent"
           :state="playerState"
           :answer-preview="playerState.answerPreview"
-          :answer-kind="current.part.answer?.kind"
           :rubric-mode="current.part.scoring?.mode === 'rubric'"
           :solution="current.part.solution"
           :grading="currentGrading"
@@ -629,6 +659,7 @@ const currentCompetencyCodes = computed(() =>
         </div>
       </div>
     </transition>
+    </div>
   </div>
 </template>
 
@@ -643,6 +674,12 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice--no-rail {
   --practice-rail-width: 0px;
+}
+/* Stacks the phase panels so loading and content overlap during the swap
+ * instead of leaving the screen briefly empty. */
+.practice__stage {
+  flex: 1;
+  min-height: 0;
 }
 .practice__topbar {
   height: calc(56px + env(safe-area-inset-top));
@@ -869,67 +906,131 @@ const currentCompetencyCodes = computed(() =>
   justify-content: center;
   flex-wrap: wrap;
 }
+/* --- programme result ------------------------------------------------------
+ * One card carrying the whole outcome. The previous version scattered three
+ * differently-sized boxes, a chip row and a sync line across the middle of an
+ * otherwise empty screen; nothing lined up and the heading merely repeated
+ * the top bar.
+ */
 .practice__summary {
   width: 100%;
-  max-width: 520px;
-  text-align: center;
-}
-.practice__summary-title {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0 0 20px;
-}
-.practice__summary-grid {
+  max-width: 420px;
   display: flex;
-  gap: 12px;
-  justify-content: center;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 16px;
 }
-.practice__stat {
-  background: var(--q-panel);
-  border: 1px solid var(--q-border-soft);
-  border-radius: 12px;
-  padding: 14px 22px;
-}
-.practice__stat-num {
-  font-weight: 800;
-  font-size: 26px;
-}
-.practice__stat-sub {
+.practice__summary-empty {
+  margin: 0;
+  text-align: center;
+  color: var(--q-mut);
   font-size: 14px;
+}
+.practice__summary-cta {
+  align-self: stretch;
+}
+
+.practice__result {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 26px 22px 22px;
+  background: var(--q-card);
+  border: 1px solid var(--q-border);
+  border-radius: 16px;
+  box-shadow: var(--q-shadow-card);
+}
+
+/* The score is the headline — the top bar already said „abgeschlossen". */
+.practice__result-score {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.practice__result-points {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.practice__result-max {
+  font-size: 13px;
   color: var(--q-mut-2);
   font-weight: 600;
 }
-.practice__stat-label {
+.practice__result-meter {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--q-track);
+  overflow: hidden;
+}
+.practice__result-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--q-accent);
+  transition: width var(--q-transition-normal);
+}
+.practice__result-count {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--q-faint);
+}
+
+/* Equal columns so the three counts read as one comparison, not three cards. */
+.practice__result-verdicts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 14px 0 0;
+  border-top: 1px solid var(--q-border-soft);
+  list-style: none;
+}
+.practice__result-verdict {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.practice__result-verdict-num {
+  font-size: 19px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.practice__result-verdict-label {
   font-size: 11px;
   color: var(--q-faint);
-  margin-top: 2px;
 }
-.practice__stat--verdicts {
-  display: flex;
-  align-items: center;
-  gap: 14px;
+
+.practice__result-section {
+  width: 100%;
+  padding-top: 14px;
+  border-top: 1px solid var(--q-border-soft);
 }
-.practice__verdict {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.practice__result-section-title {
+  margin: 0 0 9px;
+  font-size: 10.5px;
   font-weight: 700;
-  font-size: 15px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--q-faint);
+  text-align: center;
 }
-.practice__summary-comps {
+.practice__result-comps {
   display: flex;
   gap: 7px;
   justify-content: center;
   flex-wrap: wrap;
-  margin-bottom: 14px;
 }
-.practice__sync-note {
+.practice__result-sync {
+  margin: 0;
   font-size: 12px;
   color: var(--q-mut-2);
-  margin-bottom: 16px;
 }
 
 @media (max-width: 640px) {

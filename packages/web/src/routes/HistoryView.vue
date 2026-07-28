@@ -283,16 +283,22 @@ function redo(questionId: string): void {
       <p v-if="cloudMode" class="hist__heatmap-note">Aktivität nur von diesem Gerät.</p>
     </section>
 
-    <div v-if="error && rows.length === 0" class="hist__error">
+    <div class="hist__stage q-crossfade">
+    <transition name="q-crossfade">
+    <div v-if="error && rows.length === 0" key="error" class="hist__error">
       {{ error }}
       <QButton variant="secondary" @click="loadPage(true)">Erneut versuchen</QButton>
     </div>
 
-    <div v-else-if="loading && rows.length === 0" class="hist__list">
-      <QSkeleton :rows="6" height="42px" label="Verlauf wird geladen …" />
-    </div>
+    <QSkeleton
+      v-else-if="loading && rows.length === 0"
+      key="loading"
+      :rows="6"
+      height="42px"
+      label="Verlauf wird geladen …"
+    />
 
-    <div v-else-if="rows.length === 0" class="hist__empty">
+    <div v-else-if="rows.length === 0" key="empty" class="hist__empty">
       <template v-if="selectedDate">
         Keine Antworten an diesem Tag.
         <QButton variant="secondary" @click="clearDateFilter">Alle Tage anzeigen</QButton>
@@ -303,7 +309,7 @@ function redo(questionId: string): void {
       </template>
     </div>
 
-    <template v-else>
+    <div v-else key="list" class="hist__groups">
       <section v-for="group in groups" :key="group.label" class="hist__day">
         <h3 class="hist__day-label">{{ group.label }}</h3>
         <div class="hist__list">
@@ -339,7 +345,9 @@ function redo(questionId: string): void {
           {{ loading ? 'Lade …' : error ? 'Erneut versuchen' : 'Mehr laden' }}
         </QButton>
       </div>
-    </template>
+    </div>
+    </transition>
+    </div>
   </div>
 </template>
 

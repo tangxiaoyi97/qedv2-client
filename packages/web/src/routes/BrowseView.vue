@@ -571,21 +571,24 @@ function firstCode(q: QuestionSummary): string | undefined {
       <span v-else>Lade …</span>
     </div>
 
-    <div v-if="!searchMode && error" class="browse__error">
+    <div class="browse__stage q-crossfade">
+    <transition name="q-crossfade">
+    <div v-if="!searchMode && error" key="error" class="browse__error">
       Aufgabenliste konnte nicht geladen werden: {{ error }}
       <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
     </div>
 
     <QSkeleton
       v-else-if="!searchMode && loading && allQuestions.length === 0"
+      key="loading"
       :rows="6"
       height="44px"
       label="Aufgaben werden geladen …"
     />
 
-    <div v-else-if="!searchMode && filtered.length === 0" class="browse__empty">Keine Aufgaben für diese Filter.</div>
+    <div v-else-if="!searchMode && filtered.length === 0" key="empty" class="browse__empty">Keine Aufgaben für diese Filter.</div>
 
-    <div v-else-if="!searchMode" class="browse__list">
+    <div v-else-if="!searchMode" key="list" class="browse__list">
       <button
         v-for="q in windowed"
         :key="q.id"
@@ -646,6 +649,9 @@ function firstCode(q: QuestionSummary): string | undefined {
       >
         Weitere {{ filtered.length - windowed.length }} Aufgaben …
       </div>
+    </div>
+
+    </transition>
     </div>
 
     <FilterDialog

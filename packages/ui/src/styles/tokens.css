@@ -62,13 +62,39 @@ body.q-modal-open {
   --q-transition-spring: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
-/* Global Page Transition (used with <Transition name="page-fade">) */
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity var(--q-transition-normal);
+/* ------------------------------------------------------------------ *
+ * State cross-fade.
+ *
+ * `mode="out-in"` was the previous answer and it is what made the app
+ * blink: the outgoing state has to finish leaving before the incoming one
+ * starts, so for a quarter of a second the container holds nothing and the
+ * page background shows through. Here the two overlap instead, which needs
+ * the container to stack its children — that is what `.q-crossfade` does,
+ * and why it must sit on the element that owns the <Transition>.
+ *
+ * Used for route swaps, for the practice phases, and for every
+ * skeleton → content hand-off.
+ * ------------------------------------------------------------------ */
+.q-crossfade {
+  display: grid;
 }
-.page-fade-enter-from,
-.page-fade-leave-to {
+.q-crossfade > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.q-crossfade-enter-active {
+  transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+}
+.q-crossfade-leave-active {
+  transition: opacity 0.16s ease-in;
+  /* The outgoing copy is scenery: it must not eat taps on its way out. */
+  pointer-events: none;
+}
+.q-crossfade-enter-from {
+  opacity: 0;
+  transform: translateY(5px);
+}
+.q-crossfade-leave-to {
   opacity: 0;
 }
 

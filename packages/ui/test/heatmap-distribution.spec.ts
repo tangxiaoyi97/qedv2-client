@@ -195,18 +195,18 @@ describe('SolutionSheet', () => {
   ];
 
   it('honors the controlled open prop (closed ↔ open)', async () => {
-    const w = mount(SolutionSheet, { props: { solution, open: false } });
+    const w = mount(SolutionSheet, { props: { solution, detent: 'collapsed' as const } });
     const sheet = w.find('.q-ssheet');
     expect(sheet.classes()).not.toContain('q-ssheet--open');
     expect(sheet.attributes('aria-hidden')).toBe('true');
-    await w.setProps({ open: true });
+    await w.setProps({ detent: 'default' as const });
     expect(sheet.classes()).toContain('q-ssheet--open');
     expect(sheet.attributes('aria-hidden')).toBe('false');
     expect(w.text()).toContain('Offizieller Lösungsweg');
   });
 
   it('renders solution entries with note box, figures and Alternative divider', () => {
-    const w = mount(SolutionSheet, { props: { solution, open: true } });
+    const w = mount(SolutionSheet, { props: { solution, detent: 'default' as const } });
     expect(w.text()).toContain('Zutreffend:');
     expect(w.find('.katex').exists()).toBe(true);
     expect(w.text()).toContain('Beurteilungshinweis');
@@ -236,14 +236,14 @@ describe('SolutionSheet', () => {
   });
 
   it('shows a quiet empty line when there is no official solution', () => {
-    const w = mount(SolutionSheet, { props: { solution: undefined, open: true } });
+    const w = mount(SolutionSheet, { props: { solution: undefined, detent: 'default' as const } });
     expect(w.text()).toContain('Keine offizielle Lösung verfügbar.');
     expect(w.findAll('.q-ssheet__entry')).toHaveLength(0);
   });
 
   it('emits update:open=false on Escape (parent owns the state)', async () => {
-    const w = mount(SolutionSheet, { props: { solution, open: true } });
+    const w = mount(SolutionSheet, { props: { solution, detent: 'default' as const } });
     await w.find('.q-ssheet').trigger('keydown', { key: 'Escape' });
-    expect(w.emitted('update:open')).toEqual([[false]]);
+    expect(w.emitted('update:detent')).toEqual([['collapsed']]);
   });
 });

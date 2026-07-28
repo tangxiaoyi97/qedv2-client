@@ -237,11 +237,13 @@ onMounted(() => {
           <span />
         </div>
 
-        <QLoadingPanel v-if="loading" label="Leaderboard wird geladen …" class="leaderboard__loading" />
-        <div v-else-if="response?.items.length === 0" class="leaderboard__empty">
+        <div class="leaderboard__stage q-crossfade">
+        <transition name="q-crossfade">
+        <QLoadingPanel v-if="loading" key="loading" label="Leaderboard wird geladen …" class="leaderboard__loading" />
+        <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty">
           Noch keine Einträge.
         </div>
-        <div v-else class="leaderboard__rows">
+        <div v-else key="rows" class="leaderboard__rows">
           <LeaderboardRow
             v-for="item in response?.items"
             :key="item.profileId"
@@ -249,6 +251,8 @@ onMounted(() => {
             :period="period"
             @open="openDetail"
           />
+        </div>
+        </transition>
         </div>
       </section>
 

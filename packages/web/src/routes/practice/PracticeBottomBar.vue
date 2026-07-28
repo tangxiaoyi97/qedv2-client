@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
-import type { AnswerKind, Grading, GradingOrUnseen, SolutionEntry } from '@qed2/core-logic';
+import { computed } from 'vue';
+import type { Grading, GradingOrUnseen, SolutionEntry } from '@qed2/core-logic';
 import {
   GradingMenu,
   QButton,
@@ -10,36 +10,21 @@ import {
   onRadioGroupKeydown,
   sameScore,
 } from '@qed2/ui';
-import type { AnswerPreview, PartPlayerState } from '@qed2/ui';
+import type { AnswerPreview, PartPlayerState, SheetDetent } from '@qed2/ui';
 
 const props = defineProps<{
   state: PartPlayerState;
   answerPreview: AnswerPreview | null;
-  /** Current part's answer kind — the idle hint's verb depends on it. */
-  answerKind?: AnswerKind;
   /** Rubric criteria are rendered in the question body, not as total buttons. */
   rubricMode?: boolean;
   solution?: SolutionEntry[];
-  solutionOpen: boolean;
+  solutionDetent: SheetDetent;
   /** Manual grading override — the GradingMenu lives in the bar (thumb
    *  reach) instead of the question header. */
   grading: GradingOrUnseen;
   primaryLabel: string;
   primaryDisabled: boolean;
 }>();
-
-/** Selection questions are picked, not typed — match the hint's verb. */
-const idleHint = computed(() => {
-  switch (props.answerKind) {
-    case 'choice':
-    case 'matching':
-      return 'Antwort oben auswählen …';
-    case 'open':
-      return 'Antwort oben bearbeiten …';
-    default:
-      return 'Antwort oben eintragen …';
-  }
-});
 
 /** Score-tone parity with SelfAssessmentPanel: 0 → error, max → ok,
  *  anything between → accent. One „selected" language across both controls. */
@@ -63,44 +48,8 @@ const verdictPoints = computed(() => {
   return `${fmt(r.awardedPoints)} / ${fmt(r.maxPoints)} P`;
 });
 
-/* --- verdict tint -----------------------------------------------------------
- * The verdict itself now sits inside the solution sheet; the bar only carries
- * its colour, so „right or wrong" is legible without reading anything. When
- * the part advances the tint drains out to the LEFT, which reads as the old
- * answer being swept away rather than blinking off.
- */
-const DRAIN_MS = 450;
-
-const verdict = computed(() => props.state.result?.verdict ?? null);
-const drainingVerdict = ref<'correct' | 'partial' | 'incorrect' | null>(null);
-const draining = ref(false);
-let drainTimer: ReturnType<typeof setTimeout> | undefined;
-
-/** Whichever verdict the bar should currently be painted with, live or fading. */
-const tint = computed(() => verdict.value ?? drainingVerdict.value);
-
-watch(verdict, (next, previous) => {
-  clearTimeout(drainTimer);
-  if (next || !previous) {
-    drainingVerdict.value = null;
-    draining.value = false;
-    return;
-  }
-  // Verdict cleared → the user moved on. The tint element is not replaced
-  // here (it keeps rendering the previous verdict), so adding the class in
-  // this same update transitions from the clip-path it already has.
-  drainingVerdict.value = previous;
-  draining.value = true;
-  drainTimer = setTimeout(() => {
-    drainingVerdict.value = null;
-    draining.value = false;
-  }, DRAIN_MS + 60);
-});
-
-onBeforeUnmount(() => clearTimeout(drainTimer));
-
 const emit = defineEmits<{
-  'update:solutionOpen': [open: boolean];
+  'update:solutionDetent': [detent: SheetDetent];
   scoreSelect: [points: number];
   /** Self-assessment mastery dropdown (only while self-assessing). */
   selfGradingSelect: [grading: Grading];
@@ -118,27 +67,20 @@ function onMasteryChange(ev: Event): void {
 <template>
   <div class="practice-bar">
     <SolutionSheet
-      :open="solutionOpen"
+      :detent="solutionDetent"
       :solution="solution"
       content-max-width="860px"
       :handle="state.phase !== 'answering'"
       :verdict="state.result?.verdict"
       :verdict-label="verdictLabel"
       :verdict-points="verdictPoints"
-      @update:open="emit('update:solutionOpen', $event)"
+      @update:detent="emit('update:solutionDetent', $event)"
     />
 
-    <div class="practice-bar__actions">
-      <div
-        v-if="tint"
-        class="practice-bar__tint"
-        :class="[`practice-bar__tint--${tint}`, { 'practice-bar__tint--draining': draining }]"
-        aria-hidden="true"
-      />
-      <div
-        class="practice-bar__row"
-        :class="{ 'practice-bar__row--assessment': state.phase === 'self-assessing' }"
-      >
+    <div
+      class="practice-bar__row"
+      :class="{ 'practice-bar__row--assessment': state.phase === 'self-assessing' }"
+    >
       <div class="practice-bar__left">
         <!-- mastery override rides the INFO slot (left), not the action
              cluster — and it shares the Lösung toggle's outlined geometry -->
@@ -201,7 +143,6 @@ function onMasteryChange(ev: Event): void {
           </span>
           <span v-if="answerPreview.hint" class="practice-bar__preview-hint">{{ answerPreview.hint }}</span>
         </div>
-        <span v-else class="practice-bar__hint practice-bar__hint--quiet">{{ idleHint }}</span>
       </div>
 
       <div class="practice-bar__right">
@@ -212,14 +153,13 @@ function onMasteryChange(ev: Event): void {
           v-if="state.phase !== 'answering'"
           type="button"
           class="practice-bar__solution-toggle"
-          :class="{ 'practice-bar__solution-toggle--on': solutionOpen }"
-          :aria-expanded="solutionOpen"
-          @click="emit('update:solutionOpen', !solutionOpen)"
+          :class="{ 'practice-bar__solution-toggle--on': solutionDetent !== 'collapsed' }"
+          :aria-expanded="solutionDetent !== 'collapsed'"
+          @click="emit('update:solutionDetent', solutionDetent === 'collapsed' ? 'default' : 'collapsed')"
         >
           Lösung <ChevronDown class="practice-bar__solution-chevron" />
         </button>
         <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
-      </div>
       </div>
     </div>
   </div>
@@ -241,36 +181,7 @@ function onMasteryChange(ev: Event): void {
   box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.08);
 }
 
-/* Full-bleed layer the tint paints on, so the colour spans the whole bar
- * while the controls stay in the centred content column. */
-.practice-bar__actions {
-  position: relative;
-}
-
-.practice-bar__tint {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  /* Fully painted; draining clips it away from the right edge inward, so the
-   * colour retreats leftwards instead of simply switching off. */
-  clip-path: inset(0 0 0 0);
-}
-.practice-bar__tint--draining {
-  clip-path: inset(0 100% 0 0);
-  transition: clip-path 0.45s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.practice-bar__tint--correct {
-  background: var(--q-ok-bg);
-}
-.practice-bar__tint--partial {
-  background: var(--q-part-bg);
-}
-.practice-bar__tint--incorrect {
-  background: var(--q-err-bg);
-}
-
 .practice-bar__row {
-  position: relative; /* above the tint */
   max-width: 1040px;
   margin: 0 auto;
   padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
@@ -323,17 +234,6 @@ function onMasteryChange(ev: Event): void {
   margin-left: auto;
 }
 
-.practice-bar__hint {
-  font-size: 12.5px;
-  color: var(--q-part-ink);
-  font-weight: 600;
-}
-
-.practice-bar__hint--quiet {
-  color: var(--q-hint);
-  font-weight: 400;
-  font-style: italic;
-}
 .practice-bar__preview {
   display: flex;
   flex-direction: column;

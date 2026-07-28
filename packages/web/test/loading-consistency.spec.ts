@@ -13,6 +13,12 @@ const viewSources = import.meta.glob('../src/routes/**/*.vue', {
   query: '?raw',
 }) as Record<string, string>;
 
+const allSources = { ...viewSources, ...(import.meta.glob('../src/App.vue', {
+  eager: true,
+  import: 'default',
+  query: '?raw',
+}) as Record<string, string>) };
+
 const named = (path: string): string => path.split('/').slice(-1)[0]!;
 
 describe('loading states', () => {
@@ -27,6 +33,27 @@ describe('loading states', () => {
     // PracticeView keeps its bespoke loader: it is the one screen where the
     // wait is part of the experience, and the user asked for it untouched.
     expect(offenders).toEqual(['PracticeView.vue']);
+  });
+
+  it('never swaps states with a mode that empties the container first', () => {
+    // `mode="out-in"` waits for the old state to finish leaving before the new
+    // one starts — the gap in between is the flicker. Every swap cross-fades.
+    const blanking = Object.entries(allSources)
+      .filter(([, source]) => /mode="out-in"/.test(source))
+      .map(([path]) => named(path));
+    expect(blanking).toEqual([]);
+  });
+
+  it('stacks the children of every cross-fade so the swap cannot shift layout', () => {
+    // A <transition name="q-crossfade"> is only safe on a `.q-crossfade`
+    // container: without the grid stacking the two states would sit one under
+    // the other mid-swap.
+    for (const [path, source] of Object.entries(allSources)) {
+      const transitions = (source.match(/<transition name="q-crossfade"/g) ?? []).length;
+      if (transitions === 0) continue;
+      const containers = (source.match(/class="[^"]*\bq-crossfade\b[^"]*"/g) ?? []).length;
+      expect(containers, named(path)).toBeGreaterThanOrEqual(transitions);
+    }
   });
 
   it('routes every remaining waiting state through the shared components', () => {

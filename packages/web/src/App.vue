@@ -165,10 +165,10 @@ watch(
          .app__main padding transition (sibling selector below). -->
     <div class="app__scrim" aria-hidden="true" />
 
-    <main ref="mainEl" class="app__main" tabindex="-1">
+    <main ref="mainEl" class="app__main q-crossfade" tabindex="-1">
       <RouterView v-slot="{ Component }">
-        <transition name="page-fade" mode="out-in">
-          <component :is="Component" />
+        <transition name="q-crossfade">
+          <component :is="Component" :key="$route.path" />
         </transition>
       </RouterView>
     </main>
