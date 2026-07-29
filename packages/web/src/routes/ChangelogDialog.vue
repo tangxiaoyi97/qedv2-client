@@ -4,8 +4,8 @@
  * changelog exists for the running commit (ui store owns the check/fetch).
  */
 import { computed, ref } from 'vue';
-import { MarkdownView, QButton } from '@qed2/ui';
-import { useModalA11y } from '../composables/useModalA11y.js';
+import { MarkdownView, QButton, useModalA11y } from '@qed2/ui';
+
 import { useUiStore } from '../stores/ui.js';
 
 const ui = useUiStore();
@@ -19,7 +19,7 @@ useModalA11y(card, computed(() => ui.changelogOpen), () => ui.closeChangelog());
     <transition name="modal-fade">
       <div
         v-if="ui.changelogOpen"
-        class="clog q-modal-backdrop"
+        class="clog q-modal-scrim q-modal-backdrop"
         role="dialog"
         aria-modal="true"
         aria-label="Was ist neu"
@@ -42,24 +42,6 @@ useModalA11y(card, computed(() => ui.changelogOpen), () => ui.closeChangelog());
 </template>
 
 <style scoped>
-.clog {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-}
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity var(--q-transition-fast, 0.16s);
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
 .clog__card {
   width: 100%;
   max-width: 480px;

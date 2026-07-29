@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FULL_SCREEN_RESERVE_PX,
+  FULL_OVERSHOOT_PX,
+  TOP_BAR_RESERVE_PX,
   HALF_MAX_PX,
   HALF_MIN_PX,
   resolveDetentHeights,
@@ -18,7 +19,22 @@ const heights = (over: Partial<Parameters<typeof resolveDetentHeights>[0]> = {})
 
 describe('solution drawer detents', () => {
   it('leaves the top bar visible at full screen', () => {
-    expect(heights().full).toBe(PHONE - FULL_SCREEN_RESERVE_PX);
+    expect(heights().full).toBe(PHONE - TOP_BAR_RESERVE_PX + FULL_OVERSHOOT_PX);
+  });
+
+  it('gives back whatever the bottom bar chrome occupies', () => {
+    // Handle + verdict banner + action row are measured, not assumed — a
+    // constant went stale the moment the banner was added and the fixed stack
+    // started riding over the practice top bar.
+    const chrome = 140;
+    expect(heights({ chromeHeight: chrome }).full).toBe(
+      PHONE - TOP_BAR_RESERVE_PX - chrome + FULL_OVERSHOOT_PX,
+    );
+  });
+
+  it('keeps the half detent under a chrome-reduced full detent', () => {
+    const h = heights({ chromeHeight: 600, answerHeight: 9999 });
+    expect(h.default).toBeLessThanOrEqual(h.full);
   });
 
   it('opens exactly to the end of the answer when it fits', () => {

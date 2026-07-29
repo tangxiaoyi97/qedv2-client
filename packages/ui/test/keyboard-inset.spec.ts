@@ -1,6 +1,6 @@
 import { createApp, defineComponent, h } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useKeyboardInset } from '../src/composables/useKeyboardInset.js';
+import { useKeyboardInset } from '../src/shared/useKeyboardInset.js';
 
 const LAYOUT_HEIGHT = 800;
 

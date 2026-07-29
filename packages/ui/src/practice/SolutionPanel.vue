@@ -5,7 +5,7 @@
  * a subtle mono annotation ("Beurteilungshinweis") and any image figures.
  */
 import { computed } from 'vue';
-import type { SolutionEntry, ImageFigure } from '@qed2/core-logic';
+import { isRichTextEmpty, type SolutionEntry, type ImageFigure } from '@qed2/core-logic';
 import CollapsePanel from '../shared/CollapsePanel.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
@@ -42,7 +42,12 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
           <span class="q-solution__divider-label">Alternative</span>
         </div>
         <div class="q-solution__entry">
-          <RichTextView class="q-solution__result" :nodes="entry.result" />
+          <!-- Figure-only entries render no text at all — see SolutionSheet. -->
+          <RichTextView
+            v-if="!isRichTextEmpty(entry.result)"
+            class="q-solution__result"
+            :nodes="entry.result"
+          />
           <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
             <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
           </figure>

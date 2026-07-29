@@ -366,6 +366,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border: 1px solid var(--q-border-2);
   border-radius: 10px;
   background: var(--q-card);
+  /* The result landing is the one moment worth easing into. */
+  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
 }
 .q-match__row--ok {
   border: 1.5px solid var(--q-ok);
@@ -519,6 +521,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   background: var(--q-card);
   flex: none;
   box-sizing: border-box;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 .q-match__oc-radio--on {
   border: 6px solid var(--q-accent-strong);

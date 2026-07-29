@@ -7,7 +7,12 @@
  * that policy lives in core-logic — this component only emits `select`.
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { Grading, GradingOrUnseen } from '@qed2/core-logic';
+import {
+  GRADING_HINTS,
+  SELECTABLE_GRADINGS,
+  type Grading,
+  type GradingOrUnseen,
+} from '@qed2/core-logic';
 import GradingCapsule from './GradingCapsule.vue';
 import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
 
@@ -20,20 +25,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [g: Grading] }>();
 
-const SELECTABLE: readonly Grading[] = ['good', 'careless', 'meh', 'baffled', 'excluded'];
-
-const HINTS: Record<Grading, string> = {
-  good: 'Gemeistert',
-  careless: 'Eigentlich gekonnt',
-  meh: 'Bald wiederholen',
-  baffled: 'Von vorn',
-  excluded: 'Nie wieder üben',
-};
-
 /** Matches the popover's CSS min-width / estimated height — used for the
  *  overflow checks. */
 const POPOVER_WIDTH = 232;
-const POPOVER_HEIGHT = 5 * 44 + 12; // 5 options + padding
+const POPOVER_HEIGHT = SELECTABLE_GRADINGS.length * 44 + 12; // options + padding
 
 const root = ref<HTMLElement | null>(null);
 const open = ref(false);
@@ -137,7 +132,7 @@ onBeforeUnmount(() => {
       @keydown="onPopoverKeydown"
     >
       <button
-        v-for="g in SELECTABLE"
+        v-for="g in SELECTABLE_GRADINGS"
         :key="g"
         type="button"
         class="q-grading-menu__option"
@@ -149,7 +144,7 @@ onBeforeUnmount(() => {
         <GradingDot :grading="g" :size="14" />
         <span class="q-grading-menu__texts">
           <span class="q-grading-menu__label">{{ GRADING_LABELS[g] }}</span>
-          <span class="q-grading-menu__hint">{{ HINTS[g] }}</span>
+          <span class="q-grading-menu__hint">{{ GRADING_HINTS[g] }}</span>
         </span>
         <span v-if="g === grading" class="q-grading-menu__check" aria-hidden="true">✓</span>
       </button>

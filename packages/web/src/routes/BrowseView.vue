@@ -16,24 +16,34 @@ let fetchedOnce = false;
 import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router';
 import {
+  CATEGORY_ORDER as VALID_CATEGORIES,
+  EXAM_PARTS as VALID_TEILS,
+  GRADINGS as VALID_GRADINGS,
+  TERMS as VALID_TERMS,
   competencyCategory,
-  type ExamPart,
+  formatScore,
+  GRADING_LABELS as GRADING_FILTER_LABELS,
+  TEIL_LABELS,
+  TERM_LABELS,
   type GradingOrUnseen,
   type SearchResponse,
-  type Term,
 } from '@qed2/core-logic';
-import { GradingDot, HighlightSnippet, QButton, QChip, QSkeleton, SearchBox } from '@qed2/ui';
+import {
+  FilterDialog,
+  GradingDot,
+  HighlightSnippet,
+  QButton,
+  QChip,
+  QNotice,
+  QSkeleton,
+  SearchBox,
+  activeFilterCount,
+  emptyFilterState,
+  type FilterState,
+} from '@qed2/ui';
 import { useAppStore } from '../stores/app.js';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
-import FilterDialog, {
-  activeFilterCount,
-  emptyFilterState,
-  GRADING_FILTER_LABELS,
-  TEIL_LABELS,
-  TERM_LABELS,
-  type FilterState,
-} from './FilterDialog.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -48,23 +58,6 @@ const MAX_PAGES = 40;
 /** Rows rendered before the bottom sentinel grows the window (see `windowed`). */
 const ROW_WINDOW = 60;
 const FILTER_QUERY_KEYS = new Set(['year', 'term', 'teil', 'kat', 'grading', 'fmt', 'starred']);
-const VALID_TERMS: readonly Term[] = [
-  'haupttermin',
-  'nebentermin-1',
-  'nebentermin-2',
-  'herbsttermin',
-  'wintertermin',
-];
-const VALID_TEILS: readonly ExamPart[] = ['t1', 't2'];
-const VALID_CATEGORIES: readonly FilterState['categories'][number][] = ['AG', 'FA', 'AN', 'WS'];
-const VALID_GRADINGS: readonly GradingOrUnseen[] = [
-  'good',
-  'careless',
-  'meh',
-  'baffled',
-  'excluded',
-  'unseen',
-];
 
 const loading = ref(false);
 const error = ref<string | undefined>();
@@ -422,9 +415,7 @@ function rowInfo(q: QuestionSummary): RowInfo {
 }
 
 /** German decimal comma; trims float noise (rubric halves → "1,5"). */
-function fmtPoints(n: number): string {
-  return String(Math.round(n * 100) / 100).replace('.', ',');
-}
+
 
 const playableIds = computed(() => filtered.value.filter((q) => q.playable).map((q) => q.id));
 
@@ -460,10 +451,10 @@ function firstCode(q: QuestionSummary): string | undefined {
 </script>
 
 <template>
-  <div class="browse">
+  <div class="browse q-page">
     <div class="browse__sticky-header">
       <div class="browse__head">
-        <h1 class="browse__title">Aufgaben</h1>
+        <h1 class="browse__title q-page-title">Aufgaben</h1>
         <QButton :disabled="playableIds.length === 0" @click="practiceAll">Auswahl üben →</QButton>
       </div>
 
@@ -523,13 +514,17 @@ function firstCode(q: QuestionSummary): string | undefined {
         <span v-else-if="searchResult">{{ searchResult.total }} Treffer für „{{ searchResult.query }}“</span>
         <span v-if="filterCount > 0" class="browse__meta-note">(Filter sind während der Suche pausiert)</span>
       </div>
-      <div v-if="searchError" class="browse__error">
+      <QNotice v-if="searchError" tone="error">
         Suche fehlgeschlagen: {{ searchError }}
-        <QButton variant="secondary" @click="runSearch(searchQuery.trim())">Erneut versuchen</QButton>
-      </div>
-      <div v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy" class="browse__empty">
+        <template #action>
+          <QButton variant="secondary" @click="runSearch(searchQuery.trim())">
+            Erneut versuchen
+          </QButton>
+        </template>
+      </QNotice>
+      <QNotice v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy">
         Keine Treffer — Tippfehler sind erlaubt, aber probier ein anderes Wort.
-      </div>
+      </QNotice>
       <div v-else-if="searchResult" class="browse__list">
         <button
           v-for="hit in searchResult.items"
@@ -554,7 +549,7 @@ function firstCode(q: QuestionSummary): string | undefined {
               <span v-if="hitExcluded(hit.id)" class="browse__excl" title="Ausgeschlossen">⊗</span>
             </span>
             <span class="browse__hit-source">
-              {{ hit.source.year }} · {{ TERM_LABELS[hit.source.term] }} · {{ hit.source.part === 't1' ? 'Teil 1' : 'Teil 2' }} · Nr. {{ hit.source.nr }}
+              {{ hit.source.year }} · {{ TERM_LABELS[hit.source.term] }} · {{ TEIL_LABELS[hit.source.part] }} · Nr. {{ hit.source.nr }}
             </span>
             <HighlightSnippet
               v-if="hit.highlights[0]"
@@ -573,10 +568,12 @@ function firstCode(q: QuestionSummary): string | undefined {
 
     <div class="browse__stage q-crossfade">
     <transition name="q-crossfade">
-    <div v-if="!searchMode && error" key="error" class="browse__error">
+    <QNotice v-if="!searchMode && error" key="error" tone="error">
       Aufgabenliste konnte nicht geladen werden: {{ error }}
-      <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
-    </div>
+      <template #action>
+        <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
+      </template>
+    </QNotice>
 
     <QSkeleton
       v-else-if="!searchMode && loading && allQuestions.length === 0"
@@ -586,7 +583,9 @@ function firstCode(q: QuestionSummary): string | undefined {
       label="Aufgaben werden geladen …"
     />
 
-    <div v-else-if="!searchMode && filtered.length === 0" key="empty" class="browse__empty">Keine Aufgaben für diese Filter.</div>
+    <QNotice v-else-if="!searchMode && filtered.length === 0" key="empty">
+      Keine Aufgaben für diese Filter.
+    </QNotice>
 
     <div v-else-if="!searchMode" key="list" class="browse__list">
       <button
@@ -624,7 +623,7 @@ function firstCode(q: QuestionSummary): string | undefined {
             <span class="browse__due-dot" aria-hidden="true" />Fällig
           </span>
           <span class="browse__points">
-            {{ fmtPoints(rowInfo(q).awarded) }}/{{ fmtPoints(q.totalPoints) }} P
+            {{ formatScore(rowInfo(q).awarded) }}/{{ formatScore(q.totalPoints) }} P
           </span>
         </template>
         <span v-else class="browse__state browse__state--new">Neu</span>
@@ -668,8 +667,6 @@ function firstCode(q: QuestionSummary): string | undefined {
 <style scoped>
 .browse {
   max-width: 860px;
-  margin: 0 auto;
-  padding: 26px 20px 40px;
 }
 .browse__sticky-header {
   position: sticky;
@@ -690,12 +687,6 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 12px;
   margin-bottom: 16px;
   flex-wrap: wrap;
-}
-.browse__title {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0;
 }
 .browse__searchrow {
   display: flex;
@@ -722,6 +713,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   background: var(--q-card);
   color: var(--q-mut-2);
   cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 .browse__filterbtn--on {
   border-color: var(--q-accent);
@@ -1020,19 +1012,6 @@ function firstCode(q: QuestionSummary): string | undefined {
   text-align: center;
   color: var(--q-mut-2);
   font-size: 12px;
-}
-.browse__empty,
-.browse__error {
-  padding: 24px;
-  text-align: center;
-  color: var(--q-mut-2);
-  font-size: 13px;
-  background: var(--q-panel);
-  border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: center;
 }
 @media (max-width: 640px) {
   /* Two-line row (search hits keep their own layout):

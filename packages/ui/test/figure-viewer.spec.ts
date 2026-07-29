@@ -171,6 +171,52 @@ describe('FigureViewer', () => {
     wrapper.unmount();
   });
 
+  it('offers zoom as controls rather than as a caption telling you to pinch', async () => {
+    // The gesture list along the bottom named three things the user might do
+    // and gave them none of them — and cost the figure a strip of screen on
+    // devices that cannot pinch at all.
+    const wrapper = mountViewer();
+    expect(wrapper.find('.q-figview__hint').exists()).toBe(false);
+    expect(wrapper.findAll('.q-figview__zoom-btn')).toHaveLength(2);
+
+    const [out, into] = wrapper.findAll('.q-figview__zoom-btn');
+    // Nothing to shrink or reset at 1x, but both controls keep their place so
+    // the bar does not reflow the moment you zoom.
+    expect(out!.attributes('disabled')).toBeDefined();
+    expect(wrapper.get('.q-figview__reset').attributes('disabled')).toBeDefined();
+
+    await into!.trigger('click');
+    expect(scaleOf(wrapper)).toBeCloseTo(1.5, 5);
+    expect(wrapper.get('.q-figview__reset').attributes('disabled')).toBeUndefined();
+
+    await wrapper.get('.q-figview__zoom-btn').trigger('click');
+    expect(scaleOf(wrapper)).toBeCloseTo(1, 5);
+  });
+
+  it('zooms and pans from the keyboard', async () => {
+    // Pinch, double-tap and wheel between them left a keyboard user able to do
+    // nothing here but close the one screen that exists to look closer.
+    const wrapper = mountViewer();
+    const stage = wrapper.get('.q-figview__stage');
+
+    await stage.trigger('keydown', { key: '+' });
+    expect(scaleOf(wrapper)).toBeCloseTo(1.5, 5);
+    await stage.trigger('keydown', { key: '-' });
+    expect(scaleOf(wrapper)).toBeCloseTo(1, 5);
+
+    // At 1x there is nothing to pan, so arrows must not shift anything.
+    await stage.trigger('keydown', { key: 'ArrowRight' });
+    expect(translationOf(wrapper)).toBe('0px, 0px');
+
+    await stage.trigger('keydown', { key: '+' });
+    await stage.trigger('keydown', { key: 'ArrowRight' });
+    expect(translationOf(wrapper)).not.toBe('0px, 0px');
+
+    await stage.trigger('keydown', { key: '0' });
+    expect(scaleOf(wrapper)).toBeCloseTo(1, 5);
+    expect(translationOf(wrapper)).toBe('0px, 0px');
+  });
+
   it('locks the page behind it and releases the lock on close', async () => {
     const before = bodyScrollLockDepth();
     const wrapper = mountViewer();

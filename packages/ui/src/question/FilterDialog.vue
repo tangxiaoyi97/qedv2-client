@@ -35,25 +35,8 @@ export function activeFilterCount(f: FilterState): number {
   );
 }
 
-export const TERM_LABELS: Record<Term, string> = {
-  haupttermin: 'Haupttermin',
-  'nebentermin-1': 'Nebentermin 1',
-  'nebentermin-2': 'Nebentermin 2',
-  herbsttermin: 'Herbsttermin',
-  wintertermin: 'Wintertermin',
-};
 
-export const TEIL_LABELS: Record<ExamPart, string> = { t1: 'Teil 1', t2: 'Teil 2' };
 
-/** Same German strings as GRADING_LABELS in @qed2/ui GradingDot. */
-export const GRADING_FILTER_LABELS: Record<GradingOrUnseen, string> = {
-  good: 'Gut',
-  careless: 'Schlampigkeitsfehler',
-  meh: 'Halb verstanden',
-  baffled: 'Keine Ahnung',
-  excluded: 'Ausgeschlossen',
-  unseen: 'Neu',
-};
 </script>
 
 <script setup lang="ts">
@@ -64,8 +47,19 @@ export const GRADING_FILTER_LABELS: Record<GradingOrUnseen, string> = {
  * Bewertung includes `unseen` — "nur ungesehene" is a valid filter.
  */
 import { computed, ref } from 'vue';
-import { GradingDot, QButton } from '@qed2/ui';
-import { useModalA11y } from '../composables/useModalA11y.js';
+import {
+  CATEGORY_ORDER as CATEGORIES,
+  EXAM_PARTS as TEILS,
+  GRADINGS,
+  GRADING_LABELS as GRADING_FILTER_LABELS,
+  TEIL_LABELS,
+  TERMS,
+  TERM_LABELS,
+} from '@qed2/core-logic';
+import GradingDot from '../shared/GradingDot.vue';
+import QButton from '../shared/QButton.vue';
+import { useModalA11y } from '../shared/useModalA11y.js';
+
 
 const props = withDefaults(
   defineProps<{
@@ -95,23 +89,6 @@ const YEARS = computed(() => {
   const current = new Date().getFullYear();
   return Array.from({ length: current - 2014 + 1 }, (_, i) => current - i);
 });
-const TERMS: readonly Term[] = [
-  'haupttermin',
-  'nebentermin-1',
-  'nebentermin-2',
-  'herbsttermin',
-  'wintertermin',
-];
-const TEILS: readonly ExamPart[] = ['t1', 't2'];
-const CATEGORIES = ['AG', 'FA', 'AN', 'WS'] as const;
-const GRADINGS: readonly GradingOrUnseen[] = [
-  'good',
-  'careless',
-  'meh',
-  'baffled',
-  'excluded',
-  'unseen',
-];
 
 function toggled<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -163,7 +140,7 @@ const countText = computed(() =>
 
 <template>
   <Teleport to="body">
-    <div class="fdlg q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
+    <div class="fdlg q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
       <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
           <h2 class="fdlg__title">Filter</h2>
@@ -310,16 +287,6 @@ const countText = computed(() =>
 </template>
 
 <style scoped>
-.fdlg {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-}
 .fdlg__card {
   width: 100%;
   max-width: 560px;
@@ -380,6 +347,7 @@ const countText = computed(() =>
   font: 600 12px 'Public Sans', system-ui, sans-serif;
   cursor: pointer;
   white-space: nowrap;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 @media (hover: hover) and (pointer: fine) {
   .fdlg__chip:hover {

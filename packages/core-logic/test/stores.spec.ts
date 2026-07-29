@@ -63,6 +63,31 @@ describe('AttemptOutbox', () => {
     expect(await outbox.count('u1')).toBe(0);
     expect(await outbox.count('u2')).toBe(1);
   });
+
+  it('trims a runaway backlog per account, never across accounts', async () => {
+    // The queue is one shared array. Evicting its oldest entries globally
+    // meant a shared device could throw away another account's attempts,
+    // which is the opposite of "per-account audit outbox".
+    const storage = new MemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    const base = {
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-07-23T12:00:00.000Z',
+    };
+
+    await outbox.enqueue('u2', { ...base, clientAttemptId: 'other-1' });
+    for (let i = 0; i < 2100; i += 1) {
+      await outbox.enqueue('u1', { ...base, clientAttemptId: `a-${i}` });
+    }
+
+    expect(await outbox.count('u1')).toBe(2000);
+    expect(await outbox.count('u2')).toBe(1); // untouched by u1's flood
+    const kept = await outbox.list('u1', 5000);
+    expect(kept[0]?.clientAttemptId).toBe('a-100'); // oldest of MINE went first
+  });
 });
 
 describe('ArchiveStore', () => {
@@ -224,6 +249,59 @@ describe('ArchiveStore', () => {
     expect(thawed.content.perPart[0]!.grading).toBe('good');
     expect(thawed.content.perPart[0]!.fsrs.reps).toBe(frozen.reps + 1);
     expect(await store.dueCounts(new Date('2126-01-01T00:00:00.000Z'))).toEqual({ due: 1, practiced: 1 });
+  });
+
+  it('answering an excluded part records the result without thawing the freeze', async () => {
+    // The grading menu is reachable while answering, so „nie wieder üben" can
+    // be set and the part then answered. Deriving the grading from the verdict
+    // here used to undo the exclusion AND advance FSRS a second time for one
+    // interaction (setGrading had already advanced it).
+    const store = new ArchiveStore(new MemoryStorage());
+    await store.setGrading({ partId: 'p1', grading: 'excluded', now });
+    const frozen = (await store.load()).content.perPart[0]!.fsrs;
+
+    await store.applyGrade({
+      partId: 'p1',
+      competencyCodes: ['AG 1.1'],
+      verdict: 'correct',
+      awardedPoints: 1,
+      maxPoints: 1,
+      now: new Date('2026-07-04T00:00:00.000Z'),
+    });
+
+    const entry = (await store.load()).content.perPart[0]!;
+    expect(entry.grading).toBe('excluded');
+    expect(entry.fsrs).toEqual(frozen);
+    // The attempt itself is still recorded, and the competency still learns.
+    expect(entry.lastResult?.correct).toBe(true);
+    expect((await store.load()).content.perCompetency[0]?.code).toBe('AG 1.1');
+    expect(await store.excludedPartIds()).toEqual(new Set(['p1']));
+  });
+
+  it('excluding a part you just answered freezes at the PRE-answer state', async () => {
+    // Same answer event: the auto advance must be replaced, not baked in.
+    // Without honouring baseFsrs the freeze captured the advance the answer
+    // had already produced, so the part thawed later at the wrong interval.
+    const store = new ArchiveStore(new MemoryStorage());
+    await store.applyGrade({ partId: 'p1', competencyCodes: ['AG 1.1'], verdict: 'correct', awardedPoints: 1, maxPoints: 1, now });
+    const beforeSecond = (await store.load()).content.perPart[0]!.fsrs;
+
+    const { previousFsrs } = await store.applyGrade({
+      partId: 'p1', competencyCodes: ['AG 1.1'], verdict: 'correct',
+      awardedPoints: 1, maxPoints: 1, now: new Date('2026-07-04T00:00:00.000Z'),
+    });
+    expect(previousFsrs).toEqual(beforeSecond);
+
+    await store.setGrading({
+      partId: 'p1',
+      grading: 'excluded',
+      baseFsrs: previousFsrs,
+      now: new Date('2026-07-04T00:00:00.000Z'),
+    });
+
+    const entry = (await store.load()).content.perPart[0]!;
+    expect(entry.grading).toBe('excluded');
+    expect(entry.fsrs).toEqual(beforeSecond); // the answer's advance is undone
   });
 
   it('setStarred creates a reps-0 placeholder that stays out of userState and dueCounts', async () => {

@@ -181,6 +181,41 @@ function onWheel(event: WheelEvent): void {
   zoomAround(scale.value * Math.exp(-event.deltaY / 400), point.x, point.y);
 }
 
+/** One step of the ± buttons and the keyboard. */
+const ZOOM_STEP = 1.5;
+const PAN_STEP_PX = 60;
+
+/** Button/keyboard zoom is anchored on the stage centre — there is no cursor
+ *  to pin the content to. */
+function zoomBy(factor: number): void {
+  zoomAround(scale.value * factor, 0, 0);
+}
+
+/**
+ * Zoom and pan from the keyboard. Without this the viewer was reachable only
+ * by pinch, double-tap or wheel — nothing a keyboard user could do but close
+ * it, on the one screen whose entire purpose is getting a closer look.
+ */
+function onStageKeydown(event: KeyboardEvent): void {
+  const panners: Record<string, [number, number]> = {
+    ArrowLeft: [PAN_STEP_PX, 0],
+    ArrowRight: [-PAN_STEP_PX, 0],
+    ArrowUp: [0, PAN_STEP_PX],
+    ArrowDown: [0, -PAN_STEP_PX],
+  };
+  if (event.key === '+' || event.key === '=') zoomBy(ZOOM_STEP);
+  else if (event.key === '-' || event.key === '_') zoomBy(1 / ZOOM_STEP);
+  else if (event.key === '0') reset();
+  else if (panners[event.key]) {
+    if (!zoomed.value) return; // at 1x there is nothing to pan
+    const [dx, dy] = panners[event.key]!;
+    tx.value += dx;
+    ty.value += dy;
+    clampTranslation();
+  } else return;
+  event.preventDefault();
+}
+
 /* --- overlay lifecycle ---------------------------------------------------- */
 
 let previousFocus: HTMLElement | null = null;
@@ -217,7 +252,39 @@ onBeforeUnmount(() => {
     >
       <div class="q-figview__bar">
         <span class="q-figview__scale" aria-live="polite">{{ Math.round(scale * 100) }} %</span>
-        <button v-if="zoomed" type="button" class="q-figview__reset" @click="reset">
+        <!--
+          The gesture list that used to sit along the bottom told the user
+          zoom existed without giving them a way to do it — and cost the
+          figure a strip of screen on every device, including the ones that
+          cannot pinch. These buttons say the same thing by being usable.
+        -->
+        <div class="q-figview__zoom" role="group" aria-label="Zoom">
+          <button
+            type="button"
+            class="q-figview__zoom-btn"
+            aria-label="Verkleinern"
+            :disabled="!zoomed"
+            @click="zoomBy(1 / ZOOM_STEP)"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            class="q-figview__zoom-btn"
+            aria-label="Vergrößern"
+            :disabled="scale >= MAX_SCALE - 0.01"
+            @click="zoomBy(ZOOM_STEP)"
+          >
+            +
+          </button>
+        </div>
+        <!-- Always rendered, so the bar does not reflow the moment you zoom. -->
+        <button
+          type="button"
+          class="q-figview__reset"
+          :disabled="!zoomed"
+          @click="reset"
+        >
           Zurücksetzen
         </button>
         <button
@@ -231,7 +298,15 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div ref="stage" class="q-figview__stage" @click.self="emit('close')" @wheel.prevent="onWheel">
+      <div
+        ref="stage"
+        class="q-figview__stage"
+        tabindex="0"
+        :aria-label="alt ? `Abbildung: ${alt}` : 'Abbildung'"
+        @click.self="emit('close')"
+        @wheel.prevent="onWheel"
+        @keydown="onStageKeydown"
+      >
         <img
           ref="image"
           class="q-figview__img"
@@ -245,8 +320,6 @@ onBeforeUnmount(() => {
           @pointercancel="onPointerUp"
         />
       </div>
-
-      <p class="q-figview__hint">Zum Zoomen ziehen · doppeltippen · Finger spreizen</p>
     </div>
   </Teleport>
 </template>
@@ -278,21 +351,58 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
   color: var(--q-mut-2);
 }
+.q-figview__zoom {
+  display: inline-flex;
+}
+.q-figview__zoom-btn,
 .q-figview__reset {
   border: 1px solid var(--q-btn-border);
-  border-radius: 8px;
   background: var(--q-panel);
   color: var(--q-ink);
   font-family: inherit;
-  font-size: 12px;
   font-weight: 600;
-  padding: 7px 12px;
   cursor: pointer;
+  transition: opacity var(--q-transition-fast), border-color var(--q-transition-fast);
+}
+.q-figview__zoom-btn:disabled,
+.q-figview__reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.q-figview__zoom-btn:focus-visible,
+.q-figview__reset:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.q-figview__reset {
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 7px 12px;
+}
+.q-figview__zoom-btn {
+  min-width: 36px;
+  padding: 6px 0;
+  font-size: 17px;
+  line-height: 1;
+}
+/* One control, two halves: the shared edge is drawn once. */
+.q-figview__zoom-btn:first-child {
+  border-radius: 8px 0 0 8px;
+}
+.q-figview__zoom-btn:last-child {
+  border-radius: 0 8px 8px 0;
+  border-left-width: 0;
 }
 @media (pointer: coarse) {
-  .q-figview__reset {
+  .q-figview__reset,
+  .q-figview__zoom-btn {
     min-height: 44px;
+  }
+  .q-figview__reset {
     padding: 10px 16px;
+  }
+  .q-figview__zoom-btn {
+    min-width: 48px;
   }
 }
 
@@ -302,6 +412,14 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   overflow: hidden;
+  /* The strip the gesture hint used to occupy now belongs to the figure; the
+   * safe area it was also absorbing has to be paid here instead. */
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  /* A white line drawing on the page colour had no edge to speak of. Dimming
+   * the stage makes the figure the lit thing on screen. Mixed rather than a
+   * literal so it follows whichever of the four accent themes is active. */
+  background: color-mix(in srgb, var(--q-ink) 10%, var(--q-page));
+  outline: none;
 }
 
 .q-figview__img {
@@ -315,21 +433,7 @@ onBeforeUnmount(() => {
   -webkit-user-drag: none;
   background: #fff;
   border-radius: 8px;
+  box-shadow: var(--q-shadow-panel);
   will-change: transform;
-}
-
-.q-figview__hint {
-  flex: none;
-  margin: 0;
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-  text-align: center;
-  font-size: 11px;
-  color: var(--q-faint);
-}
-/* The gesture list is touch vocabulary — pointless next to a mouse. */
-@media (hover: hover) and (pointer: fine) {
-  .q-figview__hint {
-    display: none;
-  }
 }
 </style>

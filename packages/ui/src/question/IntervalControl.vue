@@ -136,7 +136,7 @@ const correctNotation = computed(() => {
 
     <div v-else-if="review" class="q-interval__review">
       <div
-        class="q-interval__verdict"
+        class="q-interval__verdict q-reveal"
         :class="result!.verdict === 'correct' ? 'q-interval__verdict--ok' : 'q-interval__verdict--err'"
       >
         <StateIcon :state="result!.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
@@ -185,6 +185,7 @@ const correctNotation = computed(() => {
   color: var(--q-disabled);
   cursor: pointer;
   font-family: inherit;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 .q-interval__bracket--on {
   background: var(--q-accent-strong);

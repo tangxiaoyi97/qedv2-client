@@ -2,10 +2,11 @@
  * Local practice-history log — append-only record of answer events, used by
  * the Verlauf page and the activity heatmap.
  *
- * SCOPE: local-only by design. The server stores only the LATEST state per
- * part (contract §4.2); `POST /me/attempts` is an optional write-only audit
- * stream with no read-back endpoint, so a cross-device history is not
- * possible with the current backend — this log covers this device.
+ * SCOPE: this device. The archive the server syncs holds only the LATEST
+ * state per part (contract §4.2), so the per-answer trail lives here. Signed
+ * in, the cloud audit trail (`GET /me/history`) is the authoritative
+ * cross-device history and the Verlauf page reads that instead; this log is
+ * what guests get, and it is never backfilled into the cloud.
  */
 import { STORAGE } from '../ports/index.js';
 import type { StoragePort } from '../ports/index.js';

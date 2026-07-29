@@ -7,8 +7,8 @@
  * after the sync-conflict dialog.
  */
 import { computed, ref } from 'vue';
-import { QButton } from '@qed2/ui';
-import { useModalA11y } from '../composables/useModalA11y.js';
+import { QButton, useModalA11y } from '@qed2/ui';
+
 import { useProgressStore } from '../stores/progress.js';
 
 const progress = useProgressStore();
@@ -66,7 +66,7 @@ function onEscape(): void {
     <transition name="modal-fade">
       <div
         v-if="choice"
-      class="achoice q-modal-backdrop"
+      class="achoice q-modal-scrim q-modal-backdrop"
       role="dialog"
       aria-modal="true"
       aria-label="Spielstand wählen"
@@ -131,24 +131,6 @@ function onEscape(): void {
 </template>
 
 <style scoped>
-.achoice {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-}
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity var(--q-transition-fast);
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
 .modal-fade-enter-active .achoice__card,
 .modal-fade-leave-active .achoice__card {
   transition: transform var(--q-transition-fast), opacity var(--q-transition-fast);

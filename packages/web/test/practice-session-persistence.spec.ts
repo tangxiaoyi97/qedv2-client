@@ -175,6 +175,66 @@ describe('session origin', () => {
     expect(reloaded.practice.phase).toBe('idle');
   });
 
+  it('does not hand back a programme saved on an earlier day', async () => {
+    // „Programm starten" means TODAY's due reviews. Without a bound the same
+    // half-finished list came back forever and FSRS never ran again.
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.finishSession();
+
+    const stale = await storage.get<Record<string, unknown>>(
+      STORAGE.app,
+      'practice-session:guest',
+    );
+    const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
+    await storage.set(STORAGE.app, 'practice-session:guest', {
+      ...stale,
+      origin: 'smart',
+      savedAt: yesterday,
+    });
+
+    const reloaded = await freshStores();
+    await expect(reloaded.practice.restoreSession('smart')).resolves.toBe(false);
+    expect(reloaded.practice.phase).toBe('idle');
+    // …and the stale snapshot is cleared rather than left to be re-offered.
+    await expect(
+      storage.get(STORAGE.app, 'practice-session:guest'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('still resumes a programme saved earlier the same day', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.finishSession();
+
+    const saved = await storage.get<Record<string, unknown>>(
+      STORAGE.app,
+      'practice-session:guest',
+    );
+    await storage.set(STORAGE.app, 'practice-session:guest', {
+      ...saved,
+      origin: 'smart',
+      savedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    const reloaded = await freshStores();
+    await expect(reloaded.practice.restoreSession('smart')).resolves.toBe(true);
+    expect(reloaded.practice.phase).toBe('running');
+  });
+
+  it('retries the request the user actually made, not whatever the URL says', async () => {
+    // The Aufgaben bulk handoff puts no ids in the URL, so a retry that
+    // re-read the route silently swapped the hand-picked set for the FSRS
+    // programme.
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1']);
+    expect(practice.origin).toBe('manual');
+
+    await practice.retry();
+    expect(practice.origin).toBe('manual');
+    expect(practice.items.map((i) => i.questionId)).toEqual(['q1']);
+  });
+
   it('still resumes that set for the Aufgaben handoff and for an unrestricted call', async () => {
     const { practice } = await freshStores();
     await practice.startQuestions(['q1', 'q2']);

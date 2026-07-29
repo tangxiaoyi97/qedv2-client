@@ -16,14 +16,10 @@ const messages = {
   de: {
     settingsLanguage: 'Sprache',
     settingsLanguageHint: 'Oberfläche',
-    program: 'Programm',
-    new: 'Neu',
   },
   en: {
     settingsLanguage: 'Language',
     settingsLanguageHint: 'Interface',
-    program: 'Program',
-    new: 'New',
   },
 } satisfies Record<Locale, Record<string, string>>;
 

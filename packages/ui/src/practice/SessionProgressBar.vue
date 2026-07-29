@@ -37,6 +37,35 @@ const segments = computed<ProgressSegment[]>(() =>
 /** Segments get thin fast; drop the separators before they eat the bar. */
 const dense = computed(() => props.items.length > 24);
 
+/**
+ * Two or more of the same verdict in a row are drawn as one block instead of
+ * separate ticks that happen to share a colour — a streak is a thing the user
+ * did, and the bar should say so at a glance.
+ *
+ * Only a settled verdict chains, and only „richtig" or „falsch": „teilweise"
+ * is the outcome that is neither, and an open run is not an achievement.
+ */
+const STREAKABLE: readonly ProgressSegment[] = ['correct', 'incorrect'];
+
+type RunPosition = 'start' | 'mid' | 'end';
+
+const runs = computed<(RunPosition | undefined)[]>(() => {
+  const list = segments.value;
+  const positions: (RunPosition | undefined)[] = list.map(() => undefined);
+  for (let start = 0; start < list.length; ) {
+    const value = list[start]!;
+    let end = start + 1;
+    while (end < list.length && list[end] === value) end += 1;
+    if (end - start >= 2 && STREAKABLE.includes(value)) {
+      positions[start] = 'start';
+      for (let i = start + 1; i < end - 1; i += 1) positions[i] = 'mid';
+      positions[end - 1] = 'end';
+    }
+    start = end;
+  }
+  return positions;
+});
+
 const summary = computed(() => {
   const counts = { correct: 0, partial: 0, incorrect: 0, open: 0 };
   for (const segment of segments.value) {
@@ -58,7 +87,7 @@ const summary = computed(() => {
       v-for="(segment, i) in segments"
       :key="i"
       class="q-sprogress__seg"
-      :class="`q-sprogress__seg--${segment}`"
+      :class="[`q-sprogress__seg--${segment}`, runs[i] ? `q-sprogress__seg--run-${runs[i]}` : '']"
     />
   </div>
 </template>
@@ -70,10 +99,13 @@ const summary = computed(() => {
   background: var(--q-track);
   overflow: hidden;
   display: flex;
-  gap: 2px;
+  /* A custom property, not a literal, because the run modifiers below have to
+   * cancel exactly this much to close a seam. */
+  --q-sprogress-gap: 2px;
+  gap: var(--q-sprogress-gap);
 }
 .q-sprogress--dense {
-  gap: 1px;
+  --q-sprogress-gap: 1px;
 }
 
 .q-sprogress__seg {
@@ -82,7 +114,30 @@ const summary = computed(() => {
   border-radius: 2px;
   /* „open" is the absence of a fill — the track shows through. */
   background: transparent;
-  transition: background var(--q-transition-normal);
+  /* The radius and the seam are part of the reveal: a streak closing up as
+   * the answer lands should ease, not snap. */
+  transition: background var(--q-transition-normal), border-radius var(--q-transition-normal),
+    margin-left var(--q-transition-normal);
+}
+
+/* A streak is drawn as one block. Segments keep their own widths — the bar
+ * stays a per-item map — but the seams inside the run close. */
+.q-sprogress__seg--run-start {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.q-sprogress__seg--run-mid {
+  border-radius: 0;
+}
+.q-sprogress__seg--run-end {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.q-sprogress__seg--run-mid,
+.q-sprogress__seg--run-end {
+  /* Pull left by exactly the flex gap. Only the seams inside a run close; the
+   * gap to whatever sits either side of the run is untouched. */
+  margin-left: calc(-1 * var(--q-sprogress-gap));
 }
 .q-sprogress__seg--correct {
   background: var(--q-ok);

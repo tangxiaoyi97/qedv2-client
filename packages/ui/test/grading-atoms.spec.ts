@@ -5,7 +5,6 @@ import GradingDot, { GRADING_LABELS } from '../src/shared/GradingDot.vue';
 import GradingCapsule from '../src/shared/GradingCapsule.vue';
 import GradingMenu from '../src/shared/GradingMenu.vue';
 import StarButton from '../src/shared/StarButton.vue';
-import ResultPill from '../src/practice/ResultPill.vue';
 import StateIcon from '../src/shared/StateIcon.vue';
 
 const ALL_STATES: GradingOrUnseen[] = ['good', 'careless', 'meh', 'baffled', 'excluded', 'unseen'];
@@ -164,43 +163,5 @@ describe('StarButton', () => {
     const w = mount(StarButton, { props: { starred: false } });
     await w.trigger('click');
     expect(w.emitted('toggle')).toHaveLength(1);
-  });
-});
-
-describe('ResultPill', () => {
-  function result(partial: Partial<GradeResult>): GradeResult {
-    return { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1, ...partial };
-  }
-
-  it('shows label, icon and points for a correct result', () => {
-    const w = mount(ResultPill, { props: { result: result({}) } });
-    expect(w.classes()).toContain('q-result-pill--correct');
-    expect(w.text()).toContain('Richtig');
-    expect(w.text()).toContain('1 / 1');
-    expect(w.text()).toContain('Punkte');
-    expect(w.findComponent(StateIcon).props('state')).toBe('correct');
-  });
-
-  it('shows the partial verdict with German comma decimals', () => {
-    const w = mount(ResultPill, {
-      props: {
-        result: result({ verdict: 'partial', correct: false, awardedPoints: 0.5, maxPoints: 2 }),
-      },
-    });
-    expect(w.classes()).toContain('q-result-pill--partial');
-    expect(w.text()).toContain('Teilweise richtig');
-    expect(w.text()).toContain('0,5 / 2');
-    expect(w.findComponent(StateIcon).props('state')).toBe('partial');
-  });
-
-  it('shows the incorrect verdict', () => {
-    const w = mount(ResultPill, {
-      props: {
-        result: result({ verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 3 }),
-      },
-    });
-    expect(w.classes()).toContain('q-result-pill--incorrect');
-    expect(w.text()).toContain('Falsch');
-    expect(w.text()).toContain('0 / 3');
   });
 });

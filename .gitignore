@@ -8,3 +8,27 @@ coverage/
 *.tsbuildinfo
 .vite/
 dev-dist/
+
+# local env variants — `.env` and `*.local` above already cover
+# .env.local / .env.*.local; this catches .env.production, .env.test, …
+.env.*
+!.env.development
+
+# logs
+*.log
+pnpm-debug.log*
+npm-debug.log*
+
+# editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+desktop.ini
+._*
+
+# scratch / throwaway probe files
+scratchpad/
+tmp/

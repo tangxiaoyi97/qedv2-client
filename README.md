@@ -42,7 +42,7 @@ core alone — login/sync additionally needs the server.
 
 ## Configuration
 
-All three upstream addresses are user-configurable at runtime (Einstellungen →
+All four upstream addresses are user-configurable at runtime (Einstellungen →
 Erweitert · Serveradressen) and persisted in IndexedDB:
 
 | Setting | Default | Used by |

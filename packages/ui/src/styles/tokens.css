@@ -33,9 +33,41 @@ html, body {
   line-height: 1.55;
 }
 
+/*
+ * Blur hook only. Several overlays carry this class purely for the frosted
+ * effect while laying themselves out completely differently (the figure
+ * viewer is a column, the session drawer's scrim sits inside its own
+ * stacking context) — so it must not dictate position, stacking or flow.
+ */
 .q-modal-backdrop {
   -webkit-backdrop-filter: var(--q-backdrop-filter);
   backdrop-filter: var(--q-backdrop-filter);
+}
+
+/*
+ * The standard centred scrim, opted into by the dialogs that all had this
+ * exact block in their own scoped sheet.
+ */
+.q-modal-scrim {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* Shared open/close fade for those dialogs (<Transition name="modal-fade">).
+ * Fast, to stay in step with the card animations they keep locally. */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity var(--q-transition-fast);
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
 }
 
 /* Visual half of shared/scroll-lock.ts, which supplies the negative `top`.
@@ -60,6 +92,9 @@ body.q-modal-open {
   --q-transition-fast: 0.15s ease-out;
   --q-transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --q-transition-spring: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  /* Header row and data row live in different files; editing one without the
+   * other silently misaligns the table, so the track list is stated once. */
+  --q-leaderboard-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
 }
 
 /* ------------------------------------------------------------------ *
@@ -151,6 +186,48 @@ body.q-modal-open {
     width: 44px;
     height: 44px;
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * Reveal.
+ *
+ * Result feedback used to appear as a hard cut: the moment a verdict landed,
+ * option rows snapped to green/red and the banner was simply there. A short
+ * rise-and-fade gives the eye something to follow and makes it read as a
+ * response to the answer rather than a repaint.
+ * ------------------------------------------------------------------ */
+.q-reveal {
+  animation: q-reveal 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.05) both;
+}
+/* Second in a group, third, … — a hair later each, so a row of marks lands
+ * as a sweep instead of a flash. */
+.q-reveal--2 {
+  animation-delay: 0.05s;
+}
+.q-reveal--3 {
+  animation-delay: 0.1s;
+}
+@keyframes q-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Page shell. Five route roots declared the same three rules, and four
+ * declared the same page title; the numbers differ only in max-width, which
+ * each view still sets itself.
+ * ------------------------------------------------------------------ */
+.q-page {
+  margin: 0 auto;
+  padding: 26px 20px 40px;
+}
+.q-page-title {
+  margin: 0;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: -0.01em;
 }
 
 /* ------------------------------------------------------------------ *

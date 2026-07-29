@@ -1,15 +1,9 @@
-# QED2 1.9.6 - layout update!
+# QED2 1.9.7
 
-the bar under a checked answer stopped stepping on itself. grade is an icon now, correct/wrong moved into the solution drawer and tints the bar instead — it drains away when you hit weiter. drag the little handle to pull the solution up or push it down
+updated: selbstbewertung, rating, progress bar, pinch to zoom etc
 
-the top bar shows one block per task: green right, red wrong, empy still open. skipped work no longer hides behind a percentage
+fixed: a solution that is only a picture no longer shows an empty box under "Offizieller Lösungsweg". "Programm starten" was handing back the same half-finished list forever — a programme is today's again. leaving a session no longer hangs on a dead connection. "Erneut versuchen" retries what you actually picked. a question you set to "Ausgeschlossen" stays excluded even if you answer it.
 
-five tabs instead of six, "Today" in the middle where your thumb is — "practice" is the big button on "today". and the tab highlight finally covers the whole tab
+2.0 starts now. this build is the one that stays up while it does.
 
-fixed: strting a programm after picking tasks in Aufgaben handed you the picked ones again. loading screens all look the same now.
-
-btw, this will be the last major update before the 2.0 version release!!
-
-enjoy
-
-tangxy, 2026.07.27
+tangxy, 2026.07.29

@@ -220,6 +220,8 @@ function toggle(i: number): void {
   text-align: left;
   cursor: pointer;
   width: 100%;
+  /* Short while answering — this is tap feedback. The review states below
+   * override it with a slower ease, since that IS the result being shown. */
   transition: border-color 0.1s ease, background 0.1s ease;
 }
 .q-choice__opt:focus-visible {
@@ -235,6 +237,11 @@ function toggle(i: number): void {
 .q-choice__opt--capped {
   opacity: 0.55;
   cursor: default;
+}
+.q-choice__opt--ok,
+.q-choice__opt--err,
+.q-choice__opt--missed {
+  transition: border-color 0.3s ease, background 0.3s ease, padding 0.3s ease;
 }
 .q-choice__opt--ok {
   border: 1.5px solid var(--q-ok);
@@ -285,6 +292,8 @@ function toggle(i: number): void {
 }
 
 .q-choice__mark-label {
+  animation: q-reveal 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.05) both;
+  animation-delay: 0.06s;
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;

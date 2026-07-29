@@ -1,4 +1,18 @@
-import type { GradeResult, Grading, QuestionPart, Scoring, SelfAssessment } from '@qed2/core-logic';
+import {
+  GRADING_HINTS,
+  GRADING_LABELS,
+  SELECTABLE_GRADINGS,
+  formatScore,
+  roundScore,
+  type GradeResult,
+  type Grading,
+  type QuestionPart,
+  type Scoring,
+  type SelfAssessment,
+} from '@qed2/core-logic';
+
+/** Re-exported so existing @qed2/ui consumers keep one import site. */
+export { formatScore, roundScore };
 
 const EPS = 1e-9;
 
@@ -22,25 +36,20 @@ export interface SelfAssessmentGradingOption {
   hint: string;
 }
 
-export const SELF_ASSESSMENT_GRADING_OPTIONS: readonly SelfAssessmentGradingOption[] = [
-  { grading: 'good', label: 'Gut', hint: 'Gemeistert' },
-  { grading: 'careless', label: 'Schlampigkeitsfehler', hint: 'Eigentlich gekonnt' },
-  { grading: 'meh', label: 'Halb verstanden', hint: 'Bald wiederholen' },
-  { grading: 'baffled', label: 'Keine Ahnung', hint: 'Von vorn' },
-  { grading: 'excluded', label: 'Ausgeschlossen', hint: 'Nie wieder üben' },
-];
+/**
+ * Derived, not written out again: the same five states in the same order with
+ * the same words as every other grading control in the app. The hand-kept
+ * copy this replaces had already drifted out of order from the popover's.
+ */
+export const SELF_ASSESSMENT_GRADING_OPTIONS: readonly SelfAssessmentGradingOption[] =
+  SELECTABLE_GRADINGS.map((grading) => ({
+    grading,
+    label: GRADING_LABELS[grading],
+    hint: GRADING_HINTS[grading],
+  }));
 
 export function sameScore(a: number | null | undefined, b: number): boolean {
   return typeof a === 'number' && Math.abs(a - b) <= EPS;
-}
-
-export function roundScore(points: number): number {
-  return Math.round(points * 100) / 100;
-}
-
-export function formatScore(points: number): string {
-  const rounded = roundScore(points);
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace('.', ',');
 }
 
 export function maxPointsForScoring(scoring: Scoring | undefined, fallbackPoints: number | undefined): number {

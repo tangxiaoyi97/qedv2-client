@@ -28,6 +28,18 @@ import { useProgressStore } from './progress.js';
 
 /** Sync after every N graded parts while logged in (brief §5: sync eagerly). */
 const SYNC_EVERY_N_GRADES = 3;
+/**
+ * A hand-picked set is an ad-hoc thing; resurrecting a week-old one is more
+ * surprise than convenience. A programme is bounded by the day instead — see
+ * `isResumable`.
+ */
+const MANUAL_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Grace for a programme that straddles midnight. Strict same-day alone would
+ * throw away a session started at 23:50 the moment the user came back ten
+ * minutes later — technically a new day, obviously the same sitting.
+ */
+const SMART_SESSION_GRACE_MS = 6 * 60 * 60 * 1000;
 const SESSION_STORAGE_KEY = 'practice-session';
 const SESSION_STORAGE_VERSION = 2;
 
@@ -96,6 +108,33 @@ function isPersistedPracticeSession(value: unknown): value is PersistedPracticeS
       && typeof record.result.maxPoints === 'number');
 }
 
+function isSameLocalDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/**
+ * Whether a snapshot still deserves to be handed back.
+ *
+ * „Programm starten" means TODAY's FSRS programme. Without a bound, a
+ * half-finished programme was resumed forever: every entry point routes to a
+ * bare /practice, so the user stayed pinned to a stale item list and new due
+ * reviews were never offered again until they ground through it. `savedAt`
+ * was being written and never read.
+ */
+export function isResumable(origin: SessionOrigin, savedAt: string, now: Date): boolean {
+  const saved = new Date(savedAt);
+  if (Number.isNaN(saved.getTime())) return false;
+  if (saved.getTime() > now.getTime() + 60_000) return false; // clock moved back
+  const age = now.getTime() - saved.getTime();
+  return origin === 'smart'
+    ? isSameLocalDay(saved, now) || age < SMART_SESSION_GRACE_MS
+    : age < MANUAL_SESSION_MAX_AGE_MS;
+}
+
 function createClientAttemptId(): string {
   const randomUUID = globalThis.crypto?.randomUUID?.bind(globalThis.crypto);
   if (randomUUID) return randomUUID();
@@ -113,6 +152,19 @@ export const usePracticeStore = defineStore('practice', () => {
   /** Non-fatal notice (e.g. some questions failed to load, session continues). */
   const warning = ref<string | undefined>();
   const partShownAt = ref(0);
+  /**
+   * Last time the live session was written — the in-memory counterpart of the
+   * snapshot's `savedAt`. Judging a running session by its START time instead
+   * declared an actively used session stale and deleted a still-fresh
+   * snapshot underneath it.
+   */
+  const lastActivityAt = ref(new Date().toISOString());
+  /** Last thing the user asked for, so the error screen can retry THAT. */
+  const lastRequest = ref<
+    { kind: 'smart'; opts?: { count?: number; filters?: QuestionsFilter } }
+    | { kind: 'questions'; ids: string[] }
+    | undefined
+  >();
   /** Pre-answer FSRS snapshots for same-event manual override (per partId). */
   const preAnswerFsrs = new Map<string, FsrsState | undefined>();
   /** Serialize session writes so a slower, older snapshot cannot win. */
@@ -151,6 +203,7 @@ export const usePracticeStore = defineStore('practice', () => {
       graded: graded.value.map(cloneGradedRecord),
       savedAt: new Date().toISOString(),
     };
+    lastActivityAt.value = snapshot.savedAt;
     try {
       await enqueueSessionPersistence(() => storage.set(STORAGE.app, key, snapshot));
     } catch {
@@ -243,6 +296,7 @@ export const usePracticeStore = defineStore('practice', () => {
   async function beginSession(list: SessionItem[], from: SessionOrigin): Promise<void> {
     items.value = list;
     origin.value = from;
+    lastActivityAt.value = new Date().toISOString();
     index.value = 0;
     graded.value = [];
     preAnswerFsrs.clear();
@@ -263,6 +317,7 @@ export const usePracticeStore = defineStore('practice', () => {
 
   /** Smart session: FSRS-due reviews + weak-competency new parts (core decides). */
   async function startSmart(opts?: { count?: number; filters?: QuestionsFilter }): Promise<void> {
+    lastRequest.value = opts ? { kind: 'smart', opts } : { kind: 'smart' };
     phase.value = 'loading';
     error.value = undefined;
     warning.value = undefined;
@@ -313,6 +368,7 @@ export const usePracticeStore = defineStore('practice', () => {
    * For bulk selections (more than one question) excluded parts are skipped.
    */
   async function startQuestions(questionIds: string[]): Promise<void> {
+    lastRequest.value = { kind: 'questions', ids: [...questionIds] };
     phase.value = 'loading';
     error.value = undefined;
     warning.value = undefined;
@@ -472,6 +528,12 @@ export const usePracticeStore = defineStore('practice', () => {
     if (phase.value === 'loading') return true;
     if (phase.value === 'running') {
       if (want && origin.value !== want) return false;
+      // A PWA can stay open for days; the live session ages the same way a
+      // persisted one does.
+      if (!isResumable(origin.value, lastActivityAt.value, new Date())) {
+        await clearPersistedSession();
+        return false;
+      }
       if (current.value && gradedPartIds.value.has(current.value.item.partId)) {
         next();
         await sessionPersistenceTail;
@@ -486,10 +548,21 @@ export const usePracticeStore = defineStore('practice', () => {
       return false;
     }
     if (want && snapshot.origin !== want) return false;
+    if (!isResumable(snapshot.origin, snapshot.savedAt, new Date())) {
+      await clearPersistedSession();
+      return false;
+    }
 
     phase.value = 'loading';
     error.value = undefined;
     warning.value = undefined;
+    // If the restore fails the user lands on the error screen, whose retry
+    // replays `lastRequest`; without this it would fall through to a fresh
+    // programme and quietly discard a restored hand-picked set.
+    lastRequest.value =
+      snapshot.origin === 'manual'
+        ? { kind: 'questions', ids: [...new Set(snapshot.items.map((item) => item.questionId))] }
+        : { kind: 'smart' };
     try {
       await fetchQuestions(snapshot.items.map((item) => item.questionId));
       const validItems = snapshot.items.filter((item) => {
@@ -518,6 +591,7 @@ export const usePracticeStore = defineStore('practice', () => {
 
       items.value = validItems;
       origin.value = snapshot.origin;
+      lastActivityAt.value = snapshot.savedAt;
       graded.value = restoredGraded;
       preAnswerFsrs.clear();
       if (restoredGraded.length >= validItems.length) {
@@ -548,6 +622,22 @@ export const usePracticeStore = defineStore('practice', () => {
     }
   }
 
+  /**
+   * Redo whatever the user last asked for. „Erneut versuchen" used to call the
+   * view's `start()`, which re-reads the URL — and the Aufgaben bulk handoff
+   * puts no ids in the URL, so a retry silently swapped the hand-picked set
+   * for today's programme.
+   */
+  async function retry(): Promise<void> {
+    const request = lastRequest.value;
+    if (!request) {
+      await startSmart();
+      return;
+    }
+    if (request.kind === 'questions') await startQuestions(request.ids);
+    else await startSmart(request.opts);
+  }
+
   function abort(): void {
     phase.value = 'idle';
     warning.value = undefined;
@@ -565,6 +655,7 @@ export const usePracticeStore = defineStore('practice', () => {
     index,
     origin,
     graded,
+    retry,
     phase,
     error,
     warning,

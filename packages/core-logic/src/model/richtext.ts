@@ -220,6 +220,22 @@ export function mathToPlain(latex: string): string {
     .replace(/ {2,}/g, ' ');
 }
 
+/**
+ * True when a RichText would render nothing at all.
+ *
+ * Not the same as `length === 0`: the bank contains entries whose `result` is
+ * a single blank text node because the whole answer is the figure underneath
+ * it. Rendering those anyway produced an empty card — a framed box with
+ * nothing in it — under „Offizieller Lösungsweg".
+ *
+ * A `fig` node always counts as content; text and math count only when they
+ * carry something other than whitespace.
+ */
+export function isRichTextEmpty(rt: RichText | undefined | null): boolean {
+  if (!rt || rt.length === 0) return true;
+  return !rt.some((node) => (node.t === 'fig' ? true : node.v.trim().length > 0));
+}
+
 /** Plain-text projection (for previews, sorting, accessibility fallbacks). */
 export function richTextToPlain(rt: RichText | undefined): string {
   if (!rt) return '';

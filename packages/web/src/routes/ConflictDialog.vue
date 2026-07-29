@@ -7,8 +7,8 @@
  */
 import { computed, ref, watch } from 'vue';
 import { isPartConflict, type ConflictEntry } from '@qed2/core-logic';
-import { QButton } from '@qed2/ui';
-import { useModalA11y } from '../composables/useModalA11y.js';
+import { QButton, useModalA11y } from '@qed2/ui';
+
 import { useProgressStore } from '../stores/progress.js';
 
 const progress = useProgressStore();
@@ -96,7 +96,7 @@ function onEscape(): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="conflict" class="conflict q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
+    <div v-if="conflict" class="conflict q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
       <div ref="card" class="conflict__card">
         <div class="conflict__head">
           <span class="conflict__icon" aria-hidden="true">⟳</span>
@@ -168,16 +168,6 @@ function onEscape(): void {
 </template>
 
 <style scoped>
-.conflict {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-}
 .conflict__card {
   width: 100%;
   max-width: 560px;

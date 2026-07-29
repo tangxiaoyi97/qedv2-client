@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { ApiError, type LeaderboardDetail, type LeaderboardPeriod, type LeaderboardResponse } from '@qed2/core-logic';
-import { QButton, QLoadingPanel } from '@qed2/ui';
+import { LeaderboardDetailDrawer, LeaderboardRow, QButton, QLoadingPanel } from '@qed2/ui';
 import { LogOut, Pencil, Trophy, UserRound } from 'lucide-vue-next';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useLeaderboardStore } from '../stores/leaderboard.js';
 import { useUiStore } from '../stores/ui.js';
-import LeaderboardDetailDrawer from './leaderboard/LeaderboardDetailDrawer.vue';
-import LeaderboardRow from './leaderboard/LeaderboardRow.vue';
 
 const PAGE_SIZE = 50;
 
@@ -396,7 +394,7 @@ onMounted(() => {
 .leaderboard__columns {
   min-height: 34px;
   display: grid;
-  grid-template-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
+  grid-template-columns: var(--q-leaderboard-columns);
   align-items: center;
   gap: 14px;
   padding: 0 16px 7px;

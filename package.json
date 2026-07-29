@@ -1,7 +1,7 @@
 {
   "name": "qed2-client",
   "private": true,
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "QED2 learning tracker client ui",
   "license": "MIT",
   "engines": {
@@ -12,7 +12,8 @@
     "dev": "pnpm --filter @qed2/web dev",
     "build": "pnpm --filter @qed2/web build",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "version:sync": "node scripts/sync-version.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

@@ -139,7 +139,7 @@ function isSelectedScore(value: number): boolean {
 
     <div class="q-selfassess__total">
       <span>Deine Punkte</span>
-      <b>{{ points.toLocaleString('de-AT') }} / {{ maxPoints.toLocaleString('de-AT') }}</b>
+      <b>{{ formatScore(points) }} / {{ formatScore(maxPoints) }}</b>
     </div>
   </div>
 </template>
@@ -258,6 +258,7 @@ function isSelectedScore(value: number): boolean {
   border: none;
   cursor: pointer;
   font-family: inherit;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 .q-selfassess__segment + .q-selfassess__segment {
   border-left: 1px solid var(--q-btn-border);

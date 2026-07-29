@@ -52,7 +52,11 @@ export interface ApplyGradeInput {
 
 export interface ApplyGradeResult {
   archive: LocalArchive;
-  /** The part's grading recorded by this event (auto-derived). */
+  /**
+   * The grading this event actually recorded. Normally the auto-derived one;
+   * for a part frozen as `excluded` it stays `excluded`, because answering
+   * must not thaw it (§1.4).
+   */
   grading: Grading;
   /**
    * FSRS state BEFORE this grade advanced it (undefined = first contact).
@@ -131,11 +135,19 @@ export class ArchiveStore {
     const partIdx = perPart.findIndex((p) => p.partId === input.partId);
     const prev = partIdx >= 0 ? perPart[partIdx] : undefined;
     const previousFsrs = prev && isPracticed(prev) ? prev.fsrs : undefined;
+    /**
+     * `excluded` is a hard freeze (supplement §1.4): the part is out of the
+     * rotation and FSRS does not advance for it. Answering one — only
+     * reachable by deliberately practising that single question — records the
+     * result but must not silently thaw it, which is what deriving the
+     * grading from the verdict here used to do.
+     */
+    const frozen = prev?.grading === 'excluded';
     const entry: PartEntry = {
       partId: input.partId,
-      grading,
+      grading: frozen ? 'excluded' : grading,
       starred: prev?.starred ?? false,
-      fsrs: advanceFsrsForGrading(previousFsrs, grading, input.now),
+      fsrs: frozen && prev ? prev.fsrs : advanceFsrsForGrading(previousFsrs, grading, input.now),
       lastResult: {
         correct: input.verdict === 'correct',
         awardedPoints: normNum(input.awardedPoints),
@@ -165,7 +177,9 @@ export class ArchiveStore {
       baseVersion: archive.baseVersion,
     };
     await this.save(updated);
-    return { archive: updated, grading, previousFsrs };
+    // The APPLIED grading, which is not the derived one for a frozen part —
+    // callers write this into the durable history log.
+    return { archive: updated, grading: entry.grading ?? grading, previousFsrs };
   }
 
   /**
@@ -174,7 +188,8 @@ export class ArchiveStore {
    * - With `baseFsrs` (same answer event): the advance is recomputed FROM
    *   THAT SNAPSHOT, replacing the auto advance entirely.
    * - Without: a standalone review event — advance from the current state.
-   * - `excluded`: freeze — grading is stored, FSRS state kept untouched.
+   * - `excluded`: freeze — grading is stored, FSRS state kept at `baseFsrs`
+   *   when given (same answer event), otherwise at the current one.
    * - Grading a part with no entry creates one (counts as a first review,
    *   except excluded, which creates a frozen reps-0 placeholder).
    */
@@ -188,7 +203,11 @@ export class ArchiveStore {
 
     let fsrs: FsrsState;
     if (input.grading === 'excluded') {
-      fsrs = prev?.fsrs ?? placeholderFsrs(input.now);
+      // Freeze at the state the caller names. Without `baseFsrs` that is the
+      // current one; WITH it (same answer event) it is the pre-answer
+      // snapshot, so excluding a part you just answered does not bake in the
+      // advance that answer produced.
+      fsrs = input.baseFsrs ?? prev?.fsrs ?? placeholderFsrs(input.now);
     } else {
       const base =
         input.baseFsrs !== undefined

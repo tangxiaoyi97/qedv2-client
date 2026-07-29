@@ -8,23 +8,19 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
+  GRADING_LABELS,
+  SELECTABLE_GRADINGS,
   competencyCategory,
+  groupMasteryByCategory,
+  parseLocalDayKey,
   type Grading,
   type GradingOrUnseen,
   type HistoryEntry,
   type QuestionSummary,
 } from '@qed2/core-logic';
-import {
-  ActivityHeatmap,
-  CompetencyGroups,
-  GradingDot,
-  GradingDistribution,
-  MasteryBar,
-  RadarChart,
-  type RadarAxis,
-} from '@qed2/ui';
+import { ActivityHeatmap, CompetencyGroups, GradingDistribution, GradingDot, MasteryBar, RadarChart, type RadarAxis, useModalA11y } from '@qed2/ui';
 import { historyLog } from '../services.js';
-import { useModalA11y } from '../composables/useModalA11y.js';
+
 import { useAppStore } from '../stores/app.js';
 import { useProgressStore } from '../stores/progress.js';
 
@@ -32,15 +28,7 @@ const router = useRouter();
 const app = useAppStore();
 const progress = useProgressStore();
 
-const GRADING_LABELS: Record<GradingOrUnseen, string> = {
-  good: 'Gut',
-  careless: 'Schlampigkeitsfehler',
-  meh: 'Halb verstanden',
-  baffled: 'Keine Ahnung',
-  excluded: 'Ausgeschlossen',
-  unseen: 'Neu',
-};
-const GRADING_ORDER: readonly Grading[] = ['good', 'careless', 'meh', 'baffled', 'excluded'];
+const GRADING_ORDER: readonly Grading[] = SELECTABLE_GRADINGS;
 
 // Per-competency due flags need the part→competency map, which the archive
 // deliberately does not carry (contract stores only codes+mastery). v1 shows
@@ -60,15 +48,10 @@ const activity = ref<Record<string, number>>({});
 const selectedActivityDate = ref<string | null>(null);
 const selectedDayEntries = ref<HistoryEntry[]>([]);
 
-function parseDayKey(key: string): Date {
-  const [y, m, d] = key.split('-').map(Number);
-  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
-}
-
 function formatDayKey(key: string | null): string {
   if (!key) return 'Kein Tag ausgewählt';
   return new Intl.DateTimeFormat('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(
-    parseDayKey(key),
+    parseLocalDayKey(key),
   );
 }
 
@@ -134,21 +117,13 @@ const CATEGORY_NAMES: Record<(typeof CATEGORY_ORDER)[number], string> = {
 };
 
 /** Radar over the four Kompetenz categories (0 for untouched ones). */
-const radarAxes = computed<RadarAxis[]>(() => {
-  const groups = new Map<string, number[]>();
-  for (const e of progress.masteryEntries) {
-    const cat = competencyCategory(e.code);
-    if (cat === 'other') continue;
-    const list = groups.get(cat) ?? [];
-    list.push(e.mastery);
-    groups.set(cat, list);
-  }
-  return CATEGORY_ORDER.map((c) => {
-    const list = groups.get(c);
-    const avg = list && list.length > 0 ? list.reduce((a, b) => a + b, 0) / list.length : 0;
-    return { label: c, value: avg, hint: `${Math.round(avg * 100)} %` };
-  });
-});
+const radarAxes = computed<RadarAxis[]>(() =>
+  groupMasteryByCategory(progress.masteryEntries).map((c) => ({
+    label: c.code,
+    value: c.mastery,
+    hint: `${Math.round(c.mastery * 100)} %`,
+  })),
+);
 
 /** Category → Aufgaben with that Kompetenz filter pre-applied. */
 function openCategory(code: string): void {
@@ -159,27 +134,17 @@ function openStatusFilter(state: GradingOrUnseen): void {
   void router.push({ path: '/questions', query: { grading: state } });
 }
 
-const categoryRows = computed(() => {
-  const groups = new Map<string, number[]>();
-  for (const e of progress.masteryEntries) {
-    const cat = competencyCategory(e.code);
-    if (cat === 'other') continue;
-    const list = groups.get(cat) ?? [];
-    list.push(e.mastery);
-    groups.set(cat, list);
-  }
-  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => {
-    const list = groups.get(c)!;
-    const avg = list.reduce((a, b) => a + b, 0) / list.length;
-    return {
-      code: c,
-      name: CATEGORY_NAMES[c],
-      count: list.length,
-      avg,
-      percent: Math.round(avg * 100),
-    };
-  });
-});
+const categoryRows = computed(() =>
+  groupMasteryByCategory(progress.masteryEntries)
+    .filter((c) => c.count > 0)
+    .map((c) => ({
+      code: c.code,
+      name: CATEGORY_NAMES[c.code],
+      count: c.count,
+      avg: c.mastery,
+      percent: Math.round(c.mastery * 100),
+    })),
+);
 
 interface PartMeta {
   questionId: string;
@@ -320,9 +285,9 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 </script>
 
 <template>
-  <div class="prog">
+  <div class="prog q-page">
     <div class="prog__title-row">
-      <h1 class="prog__title">Übersicht</h1>
+      <h1 class="prog__title q-page-title">Übersicht</h1>
       <RouterLink to="/leaderboard" class="prog__leaderboard-link">Leaderboard</RouterLink>
     </div>
 
@@ -623,14 +588,6 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 <style scoped>
 .prog {
   max-width: 860px;
-  margin: 0 auto;
-  padding: 26px 20px 40px;
-}
-.prog__title {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0;
 }
 .prog__title-row {
   display: flex;
@@ -988,7 +945,6 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   flex-direction: column;
   gap: 8px;
 }
-.prog-modal__status-grid,
 .prog-modal__summary-grid,
 .prog-modal__day-state-grid {
   display: grid;
@@ -1032,45 +988,11 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   color: var(--q-faint);
   text-align: right;
 }
-.prog-modal__status-card,
-.prog-modal__summary-card,
-.prog-modal__day-state {
-  min-width: 0;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
-  background: var(--q-panel);
-  padding: 10px 12px;
-}
-.prog-modal__status-card {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-@media (hover: hover) and (pointer: fine) {
-  .prog-modal__status-card:not(:disabled):hover {
-    border-color: var(--q-accent);
-  }
-}
-.prog-modal__status-card:focus-visible {
-  border-color: var(--q-accent);
-  outline: none;
-}
-.prog-modal__status-card:disabled {
-  cursor: default;
-  opacity: 0.55;
-}
-.prog-modal__status-card span,
 .prog-modal__day-state span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.prog-modal__status-card b,
 .prog-modal__day-state b {
   font-variant-numeric: tabular-nums;
 }
@@ -1155,6 +1077,14 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   margin-top: 4px;
   font-size: 20px;
   line-height: 1;
+}
+.prog-modal__summary-card,
+.prog-modal__day-state {
+  min-width: 0;
+  border: 1px solid var(--q-border-soft);
+  border-radius: 10px;
+  background: var(--q-panel);
+  padding: 10px 12px;
 }
 .prog-modal__day-state {
   display: grid;

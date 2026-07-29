@@ -2,8 +2,9 @@
 import { computed, ref } from 'vue';
 import { CalendarCheck2, CalendarRange, CheckCircle2, Target, Trophy, X } from 'lucide-vue-next';
 import type { LeaderboardDetail } from '@qed2/core-logic';
-import { QButton } from '@qed2/ui';
-import { useModalA11y } from '../../composables/useModalA11y.js';
+import QButton from '../shared/QButton.vue';
+import { useModalA11y } from '../shared/useModalA11y.js';
+
 
 const props = defineProps<{
   open: boolean;

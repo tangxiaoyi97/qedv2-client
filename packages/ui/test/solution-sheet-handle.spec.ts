@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import SolutionSheet from '../src/practice/SolutionSheet.vue';
+import { FULL_OVERSHOOT_PX, TOP_BAR_RESERVE_PX } from '../src/practice/sheet-detents.js';
 
 /**
  * The drawer has three detents. Dragging the handle moves it with the finger
@@ -15,7 +16,7 @@ const VIEWPORT = 768;
 const HEIGHTS = {
   collapsed: 0,
   default: Math.round(Math.min(VIEWPORT * 0.55, 460)),
-  full: VIEWPORT - 96,
+  full: VIEWPORT - TOP_BAR_RESERVE_PX + FULL_OVERSHOOT_PX,
 };
 
 function mountSheet(props: Record<string, unknown> = {}) {
@@ -55,6 +56,19 @@ describe('SolutionSheet detents', () => {
     const wrapper = mountSheet({ detent: 'collapsed' });
     expect(wrapper.find('.q-ssheet__handle').exists()).toBe(true);
     expect(wrapper.get('.q-ssheet').classes()).not.toContain('q-ssheet--open');
+  });
+
+  it('rules a line under the grip while the sheet is shut', () => {
+    // Shut, the sheet is zero-height and its own bottom rule draws nothing —
+    // without this the grip floats straight on top of the action buttons.
+    expect(mountSheet({ detent: 'collapsed' }).get('.q-ssheet__top').classes()).toContain(
+      'q-ssheet__top--closed',
+    );
+    for (const detent of ['default', 'full'] as const) {
+      expect(mountSheet({ detent }).get('.q-ssheet__top').classes()).not.toContain(
+        'q-ssheet__top--closed',
+      );
+    }
   });
 
   it('is absent while the question is still unanswered', () => {
@@ -162,10 +176,15 @@ describe('SolutionSheet half-open size', () => {
     return mountSheet(props);
   }
 
+  // Restoring inline after the assertions would leak the stubbed viewport into
+  // every later test in this file the moment one expectation fails.
+  afterEach(() => {
+    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
+  });
+
   it('never opens further than 60 % of a short viewport', () => {
     const wrapper = atViewport(600, { detent: 'default' });
     expect(heightOf(wrapper)).toBeLessThanOrEqual(Math.round(600 * 0.6));
-    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
   });
 
   it('is capped in absolute pixels on a tall viewport', () => {
@@ -173,14 +192,12 @@ describe('SolutionSheet half-open size', () => {
     // most of the screen, which is what `full` is for.
     const wrapper = atViewport(2000, { detent: 'default' });
     expect(heightOf(wrapper)).toBe(460);
-    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
   });
 
   it('never grows past the full detent, however cramped the viewport', () => {
     const wrapper = atViewport(200, { detent: 'default' });
-    const full = 200 - 96;
+    const full = 200 - TOP_BAR_RESERVE_PX + FULL_OVERSHOOT_PX;
     expect(heightOf(wrapper)).toBeLessThanOrEqual(full);
-    Object.defineProperty(window, 'innerHeight', { value: VIEWPORT, configurable: true });
   });
 
   it('wraps the answer in a measurable block that excludes the grading note', () => {
@@ -222,7 +239,12 @@ describe('SolutionSheet banner', () => {
   it('keeps the header neutral and the verdict in the body below full screen', () => {
     for (const detent of ['collapsed', 'default'] as const) {
       const wrapper = withVerdict(detent);
-      expect(wrapper.get('.q-ssheet__top').classes(), detent).toEqual(['q-ssheet__top']);
+      // No verdict tint — the header may still carry layout modifiers of its
+      // own, so name the classes that must be absent rather than the whole set.
+      const classes = wrapper.get('.q-ssheet__top').classes();
+      for (const tint of ['correct', 'partial', 'incorrect']) {
+        expect(classes, detent).not.toContain(`q-ssheet__top--${tint}`);
+      }
       expect(wrapper.find('.q-ssheet__banner').exists(), detent).toBe(false);
       expect(wrapper.get('.q-ssheet__verdict').text(), detent).toContain('Falsch');
     }
@@ -290,3 +312,24 @@ describe('SolutionSheet verdict', () => {
     expect(plain.get('.q-ssheet__handle').attributes('aria-label')).toBe('Lösung anzeigen');
   });
 });
+
+describe('SolutionSheet figure-only entries', () => {
+  const figureOnly = [{ result: [{ t: 'text' as const, v: '' }], figures: [] }];
+
+  it('drops the result card when the entry has no text', () => {
+    // The answer is the figure; a card around nothing is an empty framed box
+    // sitting under „Offizieller Lösungsweg".
+    const wrapper = mountSheet({ detent: 'default', solution: figureOnly });
+    expect(wrapper.find('.q-ssheet__card').exists()).toBe(false);
+    // The heading still stands — the entry exists, it just has no prose.
+    expect(wrapper.get('.q-ssheet__title').text()).toBe('Offizieller Lösungsweg');
+  });
+
+  it('still renders the card when there is something to say', () => {
+    const wrapper = mountSheet({
+      detent: 'default',
+      solution: [{ result: [{ t: 'text' as const, v: 'x = 3' }], figures: [] }],
+    });
+    expect(wrapper.get('.q-ssheet__card').text()).toContain('x = 3');
+  });
+})

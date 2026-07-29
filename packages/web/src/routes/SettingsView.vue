@@ -8,7 +8,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
-import { ChevronDown, CollapsePanel, QButton } from '@qed2/ui';
+import { ChevronDown, CollapsePanel, QButton, useModalA11y } from '@qed2/ui';
 import { APP_VERSION } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
@@ -17,7 +17,7 @@ import {
   setBuiltinThemeExtension,
   type BuiltinThemeId,
 } from '../platform/theme.js';
-import { useModalA11y } from '../composables/useModalA11y.js';
+
 import { useAppStore, type ThemePref } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useLeaderboardStore } from '../stores/leaderboard.js';
@@ -249,8 +249,8 @@ async function openChangelog(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings">
-    <h1 class="settings__title">Einstellungen</h1>
+  <div class="settings q-page">
+    <h1 class="settings__title q-page-title">Einstellungen</h1>
 
     <section class="settings__section">
       <div class="settings__row">
@@ -479,7 +479,7 @@ async function openChangelog(): Promise<void> {
       <transition name="modal-fade">
         <div
           v-if="versionDetail"
-          class="vdetail q-modal-backdrop"
+          class="vdetail q-modal-scrim q-modal-backdrop"
           role="dialog"
           aria-modal="true"
           :aria-label="versionDetailTitle"
@@ -511,17 +511,13 @@ async function openChangelog(): Promise<void> {
 <style scoped>
 .settings {
   max-width: 560px;
-  margin: 0 auto;
-  padding: 26px 20px 40px;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
+/* Only the bottom gap differs from .q-page-title. */
 .settings__title {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0 0 4px;
+  margin-bottom: 4px;
 }
 .settings__row {
   display: flex;
@@ -572,6 +568,7 @@ async function openChangelog(): Promise<void> {
   border: none;
   cursor: pointer;
   font-family: inherit;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 .settings__segment + .settings__segment {
   border-left: 1px solid var(--q-btn-border);
@@ -783,11 +780,6 @@ async function openChangelog(): Promise<void> {
   gap: 8px;
   margin-top: 6px;
 }
-.settings__versions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 .settings__versions-head {
   display: flex;
   align-items: center;
@@ -886,24 +878,6 @@ async function openChangelog(): Promise<void> {
 }
 
 /* ---- Versionen detail modal ---- */
-.vdetail {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-}
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity var(--q-transition-fast, 0.16s);
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
 .vdetail__card {
   width: 100%;
   max-width: 460px;

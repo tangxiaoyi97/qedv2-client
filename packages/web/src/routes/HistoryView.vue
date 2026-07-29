@@ -11,7 +11,14 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { NetworkError, type Verdict } from '@qed2/core-logic';
+import {
+  NetworkError,
+  VERDICT_LABELS,
+  formatScore,
+  localDayRange,
+  parseLocalDayKey,
+  type Verdict,
+} from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDot, QButton, QSkeleton, StateIcon } from '@qed2/ui';
 import { historyLog, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
@@ -24,12 +31,6 @@ const auth = useAuthStore();
 const progress = useProgressStore();
 
 const PAGE_SIZE = 50;
-const VERDICT_LABELS: Record<Verdict, string> = {
-  correct: 'Richtig',
-  partial: 'Teilweise richtig',
-  incorrect: 'Falsch',
-};
-
 interface Row {
   key: string;
   partId: string;
@@ -185,19 +186,8 @@ const selectedDayFmt = new Intl.DateTimeFormat('de-AT', {
   year: 'numeric',
 });
 
-function parseLocalDay(dayKey: string): Date {
-  const [year, month, day] = dayKey.split('-').map(Number);
-  return new Date(year ?? 1970, (month ?? 1) - 1, day ?? 1);
-}
-
-function localDayRange(dayKey: string): { since: string; until: string } {
-  const start = parseLocalDay(dayKey);
-  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, 0, 0, 0, -1);
-  return { since: start.toISOString(), until: end.toISOString() };
-}
-
 const selectedDateLabel = computed(() =>
-  selectedDate.value ? selectedDayFmt.format(parseLocalDay(selectedDate.value)) : '',
+  selectedDate.value ? selectedDayFmt.format(parseLocalDayKey(selectedDate.value)) : '',
 );
 
 function selectDate(dayKey: string): void {
@@ -229,8 +219,8 @@ const groups = computed(() => {
 const hasMore = computed(() => rows.value.length < total.value);
 
 function fmtPoints(r: Row): string {
-  const a = r.awardedPoints.toLocaleString('de-AT');
-  return r.maxPoints !== undefined ? `${a}/${r.maxPoints.toLocaleString('de-AT')} P` : `${a} P`;
+  const a = formatScore(r.awardedPoints);
+  return r.maxPoints !== undefined ? `${a}/${formatScore(r.maxPoints)} P` : `${a} P`;
 }
 
 function redo(questionId: string): void {
@@ -247,9 +237,9 @@ function redo(questionId: string): void {
 </script>
 
 <template>
-  <div class="hist">
+  <div class="hist q-page">
     <div class="hist__head">
-      <h1 class="hist__title">Verlauf</h1>
+      <h1 class="hist__title q-page-title">Verlauf</h1>
       <span v-if="total > 0" class="hist__count">
         {{ total }} {{ total === 1 ? 'Antwort' : 'Antworten' }}
       </span>
@@ -354,19 +344,11 @@ function redo(questionId: string): void {
 <style scoped>
 .hist {
   max-width: 720px;
-  margin: 0 auto;
-  padding: 26px 20px 40px;
 }
 .hist__head {
   display: flex;
   align-items: baseline;
   gap: 12px;
-}
-.hist__title {
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin: 0;
 }
 .hist__count {
   font-size: 12.5px;

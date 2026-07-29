@@ -14,6 +14,7 @@ import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
+import { watchForBuildUpdates } from './platform/sw-update.js';
 
 /** Drive the boot splash (index.html #boot-bar / #boot-label). */
 function bootProgress(pct: number, text: string): void {
@@ -63,6 +64,9 @@ async function boot(): Promise<void> {
 
   // After mount: announce what changed if this is a new build (non-blocking).
   void useUiStore().checkForChangelog();
+  // …and keep looking for newer builds, so an installed PWA that never gets
+  // closed does not sit on this one forever.
+  watchForBuildUpdates();
 }
 
 function showBootError(err: unknown): void {

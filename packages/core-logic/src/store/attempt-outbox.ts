@@ -9,6 +9,18 @@ interface PendingAttempt {
 }
 
 const OUTBOX_KEY = 'attempt-outbox';
+/**
+ * Upper bound PER ACCOUNT. The whole outbox is one IndexedDB document that is
+ * read and rewritten on every answer, so an unbounded queue turns each answer
+ * into O(n) work — and it only ever grows when the server keeps rejecting a
+ * payload, exactly when the device can least afford it. The oldest entries go
+ * first; the archive checksum, not this audit trail, is the authoritative
+ * progress record.
+ *
+ * Trimming is scoped to the account being appended to: on a shared device one
+ * user's backlog must not evict another user's never-uploaded attempts.
+ */
+const MAX_PENDING_PER_USER = 2000;
 
 /**
  * Durable per-account audit outbox. A response can be lost after the server
@@ -46,6 +58,17 @@ export class AttemptOutbox {
         return;
       }
       entries.push({ userId, attempt });
+
+      const mine = entries.reduce((n, entry) => (entry.userId === userId ? n + 1 : n), 0);
+      let toDrop = mine - MAX_PENDING_PER_USER;
+      for (let i = 0; i < entries.length && toDrop > 0; ) {
+        if (entries[i]?.userId === userId) {
+          entries.splice(i, 1);
+          toDrop -= 1;
+        } else {
+          i += 1;
+        }
+      }
     });
   }
 

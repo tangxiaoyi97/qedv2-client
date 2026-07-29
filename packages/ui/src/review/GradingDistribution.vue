@@ -260,6 +260,7 @@ function clearActiveState(state: GradingOrUnseen): void {
   padding: 5px 6px;
   cursor: pointer;
   text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
 @media (pointer: coarse) {
   .q-dist__item-button {

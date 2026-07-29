@@ -11,9 +11,12 @@ export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';
 export { default as QSkeleton } from './shared/QSkeleton.vue';
 export { default as QLoadingPanel } from './shared/QLoadingPanel.vue';
+export { default as QNotice } from './shared/QNotice.vue';
 export { default as MarkdownView } from './shared/MarkdownView.vue';
 export { parseMarkdown } from './shared/markdown.js';
-export { lockBodyScroll, unlockBodyScroll, bodyScrollLockDepth } from './shared/scroll-lock.js';
+export { lockBodyScroll, unlockBodyScroll } from './shared/scroll-lock.js';
+export { useModalA11y } from './shared/useModalA11y.js';
+export { useKeyboardInset } from './shared/useKeyboardInset.js';
 export type { MdBlock, MdInline } from './shared/markdown.js';
 export * from './shared/assets.js';
 
@@ -21,6 +24,7 @@ export * from './shared/assets.js';
 export { default as GradingDot } from './shared/GradingDot.vue';
 export { default as GradingCapsule } from './shared/GradingCapsule.vue';
 export { default as GradingMenu } from './shared/GradingMenu.vue';
+export { default as GradingPicker } from './shared/GradingPicker.vue';
 export { default as StarButton } from './shared/StarButton.vue';
 export { onRadioGroupKeydown } from './shared/radio-group.js';
 
@@ -37,11 +41,19 @@ export { default as ExpressionControl } from './question/ExpressionControl.vue';
 export { default as OpenControl } from './question/OpenControl.vue';
 export { default as AnswerControl } from './question/AnswerControl.vue';
 export { default as SelfAssessmentPanel } from './question/SelfAssessmentPanel.vue';
+export { default as FilterDialog } from './question/FilterDialog.vue';
+export {
+  activeFilterCount,
+  emptyFilterState,
+  type FilterState,
+} from './question/FilterDialog.vue';
+
+// leaderboard
+export { default as LeaderboardRow } from './leaderboard/LeaderboardRow.vue';
+export { default as LeaderboardDetailDrawer } from './leaderboard/LeaderboardDetailDrawer.vue';
 export type { AnswerPreview } from './question/submission-preview.js';
 
 // practice flow
-export { default as ResultBanner } from './practice/ResultBanner.vue';
-export { default as ResultPill } from './practice/ResultPill.vue';
 export { default as VerdictCard } from './practice/VerdictCard.vue';
 export { default as SolutionPanel } from './practice/SolutionPanel.vue';
 export { default as SolutionSheet } from './practice/SolutionSheet.vue';
@@ -55,8 +67,13 @@ export {
   type SelfAssessmentScoreOption,
   type SelfAssessmentUiState,
 } from './practice/self-assessment.js';
-export { default as QuestionHeader } from './practice/QuestionHeader.vue';
 export { default as SessionProgressBar } from './practice/SessionProgressBar.vue';
+export { default as SessionItemList } from './practice/SessionItemList.vue';
+export { default as PracticeBottomBar } from './practice/PracticeBottomBar.vue';
+export { default as PracticeQuestionHeader } from './practice/PracticeQuestionHeader.vue';
+export { default as PracticeSessionRail } from './practice/PracticeSessionRail.vue';
+export { default as PracticeSessionDrawer } from './practice/PracticeSessionDrawer.vue';
+export type { SessionItem } from './practice/SessionItemList.vue';
 export type { ProgressSegment } from './practice/SessionProgressBar.vue';
 
 // review / progress

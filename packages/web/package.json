@@ -1,6 +1,6 @@
 {
   "name": "@qed2/web",
-  "version": "1.9.6",
+  "version": "1.9.7",
   "description": "QED2 web client (PWA) — browser shell over @qed2/core-logic and @qed2/ui. Static build deploys to GitHub Pages.",
   "type": "module",
   "private": true,
@@ -23,6 +23,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.4",
     "fake-indexeddb": "^6.0.1",
+    "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vite-plugin-pwa": "^1.0.0",

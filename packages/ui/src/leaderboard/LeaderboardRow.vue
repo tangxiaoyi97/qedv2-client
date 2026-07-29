@@ -65,7 +65,7 @@ function periodCount(): number {
   width: 100%;
   min-height: 68px;
   display: grid;
-  grid-template-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
+  grid-template-columns: var(--q-leaderboard-columns);
   align-items: center;
   gap: 14px;
   padding: 12px 16px;

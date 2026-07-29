@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mathToPlain, richTextToPlain } from '../src/model/richtext.js';
+import { isRichTextEmpty, mathToPlain, richTextToPlain } from '../src/model/richtext.js';
 import type { RichText } from '../src/model/richtext.js';
 
 describe('mathToPlain', () => {
@@ -122,5 +122,28 @@ describe('richTextToPlain', () => {
   it('uses fig alt text and handles undefined', () => {
     expect(richTextToPlain([{ t: 'fig', src: 'a.png', alt: 'Skizze' }])).toBe('Skizze');
     expect(richTextToPlain(undefined)).toBe('');
+  });
+});
+
+describe('isRichTextEmpty', () => {
+  it('treats a blank text node as nothing to render', () => {
+    // The bank has entries whose whole answer is the figure below them; the
+    // result is a single empty string. Rendering it framed an empty card.
+    expect(isRichTextEmpty([{ t: 'text', v: '' }])).toBe(true);
+    expect(isRichTextEmpty([{ t: 'text', v: '   \n ' }])).toBe(true);
+    expect(isRichTextEmpty([])).toBe(true);
+    expect(isRichTextEmpty(undefined)).toBe(true);
+  });
+
+  it('counts any node that would actually draw', () => {
+    expect(isRichTextEmpty([{ t: 'text', v: 'a' }])).toBe(false);
+    expect(isRichTextEmpty([{ t: 'math', v: 'x^2' }])).toBe(false);
+    // A figure node is content even with no alt text.
+    expect(isRichTextEmpty([{ t: 'fig', src: 'a.svg' }])).toBe(false);
+  });
+
+  it('is not fooled by a blank node sitting next to a real one', () => {
+    expect(isRichTextEmpty([{ t: 'text', v: ' ' }, { t: 'math', v: 'n' }])).toBe(false);
+    expect(isRichTextEmpty([{ t: 'text', v: ' ' }, { t: 'math', v: '  ' }])).toBe(true);
   });
 });

@@ -12,7 +12,7 @@
  * get it instantly via the global media query).
  */
 import { computed } from 'vue';
-import type { GradeResult } from '@qed2/core-logic';
+import { VERDICT_LABELS, formatScoreRatio, type GradeResult } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
 
 const props = withDefaults(
@@ -32,24 +32,15 @@ const props = withDefaults(
 
 const emit = defineEmits<{ viewSolution: [] }>();
 
-const LABELS: Record<GradeResult['verdict'], string> = {
-  correct: 'Richtig',
-  partial: 'Teilweise richtig',
-  incorrect: 'Falsch',
-};
-
 const verdict = computed(() => props.result.verdict);
-const points = computed(() => {
-  const fmt = (n: number): string => n.toLocaleString('de-AT');
-  return `${fmt(props.result.awardedPoints)} / ${fmt(props.result.maxPoints)} P`;
-});
+const points = computed(() => formatScoreRatio(props.result.awardedPoints, props.result.maxPoints));
 </script>
 
 <template>
   <div class="q-verdict" :class="`q-verdict--${verdict}`" role="status">
     <StateIcon class="q-verdict__icon" :state="verdict" :size="30" />
     <div class="q-verdict__main">
-      <div class="q-verdict__label">{{ LABELS[verdict] }}</div>
+      <div class="q-verdict__label">{{ VERDICT_LABELS[verdict] }}</div>
       <div v-if="note" class="q-verdict__note">{{ note }}</div>
     </div>
     <div class="q-verdict__side">

@@ -7,7 +7,7 @@
  */
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { competencyCategory, type GradingOrUnseen } from '@qed2/core-logic';
+import { groupMasteryByCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
 import { historyLog } from '../services.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -37,22 +37,9 @@ const dateLine = computed(() =>
   ),
 );
 
-const CATEGORY_ORDER = ['AG', 'FA', 'AN', 'WS'] as const;
-
-const categoryMastery = computed(() => {
-  const groups = new Map<string, number[]>();
-  for (const e of progress.masteryEntries) {
-    const cat = competencyCategory(e.code);
-    if (cat === 'other') continue;
-    const list = groups.get(cat) ?? [];
-    list.push(e.mastery);
-    groups.set(cat, list);
-  }
-  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => {
-    const list = groups.get(c)!;
-    return { code: c, mastery: list.reduce((a, b) => a + b, 0) / list.length };
-  });
-});
+const categoryMastery = computed(() =>
+  groupMasteryByCategory(progress.masteryEntries).filter((c) => c.count > 0),
+);
 
 const weakest = computed(() =>
   [...categoryMastery.value].sort((a, b) => a.mastery - b.mastery).slice(0, 2).map((c) => c.code),
@@ -120,7 +107,7 @@ function openCategoryFilter(code: string): void {
 </script>
 
 <template>
-  <div class="home">
+  <div class="home q-page">
     <div class="home__header">
       <div>
         <h1 class="home__greeting">{{ greeting }} 👋</h1>
@@ -238,8 +225,6 @@ function openCategoryFilter(code: string): void {
 <style scoped>
 .home {
   max-width: 860px;
-  margin: 0 auto;
-  padding: 26px 20px 40px;
 }
 .home__header {
   margin-bottom: 24px;
@@ -335,9 +320,6 @@ function openCategoryFilter(code: string): void {
   .home__cards > .home__card {
     grid-column: span 12 !important;
   }
-}
-.home__card--wide {
-  /* spans handled by nth-child rules above */
 }
 .home__card--click {
   cursor: pointer;

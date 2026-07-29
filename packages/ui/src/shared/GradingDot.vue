@@ -1,18 +1,9 @@
 <script lang="ts">
-import type { GradingOrUnseen } from '@qed2/core-logic';
+import { GRADING_LABELS, type GradingOrUnseen } from '@qed2/core-logic';
 
-/**
- * German state names (grading supplement §1.5). Named export so sibling
- * grading components (GradingCapsule, GradingMenu) reuse the exact strings.
- */
-export const GRADING_LABELS: Record<GradingOrUnseen, string> = {
-  good: 'Gut',
-  careless: 'Schlampigkeitsfehler',
-  meh: 'Halb verstanden',
-  baffled: 'Keine Ahnung',
-  excluded: 'Ausgeschlossen',
-  unseen: 'Neu',
-};
+/** Re-exported so the sibling grading components keep one import site; the
+ *  strings themselves live with the enum in core-logic. */
+export { GRADING_LABELS };
 </script>
 
 <script setup lang="ts">

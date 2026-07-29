@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { QChip, StarButton } from '@qed2/ui';
+import QChip from '../shared/QChip.vue';
+import StarButton from '../shared/StarButton.vue';
 import { ExternalLink } from 'lucide-vue-next';
 
 defineProps<{

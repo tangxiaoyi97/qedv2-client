@@ -115,9 +115,6 @@ export const useProgressStore = defineStore('progress', () => {
     return counts;
   });
 
-  const starredCount = computed(
-    () => archive.value.content.perPart.filter((p) => p.starred).length,
-  );
 
   const excludedPartIds = computed(
     () => new Set(archive.value.content.perPart.filter((p) => p.grading === 'excluded').map((p) => p.partId)),
@@ -480,7 +477,6 @@ export const useProgressStore = defineStore('progress', () => {
     masteryEntries,
     dueCount,
     gradingCounts,
-    starredCount,
     excludedPartIds,
     partState,
     init,

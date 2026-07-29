@@ -83,7 +83,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
         <template v-if="markOf(blank.id)">
           <StateIcon :state="markOf(blank.id)!.correct ? 'correct' : 'incorrect'" :size="20" />
           <span
-            class="q-numeric__verdict"
+            class="q-numeric__verdict q-reveal"
             :class="markOf(blank.id)!.correct ? 'q-numeric__verdict--ok' : 'q-numeric__verdict--err'"
           >
             {{ markOf(blank.id)!.correct ? 'Richtig' : 'Falsch' }}
@@ -131,6 +131,8 @@ function markOf(blankId: string): BreakdownItem | undefined {
   color: var(--q-ink);
   font: 500 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
   box-sizing: border-box;
+  /* The result landing is the one moment worth easing into. */
+  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
 }
 .q-numeric__input:focus {
   outline: 2px solid var(--q-accent);

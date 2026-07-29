@@ -3,7 +3,7 @@
  *
  *  - Tab / Shift+Tab cycle INSIDE the dialog (focus trap);
  *  - Escape closes (document-level, so it works no matter where focus is);
- *  - the page behind the backdrop stops scrolling (@qed2/ui's scroll lock,
+ *  - the page behind the backdrop stops scrolling (shared/scroll-lock.ts,
  *    which is iOS-safe — plain `overflow: hidden` is not);
  *  - focus moves into the dialog on open and returns to the previously
  *    focused element on close.
@@ -20,7 +20,7 @@
 import { onBeforeUnmount, watch, type Ref } from 'vue';
 // Shared with @qed2/ui's own overlays (FigureViewer), so nesting a viewer
 // inside a dialog keeps one consistent lock count.
-import { lockBodyScroll, unlockBodyScroll } from '@qed2/ui';
+import { lockBodyScroll, unlockBodyScroll } from './scroll-lock.js';
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +

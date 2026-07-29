@@ -1,5 +1,5 @@
 /**
- * App store: runtime config (three configurable upstream addresses), theme,
+ * App store: runtime config (four configurable upstream addresses), theme,
  * connectivity, API client instances. Contract §8.2: never hardcode hosts —
  * everything flows from ClientConfig.
  */

@@ -11,15 +11,19 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import type {
-  GradeResult,
-  Grading,
-  QuestionsFilter,
-  Submission,
-  SelfAssessment,
-  QuestionPart,
-  Term,
-  ExamPart,
+import {
+  TEIL_LABELS,
+  formatScore,
+  TERM_LABELS,
+  VERDICT_LABELS_SHORT,
+  type ExamPart,
+  type GradeResult,
+  type Grading,
+  type QuestionPart,
+  type QuestionsFilter,
+  type SelfAssessment,
+  type Submission,
+  type Term,
 } from '@qed2/core-logic';
 import {
   PartPlayer,
@@ -27,8 +31,12 @@ import {
   QButton,
   QChip,
   RichTextView,
-  SelfAssessmentPanel,
+  PracticeBottomBar,
+  PracticeQuestionHeader,
+  PracticeSessionDrawer,
+  PracticeSessionRail,
   SessionProgressBar,
+  type SessionItem,
   StateIcon,
   VerdictCard,
   type PartPlayerCommand,
@@ -39,10 +47,6 @@ import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useAuthStore } from '../stores/auth.js';
 import { historyLog } from '../services.js';
-import PracticeBottomBar from './practice/PracticeBottomBar.vue';
-import PracticeQuestionHeader from './practice/PracticeQuestionHeader.vue';
-import PracticeSessionDrawer from './practice/PracticeSessionDrawer.vue';
-import PracticeSessionRail from './practice/PracticeSessionRail.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -50,13 +54,6 @@ const practice = usePracticeStore();
 const progress = useProgressStore();
 const auth = useAuthStore();
 
-const TERM_LABELS: Record<Term, string> = {
-  haupttermin: 'Haupttermin',
-  'nebentermin-1': 'Nebentermin 1',
-  'nebentermin-2': 'Nebentermin 2',
-  herbsttermin: 'Herbsttermin',
-  wintertermin: 'Wintertermin',
-};
 
 const current = computed(() => practice.current);
 /** Verdict per graded part — the segmented top bar's only input besides items. */
@@ -79,6 +76,42 @@ let playerCommandId = 0;
 /** Solution drawer position. „full" is reachable by swipe only (SolutionSheet). */
 const solutionDetent = ref<SheetDetent>('collapsed');
 const solutionOpen = computed(() => solutionDetent.value !== 'collapsed');
+/** Real sheet height, reported by SolutionSheet — never re-derived here. */
+const solutionHeight = ref(0);
+/**
+ * The real top bar height (56px plus whatever the notch adds), handed to the
+ * solution sheet so full screen stops exactly below it. A constant inside the
+ * sheet could not see `env(safe-area-inset-top)`.
+ */
+const topbarEl = ref<HTMLElement | null>(null);
+const topbarHeight = ref(0);
+let topbarObserver: ResizeObserver | undefined;
+
+function measureTopbar(): void {
+  const el = topbarEl.value;
+  if (el) topbarHeight.value = Math.ceil(el.getBoundingClientRect().height);
+}
+/**
+ * A grade picked while the part is still unanswered is a pre-declaration, not
+ * a review: writing it straight through advanced FSRS once, and answering
+ * then advanced it a second time for the same interaction (and overwrote the
+ * pick). Held until the verdict exists, it goes through the same override
+ * path as a post-answer pick — which rebases on the pre-answer snapshot.
+ *
+ * Holding it is only safe if every way OUT of the part flushes it first;
+ * `flushPendingGrading` is called from each of them. A pick the user made
+ * must never be silently dropped — least of all „Ausgeschlossen".
+ */
+const pendingGrading = ref<Grading | null>(null);
+
+/** Write a held pick through as a standalone review event. */
+async function flushPendingGrading(): Promise<void> {
+  const grading = pendingGrading.value;
+  const partId = current.value?.part.id;
+  pendingGrading.value = null;
+  if (grading && partId) await practice.overrideGrading(partId, grading);
+}
+
 const mobileRailOpen = ref(false);
 const exitArmed = ref(false);
 const exitButton = ref<HTMLButtonElement | null>(null);
@@ -91,14 +124,20 @@ function onPlayerState(state: PartPlayerState): void {
   // self-assessment — open the sheet for the user. Same for a wrong or
   // half-right answer: the people who most need the solution shouldn't
   // have to hunt for the toggle.
-  if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionDetent.value = 'default';
+  // Full screen, not half: judging means reading the solution AND working
+  // the criteria, both of which now live in the sheet. Half would put the
+  // controls below the fold on the one step that is nothing but controls.
+  if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionDetent.value = 'full';
   if (
     state.phase === 'reviewed' &&
     !wasReviewed &&
-    state.result != null &&
-    state.result.verdict !== 'correct'
+    state.result != null
   ) {
-    solutionDetent.value = 'default';
+    // Coming out of self-assessment the sheet is at full screen and the
+    // assessment block has just vanished from under the user; drop back to
+    // the reading height so what is left — the solution — is what they see.
+    solutionDetent.value =
+      wasSelfAssessing || state.result.verdict !== 'correct' ? 'default' : solutionDetent.value;
   }
 }
 
@@ -112,7 +151,10 @@ async function onGraded(payload: {
   const part: QuestionPart | undefined = current.value?.part;
   if (!part || part.id !== payload.partId) return;
   await practice.recordGraded({ part, result: payload.result, submission: payload.submission });
-  if (payload.manualGrading) await practice.overrideGrading(payload.partId, payload.manualGrading);
+  // The player's own pick wins over one made before answering.
+  const manual = payload.manualGrading ?? pendingGrading.value ?? undefined;
+  pendingGrading.value = null;
+  if (manual) await practice.overrideGrading(payload.partId, manual);
 }
 
 /* Double-click / accidental second-tap protection: after „Prüfen" flips the
@@ -162,10 +204,6 @@ const primaryDisabled = computed(
   },
 );
 
-function onSelfScoreSelect(points: number): void {
-  playerCommand.value = { id: ++playerCommandId, type: 'set-score', points };
-}
-
 function onSelfGradingSelect(grading: Grading): void {
   playerCommand.value = { id: ++playerCommandId, type: 'set-grading', grading };
 }
@@ -186,8 +224,10 @@ watch(
     // SolutionSheet triggers (0.3s) — scrolling before the layout settles
     // lands the card behind the sheet again.
     window.setTimeout(() => {
-      const sheetH = solutionOpen.value ? Math.min(0.55 * window.innerHeight, 420) : 0;
-      verdictAnchor.value?.style.setProperty('scroll-margin-bottom', `${Math.round(sheetH) + 90}px`);
+      verdictAnchor.value?.style.setProperty(
+        'scroll-margin-bottom',
+        `${Math.round(solutionHeight.value) + 90}px`,
+      );
       verdictAnchor.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }, 340);
   },
@@ -201,7 +241,10 @@ function openSolutionFromVerdict(): void {
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
 const currentGrading = computed(
-  () => progress.partState.get(current.value?.part.id ?? '')?.grading ?? 'unseen',
+  () =>
+    pendingGrading.value ??
+    progress.partState.get(current.value?.part.id ?? '')?.grading ??
+    'unseen',
 );
 const currentStarred = computed(
   () => progress.partState.get(current.value?.part.id ?? '')?.starred ?? false,
@@ -210,6 +253,11 @@ const currentStarred = computed(
 async function onGradingSelect(grading: Grading): Promise<void> {
   const partId = current.value?.part.id;
   if (!partId) return;
+  if (playerState.value.phase === 'answering') {
+    pendingGrading.value = grading;
+    return;
+  }
+  pendingGrading.value = null;
   await practice.overrideGrading(partId, grading);
 }
 
@@ -306,8 +354,22 @@ function returnTarget(): string {
   return localReturnPath(queryReturn) ?? localReturnPath(router.options.history.state.back) ?? '/';
 }
 
+/** Leaving must never hang on the network. */
+const EXIT_SYNC_GRACE_MS = 2500;
+
 async function exitNow(): Promise<void> {
-  await practice.finishSession();
+  // Everything that must be attempted before leaving goes INSIDE the race:
+  // finishSession persists (fast, local) then syncs (arbitrary network), and
+  // a storage write can hang or reject too. A dead-but-accepting server used
+  // to leave the user staring at a screen that did nothing; the outbox and
+  // the archive are durable, so leaving early loses nothing.
+  await Promise.race([
+    (async () => {
+      await flushPendingGrading();
+      await practice.finishSession();
+    })().catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, EXIT_SYNC_GRACE_MS)),
+  ]);
   void router.replace(returnTarget());
 }
 
@@ -338,11 +400,25 @@ function onKeydown(ev: KeyboardEvent): void {
     practice.next();
   }
 }
+onMounted(() => {
+  measureTopbar();
+  window.addEventListener('resize', measureTopbar);
+  if (typeof ResizeObserver !== 'undefined' && topbarEl.value) {
+    topbarObserver = new ResizeObserver(measureTopbar);
+    topbarObserver.observe(topbarEl.value);
+  }
+});
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('resize', measureTopbar);
+  topbarObserver?.disconnect();
   document.removeEventListener('pointerdown', onDocumentPointerDown);
+  // Browser/Android back leaves the route without going through exitNow, and
+  // a held pick must never be dropped silently. Fire-and-forget is the best
+  // available here — the write is local and the component is going away.
+  void flushPendingGrading();
 });
 
 const multiPart = computed(() => (current.value?.question.parts.length ?? 0) > 1);
@@ -369,9 +445,9 @@ const scorePct = computed(() => {
 const summaryVerdictRows = computed(() => {
   const by = summaryStats.value.byVerdict;
   return [
-    { state: 'correct' as const, count: by.correct, label: 'Richtig' },
-    { state: 'partial' as const, count: by.partial, label: 'Teilweise' },
-    { state: 'incorrect' as const, count: by.incorrect, label: 'Falsch' },
+    { state: 'correct' as const, count: by.correct, label: VERDICT_LABELS_SHORT.correct },
+    { state: 'partial' as const, count: by.partial, label: VERDICT_LABELS_SHORT.partial },
+    { state: 'incorrect' as const, count: by.incorrect, label: VERDICT_LABELS_SHORT.incorrect },
   ];
 });
 
@@ -388,16 +464,7 @@ const syncNote = computed(() => {
 const showProgramRail = computed(() => practice.total > 1);
 
 /* --- session rail (left sidebar): the session's items + current position --- */
-interface RailItem {
-  index: number;
-  partId: string;
-  title: string;
-  partLabel: string | undefined;
-  state: 'correct' | 'partial' | 'incorrect' | 'current' | 'pending';
-  jumpable: boolean;
-}
-
-const railItems = computed<RailItem[]>(() => {
+const railItems = computed<SessionItem[]>(() => {
   const verdictByPart = new Map(practice.graded.map((g) => [g.partId, g.result.verdict]));
   return practice.items.map((item, i) => {
     const q = practice.questions.get(item.questionId);
@@ -416,6 +483,7 @@ const railItems = computed<RailItem[]>(() => {
 });
 
 function jumpToSessionItem(index: number): void {
+  void flushPendingGrading();
   practice.jumpTo(index);
   mobileRailOpen.value = false;
 }
@@ -424,7 +492,7 @@ const gradedCount = computed(() => practice.graded.length);
 const sourceLine = computed(() => {
   const q = current.value?.question;
   if (!q) return '';
-  return `${TERM_LABELS[q.source.term]} ${q.source.year} · ${q.source.part === 't1' ? 'Teil 1' : 'Teil 2'}`;
+  return `${TERM_LABELS[q.source.term]} ${q.source.year} · ${TEIL_LABELS[q.source.part]}`;
 });
 const officialAufgabenpoolUrl = computed(() => {
   const refs = current.value?.question.externalRefs ?? [];
@@ -449,9 +517,16 @@ const currentCompetencyCodes = computed(() =>
 </script>
 
 <template>
-  <div class="practice q-app" :class="{ 'practice--no-rail': !showProgramRail }">
+  <div
+    class="practice q-app"
+    :class="{ 'practice--no-rail': !showProgramRail }"
+    :style="{
+      '--practice-sheet-height': `${Math.round(solutionHeight)}px`,
+      ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
+    }"
+  >
     <!-- top bar -->
-    <div class="practice__topbar">
+    <div ref="topbarEl" class="practice__topbar">
       <button
         ref="exitButton"
         type="button"
@@ -510,7 +585,7 @@ const currentCompetencyCodes = computed(() =>
           </div>
           <div class="practice__actions-row">
             <QButton variant="secondary" @click="exitNow">Zurück</QButton>
-            <QButton @click="start">Erneut versuchen</QButton>
+            <QButton @click="practice.retry()">Erneut versuchen</QButton>
           </div>
         </div>
       </div>
@@ -529,8 +604,8 @@ const currentCompetencyCodes = computed(() =>
                headline, everything else supports it. -->
           <section class="practice__result">
             <div class="practice__result-score">
-              <span class="practice__result-points">{{ summaryStats.points.toLocaleString('de-AT') }}</span>
-              <span class="practice__result-max">von {{ summaryStats.maxPoints.toLocaleString('de-AT') }} Punkten</span>
+              <span class="practice__result-points">{{ formatScore(summaryStats.points) }}</span>
+              <span class="practice__result-max">von {{ formatScore(summaryStats.maxPoints) }} Punkten</span>
             </div>
             <div class="practice__result-meter" role="img" :aria-label="`${scorePct} Prozent erreicht`">
               <span class="practice__result-meter-fill" :style="{ width: `${scorePct}%` }" />
@@ -621,33 +696,22 @@ const currentCompetencyCodes = computed(() =>
               />
             </div>
 
-            <SelfAssessmentPanel
-              v-if="
-                playerState.phase === 'self-assessing' &&
-                playerState.selfAssessment &&
-                current.part.scoring?.mode === 'rubric'
-              "
-              class="practice__rubric-assessment"
-              :model-value="playerState.selfAssessment.assessment"
-              :scoring="current.part.scoring"
-              :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
-              :max-points="playerState.selfAssessment.maxPoints"
-              :score-options="playerState.selfAssessment.scoreOptions"
-              @update:model-value="onSelfAssessmentUpdate"
-            />
           </div>
         </div>
 
         <PracticeBottomBar
           v-model:solution-detent="solutionDetent"
+          @update:solution-height="solutionHeight = $event"
+          :top-reserve="topbarHeight"
           :state="playerState"
           :answer-preview="playerState.answerPreview"
-          :rubric-mode="current.part.scoring?.mode === 'rubric'"
+          :scoring="current.part.scoring"
+          :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
           :solution="current.part.solution"
           :grading="currentGrading"
           :primary-label="primaryLabel"
           :primary-disabled="primaryDisabled"
-          @score-select="onSelfScoreSelect"
+          @assessment-update="onSelfAssessmentUpdate"
           @self-grading-select="onSelfGradingSelect"
           @grading-select="onGradingSelect"
           @primary="primaryAction"
@@ -802,14 +866,15 @@ const currentCompetencyCodes = computed(() =>
   transition: padding-bottom 0.3s ease;
 }
 /* SolutionSheet is fixed above the bar — while it's open, the content must
- * clear sheet (min(55vh,420px)) + bar (~90px) or feedback hides behind it.
+ * clear the sheet plus the bar (~110px) or feedback hides behind it. The
+ * height comes from the sheet itself (--practice-sheet-height); re-deriving
+ * it here went stale the moment the detent became content-measured.
  * (doubled class beats the ≤640px padding override below regardless of
  * source order) */
 .practice__content.practice__content--sheet-open {
-  padding-bottom: calc(min(55vh, 420px) + 110px + var(--q-keyboard-inset, 0px));
-}
-.practice__rubric-assessment {
-  margin-top: 18px;
+  padding-bottom: calc(
+    var(--practice-sheet-height, 0px) + 110px + var(--q-keyboard-inset, 0px)
+  );
 }
 .practice__verdict {
   margin-top: 16px;

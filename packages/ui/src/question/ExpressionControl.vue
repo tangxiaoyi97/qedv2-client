@@ -166,6 +166,8 @@ function onToolClick(tool: (typeof TOOLBAR)[number]): void {
   font-family: ui-monospace, Menlo, monospace;
   background: var(--q-card);
   color: var(--q-ink);
+  /* The result landing is the one moment worth easing into. */
+  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
 }
 .q-expr__input:focus {
   outline: none;
