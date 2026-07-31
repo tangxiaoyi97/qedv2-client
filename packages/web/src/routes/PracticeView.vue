@@ -12,6 +12,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  type AiAssessResponse,
   TEIL_LABELS,
   formatScore,
   TERM_LABELS,
@@ -31,6 +32,7 @@ import {
   QButton,
   QChip,
   RichTextView,
+  AiAssessPanel,
   AiExplainPanel,
   PracticeBottomBar,
   PracticeQuestionHeader,
@@ -71,6 +73,7 @@ const playerState = ref<PartPlayerState>({
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
+  submittedText: '',
   selfAssessment: null,
 });
 const playerCommand = ref<PartPlayerCommand | null>(null);
@@ -216,8 +219,8 @@ const explainDismissed = ref(new Set<string>());
 const explainLoading = ref(false);
 const explainError = ref<string | null>(null);
 
-/** The answer text the explanation is about — the same projection the preview shows. */
-const explainSubmission = computed(() => playerState.value.answerPreview?.value ?? '');
+/** What the user actually wrote — see PartPlayerState.submittedText. */
+const explainSubmission = computed(() => playerState.value.submittedText);
 
 const showExplain = computed(() => {
   const result = playerState.value.result;
@@ -257,6 +260,100 @@ async function askForExplanation(): Promise<void> {
   } finally {
     explainLoading.value = false;
   }
+}
+
+/* --- AI assistance for self-assessment ------------------------------------
+ * A suggestion, never a commit. The user still presses „Bewertung übernehmen".
+ */
+const assistLoading = ref(false);
+const assistError = ref<string | null>(null);
+const assistResult = ref<AiAssessResponse | null>(null);
+
+const showAssist = computed(
+  () => playerState.value.phase === 'self-assessing' && current.value != null && ai.canAssess(current.value.part),
+);
+
+const rubricLabels = computed(() => {
+  const scoring = current.value?.part.scoring;
+  return scoring?.mode === 'rubric' ? scoring.criteria.map((c) => c.desc) : [];
+});
+
+const assist = computed(() => ({
+  criteria: assistResult.value?.criteria,
+  overall: assistResult.value?.overall,
+  advisoryOnly: assistResult.value?.advisoryOnly,
+  model: assistResult.value?.model,
+  loading: assistLoading.value,
+  error: assistError.value ?? undefined,
+}));
+
+/** Reset when the part changes — a suggestion is about one answer only. */
+watch(
+  () => current.value?.part.id,
+  () => {
+    assistResult.value = null;
+    assistError.value = null;
+  },
+);
+
+async function askForAssessment(): Promise<void> {
+  const part = current.value;
+  const self = playerState.value.selfAssessment;
+  if (!part || !self || assistLoading.value) return;
+  assistLoading.value = true;
+  assistError.value = null;
+  try {
+    const answer = await ai.assess({
+      question: part.question,
+      part: part.part,
+      submitted: playerState.value.submittedText,
+      maxPoints: self.maxPoints,
+      // Non-rubric parts are judged against the values the part allows, so the
+      // model can never return a score this part cannot represent.
+      scoreOptions: self.scoreOptions.map((o) => o.points),
+    });
+    assistResult.value = answer;
+    if (answer && !answer.advisoryOnly) applySuggestion(answer);
+  } catch (e) {
+    assistError.value = explainMessage(e);
+  } finally {
+    assistLoading.value = false;
+  }
+}
+
+/**
+ * Tick the boxes the model is BOTH confident about and able to quote for.
+ *
+ * A low-confidence or unevidenced positive is shown with its reasoning but
+ * never pre-ticked: an unticked box the user has to think about costs a
+ * moment, a wrongly ticked one costs a distorted revision schedule.
+ */
+const CONFIDENCE_FLOOR = 0.75;
+
+function applySuggestion(answer: AiAssessResponse): void {
+  const self = playerState.value.selfAssessment;
+  if (!self) return;
+
+  if (answer.overall) {
+    const { points, confidence, quoteVerified } = answer.overall;
+    // A zero needs no quote — having nothing to cite IS the finding. Awarding
+    // marks without one is the case that would silently inflate a grade.
+    const trustworthy = confidence >= CONFIDENCE_FLOOR && (points === 0 || quoteVerified);
+    if (!trustworthy) return;
+    onSelfAssessmentUpdate({
+      ...self.assessment,
+      awardedPoints: points,
+      overall: points >= self.maxPoints ? 'full' : points > 0 ? 'partial' : 'none',
+    });
+    return;
+  }
+
+  const criteriaMet = rubricLabels.value.map((_, i) => {
+    const verdict = answer.criteria?.find((c) => c.index === i);
+    if (!verdict?.met) return false;
+    return verdict.confidence >= CONFIDENCE_FLOOR && verdict.quoteVerified;
+  });
+  onSelfAssessmentUpdate({ ...self.assessment, criteriaMet });
 }
 
 function dismissExplanation(): void {
@@ -799,6 +896,21 @@ const currentCompetencyCodes = computed(() =>
         >
           <!-- Offered only for a wrong or half-right answer, and only once the
                account can actually pay for it (see aiStore.canExplain). -->
+          <!-- Only for parts the bank marked grader:'ai' with a rubric. -->
+          <template v-if="showAssist" #assist>
+            <AiAssessPanel
+              :criteria="assist.criteria"
+              :overall="assist.overall"
+              :max-points="playerState.selfAssessment?.maxPoints"
+              :labels="rubricLabels"
+              :loading="assist.loading"
+              :error="assist.error"
+              :advisory-only="assist.advisoryOnly"
+              :model="assist.model"
+              @ask="askForAssessment"
+            />
+          </template>
+
           <template v-if="showExplain" #explain>
             <AiExplainPanel
               :markdown="explainState.markdown"

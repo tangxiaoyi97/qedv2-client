@@ -10,7 +10,7 @@
  * sent, and when AI must not be offered at all, are exactly the kind of thing
  * that has to be testable without a browser.
  */
-import type { GradeResult } from '../grading/types.js';
+import type { GradeResult, Submission } from '../grading/types.js';
 import type { Answer, Question, QuestionPart, RubricScoring } from '../model/question.js';
 import { isRichTextEmpty, richTextToPlain } from '../model/richtext.js';
 import type { AiAssessRequest, AiExplainRequest, AiRubricCriterion } from './types.js';
@@ -81,28 +81,48 @@ export function buildExplainRequest(input: {
 }
 
 /**
- * Build a rubric-assessment request, or `null` when this part must not be
- * assessed by an AI at all.
+ * Build an assessment request, or `null` when this part must not be judged by
+ * an AI at all.
  *
- * Three gates, all of them deliberate:
- *  - the bank must mark the part `grader: 'ai'`,
- *  - the scoring must be rubric mode (no criteria, no reliable judgement),
- *  - the answer must not be empty (nothing to evidence a criterion with).
+ * Which shape comes back depends on the scoring: rubric parts get `criteria`
+ * (one verdict each), everything else gets `scoreOptions` (one decision from
+ * the values the part allows). In the bank as it stands that split is roughly
+ * two thirds / one third, so refusing the non-rubric ones would leave a large
+ * slice of AI-marked questions with no help at all.
+ *
+ * Gates: the bank must say `grader: 'ai'`, and the answer must not be empty —
+ * there is nothing to evidence a verdict with.
  */
 export function buildAssessRequest(input: {
   question: Question;
   part: QuestionPart;
   submitted: string;
   maxPoints: number;
+  /** Point values the part permits — required for non-rubric scoring. */
+  scoreOptions?: number[];
 }): AiAssessRequest | null {
   const { question, part, submitted, maxPoints } = input;
   if (!isAiGradable(part)) return null;
   if (!submitted.trim()) return null;
 
-  const criteria = rubricCriteria(part.scoring as RubricScoring);
-  if (criteria.length === 0) return null;
+  const base = shared(question, part, submitted, maxPoints);
+  const answer = part.answer;
+  const rubricText =
+    answer?.kind === 'open' && !isRichTextEmpty(answer.rubric)
+      ? richTextToPlain(answer.rubric)
+      : undefined;
 
-  return { ...shared(question, part, submitted, maxPoints), criteria };
+  if (part.scoring?.mode === 'rubric') {
+    const criteria = rubricCriteria(part.scoring);
+    if (criteria.length > 0) return { ...base, criteria };
+  }
+
+  // No scored criteria: judge the answer as a whole against the values the
+  // part allows. Two thirds of AI-eligible open parts are rubric; the rest
+  // are all-or-nothing or tiered and would otherwise get no help at all.
+  const options = (input.scoreOptions ?? []).filter((n) => Number.isFinite(n));
+  if (options.length < 2) return null;
+  return { ...base, scoreOptions: [...new Set(options)].sort((a, b) => a - b), ...(rubricText ? { rubricText } : {}) };
 }
 
 export function rubricCriteria(scoring: RubricScoring): AiRubricCriterion[] {
@@ -110,15 +130,45 @@ export function rubricCriteria(scoring: RubricScoring): AiRubricCriterion[] {
 }
 
 /**
- * Whether the bank and the scoring both allow an AI verdict on this part.
+ * Whether the bank allows an AI verdict on this part.
  *
- * `grader` is per-question metadata that has existed since v1 — the bank
- * decides which questions have a rubric good enough to judge against, and the
- * client obeys it.
+ * `grader` is per-question metadata that has existed since v1 — the content
+ * side decides, and the client obeys it.
  */
 export function isAiGradable(part: QuestionPart): boolean {
   const answer: Answer | undefined = part.answer;
   if (!answer || answer.kind !== 'open') return false;
-  if (answer.grader !== 'ai') return false;
-  return part.scoring?.mode === 'rubric';
+  // The bank decides, per question. Scoring mode does NOT gate this any more:
+  // rubric parts get per-criterion verdicts, the rest get one overall score.
+  return answer.grader === 'ai';
+}
+
+/**
+ * The student's answer as plain text, for an AI prompt.
+ *
+ * NOT `answerPreview`: that is a UI affordance and returns null for every kind
+ * except `interval`, so using it silently sent an empty answer for every open
+ * question — the model was being asked to explain nothing at all.
+ *
+ * Only the kinds a human writes in prose are worth sending. Choice and
+ * matching are graded deterministically and never reach an AI.
+ */
+export function submittedText(submission: Submission | null | undefined): string {
+  if (!submission) return '';
+  switch (submission.kind) {
+    case 'open':
+      return submission.text.trim();
+    case 'expression':
+      return submission.expr.trim();
+    case 'numeric':
+      // Blank id → raw input. Join in a stable order so the same answer always
+      // produces the same prompt, and therefore the same cache key.
+      return Object.keys(submission.values)
+        .sort()
+        .map((k) => submission.values[k]?.trim() ?? '')
+        .filter(Boolean)
+        .join(' · ');
+    default:
+      return '';
+  }
 }

@@ -40,6 +40,7 @@ import { emptySubmission, isSubmissionComplete } from '../question/submission-de
 import AnswerControl from '../question/AnswerControl.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
 import { answerPreview } from '../question/submission-preview.js';
+import { submittedText } from '@qed2/core-logic';
 import {
   defaultGradingForScore,
   gradeResultFromScore,
@@ -126,6 +127,7 @@ watchEffect(() => {
     indeterminate: indeterminate.value,
     unplayable: !answer.value,
     answerPreview: currentAnswerPreview.value,
+    submittedText: submittedText(submission.value),
     selfAssessment: selfAssessmentState.value,
   });
 });

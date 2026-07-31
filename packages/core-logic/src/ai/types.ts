@@ -52,8 +52,18 @@ export interface AiRubricCriterion {
   points: number;
 }
 
+/**
+ * Two shapes, one endpoint.
+ *
+ * Rubric parts send `criteria` and get a verdict each. All-or-nothing and
+ * tiered parts have nothing to decompose, so they send the point values the
+ * part allows and get one decision back.
+ */
 export interface AiAssessRequest extends AiQuestionContext {
-  criteria: AiRubricCriterion[];
+  criteria?: AiRubricCriterion[];
+  scoreOptions?: number[];
+  /** The part's rubric prose — guidance even when it is not scored criteria. */
+  rubricText?: string;
 }
 
 export interface AiAssessedCriterion {
@@ -67,8 +77,19 @@ export interface AiAssessedCriterion {
   quoteVerified: boolean;
 }
 
+export interface AiOverallAssessment {
+  points: number;
+  confidence: number;
+  quote: string;
+  reason: string;
+  quoteVerified: boolean;
+}
+
 export interface AiAssessResponse {
-  criteria: AiAssessedCriterion[];
+  /** Present for rubric parts. */
+  criteria?: AiAssessedCriterion[];
+  /** Present for all-or-nothing / tiered parts. */
+  overall?: AiOverallAssessment;
   /**
    * The server refuses to vouch for this reply — a figure it could not see, a
    * skipped criterion, or an unevidenced positive. The UI must show the

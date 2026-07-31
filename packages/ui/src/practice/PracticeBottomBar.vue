@@ -103,6 +103,10 @@ const emit = defineEmits<{
           :score-options="state.selfAssessment.scoreOptions"
           @update:model-value="emit('assessmentUpdate', $event)"
         />
+        <!-- AI suggestion sits between the criteria and the mastery pick:
+             after the thing it comments on, before the thing it informs. -->
+        <slot name="assist" />
+
         <div class="practice-bar__mastery">
           <span class="practice-bar__mastery-label">Bewertung</span>
           <GradingPicker
@@ -131,11 +135,6 @@ const emit = defineEmits<{
           <span class="practice-bar__preview-main">
             <span class="practice-bar__preview-label">Deine Punkte:</span>
             <b class="practice-bar__preview-value">{{ assessedScore }}</b>
-          </span>
-          <!-- Only worth saying while the panel is out of sight; with the
-               sheet open the user is already looking straight at it. -->
-          <span v-if="solutionDetent === 'collapsed'" class="practice-bar__preview-hint">
-            in der Lösung bewerten
           </span>
         </div>
         <div v-else-if="answerPreview" class="practice-bar__preview">

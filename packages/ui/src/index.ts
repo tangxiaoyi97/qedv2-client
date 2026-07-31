@@ -26,6 +26,7 @@ export { default as GradingCapsule } from './shared/GradingCapsule.vue';
 export { default as GradingMenu } from './shared/GradingMenu.vue';
 export { default as GradingPicker } from './shared/GradingPicker.vue';
 export { default as AiExplainPanel } from './practice/AiExplainPanel.vue';
+export { default as AiAssessPanel } from './practice/AiAssessPanel.vue';
 export { default as StarButton } from './shared/StarButton.vue';
 export { onRadioGroupKeydown } from './shared/radio-group.js';
 

@@ -10,7 +10,7 @@ import AiExplainPanel from '../src/practice/AiExplainPanel.vue';
 describe('AiExplainPanel', () => {
   it('starts as a single button and fetches nothing', () => {
     const wrapper = mount(AiExplainPanel);
-    expect(wrapper.find('.q-aix__ask').text()).toContain('Warum');
+    expect(wrapper.find('.q-aix__ask').text()).toBe('Warum?');
     expect(wrapper.find('.q-aix__body').exists()).toBe(false);
     expect(wrapper.find('.q-skeleton-list').exists()).toBe(false);
   });

@@ -16,6 +16,7 @@ const reviewed = (verdict: 'correct' | 'partial' | 'incorrect'): PartPlayerState
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
+  submittedText: '',
   selfAssessment: null,
 });
 
@@ -26,6 +27,7 @@ const answering: PartPlayerState = {
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
+  submittedText: '',
   selfAssessment: null,
 };
 
@@ -36,6 +38,7 @@ const selfAssessing: PartPlayerState = {
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
+  submittedText: '',
   selfAssessment: {
     maxPoints: 1,
     scoreOptions: [
@@ -54,6 +57,7 @@ function mountBar(state: PartPlayerState, extra: Record<string, unknown> = {}) {
   const app = createApp(PracticeBottomBar, {
     state,
     answerPreview: null,
+  submittedText: '',
     solutionDetent: 'collapsed',
     grading: 'unseen',
     primaryLabel: 'Weiter →',

@@ -19,6 +19,15 @@ export interface PartPlayerState {
   unplayable: boolean;
   /** Live user-answer preview for controls that expose one. */
   answerPreview: AnswerPreview | null;
+  /**
+   * The answer as plain text, for anything that needs to READ what the user
+   * wrote — currently the AI prompts.
+   *
+   * Deliberately separate from `answerPreview`, which is a UI affordance that
+   * only exists for interval questions. Using that as the answer text meant
+   * every open question was sent to the model with nothing in it.
+   */
+  submittedText: string;
   /** Supported manual assessment choices while phase === 'self-assessing'. */
   selfAssessment: SelfAssessmentUiState | null;
 }

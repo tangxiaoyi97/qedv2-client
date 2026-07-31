@@ -9,7 +9,10 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import {
+  buildAssessRequest,
   buildExplainRequest,
+  isAiGradable,
+  type AiAssessResponse,
   type AiCapabilities,
   type AiExplainResponse,
   type AiStatus,
@@ -57,6 +60,23 @@ export const useAiStore = defineStore('ai', () => {
   const available = computed(() => capabilities.value !== null);
 
   const poolOnlyServer = computed(() => capabilities.value?.poolAvailable === true);
+
+  /**
+   * Whether an AI verdict may even be requested for this part.
+   *
+   * Three gates, and the bank owns the first one: `grader: 'ai'` is per
+   * question, so the content decides which rubrics are good enough to judge
+   * against. The client never overrides that.
+   */
+  function canAssess(part: QuestionPart): boolean {
+    return (
+      auth.isLoggedIn &&
+      capabilities.value?.assess === true &&
+      status.value !== null &&
+      status.value.active !== 'none' &&
+      isAiGradable(part)
+    );
+  }
 
   async function refreshStatus(): Promise<void> {
     if (!auth.isLoggedIn || capabilities.value === null) {
@@ -135,6 +155,26 @@ export const useAiStore = defineStore('ai', () => {
     return answer;
   }
 
+  /**
+   * Ask for per-criterion verdicts.
+   *
+   * Returns null when the part is not AI-gradable at all, so callers do not
+   * have to repeat the gate. The response is a SUGGESTION — applying it is the
+   * caller's job, and committing it is the user's.
+   */
+  async function assess(input: {
+    question: Question;
+    part: QuestionPart;
+    submitted: string;
+    maxPoints: number;
+    /** Point values the part allows — used when it has no scored criteria. */
+    scoreOptions?: number[];
+  }): Promise<AiAssessResponse | null> {
+    const request = buildAssessRequest(input);
+    if (!request) return null;
+    return app.serverClient.aiAssess(request);
+  }
+
   function cached(partId: string, submitted: string): AiExplainResponse | undefined {
     return cache.value.get(cacheKey(partId, submitted));
   }
@@ -150,6 +190,8 @@ export const useAiStore = defineStore('ai', () => {
     saveCredential,
     deleteCredential,
     explain,
+    canAssess,
+    assess,
     cached,
   };
 });

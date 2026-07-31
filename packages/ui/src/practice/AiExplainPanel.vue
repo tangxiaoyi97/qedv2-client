@@ -53,9 +53,7 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
     </div>
 
     <!-- Idle: one button, nothing fetched. -->
-    <button v-if="idle" type="button" class="q-aix__ask" @click="emit('ask')">
-      Warum ist das falsch?
-    </button>
+    <button v-if="idle" type="button" class="q-aix__ask" @click="emit('ask')">Warum?</button>
 
     <div v-else-if="loading" class="q-aix__loading">
       <!-- Rows shaped like the prose that replaces them, so nothing jumps. -->

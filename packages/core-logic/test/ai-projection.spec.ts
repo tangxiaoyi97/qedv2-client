@@ -4,6 +4,7 @@ import {
   buildExplainRequest,
   figureAlts,
   isAiGradable,
+  submittedText,
 } from '../src/ai/projection.js';
 import type { Question, QuestionPart } from '../src/model/question.js';
 import type { GradeResult } from '../src/grading/types.js';
@@ -112,15 +113,44 @@ describe('figures', () => {
 });
 
 describe('assess gating', () => {
-  it('only accepts open parts the bank marked grader:"ai" with rubric scoring', () => {
+  it('accepts any open part the bank marked grader:"ai", whatever the scoring', () => {
+    // The bank decides. Roughly a third of AI-marked open parts in the real
+    // question bank are allOrNothing or tiered rather than rubric; gating on
+    // rubric alone silently excluded all of them.
     expect(isAiGradable(part())).toBe(true);
-    // The bank decides; a rubric alone is not consent.
+    expect(isAiGradable(part({ scoring: { mode: 'allOrNothing', points: 2 } }))).toBe(true);
     expect(isAiGradable(part({ answer: { kind: 'open', rubric: text('r'), grader: 'self' } }))).toBe(
       false,
     );
     const numeric = { ...part(), answer: { kind: 'numeric', value: 4, tolerance: 0 } } as unknown as QuestionPart;
     expect(isAiGradable(numeric)).toBe(false);
-    expect(isAiGradable(part({ scoring: { mode: 'allOrNothing', points: 2 } }))).toBe(false);
+  });
+
+  it('sends scoreOptions and the rubric prose for a non-rubric part', () => {
+    const req = buildAssessRequest({
+      question: question(),
+      part: part({ scoring: { mode: 'allOrNothing', points: 1 } }),
+      submitted: 'x = 4',
+      maxPoints: 1,
+      scoreOptions: [1, 0, 1],
+    });
+    expect(req?.criteria).toBeUndefined();
+    expect(req?.scoreOptions).toEqual([0, 1]); // deduped and sorted
+    expect(req?.rubricText).toBe('raster');
+  });
+
+  it('refuses a non-rubric part with nothing to choose between', () => {
+    for (const scoreOptions of [undefined, [], [1]]) {
+      expect(
+        buildAssessRequest({
+          question: question(),
+          part: part({ scoring: { mode: 'allOrNothing', points: 1 } }),
+          submitted: 'x = 4',
+          maxPoints: 1,
+          ...(scoreOptions ? { scoreOptions } : {}),
+        }),
+      ).toBeNull();
+    }
   });
 
   it('numbers the criteria so the model can only answer about real ones', () => {
@@ -144,6 +174,18 @@ describe('assess gating', () => {
     }
   });
 
+  it('prefers criteria when the part has them', () => {
+    const req = buildAssessRequest({
+      question: question(),
+      part: part(),
+      submitted: 'x = 4',
+      maxPoints: 2,
+      scoreOptions: [0, 1, 2],
+    });
+    expect(req?.criteria).toHaveLength(2);
+    expect(req?.scoreOptions).toBeUndefined();
+  });
+
   it('refuses a part the bank did not open to AI', () => {
     expect(
       buildAssessRequest({
@@ -163,5 +205,33 @@ describe('assess gating', () => {
       maxPoints: 2,
     });
     expect(req?.figureAlts).toEqual(['Graph']);
+  });
+});
+
+/**
+ * `answerPreview` returns null for every kind except interval, so using it as
+ * the answer text sent every open question to the model empty. This is the
+ * projection that actually reads what the user wrote.
+ */
+describe('submittedText', () => {
+  it('reads an open answer', () => {
+    expect(submittedText({ kind: 'open', text: '  x = 4 ', selfAssessment: {} })).toBe('x = 4');
+  });
+
+  it('reads an expression', () => {
+    expect(submittedText({ kind: 'expression', expr: ' 2*x ' })).toBe('2*x');
+  });
+
+  it('joins numeric blanks in a stable order', () => {
+    // Stable, because the text is part of the AI cache key.
+    const values = { b: '2', a: '1' };
+    expect(submittedText({ kind: 'numeric', values })).toBe('1 · 2');
+    expect(submittedText({ kind: 'numeric', values: { a: '1', b: '2' } })).toBe('1 · 2');
+  });
+
+  it('is empty for kinds an AI never sees', () => {
+    expect(submittedText({ kind: 'choice', selected: [0] })).toBe('');
+    expect(submittedText(null)).toBe('');
+    expect(submittedText(undefined)).toBe('');
   });
 });
