@@ -1,0 +1,91 @@
+name: Deploy preview
+
+# Builds @qed2/web for the PREVIEW channel and ships it to the self-hosted
+# preview box. Deliberately NOT GitHub Pages: preview and production must not
+# share an origin, because one origin means one IndexedDB and one service
+# worker registration — a preview build with a changed archive shape would
+# sync corruption into real accounts carrying a valid checksum, and a stale
+# root SW would serve the wrong app entirely. Both have already happened once.
+
+on:
+  push:
+    branches: [preview]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install (workspace)
+        run: pnpm install --frozen-lockfile
+
+      # Preview is not a bypass lane. A red suite still stops the deploy.
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Test
+        run: pnpm -r test
+
+      - name: Build (preview channel)
+        env:
+          QED2_CHANNEL: preview
+          QED2_DEFAULT_CORE: https://preview.qedcore.barcarolle.studio
+          QED2_DEFAULT_SERVER: https://preview.qedsync.barcarolle.studio
+          # The changelog dialog belongs to real releases.
+          CHANGELOG_CHANGED: '0'
+        run: pnpm --filter @qed2/web build
+
+      # Proves the artifact belongs to the channel it claims — a source-level
+      # convention does not survive a mis-push, a build artifact assertion does.
+      - name: Assert channel
+        working-directory: packages/web
+        run: node scripts/assert-channel.mjs preview
+
+      - name: Install SSH key
+        env:
+          DEPLOY_KEY: ${{ secrets.PREVIEW_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.PREVIEW_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # Atomic: upload into releases/<sha>/, then swap a symlink.
+      #
+      # Not optional for a PWA. rsyncing into the live directory leaves a
+      # window where index.html is new and assets/*.js are not — and the
+      # service worker precaches that broken state, so the app stays broken on
+      # every device that loaded during it, long after the server recovered.
+      - name: Upload release
+        env:
+          HOST: ${{ secrets.PREVIEW_SSH_HOST }}
+          USER: ${{ secrets.PREVIEW_SSH_USER }}
+          ROOT: /srv/qed2-preview
+        run: |
+          set -euo pipefail
+          REL="$ROOT/releases/${GITHUB_SHA::7}"
+          ssh "$USER@$HOST" "mkdir -p '$REL'"
+          rsync -az --delete packages/web/dist/ "$USER@$HOST:$REL/"
+          ssh "$USER@$HOST" "ln -sfn '$REL' '$ROOT/current.tmp' && mv -Tf '$ROOT/current.tmp' '$ROOT/current'"
+          # Keep the last five so a rollback is one symlink swap.
+          ssh "$USER@$HOST" "cd '$ROOT/releases' && ls -1dt */ | tail -n +6 | xargs -r rm -rf"
+          echo "deployed ${GITHUB_SHA::7} to preview.qed.barcarolle.studio"

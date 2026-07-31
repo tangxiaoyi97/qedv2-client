@@ -49,6 +49,8 @@ export interface AiPromptOptions {
   language?: string;
   /** Free text from the settings page — the rules always take precedence. */
   customInstructions?: string;
+  /** Spend pool credit despite having an own key (BOTH entitlements only). */
+  preferPool?: boolean;
 }
 
 /** `answer` = why mine is wrong. `walkthrough` = how the question is done. */

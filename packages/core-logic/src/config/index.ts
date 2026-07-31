@@ -32,6 +32,11 @@ export interface ClientConfig {
    * The prompt's own rules always take precedence over these.
    */
   aiCustomInstructions?: string;
+  /**
+   * Spend the shared pool even though this account has its own key.
+   * Only meaningful for a `BOTH` entitlement; the server ignores it otherwise.
+   */
+  aiPreferPool?: boolean;
 }
 
 export const DEFAULT_CONFIG: ClientConfig = {

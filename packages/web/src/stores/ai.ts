@@ -137,7 +137,26 @@ export const useAiStore = defineStore('ai', () => {
    * Prompt preferences live in the app config, so they ride every request and
    * nothing is stored server-side.
    */
+  /**
+   * A `BOTH`-mode account choosing to spend pool credit instead of its own key.
+   *
+   * The request field existed from the start but nothing could set it, so the
+   * choice the server offers was unreachable from the app.
+   */
+  const preferPool = computed({
+    get: () => app.config.aiPreferPool === true,
+    set: (value: boolean) => {
+      void app.updateConfig({ aiPreferPool: value });
+    },
+  });
+
+  /** Only meaningful when both sources are actually available. */
+  const canChooseSource = computed(
+    () => status.value?.byo.configured === true && status.value.pool.eligible,
+  );
+
   const promptPrefs = computed(() => ({
+    ...(preferPool.value ? { preferPool: true } : {}),
     ...(app.config.aiLanguage ? { language: app.config.aiLanguage } : {}),
     ...(app.config.aiCustomInstructions
       ? { customInstructions: app.config.aiCustomInstructions }
@@ -218,6 +237,8 @@ export const useAiStore = defineStore('ai', () => {
     available,
     canExplain,
     poolOnlyServer,
+    preferPool,
+    canChooseSource,
     refreshStatus,
     saveCredential,
     deleteCredential,

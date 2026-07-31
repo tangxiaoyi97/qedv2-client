@@ -117,6 +117,29 @@ async function remove(): Promise<void> {
         <span v-else class="ai-set__pool-value">unbegrenzt</span>
       </div>
 
+      <!-- Only shown when both sources exist; otherwise there is no choice. -->
+      <div v-if="ai.canChooseSource" class="ai-set__field">
+        <label class="ai-set__label">Welcher Schlüssel wird verwendet?</label>
+        <div class="ai-set__providers" role="radiogroup" aria-label="Schlüsselquelle">
+          <button
+            v-for="opt in [
+              { pool: false, label: 'Eigener Schlüssel', hint: 'schont dein Kontingent' },
+              { pool: true, label: 'Kontingent', hint: 'schont deinen Schlüssel' },
+            ]"
+            :key="String(opt.pool)"
+            type="button"
+            class="ai-set__provider"
+            :class="{ 'ai-set__provider--on': ai.preferPool === opt.pool }"
+            role="radio"
+            :aria-checked="ai.preferPool === opt.pool"
+            @click="ai.preferPool = opt.pool"
+          >
+            <span class="ai-set__provider-label">{{ opt.label }}</span>
+            <span class="ai-set__provider-hint">{{ opt.hint }}</span>
+          </button>
+        </div>
+      </div>
+
       <div v-if="configured" class="ai-set__current">
         <div class="ai-set__current-main">
           <span class="ai-set__current-label">Eigener Schlüssel</span>

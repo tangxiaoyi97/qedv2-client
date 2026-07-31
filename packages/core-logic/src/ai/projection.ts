@@ -98,6 +98,7 @@ export function promptOptions(options: AiPromptOptions | undefined): AiPromptOpt
   const custom = options?.customInstructions?.trim();
   if (language) out.language = language;
   if (custom) out.customInstructions = custom;
+  if (options?.preferPool === true) out.preferPool = true;
   return out;
 }
 
@@ -195,6 +196,19 @@ export function submittedText(
             .filter(Boolean)
             .join('\n')
         : submission.selected.map((i) => String.fromCharCode(65 + i)).join(', ');
+    case 'matching':
+      // Pair indices are as opaque to a model as choice indices were. Resolve
+      // both sides so an explanation can name what was matched to what.
+      return answer?.kind === 'matching'
+        ? submission.matches
+            .map((right, left) =>
+              right === null
+                ? null
+                : `${richTextToPlain(answer.left[left])} → ${richTextToPlain(answer.right[right])}`,
+            )
+            .filter((line): line is string => Boolean(line))
+            .join('\n')
+        : '';
     case 'interval':
       return [submission.lower, submission.upper]
         .map((v) => (v ?? '').toString().trim())

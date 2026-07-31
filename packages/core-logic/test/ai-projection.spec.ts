@@ -309,3 +309,30 @@ describe('submittedText for pickable answers', () => {
     );
   });
 });
+
+describe('submittedText for matching', () => {
+  const matchingAnswer = {
+    kind: 'matching' as const,
+    left: [text('Median'), text('Modus')],
+    right: [text('mittlerer Wert'), text('häufigster Wert'), text('Mittelwert')],
+    pairs: [
+      [0, 0],
+      [1, 1],
+    ] as [number, number][],
+  };
+
+  it('names both sides of each pair', () => {
+    const out = submittedText({ kind: 'matching', matches: [0, 1] }, matchingAnswer);
+    expect(out).toContain('Median → mittlerer Wert');
+    expect(out).toContain('Modus → häufigster Wert');
+  });
+
+  it('skips what the user left unassigned', () => {
+    const out = submittedText({ kind: 'matching', matches: [2, null] }, matchingAnswer);
+    expect(out).toBe('Median → Mittelwert');
+  });
+
+  it('stays empty without the answer to resolve against', () => {
+    expect(submittedText({ kind: 'matching', matches: [0, 1] })).toBe('');
+  });
+});
