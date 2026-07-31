@@ -38,3 +38,27 @@ textarea {
 a {
   color: var(--q-accent-strong);
 }
+
+/*
+ * Preview channel banner.
+ *
+ * Stable and preview are different origins with different databases, and they
+ * look identical otherwise — which is exactly how you end up doing real work
+ * in the wrong one. The stripe is deliberately loud and unmissable.
+ */
+:root[data-qed2-channel='preview'] body::before {
+  content: 'PREVIEW';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  height: 4px;
+  padding-inline: 8px;
+  background: var(--q-err);
+  color: var(--q-on-err);
+  font: 800 8px/4px 'Public Sans', system-ui, sans-serif;
+  letter-spacing: 0.35em;
+  text-align: right;
+  pointer-events: none;
+}

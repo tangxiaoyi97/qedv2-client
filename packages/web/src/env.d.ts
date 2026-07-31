@@ -6,15 +6,29 @@ declare const __APP_COMMIT__: string;
 /** Build-time app version (package.json) injected by vite.config (define). */
 declare const __APP_VERSION__: string;
 
+/** Release channel: 'stable' | 'preview'. Injected by vite.config.ts. */
+declare const __QED2_CHANNEL__: string;
+/** `QED2-CHANNEL:<channel>` — the token the deploy guard greps for. */
+declare const __QED2_CHANNEL_SENTINEL__: string;
+/** Channel default endpoints; empty string = use the production defaults. */
+declare const __QED2_DEFAULT_CORE__: string;
+declare const __QED2_DEFAULT_SERVER__: string;
+
 /** Node-only build helper (see scripts/commit.mjs) — typed for vite.config. */
 declare module '*/commit.mjs' {
   export function resolveCommit(): string;
   export function resolveVersion(): string;
 }
 
+/** Node-only build helper (see scripts/channel.mjs) — typed for vite.config. */
+declare module '*/channel.mjs' {
+  export function resolveChannel(): 'stable' | 'preview';
+  export function resolveEndpoints(): { core: string; server: string };
+}
+
 /** Web app manifest (see scripts/pwa-manifest.mjs) — typed for vite.config. */
 declare module '*/pwa-manifest.mjs' {
-  export const PWA_MANIFEST: {
+  interface WebAppManifest {
     id: string;
     name: string;
     short_name: string;
@@ -26,5 +40,7 @@ declare module '*/pwa-manifest.mjs' {
     background_color: string;
     theme_color: string;
     icons: { src: string; sizes: string; type: string; purpose: string }[];
-  };
+  }
+  /** Takes the release channel: the preview build installs as its own app. */
+  export function PWA_MANIFEST(channel?: string): WebAppManifest;
 }

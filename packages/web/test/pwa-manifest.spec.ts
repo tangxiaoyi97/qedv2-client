@@ -52,21 +52,21 @@ describe('web app manifest', () => {
     // Regression guard for 1.9.3: deleting these two entries did not make the
     // manifest theme-neutral, it handed the launcher/splash/task-switcher over
     // to vite-plugin-pwa's own defaults — Vue green on white.
-    expect(PWA_MANIFEST.theme_color).toBe(lightThemeToken('--q-accent-strong'));
-    expect(PWA_MANIFEST.background_color).toBe(lightThemeToken('--q-page'));
-    expect(PWA_MANIFEST.theme_color).not.toBe('#42b883');
-    expect(PWA_MANIFEST.background_color).not.toBe('#ffffff');
+    expect(PWA_MANIFEST().theme_color).toBe(lightThemeToken('--q-accent-strong'));
+    expect(PWA_MANIFEST().background_color).toBe(lightThemeToken('--q-page'));
+    expect(PWA_MANIFEST().theme_color).not.toBe('#42b883');
+    expect(PWA_MANIFEST().background_color).not.toBe('#ffffff');
   });
 
   it('pins the app identity and scope explicitly', () => {
-    expect(PWA_MANIFEST.id).toBe('/');
-    expect(PWA_MANIFEST.start_url).toBe('/');
-    expect(PWA_MANIFEST.scope).toBe('/');
-    expect(PWA_MANIFEST.display).toBe('standalone');
+    expect(PWA_MANIFEST().id).toBe('/');
+    expect(PWA_MANIFEST().start_url).toBe('/');
+    expect(PWA_MANIFEST().scope).toBe('/');
+    expect(PWA_MANIFEST().display).toBe('standalone');
   });
 
   it('declares icons that exist and match their declared size', () => {
-    for (const icon of PWA_MANIFEST.icons) {
+    for (const icon of PWA_MANIFEST().icons) {
       const width = shortestSide(icon);
       expect(pngHeader(icon.src), icon.src).toEqual({ signature: true, width, height: width });
     }
@@ -77,7 +77,7 @@ describe('web app manifest', () => {
     // a generated letter tile on theme_color; without a maskable one, Android
     // launchers shrink the square tile into a white circle.
     const usable = (purpose: string) =>
-      PWA_MANIFEST.icons.filter((i) => i.purpose === purpose && shortestSide(i) >= 192);
+      PWA_MANIFEST().icons.filter((i) => i.purpose === purpose && shortestSide(i) >= 192);
     expect(usable('any').length).toBeGreaterThan(0);
     expect(usable('maskable').length).toBeGreaterThan(0);
   });
@@ -87,5 +87,27 @@ describe('web app manifest', () => {
     const href = /rel="apple-touch-icon"\s+href="\/([^"]+)"/.exec(indexHtml)?.[1];
     expect(href).toBeDefined();
     expect(pngHeader(href as string)).toEqual({ signature: true, width: 180, height: 180 });
+  });
+});
+
+/**
+ * The preview build installs as its own app on its own origin. Identical
+ * names and icons on the home screen is how you end up doing real work in the
+ * wrong environment.
+ */
+describe('channel identity', () => {
+  it('gives the preview build a distinct name and colour', () => {
+    const stable = PWA_MANIFEST('stable');
+    const preview = PWA_MANIFEST('preview');
+    expect(stable.name).toBe('QED2 — Matura Mathematik');
+    expect(preview.name).toBe('QED2 Preview');
+    expect(preview.short_name).not.toBe(stable.short_name);
+    expect(preview.theme_color).not.toBe(stable.theme_color);
+  });
+
+  it('defaults to the stable identity', () => {
+    expect(PWA_MANIFEST().name).toBe(PWA_MANIFEST('stable').name);
+    // An unknown channel must not silently produce a preview-looking build.
+    expect(PWA_MANIFEST('nonsense').name).toBe(PWA_MANIFEST('stable').name);
   });
 });

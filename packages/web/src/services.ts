@@ -20,6 +20,7 @@ import {
   QuestionCache,
   type PlatformPorts,
 } from '@qed2/core-logic';
+import { channelDefaults } from './platform/channel.js';
 import { WebStorage } from './platform/web-storage.js';
 import { WebCoreRuntime, WebNetwork, WebUpdate } from './platform/web-ports.js';
 
@@ -41,7 +42,12 @@ export const attemptOutbox = new AttemptOutbox(storage);
 
 /** Env-provided dev defaults (fall back to production defaults otherwise). */
 export function envConfigDefaults(): Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> {
-  const out: Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> = {};
+  // Two layers, in this order:
+  //   1. the release channel's endpoints, baked in at build time — this is
+  //      what points a preview build at the preview core/server instead of at
+  //      real user data;
+  //   2. VITE_* overrides, so a local dev run can still aim anywhere.
+  const out: Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> = { ...channelDefaults() };
   const core = import.meta.env.VITE_QED2_CORE_URL as string | undefined;
   const server = import.meta.env.VITE_QED2_SERVER_URL as string | undefined;
   if (core) out.coreBaseUrl = core;

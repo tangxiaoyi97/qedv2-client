@@ -7,3 +7,4 @@ export * from './grading/expression-preview.js';
 export * from './fsrs/index.js';
 export * from './sync/index.js';
 export * from './store/index.js';
+export * from './ai/index.js';

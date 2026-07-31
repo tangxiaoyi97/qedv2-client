@@ -10,6 +10,7 @@ import './styles/app.css';
 import App from './App.vue';
 import { router } from './router.js';
 import { prepareThemeBeforeMount } from './platform/theme.js';
+import { applyChannelMarker } from './platform/channel.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -26,6 +27,9 @@ function bootProgress(pct: number, text: string): void {
 
 async function boot(): Promise<void> {
   // Revalidate/move the CSS theme extension before ANY UI paints.
+  // Before anything paints: the banner needs the hook, and a preview build
+  // must be recognisable from the very first frame.
+  applyChannelMarker();
   await prepareThemeBeforeMount();
   bootProgress(12, 'Thema wird angewendet …');
 

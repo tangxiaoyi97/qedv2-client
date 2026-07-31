@@ -10,7 +10,7 @@
  * 1.9.3 shipped a green launcher/splash color; an omitted field is not a
  * neutral field.
  */
-export const PWA_MANIFEST = {
+const BASE = {
   // Explicit app identity. Without it the id is derived from start_url, so a
   // later start_url change would register as an entirely different app and
   // orphan every existing installation.
@@ -38,3 +38,24 @@ export const PWA_MANIFEST = {
     { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
 };
+
+/**
+ * Channel-specific identity.
+ *
+ * The preview build lives on its own origin, so it installs as a SEPARATE app.
+ * It must therefore look separate too: identical names and icons on the home
+ * screen is how you end up doing real work in the wrong environment.
+ *
+ * `id` and `scope` stay '/' in both — each channel is alone on its origin.
+ */
+export function PWA_MANIFEST(channel = 'stable') {
+  if (channel !== 'preview') return BASE;
+  return {
+    ...BASE,
+    name: 'QED2 Preview',
+    short_name: 'QED2 Prev',
+    description: 'Vorschau-Build — nicht die stabile Version',
+    // Deliberately off-brand so the two are never confused at a glance.
+    theme_color: '#8a3423',
+  };
+}

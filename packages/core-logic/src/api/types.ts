@@ -2,6 +2,7 @@
  * Wire types for both services, derived from the contract (§3 core, §4–5
  * server) and verified against the real running services.
  */
+import type { AiCapabilities } from '../ai/types.js';
 import type { AnswerKind, Question, QuestionSummary, Term, ExamPart } from '../model/question.js';
 import type { ArchiveContent, PartEntry, CompetencyEntry, ServerArchiveState } from '../model/archive.js';
 
@@ -346,6 +347,13 @@ export interface ServerInfo {
     /** Exact name of the most recently applied migration. */
     latestMigration: string | null;
   };
+  /**
+   * AI capabilities. ABSENT means this server has no AI at all — an older
+   * server, or one with every flag off. Clients must treat absence as "off"
+   * rather than probing, so a 2.0 client works against a 1.x server.
+   */
+  ai?: AiCapabilities;
 }
 
 export type { ServerArchiveState };
+export type { AiCapabilities };

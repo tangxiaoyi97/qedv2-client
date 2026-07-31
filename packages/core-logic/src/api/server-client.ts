@@ -12,6 +12,14 @@
 import { normalizeBaseUrl } from '../config/index.js';
 import { requestJson, type RequestOptions } from './http.js';
 import type {
+  AiAssessRequest,
+  AiAssessResponse,
+  AiExplainRequest,
+  AiExplainResponse,
+  AiProviderId,
+  AiStatus,
+} from '../ai/types.js';
+import type {
   AttemptRecord,
   AuthResponse,
   HealthResponse,
@@ -171,6 +179,62 @@ export class ServerClient {
       this.baseUrl,
       '/me/leaderboard-profile',
       this.authed({ method: 'DELETE' }),
+    );
+  }
+
+  /* --- AI ------------------------------------------------------------------
+   * All three go through the server rather than straight to a vendor: the
+   * shared pool key must never reach a client, and routing both key sources
+   * through one path keeps rate limiting, usage accounting and the cost
+   * circuit breaker in a single place.
+   */
+
+  /** GET /me/ai/status — what this user can currently do, and on whose key. */
+  aiStatus(): Promise<AiStatus> {
+    return requestJson<AiStatus>(this.baseUrl, '/me/ai/status', this.authed({}));
+  }
+
+  /** PUT /me/ai/credential — store a user-supplied key (encrypted at rest). */
+  saveAiCredential(input: {
+    provider: AiProviderId;
+    apiKey: string;
+    model?: string;
+    baseUrl?: string;
+  }): Promise<AiStatus> {
+    return requestJson<AiStatus>(
+      this.baseUrl,
+      '/me/ai/credential',
+      this.authed({ method: 'PUT', body: input }),
+    );
+  }
+
+  /** DELETE /me/ai/credential — forget it entirely. */
+  deleteAiCredential(): Promise<AiStatus> {
+    return requestJson<AiStatus>(
+      this.baseUrl,
+      '/me/ai/credential',
+      this.authed({ method: 'DELETE' }),
+    );
+  }
+
+  /** POST /me/ai-explain — why this answer is wrong. Advisory text only. */
+  aiExplain(req: AiExplainRequest, signal?: RequestOptions['signal']): Promise<AiExplainResponse> {
+    return requestJson<AiExplainResponse>(
+      this.baseUrl,
+      '/me/ai-explain',
+      this.authed({ method: 'POST', body: req, ...(signal ? { signal } : {}) }),
+    );
+  }
+
+  /**
+   * POST /me/ai-grade — per-criterion verdicts for a rubric part.
+   * The response is a SUGGESTION: the user still has to confirm it.
+   */
+  aiAssess(req: AiAssessRequest, signal?: RequestOptions['signal']): Promise<AiAssessResponse> {
+    return requestJson<AiAssessResponse>(
+      this.baseUrl,
+      '/me/ai-grade',
+      this.authed({ method: 'POST', body: req, ...(signal ? { signal } : {}) }),
     );
   }
 
