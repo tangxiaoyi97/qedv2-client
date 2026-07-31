@@ -35,6 +35,8 @@ export const STORAGE = {
   history: 'history',
   /** Misc app state (last session, etc.). */
   app: 'app',
+  /** AI answers already paid for — see store/ai-cache.ts. */
+  aiCache: 'ai-cache',
 } as const;
 
 /* ------------------------------------------------------------------ *

@@ -74,6 +74,16 @@ async function save(): Promise<void> {
 }
 
 const exporting = ref(false);
+const clearing = ref(false);
+
+async function clearCache(): Promise<void> {
+  clearing.value = true;
+  try {
+    await ai.clearCache();
+  } finally {
+    clearing.value = false;
+  }
+}
 
 async function exportHistory(): Promise<void> {
   exporting.value = true;
@@ -140,136 +150,105 @@ async function remove(): Promise<void> {
         <span v-else class="ai-set__pool-value">unbegrenzt</span>
       </div>
 
-      <!-- Only shown when both sources exist; otherwise there is no choice. -->
-      <div v-if="ai.canChooseSource" class="ai-set__field">
-        <label class="ai-set__label">Welcher Schlüssel wird verwendet?</label>
-        <div class="ai-set__providers" role="radiogroup" aria-label="Schlüsselquelle">
+      <!--
+        One exclusive choice. The pool option is disabled — not hidden — when
+        the server has not granted it, so the user can see that it exists and
+        why it is unavailable, instead of wondering what they are missing.
+      -->
+      <div class="ai-set__field">
+        <span class="ai-set__label">Welche KI wird verwendet?</span>
+        <div class="ai-set__modes" role="radiogroup" aria-label="KI-Quelle">
           <button
-            v-for="opt in [
-              { pool: false, label: 'Eigener Schlüssel', hint: 'schont dein Kontingent' },
-              { pool: true, label: 'Kontingent', hint: 'schont deinen Schlüssel' },
-            ]"
-            :key="String(opt.pool)"
             type="button"
-            class="ai-set__provider"
-            :class="{ 'ai-set__provider--on': ai.preferPool === opt.pool }"
+            class="ai-set__mode"
+            :class="{ 'ai-set__mode--on': ai.mode === 'pool' }"
             role="radio"
-            :aria-checked="ai.preferPool === opt.pool"
-            @click="ai.preferPool = opt.pool"
+            :aria-checked="ai.mode === 'pool'"
+            :disabled="!ai.poolOffered"
+            @click="ai.setMode('pool')"
           >
-            <span class="ai-set__provider-label">{{ opt.label }}</span>
-            <span class="ai-set__provider-hint">{{ opt.hint }}</span>
+            <span class="ai-set__mode-title">Vom Server bereitgestellt</span>
+            <span class="ai-set__mode-hint">
+              {{ ai.poolOffered ? 'Kein eigener Schlüssel nötig' : 'Für dieses Konto nicht freigeschaltet' }}
+            </span>
+          </button>
+          <button
+            type="button"
+            class="ai-set__mode"
+            :class="{ 'ai-set__mode--on': ai.mode === 'byo' }"
+            role="radio"
+            :aria-checked="ai.mode === 'byo'"
+            @click="ai.setMode('byo')"
+          >
+            <span class="ai-set__mode-title">Eigener Schlüssel</span>
+            <span class="ai-set__mode-hint">
+              {{ configured ? `${status?.byo.provider === 'gemini' ? 'Gemini' : 'OpenAI'} · ···${status?.byo.last4}` : 'Noch keiner hinterlegt' }}
+            </span>
           </button>
         </div>
       </div>
 
-      <div v-if="configured" class="ai-set__current">
-        <div class="ai-set__current-main">
-          <span class="ai-set__current-label">Eigener Schlüssel</span>
-          <span class="ai-set__current-value">
-            {{ status?.byo.provider === 'gemini' ? 'Google Gemini' : 'OpenAI' }}
-            <template v-if="status?.byo.model"> · {{ status.byo.model }}</template>
-            · ···{{ status?.byo.last4 }}
-          </span>
-        </div>
-        <QButton variant="ghost" :disabled="saving" @click="remove">Entfernen</QButton>
-      </div>
-
-      <form class="ai-set__form" @submit.prevent="save">
-        <div class="ai-set__field">
-          <label class="ai-set__label" for="ai-provider">Anbieter</label>
-          <div class="ai-set__providers" role="radiogroup" aria-label="Anbieter">
-            <button
-              v-for="p in PROVIDERS"
-              :key="p.id"
-              type="button"
-              class="ai-set__provider"
-              :class="{ 'ai-set__provider--on': provider === p.id }"
-              role="radio"
-              :aria-checked="provider === p.id"
-              @click="provider = p.id"
-            >
-              <span class="ai-set__provider-label">{{ p.label }}</span>
-              <span class="ai-set__provider-hint">{{ p.hint }}</span>
-            </button>
+      <!-- The key form belongs to exactly one of the two modes. -->
+      <template v-if="ai.mode === 'byo'">
+        <div v-if="configured" class="ai-set__current">
+          <div class="ai-set__current-main">
+            <span class="ai-set__current-label">Hinterlegt</span>
+            <span class="ai-set__current-value">
+              {{ status?.byo.provider === 'gemini' ? 'Google Gemini' : 'OpenAI' }}
+              <template v-if="status?.byo.model"> · {{ status.byo.model }}</template>
+              · ···{{ status?.byo.last4 }}
+            </span>
           </div>
+          <QButton variant="ghost" :disabled="saving" @click="remove">Entfernen</QButton>
         </div>
 
-        <div class="ai-set__field">
-          <label class="ai-set__label" for="ai-key">
-            {{ configured ? 'Schlüssel ersetzen' : 'API-Schlüssel' }}
-          </label>
-          <input
-            id="ai-key"
-            v-model="apiKey"
-            type="password"
-            class="ai-set__input"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="sk-…"
-          />
-          <p class="ai-set__hint">
-            Wird verschlüsselt gespeichert und nie wieder angezeigt — auch nicht dir.
-          </p>
-        </div>
+        <form class="ai-set__form" @submit.prevent="save">
+          <div class="ai-set__field">
+            <span class="ai-set__label">Anbieter</span>
+            <div class="ai-set__providers" role="radiogroup" aria-label="Anbieter">
+              <button
+                v-for="p in PROVIDERS"
+                :key="p.id"
+                type="button"
+                class="ai-set__provider"
+                :class="{ 'ai-set__provider--on': provider === p.id }"
+                role="radio"
+                :aria-checked="provider === p.id"
+                @click="provider = p.id"
+              >
+                <span class="ai-set__provider-label">{{ p.label }}</span>
+                <span class="ai-set__provider-hint">{{ p.hint }}</span>
+              </button>
+            </div>
+          </div>
 
-        <div class="ai-set__field">
-          <label class="ai-set__label" for="ai-model">Modell <span class="ai-set__opt">optional</span></label>
-          <input id="ai-model" v-model="model" type="text" class="ai-set__input" spellcheck="false" placeholder="gpt-5-mini" />
-        </div>
+          <div class="ai-set__field">
+            <label class="ai-set__label" for="ai-key">
+              {{ configured ? 'Schlüssel ersetzen' : 'API-Schlüssel' }}
+            </label>
+            <input id="ai-key" v-model="apiKey" type="password" class="ai-set__input"
+                   autocomplete="off" spellcheck="false" placeholder="sk-…" />
+            <p class="ai-set__hint">Wird verschlüsselt gespeichert und nie wieder angezeigt — auch nicht dir.</p>
+          </div>
 
-        <div v-if="showBaseUrl" class="ai-set__field">
-          <label class="ai-set__label" for="ai-base">Endpunkt <span class="ai-set__opt">optional</span></label>
-          <input id="ai-base" v-model="baseUrl" type="url" class="ai-set__input" spellcheck="false" placeholder="https://api.openai.com/v1" />
-          <p class="ai-set__hint">Für Azure, OpenRouter, DeepSeek oder ein lokales Ollama.</p>
-        </div>
+          <div class="ai-set__row2">
+            <div class="ai-set__field">
+              <label class="ai-set__label" for="ai-model">Modell <span class="ai-set__opt">optional</span></label>
+              <input id="ai-model" v-model="model" type="text" class="ai-set__input" spellcheck="false" placeholder="gpt-5-mini" />
+            </div>
+            <div v-if="showBaseUrl" class="ai-set__field">
+              <label class="ai-set__label" for="ai-base">Endpunkt <span class="ai-set__opt">optional</span></label>
+              <input id="ai-base" v-model="baseUrl" type="url" class="ai-set__input" spellcheck="false" placeholder="https://api.openai.com/v1" />
+            </div>
+          </div>
 
-        <!--
-        Prompt preferences. They ride every request rather than being stored:
-        two strings do not justify a server table, and the client already owns
-        user settings.
-      -->
-      <div class="ai-set__field">
-        <label class="ai-set__label" for="ai-language">
-          Antwortsprache <span class="ai-set__opt">optional</span>
-        </label>
-        <input
-          id="ai-language"
-          v-model="language"
-          type="text"
-          class="ai-set__input"
-          spellcheck="false"
-          maxlength="80"
-          placeholder="Deutsch"
-          @change="saveLanguage"
-        />
-        <!-- Free text on purpose: a fixed list would need extending for
-             Slovenian or Bosnian, and could not express a mixed request. -->
-        <p class="ai-set__hint">
-          Schreib die Sprache so, wie du sie willst — auch „Kroatisch, Fachbegriffe auf Deutsch".
-          Leer = Deutsch.
-        </p>
-      </div>
-
-      <div class="ai-set__field">
-        <label class="ai-set__label" for="ai-prompt">
-          Eigene Anweisungen <span class="ai-set__opt">optional · English</span>
-        </label>
-        <textarea
-          id="ai-prompt"
-          v-model="customInstructions"
-          class="ai-set__input ai-set__textarea"
-          rows="3"
-          spellcheck="false"
-          maxlength="600"
-          placeholder="e.g. Explain like I am a beginner. Always show the intermediate steps."
-          @change="saveInstructions"
-        ></textarea>
-        <p class="ai-set__hint">
-          Wird an jede Anfrage angehängt. Die Regeln der App haben Vorrang — Punkte vergibst
-          weiterhin nur du selbst. {{ customInstructions.length }}/600
-        </p>
-      </div>
+          <div class="ai-set__actions">
+            <QButton type="submit" :disabled="!apiKey.trim() || saving">
+              {{ saving ? 'Speichern …' : 'Speichern' }}
+            </QButton>
+          </div>
+        </form>
+      </template>
 
       <!--
         The answers and self-assessed ticks live only on this device. Handing
@@ -288,19 +267,95 @@ async function remove(): Promise<void> {
         </p>
       </div>
 
-      <QNotice v-if="error" tone="error">{{ error }}</QNotice>
-        <p v-else-if="saved" class="ai-set__saved" role="status">Schlüssel gespeichert.</p>
-
-        <div class="ai-set__actions">
-          <QButton type="submit" :disabled="!apiKey.trim() || saving">
-            {{ saving ? 'Speichern …' : 'Speichern' }}
+      <!-- Answers already paid for. Kept so the same question is not bought
+           twice; forgetting them should be one button, not a mystery. -->
+      <div class="ai-set__field">
+        <span class="ai-set__label">Gespeicherte KI-Antworten</span>
+        <div class="ai-set__actions ai-set__actions--start">
+          <QButton variant="ghost" :disabled="clearing" @click="clearCache">
+            {{ clearing ? 'Wird gelöscht …' : 'Zwischenspeicher leeren' }}
           </QButton>
         </div>
-      </form>
+        <p class="ai-set__hint">
+          Bereits erzeugte Erklärungen bleiben auf diesem Gerät, damit dieselbe Aufgabe
+          nicht zweimal abgefragt wird. Löschen erzwingt neue Anfragen.
+        </p>
+      </div>
+
+      <QNotice v-if="error" tone="error">{{ error }}</QNotice>
+      <p v-else-if="saved" class="ai-set__saved" role="status">Schlüssel gespeichert.</p>
   </section>
 </template>
 
 <style scoped>
+/*
+ * Layout.
+ *
+ * Phone first: everything stacks. From 560px up the paired fields sit side by
+ * side, because on a laptop a column of full-width inputs reads as a form that
+ * has not been thought about — and this section is long enough already.
+ */
+.ai-set__modes {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.ai-set__mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-height: 56px;
+  padding: 11px 14px;
+  border: 1px solid var(--q-border-2);
+  border-radius: 11px;
+  background: var(--q-card);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color var(--q-transition-fast), background var(--q-transition-fast);
+}
+.ai-set__mode--on {
+  border-color: var(--q-accent);
+  background: var(--q-accent-bg);
+  box-shadow: 0 0 0 3px var(--q-accent-ring);
+}
+/* Disabled, not hidden: the user should see the option exists and why it is
+ * out of reach, rather than wonder what they are missing. */
+.ai-set__mode:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+.ai-set__mode:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.ai-set__mode-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--q-ink);
+}
+.ai-set__mode-hint {
+  font-size: 11.5px;
+  color: var(--q-faint);
+}
+
+.ai-set__row2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 560px) {
+  .ai-set__modes,
+  .ai-set__row2 {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ai-set__field--half {
+    max-width: 320px;
+  }
+}
+
 .ai-set__disclosure {
   padding: 12px 14px;
   border: 1px solid var(--q-border-soft);

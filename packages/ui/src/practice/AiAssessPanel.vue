@@ -46,6 +46,8 @@ const props = defineProps<{
   /** Server refuses to vouch for this reply — show it, tick nothing. */
   advisoryOnly?: boolean;
   model?: string | undefined;
+  /** Hides the model name on the shared key — the server chose it, not you. */
+  source?: string | undefined;
 }>();
 
 const emit = defineEmits<{ ask: [] }>();
@@ -140,7 +142,7 @@ const shaky = (c: AssessedCriterion): boolean =>
           {{ overall ? 'Die Punkte oben sind vorausgewählt' : 'Die Häkchen oben sind gesetzt' }}, aber
           nicht gespeichert — du bestätigst mit „Bewertung übernehmen".
         </template>
-        <span v-if="model" class="q-aia__model">{{ model }}</span>
+        <span v-if="model && source !== 'pool'" class="q-aia__model">{{ model }}</span>
       </p>
     </template>
   </section>

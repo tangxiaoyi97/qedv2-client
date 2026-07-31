@@ -21,11 +21,9 @@ import {
   type Question,
   type QuestionPart,
 } from '@qed2/core-logic';
+import { aiCache } from '../services.js';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
-
-/** How many explanations to keep. Small: they are per-answer and rarely revisited. */
-const CACHE_LIMIT = 60;
 
 export const useAiStore = defineStore('ai', () => {
   const app = useAppStore();
@@ -41,7 +39,14 @@ export const useAiStore = defineStore('ai', () => {
   const status = ref<AiStatus | null>(null);
   const statusError = ref<string | null>(null);
 
-  /** Answers already fetched, keyed by prompt version + part + submission. */
+  /**
+   * Answers already fetched.
+   *
+   * Two layers: a Map so a re-render is instant, and AiCache behind it so a
+   * reload does not buy the same explanation twice. The Map used to be the
+   * only layer, which made the cache worth very little — the commonest way to
+   * look at an explanation again is to come back to the question later.
+   */
   const cache = ref(new Map<string, AiExplainResponse>());
 
   /**
@@ -55,6 +60,11 @@ export const useAiStore = defineStore('ai', () => {
       capabilities.value?.explain === true &&
       status.value !== null &&
       status.value.active !== 'none',
+  );
+
+  /** Nothing works until one of the two modes is actually usable. */
+  const configured = computed(
+    () => poolOffered.value || status.value?.byo.configured === true,
   );
 
   /**
@@ -138,22 +148,31 @@ export const useAiStore = defineStore('ai', () => {
    * nothing is stored server-side.
    */
   /**
-   * A `BOTH`-mode account choosing to spend pool credit instead of its own key.
+   * One choice, two modes: spend the server's key, or bring your own.
    *
-   * The request field existed from the start but nothing could set it, so the
-   * choice the server offers was unreachable from the app.
+   * Modelled as a single exclusive setting rather than "have a key" plus a
+   * separate "prefer pool" flag, because that pair had four states and only
+   * three of them meant anything. `pool` is selectable only where the server
+   * has actually granted it.
    */
-  const preferPool = computed({
-    get: () => app.config.aiPreferPool === true,
-    set: (value: boolean) => {
-      void app.updateConfig({ aiPreferPool: value });
-    },
+  const poolOffered = computed(() => status.value?.pool.eligible === true);
+
+  const mode = computed<'pool' | 'byo'>(() => {
+    const chosen = app.config.aiPreferPool;
+    // Never chosen: follow what actually works. An account granted the pool
+    // and holding no key of its own opened the settings to find the mode it
+    // cannot use already selected.
+    if (chosen === undefined) return poolOffered.value ? 'pool' : 'byo';
+    return chosen && poolOffered.value ? 'pool' : 'byo';
   });
 
-  /** Only meaningful when both sources are actually available. */
-  const canChooseSource = computed(
-    () => status.value?.byo.configured === true && status.value.pool.eligible,
-  );
+  function setMode(next: 'pool' | 'byo'): void {
+    if (next === 'pool' && !poolOffered.value) return;
+    void app.updateConfig({ aiPreferPool: next === 'pool' });
+  }
+
+  /** The request flag the server reads. */
+  const preferPool = computed(() => mode.value === 'pool');
 
   const promptPrefs = computed(() => ({
     ...(preferPool.value ? { preferPool: true } : {}),
@@ -187,18 +206,21 @@ export const useAiStore = defineStore('ai', () => {
   }): Promise<AiExplainResponse> {
     const mode = input.mode ?? 'answer';
     const key = cacheKey(input.part.id, input.submitted, mode);
-    const hit = cache.value.get(key);
-    if (hit) return hit;
+
+    const inMemory = cache.value.get(key);
+    if (inMemory) return inMemory;
+
+    const stored = await aiCache.get<AiExplainResponse>(key);
+    if (stored) {
+      cache.value.set(key, stored);
+      return stored;
+    }
 
     const answer = await app.serverClient.aiExplain(
       buildExplainRequest({ ...input, mode, options: promptPrefs.value }),
     );
     cache.value.set(key, answer);
-    // Oldest-first eviction; Map preserves insertion order.
-    if (cache.value.size > CACHE_LIMIT) {
-      const oldest = cache.value.keys().next().value;
-      if (oldest !== undefined) cache.value.delete(oldest);
-    }
+    await aiCache.set(key, answer);
     return answer;
   }
 
@@ -222,6 +244,11 @@ export const useAiStore = defineStore('ai', () => {
     return app.serverClient.aiAssess({ ...request, ...promptPrefs.value });
   }
 
+  /**
+   * Synchronous read for rendering. Only sees the in-memory layer, which is
+   * what `explain()` fills on the way through — the panel asks for an answer
+   * before it shows one, so the stored layer is always promoted by then.
+   */
   function cached(
     partId: string,
     submitted: string,
@@ -230,19 +257,28 @@ export const useAiStore = defineStore('ai', () => {
     return cache.value.get(cacheKey(partId, submitted, mode));
   }
 
+  /** Belongs next to „Schlüssel entfernen": forgetting should mean all of it. */
+  async function clearCache(): Promise<void> {
+    cache.value = new Map();
+    await aiCache.clear();
+  }
+
   return {
     capabilities,
     status,
     statusError,
     available,
     canExplain,
+    configured,
     poolOnlyServer,
-    preferPool,
-    canChooseSource,
+    mode,
+    setMode,
+    poolOffered,
     refreshStatus,
     saveCredential,
     deleteCredential,
     explain,
+    clearCache,
     canAssess,
     assess,
     cached,

@@ -94,10 +94,16 @@ describe('AiExplainPanel', () => {
     expect(answered.emitted('dismiss')).toHaveLength(1);
   });
 
-  it('names whose key paid for it', () => {
-    const pool = mount(AiExplainPanel, { props: { markdown: 'x', model: 'm', source: 'pool' } });
-    expect(pool.get('.q-aix__foot').text()).toContain('Kontingent');
-    const byo = mount(AiExplainPanel, { props: { markdown: 'x', model: 'm', source: 'byo' } });
-    expect(byo.get('.q-aix__foot').text()).toContain('eigener Schlüssel');
+  it('names the model only when the reader chose it', () => {
+    // On the shared key the server picks the model; printing it tells the
+    // user nothing they decided and leaks a deployment detail.
+    const byo = mount(AiExplainPanel, { props: { markdown: 'x', model: 'gpt-5-mini', source: 'byo' } });
+    expect(byo.get('.q-aix__foot').text()).toContain('gpt-5-mini');
+
+    const pool = mount(AiExplainPanel, { props: { markdown: 'x', model: 'gemini-2.5-flash', source: 'pool' } });
+    expect(pool.get('.q-aix__foot').text()).not.toContain('gemini');
+    expect(pool.get('.q-aix__foot').text()).not.toContain('Kontingent');
+    // The warning that it is machine-written stays either way.
+    expect(pool.get('.q-aix__foot').text()).toContain('Generiert von KI');
   });
 });

@@ -92,7 +92,12 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
       -->
       <p class="q-aix__foot">
         Generiert von KI — kann Fehler enthalten. Maßgeblich ist der offizielle Lösungsweg.
-        <span v-if="model" class="q-aix__model">{{ model }}<template v-if="source"> · {{ source === 'pool' ? 'Kontingent' : 'eigener Schlüssel' }}</template></span>
+        <!--
+          Provenance only when the reader chose it. On the shared key the
+          server picks the model, so naming it tells the user nothing they
+          decided and leaks a deployment detail into a study aid.
+        -->
+        <span v-if="model && source !== 'pool'" class="q-aix__model">{{ model }}</span>
       </p>
     </template>
     </template>

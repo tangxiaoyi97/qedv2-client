@@ -16,6 +16,7 @@ import {
   AttemptOutbox,
   AuthStore,
   ConfigStore,
+  AiCache,
   HistoryLog,
   QuestionCache,
   type PlatformPorts,
@@ -38,6 +39,8 @@ export const authStore = new AuthStore(storage);
 export const archiveStore = new ArchiveStore(storage);
 export const questionCache = new QuestionCache(storage);
 export const historyLog = new HistoryLog(storage);
+/** AI answers already paid for — survives a reload, unlike a Map. */
+export const aiCache = new AiCache(storage);
 export const attemptOutbox = new AttemptOutbox(storage);
 
 /** Env-provided dev defaults (fall back to production defaults otherwise). */

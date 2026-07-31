@@ -319,6 +319,7 @@ const rubricLabels = computed(() => {
 const assist = computed(() => ({
   criteria: assistResult.value?.criteria,
   overall: assistResult.value?.overall,
+  source: assistResult.value?.source,
   advisoryOnly: assistResult.value?.advisoryOnly,
   model: assistResult.value?.model,
   loading: assistLoading.value,
@@ -945,6 +946,7 @@ const currentCompetencyCodes = computed(() =>
               :error="assist.error"
               :advisory-only="assist.advisoryOnly"
               :model="assist.model"
+              :source="assist.source"
               @ask="askForAssessment"
             />
           </template>
