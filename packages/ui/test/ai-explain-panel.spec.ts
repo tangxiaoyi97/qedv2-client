@@ -8,17 +8,28 @@ import AiExplainPanel from '../src/practice/AiExplainPanel.vue';
  * the official solution.
  */
 describe('AiExplainPanel', () => {
-  it('starts as a single button and fetches nothing', () => {
+  it('offers, rather than pretending to be an empty section', () => {
+    // A heading with a rule above it and nothing underneath reads as content
+    // that failed to load. Until the user asks, this is one row and no more.
     const wrapper = mount(AiExplainPanel);
-    expect(wrapper.find('.q-aix__ask').text()).toBe('Warum?');
+    expect(wrapper.get('.q-aix__offer-label').text()).toBe('Warum?');
+    expect(wrapper.find('.q-aix__title').exists()).toBe(false);
     expect(wrapper.find('.q-aix__body').exists()).toBe(false);
     expect(wrapper.find('.q-skeleton-list').exists()).toBe(false);
+    expect(wrapper.get('.q-aix').classes()).toContain('q-aix--idle');
   });
 
-  it('asks only when the user presses the button', async () => {
+  it('becomes a titled section only once there is something in it', () => {
+    const answered = mount(AiExplainPanel, { props: { markdown: 'Text.' } });
+    expect(answered.get('.q-aix__title').text()).toBe('Erklärung');
+    expect(answered.find('.q-aix__offer').exists()).toBe(false);
+    expect(answered.get('.q-aix').classes()).not.toContain('q-aix--idle');
+  });
+
+  it('asks only when the user presses the offer', async () => {
     const wrapper = mount(AiExplainPanel);
     expect(wrapper.emitted('ask')).toBeUndefined();
-    await wrapper.get('.q-aix__ask').trigger('click');
+    await wrapper.get('.q-aix__offer').trigger('click');
     expect(wrapper.emitted('ask')).toHaveLength(1);
   });
 

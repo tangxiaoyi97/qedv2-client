@@ -199,6 +199,9 @@ export const useProgressStore = defineStore('progress', () => {
     competencyCodes: string[];
     result: GradeResult;
     elapsedMs?: number;
+    /** Local-only evaluation material — see HistoryEntry.submittedText. */
+    submittedText?: string;
+    criteriaMet?: boolean[];
   }): Promise<{ grading: Grading; previousFsrs: FsrsState | undefined }> {
     return enqueueArchiveMutation(async () => {
       const now = new Date();
@@ -221,6 +224,10 @@ export const useProgressStore = defineStore('progress', () => {
         gradedAt: now.toISOString(),
       };
       if (input.elapsedMs !== undefined) entry.elapsedMs = input.elapsedMs;
+      // Kept locally so the AI grading evaluation has real labelled data —
+      // the score alone cannot be replayed against a grader (see history-log).
+      if (input.submittedText) entry.submittedText = input.submittedText;
+      if (input.criteriaMet) entry.criteriaMet = input.criteriaMet;
       await historyLog.append(entry);
       historyVersion.value += 1;
       return { grading: res.grading, previousFsrs: res.previousFsrs };

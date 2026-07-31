@@ -37,7 +37,20 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
 </script>
 
 <template>
-  <section class="q-aix" aria-labelledby="q-aix-title">
+  <section class="q-aix" :class="{ 'q-aix--idle': idle }" aria-labelledby="q-aix-title">
+    <!--
+      Idle is deliberately NOT a section. A heading with a divider above it and
+      nothing underneath reads as content that failed to load — the shape
+      promises something the user has not asked for yet. So until they do, this
+      is one quiet row that offers, and nothing else.
+    -->
+    <button v-if="idle" type="button" class="q-aix__offer" @click="emit('ask')">
+      <span class="q-aix__offer-label">Warum?</span>
+      <span class="q-aix__offer-sub">KI erklärt deinen Fehler</span>
+      <span class="q-aix__badge">KI</span>
+    </button>
+
+    <template v-else>
     <div class="q-aix__head">
       <h4 id="q-aix-title" class="q-aix__title">Erklärung</h4>
       <span class="q-aix__badge">KI</span>
@@ -52,10 +65,7 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
       </button>
     </div>
 
-    <!-- Idle: one button, nothing fetched. -->
-    <button v-if="idle" type="button" class="q-aix__ask" @click="emit('ask')">Warum?</button>
-
-    <div v-else-if="loading" class="q-aix__loading">
+    <div v-if="loading" class="q-aix__loading">
       <!-- Rows shaped like the prose that replaces them, so nothing jumps. -->
       <QSkeleton :rows="3" height="16px" radius="6px" gap="9px" label="Erklärung wird erzeugt …" />
       <span class="q-aix__loading-label">Die KI liest deine Antwort …</span>
@@ -82,6 +92,7 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
         <span v-if="model" class="q-aix__model">{{ model }}<template v-if="source"> · {{ source === 'pool' ? 'Kontingent' : 'eigener Schlüssel' }}</template></span>
       </p>
     </template>
+    </template>
   </section>
 </template>
 
@@ -90,6 +101,60 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
   margin-top: 4px;
   padding-top: 14px;
   border-top: 1px solid var(--q-border-2);
+}
+/* No rule, no heading, no reserved space until there is something to show. */
+.q-aix--idle {
+  padding-top: 10px;
+  border-top: none;
+}
+
+/*
+ * The offer. Full width so it reads as a row you can tap rather than a button
+ * stranded in white space, and quiet enough that it never competes with the
+ * official solution above it.
+ */
+.q-aix__offer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px dashed var(--q-border-2);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--q-ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--q-transition-fast), background var(--q-transition-fast);
+}
+@media (hover: hover) and (pointer: fine) {
+  .q-aix__offer:hover {
+    border-style: solid;
+    border-color: var(--q-accent);
+    background: var(--q-accent-bg);
+  }
+}
+.q-aix__offer:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.q-aix__offer-label {
+  font-size: 13.5px;
+  font-weight: 700;
+  flex: none;
+}
+.q-aix__offer-sub {
+  font-size: 11.5px;
+  color: var(--q-faint);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.q-aix__offer .q-aix__badge {
+  margin-left: auto;
 }
 
 .q-aix__head {

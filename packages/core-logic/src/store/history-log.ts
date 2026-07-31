@@ -23,7 +23,26 @@ export interface HistoryEntry {
   /** ISO 8601 UTC. */
   gradedAt: string;
   elapsedMs?: number;
+
+  /* --- evaluation material (local only, never synced) ---------------------
+   * The answer the user wrote, and — for self-assessed parts — the criteria
+   * they ticked themselves.
+   *
+   * This exists because the AI grading evaluation needs labelled data and
+   * there was none: every store recorded the SCORE an answer received and
+   * none recorded the answer, so a grader could not be replayed against real
+   * work. These two fields turn ordinary practice into that dataset.
+   *
+   * Local only, by design. It is a person's own written work; it stays on
+   * their device, never enters the synced archive, and is not part of the
+   * checksum. Capped like everything else here.
+   */
+  submittedText?: string;
+  criteriaMet?: boolean[];
 }
+
+/** Answers longer than this are truncated — the log is a tail, not a backup. */
+export const MAX_SUBMITTED_CHARS = 4000;
 
 /** Storage layout: one document holding the newest-first entry array. */
 const HISTORY_KEY = 'log';
@@ -38,6 +57,11 @@ export class HistoryLog {
   }
 
   async append(entry: HistoryEntry): Promise<void> {
+    if (entry.submittedText !== undefined) {
+      const trimmed = entry.submittedText.trim();
+      if (trimmed) entry.submittedText = trimmed.slice(0, MAX_SUBMITTED_CHARS);
+      else delete entry.submittedText;
+    }
     const entries = await this.read();
     entries.unshift(entry);
     if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
