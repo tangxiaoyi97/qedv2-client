@@ -127,7 +127,7 @@ watchEffect(() => {
     indeterminate: indeterminate.value,
     unplayable: !answer.value,
     answerPreview: currentAnswerPreview.value,
-    submittedText: submittedText(submission.value),
+    submittedText: submittedText(submission.value, answer.value),
     selfAssessment: selfAssessmentState.value,
   });
 });

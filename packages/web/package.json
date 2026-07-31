@@ -1,6 +1,6 @@
 {
   "name": "@qed2/web",
-  "version": "2.0.0-beta.6",
+  "version": "2.0.0-beta.7",
   "description": "QED2 web client (PWA) — browser shell over @qed2/core-logic and @qed2/ui. Static build deploys to GitHub Pages.",
   "type": "module",
   "private": true,
@@ -9,7 +9,8 @@
     "build": "vite build && node scripts/archive-changelog.mjs && cp dist/index.html dist/404.html",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "verify": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {
     "@fontsource/public-sans": "^5.2.7",

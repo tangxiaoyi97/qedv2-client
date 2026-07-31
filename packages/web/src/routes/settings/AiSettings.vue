@@ -13,11 +13,9 @@
 import { computed, ref } from 'vue';
 import { QButton, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
-import { useAuthStore } from '../../stores/auth.js';
 import { useAppStore } from '../../stores/app.js';
 
 const ai = useAiStore();
-const auth = useAuthStore();
 const app = useAppStore();
 
 const language = ref(app.config.aiLanguage ?? '');
@@ -97,9 +95,6 @@ async function remove(): Promise<void> {
       </div>
     </div>
 
-    <QNotice v-if="!auth.isLoggedIn">Zum Einrichten anmelden.</QNotice>
-
-    <template v-else>
       <!-- What leaves the device. Stated before anything is sent. -->
       <div class="ai-set__disclosure">
         <p class="ai-set__disclosure-title">Was dabei übertragen wird</p>
@@ -239,7 +234,6 @@ async function remove(): Promise<void> {
           </QButton>
         </div>
       </form>
-    </template>
   </section>
 </template>
 

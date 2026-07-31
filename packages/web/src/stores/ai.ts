@@ -57,8 +57,15 @@ export const useAiStore = defineStore('ai', () => {
       status.value.active !== 'none',
   );
 
-  /** True when the server has AI at all — drives whether settings shows the section. */
-  const available = computed(() => capabilities.value !== null);
+  /**
+   * Whether to show AI anywhere at all.
+   *
+   * Requires a session, not just a server that supports it. The endpoints are
+   * behind JwtAuthGuard anyway, so a guest could only ever collect 401s — and
+   * an entry point that exists but always refuses is worse than no entry
+   * point. Guests see nothing.
+   */
+  const available = computed(() => auth.isLoggedIn && capabilities.value !== null);
 
   const poolOnlyServer = computed(() => capabilities.value?.poolAvailable === true);
 

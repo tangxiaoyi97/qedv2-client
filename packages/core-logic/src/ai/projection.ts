@@ -175,13 +175,31 @@ export function isAiGradable(part: QuestionPart): boolean {
  * Only the kinds a human writes in prose are worth sending. Choice and
  * matching are graded deterministically and never reach an AI.
  */
-export function submittedText(submission: Submission | null | undefined): string {
+export function submittedText(
+  submission: Submission | null | undefined,
+  answer?: Answer | undefined,
+): string {
   if (!submission) return '';
   switch (submission.kind) {
     case 'open':
       return submission.text.trim();
     case 'expression':
       return submission.expr.trim();
+    case 'choice':
+      // Indices alone say nothing. Ask a model why "1, 3" is wrong and it can
+      // only shrug — the real Gemini reply to a choice question was "no answer
+      // was given". So resolve them against the option texts.
+      return answer?.kind === 'choice'
+        ? submission.selected
+            .map((i) => `${String.fromCharCode(65 + i)}) ${richTextToPlain(answer.options[i])}`)
+            .filter(Boolean)
+            .join('\n')
+        : submission.selected.map((i) => String.fromCharCode(65 + i)).join(', ');
+    case 'interval':
+      return [submission.lower, submission.upper]
+        .map((v) => (v ?? '').toString().trim())
+        .filter(Boolean)
+        .join(' … ');
     case 'numeric':
       // Blank id → raw input. Join in a stable order so the same answer always
       // produces the same prompt, and therefore the same cache key.

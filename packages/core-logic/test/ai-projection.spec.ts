@@ -229,10 +229,12 @@ describe('submittedText', () => {
     expect(submittedText({ kind: 'numeric', values: { a: '1', b: '2' } })).toBe('1 · 2');
   });
 
-  it('is empty for kinds an AI never sees', () => {
-    expect(submittedText({ kind: 'choice', selected: [0] })).toBe('');
+  it('is empty when there is no submission at all', () => {
     expect(submittedText(null)).toBe('');
     expect(submittedText(undefined)).toBe('');
+    // Matching has no readable projection yet, so it stays empty rather than
+    // sending pair indices a model cannot interpret.
+    expect(submittedText({ kind: 'matching', matches: [] })).toBe('');
   });
 });
 
@@ -275,5 +277,35 @@ describe('prompt options', () => {
     expect(buildExplainRequest({ ...base, mode: 'walkthrough' }).mode).toBe('walkthrough');
     expect(buildExplainRequest({ ...base, mode: 'answer' }).mode).toBeUndefined();
     expect(buildExplainRequest(base).mode).toBeUndefined();
+  });
+});
+
+/**
+ * Choice is the most common question type. Sending bare indices produced a
+ * real Gemini reply of "no answer was given" — the model had nothing to work
+ * with, so the whole explanation feature was useless on those questions.
+ */
+describe('submittedText for pickable answers', () => {
+  const choiceAnswer = {
+    kind: 'choice' as const,
+    selectCount: 2,
+    correct: [1, 3],
+    options: [text('a + b'), text('b : a'), text('a : b'), text('a · b'), text('b − a')],
+  };
+
+  it('resolves selected indices against the option texts', () => {
+    const out = submittedText({ kind: 'choice', selected: [0, 3] }, choiceAnswer);
+    expect(out).toContain('A) a + b');
+    expect(out).toContain('D) a · b');
+  });
+
+  it('falls back to letters when the options are not to hand', () => {
+    expect(submittedText({ kind: 'choice', selected: [0, 3] })).toBe('A, D');
+  });
+
+  it('reads an interval', () => {
+    expect(submittedText({ kind: 'interval', lower: '2', upper: '5', lowerClosed: true, upperClosed: false })).toBe(
+      '2 … 5',
+    );
   });
 });
