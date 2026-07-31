@@ -50,21 +50,26 @@ export function parseChangelogIndex(text: string): ChangelogEntry[] | null {
 }
 
 /**
- * Everything the user has not seen yet, newest first.
+ * What the on-open dialog announces: the running version's notes, or nothing.
  *
- * Selection is by POSITION in the index, never by comparing version strings.
- * The index is newest-first by construction (CHANGELOG.md is prepended to), so
- * "newer than what you saw" is "above it in the list" — which stays correct
- * across 1.9.7 → 1.10.0, prereleases, and any numbering scheme, none of which
- * a hand-rolled semver comparator survives.
+ * Only the newest — someone opening the app wants to know what changed in
+ * front of them, not to be handed a reading list. Everything older is one tap
+ * away in the settings, which is where a history belongs.
+ *
+ * Returns an array because the dialog renders a list either way; here it is
+ * empty or one long.
  *
  * Rules:
  *  - no entry for the running version → this build announces nothing
  *  - never seen anything → adopt silently; a fresh install is not an update
- *  - last seen is unknown (index too short, or a user migrating off the old
- *    commit-keyed marker) → show just this version, never the whole history
- *  - last seen is at or above the current one → nothing (also covers a
- *    rollback, where shouting about a version you no longer run is wrong)
+ *  - already seen this version → nothing
+ *  - the seen version sits at or above this one in the index → nothing, so a
+ *    rollback does not pop notes for a version you are moving away from
+ *
+ * Position in the index, never a version-string comparison: the index is
+ * newest-first by construction (CHANGELOG.md is prepended to), which stays
+ * correct across 1.9.7 → 1.10.0 and prereleases, where a hand-rolled semver
+ * comparator would not.
  */
 export function entriesToAnnounce(
   entries: ChangelogEntry[],
@@ -77,7 +82,6 @@ export function entriesToAnnounce(
   if (lastSeenVersion === currentVersion) return [];
 
   const seen = entries.findIndex((e) => e.version === lastSeenVersion);
-  if (seen === -1) return [entries[here]!];
-  if (seen <= here) return [];
-  return entries.slice(here, seen);
+  if (seen !== -1 && seen <= here) return [];
+  return [entries[here]!];
 }

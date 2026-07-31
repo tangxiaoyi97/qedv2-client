@@ -29,16 +29,16 @@ describe('entriesToAnnounce', () => {
     expect(entriesToAnnounce(INDEX, '1.9.7', '1.9.7')).toEqual([]);
   });
 
-  it('announces every version skipped, not just the newest', () => {
-    // The failure this exists for: updating from 1.9.5 straight to 1.9.7 used
-    // to show 1.9.7's notes only, and 1.9.6's were unreachable forever.
+  it('announces only the running version, even after skipping releases', () => {
+    // Deliberate: the dialog is an announcement, not a reading list. The
+    // versions in between are still reachable — the settings page opens the
+    // full index, which is what the old sha-keyed build could never do.
     const shown = entriesToAnnounce(INDEX, '1.9.7', '1.9.5');
-    expect(shown.map((e) => e.version)).toEqual(['1.9.7', '1.9.6']);
+    expect(shown.map((e) => e.version)).toEqual(['1.9.7']);
   });
 
-  it('announces only the current version when the last seen one is unknown', () => {
-    // Migrating off the old commit-keyed marker lands here — it must not dump
-    // the entire history on someone who has been using the app all along.
+  it('announces the current version when the last seen one is unknown', () => {
+    // Migrating off the old commit-keyed marker lands here.
     expect(entriesToAnnounce(INDEX, '1.9.7', '').map((e) => e.version)).toEqual(['1.9.7']);
     expect(entriesToAnnounce(INDEX, '1.9.7', '0.1.0').map((e) => e.version)).toEqual(['1.9.7']);
   });

@@ -43,9 +43,10 @@ on every commit.
 
 Every deploy ships the **whole** history as `dist/changelogs/index.json`. The app
 remembers the last version it showed you (`qed2.lastSeenVersion`) and, after an
-update, shows every section between that one and the running one — skipping
-three releases means reading three sets of notes, not losing two. The settings
-page opens the same dialog with the full list.
+update, announces the running version — that one section, nothing else. The
+settings page („Änderungen") opens the same dialog with every version ever
+shipped, which is where older notes live now; the old sha-keyed build had no
+way to show them at all.
 
 A build whose version has no section announces nothing. An unreleased build (a
 beta, or main before the bump) ships `latest.md` as a draft entry instead, so

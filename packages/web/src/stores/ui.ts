@@ -93,13 +93,10 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   /**
-   * On first load after an update, show everything released since the version
-   * this browser last saw — not just the newest.
+   * On first load after an update, announce the running version — and only it.
    *
-   * Skipping a release is the normal case, not an edge one: the app updates in
-   * the background and people go a fortnight between sessions. The old build
-   * could only ever show the notes for the exact commit it was running, so
-   * anything in between was lost for good.
+   * Older notes are not lost the way they used to be; they are in the settings
+   * page, which now has the whole history because every deploy ships it.
    */
   async function checkForChangelog(): Promise<void> {
     const seen = lastSeenVersion();
