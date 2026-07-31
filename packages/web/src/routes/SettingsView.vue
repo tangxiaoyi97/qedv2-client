@@ -238,11 +238,11 @@ async function doLogout(): Promise<void> {
   await auth.logout();
 }
 
-/** „Was ist neu" button — re-opens this build's changelog if one exists. */
+/** Opens the full release history — every version, not just this build's. */
 const changelogState = ref<'idle' | 'loading' | 'none'>('idle');
 async function openChangelog(): Promise<void> {
   changelogState.value = 'loading';
-  const found = await ui.showCurrentChangelog();
+  const found = await ui.showChangelogHistory();
   changelogState.value = found ? 'idle' : 'none';
   if (!found) setTimeout(() => (changelogState.value = 'idle'), 2500);
 }
@@ -385,7 +385,7 @@ async function openChangelog(): Promise<void> {
       </div>
       <div class="settings__versions-actions">
         <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
-          {{ changelogState === 'none' ? 'Keine Hinweise für diesen Build' : 'Was ist neu' }}
+          {{ changelogState === 'none' ? 'Keine Versionshinweise gefunden' : 'Änderungen' }}
         </QButton>
         <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
           Nach Updates suchen

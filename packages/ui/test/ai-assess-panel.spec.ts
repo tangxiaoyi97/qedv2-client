@@ -80,10 +80,13 @@ describe('AiAssessPanel', () => {
   });
 
   it('always identifies itself as a machine', () => {
+    // The shared AiBadge, not a local chip: this mark also sits beside the
+    // official Lösungsweg, and the two must be the same object so they cannot
+    // drift into looking like different things.
     const idle = mount(AiAssessPanel, { props: { labels: LABELS } });
-    expect(idle.get('.q-aia__badge').text()).toBe('KI');
+    expect(idle.get('.q-aibadge').text()).toBe('KI');
     const done = mount(AiAssessPanel, { props: { labels: LABELS, criteria: [crit()] } });
-    expect(done.get('.q-aia__badge').text()).toBe('KI');
+    expect(done.get('.q-aibadge').text()).toBe('KI');
   });
 
   it('offers a retry after a failure', async () => {

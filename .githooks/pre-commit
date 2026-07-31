@@ -1,4 +1,12 @@
 #!/bin/sh
-# Sync the root package.json version into packages/*/package.json so the
-# bump rides the same commit (see scripts/sync-version.mjs).
-node "$(git rev-parse --show-toplevel)/scripts/sync-version.mjs"
+# Release assembly, inside the commit you are already making.
+#
+#  1. sync the root package.json version into packages/*/package.json
+#  2. if that version has no CHANGELOG.md section yet, fold latest.md into one
+#
+# Both re-stage what they touch, so bumping the root version and writing
+# latest.md is the whole release ritual — everything else follows from it.
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+node "$ROOT/scripts/sync-version.mjs"
+node "$ROOT/scripts/fold-changelog.mjs"

@@ -15,6 +15,7 @@
  *    would be worse than no explanation at all.
  */
 import { computed } from 'vue';
+import AiBadge from '../shared/AiBadge.vue';
 import MarkdownView from '../shared/MarkdownView.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
 
@@ -50,13 +51,13 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
     -->
     <button v-if="idle" type="button" class="q-aix__offer" @click="emit('ask')">
       <span class="q-aix__offer-label">{{ offerLabel ?? 'Warum?' }}</span>
-      <span class="q-aix__badge">KI</span>
+      <AiBadge size="md" class="q-aix__badge" />
     </button>
 
     <template v-else>
     <div class="q-aix__head">
       <h4 id="q-aix-title" class="q-aix__title">{{ titleLabel ?? 'Erklärung' }}</h4>
-      <span class="q-aix__badge">KI</span>
+      <AiBadge class="q-aix__badge" />
       <button
         v-if="hasAnswer || error"
         type="button"
@@ -169,16 +170,8 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
   font-weight: 700;
   color: var(--q-ink);
 }
-/* Marks the whole block as machine-written, not part of the official answer. */
-.q-aix__badge {
-  font: 800 9.5px 'Public Sans', system-ui, sans-serif;
-  letter-spacing: 0.1em;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: var(--q-neutral-bg);
-  border: 1px solid var(--q-neutral-border);
-  color: var(--q-neutral);
-}
+/* Appearance lives in AiBadge — identical here and in the assessment panel.
+ * This class only positions it. */
 .q-aix__dismiss {
   margin-left: auto;
   border: none;

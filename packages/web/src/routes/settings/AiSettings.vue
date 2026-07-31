@@ -30,9 +30,14 @@ function saveInstructions(): void {
   void app.updateConfig({ aiCustomInstructions: customInstructions.value.trim() });
 }
 
-const PROVIDERS = [
-  { id: 'openai' as const, label: 'OpenAI / ChatGPT', hint: 'auch Azure, OpenRouter, DeepSeek, Ollama' },
-  { id: 'gemini' as const, label: 'Google Gemini', hint: 'großzügiges Gratis-Kontingent' },
+/**
+ * A hint is for what OUR side supports, not for what a vendor currently gives
+ * away — free tiers change without telling us, and a promise we cannot keep
+ * belongs in nobody's settings page.
+ */
+const PROVIDERS: { id: 'openai' | 'gemini'; label: string; hint?: string }[] = [
+  { id: 'openai', label: 'OpenAI / ChatGPT', hint: 'auch Azure, OpenRouter, DeepSeek, Ollama' },
+  { id: 'gemini', label: 'Google Gemini' },
 ];
 
 const provider = ref<'openai' | 'gemini'>('openai');
@@ -217,7 +222,7 @@ async function remove(): Promise<void> {
                 @click="provider = p.id"
               >
                 <span class="ai-set__provider-label">{{ p.label }}</span>
-                <span class="ai-set__provider-hint">{{ p.hint }}</span>
+                <span v-if="p.hint" class="ai-set__provider-hint">{{ p.hint }}</span>
               </button>
             </div>
           </div>
@@ -480,6 +485,9 @@ async function remove(): Promise<void> {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  /* Grid rows are equal height; a card with no hint centres its label rather
+   * than hanging from the top next to one that has two lines. */
+  justify-content: center;
   gap: 2px;
   min-height: 44px;
   padding: 9px 12px;

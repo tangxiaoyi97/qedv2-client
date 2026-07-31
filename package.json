@@ -13,7 +13,8 @@
     "build": "pnpm --filter @qed2/web build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "version:sync": "node scripts/sync-version.mjs"
+    "version:sync": "node scripts/sync-version.mjs",
+    "changelog:fold": "node scripts/fold-changelog.mjs"
   },
   "devDependencies": {
     "typescript": "^5.8.3"

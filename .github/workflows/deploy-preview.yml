@@ -49,8 +49,6 @@ jobs:
           QED2_CHANNEL: preview
           QED2_DEFAULT_CORE: https://qedcore-pv.barcarolle.studio
           QED2_DEFAULT_SERVER: https://qedsync-pv.barcarolle.studio
-          # The changelog dialog belongs to real releases.
-          CHANGELOG_CHANGED: '0'
         run: pnpm --filter @qed2/web build
 
       # Proves the artifact belongs to the channel it claims — a source-level

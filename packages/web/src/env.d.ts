@@ -20,6 +20,27 @@ declare module '*/commit.mjs' {
   export function resolveVersion(): string;
 }
 
+/** The changelog format (see <repo>/scripts/changelog.mjs) — shared by the
+ *  release-time fold and the build-time compile, so its tests live here. */
+declare module '*/changelog.mjs' {
+  export interface ChangelogSection {
+    version: string;
+    date: string;
+    body: string;
+  }
+  export const CHANGELOG_PREAMBLE: string;
+  export function parseChangelog(text: string): ChangelogSection[];
+  export function normalizeDraft(draft: string, version: string): string;
+  export function formatSection(version: string, date: string, body: string): string;
+  export function prependSection(
+    changelog: string,
+    version: string,
+    date: string,
+    body: string,
+  ): string | null;
+  export function isPrerelease(version: string): boolean;
+}
+
 /** Node-only build helper (see scripts/channel.mjs) — typed for vite.config. */
 declare module '*/channel.mjs' {
   export function resolveChannel(): 'stable' | 'preview';

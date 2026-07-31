@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/archive-changelog.mjs && cp dist/index.html dist/404.html",
+    "build": "vite build && node scripts/build-changelog.mjs && cp dist/index.html dist/404.html",
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "vue-tsc --noEmit",

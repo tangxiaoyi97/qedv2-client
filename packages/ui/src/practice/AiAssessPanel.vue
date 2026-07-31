@@ -13,6 +13,7 @@
  * instead of taking its word.
  */
 import { computed } from 'vue';
+import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
 
@@ -65,7 +66,7 @@ const shaky = (c: AssessedCriterion): boolean =>
 <template>
   <section class="q-aia">
     <button v-if="idle" type="button" class="q-aia__ask" @click="emit('ask')">
-      <span class="q-aia__badge">KI</span>
+      <AiBadge size="md" />
       Vorschlag holen
     </button>
 
@@ -80,7 +81,7 @@ const shaky = (c: AssessedCriterion): boolean =>
 
     <template v-else>
       <div class="q-aia__head">
-        <span class="q-aia__badge">KI</span>
+        <AiBadge />
         <span class="q-aia__head-text">
           {{ advisoryOnly ? 'Nur als Hinweis — bitte selbst entscheiden' : 'Vorschlag — bitte prüfen' }}
         </span>
@@ -151,17 +152,6 @@ const shaky = (c: AssessedCriterion): boolean =>
 <style scoped>
 .q-aia {
   margin-top: 12px;
-}
-
-.q-aia__badge {
-  font: 800 9.5px 'Public Sans', system-ui, sans-serif;
-  letter-spacing: 0.1em;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: var(--q-neutral-bg);
-  border: 1px solid var(--q-neutral-border);
-  color: var(--q-neutral);
-  flex: none;
 }
 
 .q-aia__ask {

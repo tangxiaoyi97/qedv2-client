@@ -25,24 +25,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          # need the previous commit to diff latest.md against
-          fetch-depth: 2
-
-      - name: Detect changelog change
-        id: changelog
-        run: |
-          before='${{ github.event.before }}'
-          # Fall back to HEAD~1 for manual runs / missing before sha.
-          if [ -z "$before" ] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
-            before="$(git rev-parse HEAD~1 2>/dev/null || echo '')"
-          fi
-          if [ -n "$before" ] && git diff --name-only "$before" '${{ github.sha }}' \
-              | grep -qx 'packages/web/public/changelogs/latest.md'; then
-            echo "changed=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=0" >> "$GITHUB_OUTPUT"
-          fi
 
       - uses: pnpm/action-setup@v4
         with:
@@ -64,9 +46,9 @@ jobs:
       - name: Test
         run: pnpm -r test
 
+      # The changelog needs nothing from CI: which notes ship is decided by
+      # CHANGELOG.md, which the release commit already carries.
       - name: Build web
-        env:
-          CHANGELOG_CHANGED: ${{ steps.changelog.outputs.changed }}
         run: pnpm --filter @qed2/web build
 
       - uses: actions/configure-pages@v5

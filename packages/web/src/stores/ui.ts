@@ -5,9 +5,13 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { translate, type Locale, type MessageKey } from '../i18n.js';
+import { entriesToAnnounce, parseChangelogIndex, type ChangelogEntry } from '../changelog.js';
+import { APP_VERSION } from '../services.js';
 
 const LOCALE_KEY = 'qed2.locale';
-const LAST_SEEN_COMMIT_KEY = 'qed2.lastSeenCommit';
+const LAST_SEEN_VERSION_KEY = 'qed2.lastSeenVersion';
+/** Pre-2.0 marker. Read once, to tell an upgrader from a fresh install. */
+const LEGACY_LAST_SEEN_COMMIT_KEY = 'qed2.lastSeenCommit';
 
 /** Build commit baked in by vite (define). 'dev' when built without git. */
 const APP_COMMIT: string = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev';
@@ -15,12 +19,6 @@ const APP_COMMIT: string = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ :
 function initialLocale(): Locale {
   if (typeof window === 'undefined') return 'de';
   return window.localStorage.getItem(LOCALE_KEY) === 'en' ? 'en' : 'de';
-}
-
-/** The service worker can answer a missing changelog with the app shell
- *  (index.html, 200 OK) — HTML is NOT a changelog, drop it silently. */
-function looksLikeHtml(text: string): boolean {
-  return /^\s*</.test(text);
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -48,75 +46,93 @@ export const useUiStore = defineStore('ui', () => {
     authModalOpen.value = false;
   }
 
-  /* ---- changelog-on-update dialog ---- */
-  const changelogMarkdown = ref<string | null>(null);
-  const changelogOpen = computed(() => changelogMarkdown.value !== null);
+  /* ---- changelog ---- */
 
-  function lastSeenCommit(): string | null {
+  /** All released notes, newest first. Fetched once, then reused. */
+  const changelogIndex = ref<ChangelogEntry[] | null>(null);
+  /** What the dialog is currently showing; empty means closed. */
+  const changelogShown = ref<ChangelogEntry[]>([]);
+  const changelogOpen = computed(() => changelogShown.value.length > 0);
+
+  function lastSeenVersion(): string | null {
     if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(LAST_SEEN_COMMIT_KEY);
+    const stored = window.localStorage.getItem(LAST_SEEN_VERSION_KEY);
+    if (stored !== null) return stored;
+    /*
+     * Migration off the commit-keyed marker. A commit cannot be mapped to a
+     * version, but its presence proves this browser ran an older build — so
+     * treat it as "seen something unknown", which announces this version only.
+     * A fresh install has neither key and is adopted silently.
+     */
+    return window.localStorage.getItem(LEGACY_LAST_SEEN_COMMIT_KEY) === null ? null : '';
   }
-  function rememberCommit(): void {
-    if (typeof window !== 'undefined') window.localStorage.setItem(LAST_SEEN_COMMIT_KEY, APP_COMMIT);
+
+  function rememberVersion(): void {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION);
+    window.localStorage.removeItem(LEGACY_LAST_SEEN_COMMIT_KEY);
   }
 
   /**
-   * On first load after an update, fetch this build's changelog and pop the
-   * dialog. Skips when the commit is unknown ('dev'), unchanged since last
-   * seen, or has no archived changelog (404). A network failure is left
-   * un-remembered so the next load retries.
+   * Load the index. Cached in memory; a network failure returns null and is
+   * NOT remembered, so the next load retries rather than losing the notes.
+   */
+  async function loadChangelogIndex(): Promise<ChangelogEntry[] | null> {
+    if (changelogIndex.value !== null) return changelogIndex.value;
+    const base = import.meta.env.BASE_URL || '/';
+    try {
+      const res = await fetch(`${base}changelogs/index.json`, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const parsed = parseChangelogIndex(await res.text());
+      if (parsed === null) return null;
+      changelogIndex.value = parsed;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * On first load after an update, show everything released since the version
+   * this browser last saw — not just the newest.
+   *
+   * Skipping a release is the normal case, not an edge one: the app updates in
+   * the background and people go a fortnight between sessions. The old build
+   * could only ever show the notes for the exact commit it was running, so
+   * anything in between was lost for good.
    */
   async function checkForChangelog(): Promise<void> {
-    if (APP_COMMIT === 'dev') return;
-    // First run ever: adopt the current commit silently, don't announce.
-    if (lastSeenCommit() === null) {
-      rememberCommit();
-      return;
-    }
-    if (lastSeenCommit() === APP_COMMIT) return;
+    const seen = lastSeenVersion();
+    if (seen === APP_VERSION) return;
 
-    const base = import.meta.env.BASE_URL || '/';
-    const url = `${base}changelogs/${APP_COMMIT}.md`;
-    let res: Response;
-    try {
-      res = await fetch(url, { cache: 'no-store' });
-    } catch {
-      return; // offline — retry next load, stay un-remembered
-    }
-    if (res.status === 404) {
-      rememberCommit(); // this build ships no notes — don't ask again
+    const entries = await loadChangelogIndex();
+    if (entries === null) return; // offline — retry next load, stay un-remembered
+
+    const announce = entriesToAnnounce(entries, APP_VERSION, seen);
+    if (announce.length === 0) {
+      rememberVersion(); // nothing to say for this build — don't ask again
       return;
     }
-    if (!res.ok) return;
-    const text = (await res.text()).trim();
-    if (text === '' || looksLikeHtml(text)) {
-      rememberCommit();
-      return;
-    }
-    changelogMarkdown.value = text;
+    changelogShown.value = announce;
     // remembered only when the user dismisses (closeChangelog)
   }
 
   function closeChangelog(): void {
-    changelogMarkdown.value = null;
-    rememberCommit();
+    changelogShown.value = [];
+    rememberVersion();
   }
 
-  /** Settings button: fetch THIS build's changelog regardless of the
-   *  last-seen marker. Returns false when the build ships no notes. */
-  async function showCurrentChangelog(): Promise<boolean> {
-    if (APP_COMMIT === 'dev') return false;
-    const base = import.meta.env.BASE_URL || '/';
-    try {
-      const res = await fetch(`${base}changelogs/${APP_COMMIT}.md`, { cache: 'no-store' });
-      if (!res.ok) return false;
-      const text = (await res.text()).trim();
-      if (text === '' || looksLikeHtml(text)) return false;
-      changelogMarkdown.value = text;
-      return true;
-    } catch {
-      return false;
-    }
+  /**
+   * Settings button: the full history, every version the app has ever shipped.
+   *
+   * Now possible at all because the whole file ships on every deploy. Returns
+   * false only when the index cannot be reached.
+   */
+  async function showChangelogHistory(): Promise<boolean> {
+    const entries = await loadChangelogIndex();
+    if (entries === null || entries.length === 0) return false;
+    changelogShown.value = entries;
+    return true;
   }
 
   return {
@@ -128,10 +144,10 @@ export const useUiStore = defineStore('ui', () => {
     openAuthModal,
     closeAuthModal,
     appCommit: APP_COMMIT,
-    changelogMarkdown,
+    changelogShown,
     changelogOpen,
     checkForChangelog,
     closeChangelog,
-    showCurrentChangelog,
+    showChangelogHistory,
   };
 });

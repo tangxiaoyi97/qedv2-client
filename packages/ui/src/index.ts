@@ -10,6 +10,7 @@ export { default as QButton } from './shared/QButton.vue';
 export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';
 export { default as QSkeleton } from './shared/QSkeleton.vue';
+export { default as AiBadge } from './shared/AiBadge.vue';
 export { default as QLoadingPanel } from './shared/QLoadingPanel.vue';
 export { default as QNotice } from './shared/QNotice.vue';
 export { default as MarkdownView } from './shared/MarkdownView.vue';

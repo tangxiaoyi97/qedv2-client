@@ -1,24 +1,54 @@
-# Changelog-on-update
+# Release notes
 
-`latest.md` holds the update notes for the CURRENT unreleased build. Write it
-in the same commit as the change (Markdown: `#`/`##`/`###`, `-` lists, `**bold**`,
-`` `code` ``, `[text](url)`).
+Two files, one direction of travel:
 
-On deploy the build script (`scripts/archive-changelog.mjs`) archives it as
-`<commit-sha>.md` **only when**:
+```
+latest.md                      you write here, any time
+   │  pre-commit hook, when the root package.json version is new
+   ▼
+<repo>/CHANGELOG.md            released history, newest first
+   │  build (packages/web/scripts/build-changelog.mjs)
+   ▼
+dist/changelogs/index.json     what the app fetches
+```
 
-1. `latest.md` is non-empty, AND
-2. `latest.md` was changed in this push (the CI passes `CHANGELOG_CHANGED`;
-   local builds always archive so you can preview).
+## Writing notes
 
-The archived file lands in `dist/changelogs/<sha>.md`. The app bakes in its own
-build commit and, on first load after an update, fetches `/changelogs/<sha>.md`;
-if it exists it shows the update dialog, otherwise nothing pops. So a version
-with no `latest.md` changes simply never pops a dialog.
+Put whatever you want to announce in `latest.md`. Markdown: `###` headings,
+`-` lists, `**bold**`, `` `code` ``, `[text](url)`.
 
-You don't have to empty `latest.md` — leaving last version's notes is harmless
-because an unchanged `latest.md` is not re-archived. Overwrite it when you have
-something new to announce.
+**Do not write the version number.** It comes from the root `package.json` and
+is rendered as the section heading. A leading `# …` line is demoted to `###`
+with any version echo removed, so the old `# QED2 1.9.6 - layout update!` habit
+still produces `### layout update!` — but you may as well write `### layout
+update!` yourself.
 
-This README and `latest.md` are the only files kept here in git; archived
-`<sha>.md` files exist only in build output, never committed.
+## Releasing
+
+Bump `version` in the **root** `package.json` and commit. The pre-commit hook
+does the rest:
+
+1. `sync-version.mjs` copies the version into every `packages/*/package.json`
+2. `fold-changelog.mjs` moves `latest.md` into a new `## <version> — <date>`
+   section at the top of `CHANGELOG.md` and empties `latest.md`
+
+Both re-stage what they touched, so it stays one ordinary commit. Nothing runs
+in CI and nothing pushes back to the repository.
+
+The fold is a no-op for prerelease versions (`2.0.0-beta.3`), for a version that
+already has a section, and for an empty `latest.md` — so the hook is safe to run
+on every commit.
+
+## What the app does with it
+
+Every deploy ships the **whole** history as `dist/changelogs/index.json`. The app
+remembers the last version it showed you (`qed2.lastSeenVersion`) and, after an
+update, shows every section between that one and the running one — skipping
+three releases means reading three sets of notes, not losing two. The settings
+page opens the same dialog with the full list.
+
+A build whose version has no section announces nothing. An unreleased build (a
+beta, or main before the bump) ships `latest.md` as a draft entry instead, so
+the dialog can be checked before it is real.
+
+Only this README and `latest.md` live here in git; `index.json` is build output.
