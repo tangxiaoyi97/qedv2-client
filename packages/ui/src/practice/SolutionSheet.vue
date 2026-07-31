@@ -404,6 +404,13 @@ onBeforeUnmount(() => {
       <div v-if="$slots.assessment" class="q-ssheet__assessment">
         <slot name="assessment" />
       </div>
+
+      <!--
+        AI explanation, below the official solution and clearly separated from
+        it. Order matters: the checked answer is read first, the machine's
+        commentary second.
+      -->
+      <slot name="explain" />
     </div>
     </section>
   </div>

@@ -31,6 +31,7 @@ import {
   QButton,
   QChip,
   RichTextView,
+  AiExplainPanel,
   PracticeBottomBar,
   PracticeQuestionHeader,
   PracticeSessionDrawer,
@@ -45,6 +46,7 @@ import {
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
+import { useAiStore } from '../stores/ai.js';
 import { useAuthStore } from '../stores/auth.js';
 import { historyLog } from '../services.js';
 
@@ -203,6 +205,85 @@ const primaryDisabled = computed(
     return false;
   },
 );
+
+/* --- AI explanation -------------------------------------------------------
+ * Nothing is fetched until the user presses the button: the call costs real
+ * money, and most answers do not need explaining.
+ */
+const ai = useAiStore();
+
+const explainDismissed = ref(new Set<string>());
+const explainLoading = ref(false);
+const explainError = ref<string | null>(null);
+
+/** The answer text the explanation is about — the same projection the preview shows. */
+const explainSubmission = computed(() => playerState.value.answerPreview?.value ?? '');
+
+const showExplain = computed(() => {
+  const result = playerState.value.result;
+  if (!result || result.verdict === 'correct') return false;
+  if (!ai.canExplain) return false;
+  return !explainDismissed.value.has(explainKey.value);
+});
+
+const explainKey = computed(() => `${current.value?.part.id ?? ''}|${explainSubmission.value}`);
+
+const explainState = computed(() => {
+  const hit = current.value ? ai.cached(current.value.part.id, explainSubmission.value) : undefined;
+  return {
+    markdown: hit?.markdown,
+    model: hit?.model,
+    source: hit?.source,
+    loading: explainLoading.value,
+    error: explainError.value ?? undefined,
+  };
+});
+
+async function askForExplanation(): Promise<void> {
+  const part = current.value;
+  const result = playerState.value.result;
+  if (!part || !result || explainLoading.value) return;
+  explainLoading.value = true;
+  explainError.value = null;
+  try {
+    await ai.explain({
+      question: part.question,
+      part: part.part,
+      submitted: explainSubmission.value,
+      result,
+    });
+  } catch (e) {
+    explainError.value = explainMessage(e);
+  } finally {
+    explainLoading.value = false;
+  }
+}
+
+function dismissExplanation(): void {
+  explainDismissed.value = new Set([...explainDismissed.value, explainKey.value]);
+  explainError.value = null;
+}
+
+/** Turn an API error code into something a student can act on. */
+function explainMessage(e: unknown): string {
+  const code = (e as { code?: string })?.code;
+  switch (code) {
+    case 'AI_NO_CREDENTIAL':
+      return 'Kein KI-Schlüssel hinterlegt — unter Optionen einrichten.';
+    case 'AI_QUOTA_EXCEEDED':
+    case 'AI_PROVIDER_QUOTA':
+      return 'Dein KI-Kontingent für diesen Monat ist aufgebraucht.';
+    case 'AI_KEY_REJECTED':
+      return 'Der KI-Anbieter hat den Schlüssel abgelehnt — bitte unter Optionen prüfen.';
+    case 'AI_RATE_LIMITED':
+      return 'Zu viele Anfragen — bitte kurz warten.';
+    case 'AI_TIMEOUT':
+    case 'AI_UNREACHABLE':
+      return 'Die KI war nicht erreichbar. Nochmal versuchen?';
+    default:
+      return 'Die Erklärung konnte nicht erzeugt werden.';
+  }
+}
 
 function onSelfGradingSelect(grading: Grading): void {
   playerCommand.value = { id: ++playerCommandId, type: 'set-grading', grading };
@@ -715,7 +796,21 @@ const currentCompetencyCodes = computed(() =>
           @self-grading-select="onSelfGradingSelect"
           @grading-select="onGradingSelect"
           @primary="primaryAction"
-        />
+        >
+          <!-- Offered only for a wrong or half-right answer, and only once the
+               account can actually pay for it (see aiStore.canExplain). -->
+          <template v-if="showExplain" #explain>
+            <AiExplainPanel
+              :markdown="explainState.markdown"
+              :loading="explainState.loading"
+              :error="explainState.error"
+              :model="explainState.model"
+              :source="explainState.source"
+              @ask="askForExplanation"
+              @dismiss="dismissExplanation"
+            />
+          </template>
+        </PracticeBottomBar>
 
         <div v-if="practice.warning" class="practice__warning" role="alert">{{ practice.warning }}</div>
         <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">

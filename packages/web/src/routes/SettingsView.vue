@@ -9,6 +9,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, useModalA11y } from '@qed2/ui';
+import AiSettings from './settings/AiSettings.vue';
 import { APP_VERSION } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
@@ -391,6 +392,8 @@ async function openChangelog(): Promise<void> {
         </QButton>
       </div>
     </section>
+
+    <AiSettings />
 
     <section class="settings__section">
       <template v-if="auth.isLoggedIn">

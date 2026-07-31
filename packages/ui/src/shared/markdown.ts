@@ -28,7 +28,19 @@ export interface InlineLink {
   v: string;
   href: string;
 }
-export type MdInline = InlineText | InlineBold | InlineCode | InlineLink;
+/**
+ * Inline math, `$…$`.
+ *
+ * Added for AI explanations: the model is asked to write formulas in KaTeX, so
+ * without this an explanation reads "also ist $x = 4$" with the dollars intact.
+ * Changelogs simply never contain a `$…$` pair, so the same parser serves both.
+ */
+export interface InlineMath {
+  t: 'math';
+  v: string;
+}
+
+export type MdInline = InlineText | InlineBold | InlineCode | InlineLink | InlineMath;
 
 export interface MdHeading {
   t: 'heading';
@@ -39,12 +51,18 @@ export interface MdParagraph {
   t: 'paragraph';
   content: MdInline[];
 }
+/** Display math on its own line, `$$…$$`. */
+export interface MdMathBlock {
+  t: 'mathblock';
+  v: string;
+}
+
 export interface MdList {
   t: 'list';
   ordered: boolean;
   items: MdInline[][];
 }
-export type MdBlock = MdHeading | MdParagraph | MdList;
+export type MdBlock = MdHeading | MdParagraph | MdList | MdMathBlock;
 
 function safeHref(raw: string): string | null {
   const href = raw.trim();
@@ -57,8 +75,19 @@ function safeHref(raw: string): string | null {
 /** Parse inline markup within a single line. */
 export function parseInline(line: string): MdInline[] {
   const out: MdInline[] = [];
-  // One regex, alternation ordered so the first match wins per position.
-  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g;
+  /*
+   * One regex, alternation ordered so the first match wins per position.
+   *
+   * Code comes BEFORE math: `$x$` inside backticks is a literal dollar sign.
+   *
+   * Math borrows KaTeX's own heuristic — no whitespace directly after the
+   * opening `$` or directly before the closing one. Without it, a paragraph
+   * saying "kostet 5$ und 3$ mehr" turns the middle into a formula, because
+   * paragraph lines are joined before this runs and a `\n` guard would never
+   * see anything.
+   */
+  const re =
+    /\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|\$(\S|\S[^$]*?\S)\$/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(line)) !== null) {
@@ -71,6 +100,8 @@ export function parseInline(line: string): MdInline[] {
       const href = safeHref(m[4]);
       if (href) out.push({ t: 'link', v: m[3], href });
       else out.push({ t: 'text', v: m[3] }); // drop unsafe link, keep text
+    } else if (m[5] !== undefined) {
+      out.push({ t: 'math', v: m[5] });
     }
     last = re.lastIndex;
   }
@@ -103,6 +134,14 @@ export function parseMarkdown(src: string): MdBlock[] {
 
   for (const rawLine of lines) {
     const line = rawLine.trimEnd();
+    // A line that is nothing but `$$…$$` is display math.
+    const mathBlock = /^\$\$(.+)\$\$$/.exec(line.trim());
+    if (mathBlock?.[1]) {
+      flushParagraph();
+      flushList();
+      blocks.push({ t: 'mathblock', v: mathBlock[1].trim() });
+      continue;
+    }
     const heading = /^(#{1,3})\s+(.*)$/.exec(line);
     const ul = /^[-*]\s+(.*)$/.exec(line);
     const ol = /^\d+\.\s+(.*)$/.exec(line);

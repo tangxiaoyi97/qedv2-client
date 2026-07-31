@@ -1,0 +1,219 @@
+<script setup lang="ts">
+/**
+ * "Warum?" — the AI explanation of a wrong answer, inside the solution drawer.
+ *
+ * Three deliberate choices:
+ *
+ *  - It does NOTHING until asked. The request costs real money, and an answer
+ *    the user did not want is worse than no answer, so the panel starts as a
+ *    single button.
+ *  - It is visibly not the official solution. The official Lösungsweg is
+ *    authoritative; this is a machine's reading of YOUR answer, and the two
+ *    must never blur together on the same screen.
+ *  - It renders Markdown AND KaTeX. The model is asked for formulas in `$…$`,
+ *    and an explanation that says "also ist $x = 4$" with the dollars showing
+ *    would be worse than no explanation at all.
+ */
+import { computed } from 'vue';
+import MarkdownView from '../shared/MarkdownView.vue';
+import QSkeleton from '../shared/QSkeleton.vue';
+
+const props = defineProps<{
+  /** Rendered explanation, once there is one. */
+  markdown?: string | undefined;
+  loading?: boolean;
+  /** Human-readable failure; the panel stays usable and offers a retry. */
+  error?: string | undefined;
+  /** Shown as provenance once an answer exists. */
+  model?: string | undefined;
+  /** 'byo' | 'pool' — whose key paid for it. */
+  source?: string | undefined;
+}>();
+
+const emit = defineEmits<{ ask: []; dismiss: [] }>();
+
+const hasAnswer = computed(() => Boolean(props.markdown?.trim()));
+const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
+</script>
+
+<template>
+  <section class="q-aix" aria-labelledby="q-aix-title">
+    <div class="q-aix__head">
+      <h4 id="q-aix-title" class="q-aix__title">Erklärung</h4>
+      <span class="q-aix__badge">KI</span>
+      <button
+        v-if="hasAnswer || error"
+        type="button"
+        class="q-aix__dismiss"
+        aria-label="Erklärung ausblenden"
+        @click="emit('dismiss')"
+      >
+        ✕
+      </button>
+    </div>
+
+    <!-- Idle: one button, nothing fetched. -->
+    <button v-if="idle" type="button" class="q-aix__ask" @click="emit('ask')">
+      Warum ist das falsch?
+    </button>
+
+    <div v-else-if="loading" class="q-aix__loading">
+      <!-- Rows shaped like the prose that replaces them, so nothing jumps. -->
+      <QSkeleton :rows="3" height="16px" radius="6px" gap="9px" label="Erklärung wird erzeugt …" />
+      <span class="q-aix__loading-label">Die KI liest deine Antwort …</span>
+    </div>
+
+    <div v-else-if="error" class="q-aix__error" role="alert">
+      <p class="q-aix__error-text">{{ error }}</p>
+      <button type="button" class="q-aix__ask q-aix__ask--retry" @click="emit('ask')">
+        Nochmal versuchen
+      </button>
+    </div>
+
+    <template v-else>
+      <div class="q-aix__body q-reveal">
+        <MarkdownView :source="markdown ?? ''" />
+      </div>
+      <!--
+        Provenance and a warning, permanently attached to the text. The
+        official solution above is checked; this is not, and the reader has to
+        be able to tell at a glance which is which.
+      -->
+      <p class="q-aix__foot">
+        Von einer KI erzeugt — kann Fehler enthalten. Maßgeblich ist der offizielle Lösungsweg.
+        <span v-if="model" class="q-aix__model">{{ model }}<template v-if="source"> · {{ source === 'pool' ? 'Kontingent' : 'eigener Schlüssel' }}</template></span>
+      </p>
+    </template>
+  </section>
+</template>
+
+<style scoped>
+.q-aix {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--q-border-2);
+}
+
+.q-aix__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.q-aix__title {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--q-ink);
+}
+/* Marks the whole block as machine-written, not part of the official answer. */
+.q-aix__badge {
+  font: 800 9.5px 'Public Sans', system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--q-neutral-bg);
+  border: 1px solid var(--q-neutral-border);
+  color: var(--q-neutral);
+}
+.q-aix__dismiss {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--q-faint);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .q-aix__dismiss:hover {
+    color: var(--q-ink);
+    background: var(--q-panel);
+  }
+}
+
+.q-aix__ask {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--q-border-2);
+  border-radius: 10px;
+  background: var(--q-card);
+  color: var(--q-ink);
+  font: 700 13px 'Public Sans', system-ui, sans-serif;
+  cursor: pointer;
+  transition: border-color var(--q-transition-fast), background var(--q-transition-fast);
+}
+@media (hover: hover) and (pointer: fine) {
+  .q-aix__ask:hover {
+    border-color: var(--q-accent);
+    background: var(--q-accent-bg);
+  }
+}
+.q-aix__ask:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.q-aix__ask--retry {
+  min-height: 38px;
+  font-size: 12.5px;
+}
+
+.q-aix__loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.q-aix__loading-label {
+  font-size: 11.5px;
+  color: var(--q-faint);
+}
+
+.q-aix__error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid var(--q-err-border);
+  background: var(--q-err-bg);
+  border-radius: 9px;
+}
+.q-aix__error-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--q-err-ink);
+}
+
+.q-aix__body {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--q-ink-2);
+}
+/* A long derivation scrolls inside the panel instead of widening the drawer. */
+.q-aix__body :deep(.q-md__mathblock) {
+  max-width: 100%;
+}
+.q-aix__body :deep(p:first-child) {
+  margin-top: 0;
+}
+.q-aix__body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.q-aix__foot {
+  margin: 12px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--q-faint);
+}
+.q-aix__model {
+  display: block;
+  margin-top: 2px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--q-hint);
+}
+</style>

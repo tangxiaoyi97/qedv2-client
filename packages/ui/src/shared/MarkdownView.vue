@@ -1,10 +1,16 @@
 <script setup lang="ts">
 /**
- * Renders a trusted short Markdown document (changelogs) via the safe token
- * tree from markdown.ts — never v-html. Links open in a new tab with
- * rel="noopener".
+ * Renders a short Markdown document via the safe token tree from markdown.ts —
+ * never v-html. Links open in a new tab with rel="noopener".
+ *
+ * Used for changelogs and for AI explanations. The latter contain KaTeX, which
+ * is why `$…$` and `$$…$$` are part of the token tree: an explanation that
+ * says "also ist $x = 4$" has to render as mathematics, not as dollar signs.
+ * MathText already fails soft on bad input, so a malformed formula degrades to
+ * readable source instead of breaking the page.
  */
 import { computed } from 'vue';
+import MathText from './MathText.vue';
 import { parseMarkdown } from './markdown.js';
 
 const props = defineProps<{ source: string }>();
@@ -24,6 +30,7 @@ const blocks = computed(() => parseMarkdown(props.source));
         <template v-for="(node, ni) in block.content" :key="ni">
           <strong v-if="node.t === 'bold'">{{ node.v }}</strong>
           <code v-else-if="node.t === 'code'" class="q-md__code">{{ node.v }}</code>
+          <MathText v-else-if="node.t === 'math'" :src="node.v" />
           <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
           <template v-else>{{ node.v }}</template>
         </template>
@@ -34,7 +41,8 @@ const blocks = computed(() => parseMarkdown(props.source));
           <template v-for="(node, ni) in item" :key="ni">
             <strong v-if="node.t === 'bold'">{{ node.v }}</strong>
             <code v-else-if="node.t === 'code'" class="q-md__code">{{ node.v }}</code>
-            <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
+            <MathText v-else-if="node.t === 'math'" :src="node.v" />
+          <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
             <template v-else>{{ node.v }}</template>
           </template>
         </li>
@@ -45,16 +53,22 @@ const blocks = computed(() => parseMarkdown(props.source));
           <template v-for="(node, ni) in item" :key="ni">
             <strong v-if="node.t === 'bold'">{{ node.v }}</strong>
             <code v-else-if="node.t === 'code'" class="q-md__code">{{ node.v }}</code>
-            <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
+            <MathText v-else-if="node.t === 'math'" :src="node.v" />
+          <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
             <template v-else>{{ node.v }}</template>
           </template>
         </li>
       </ol>
 
+      <div v-else-if="block.t === 'mathblock'" class="q-md__mathblock">
+        <MathText :src="block.v" display />
+      </div>
+
       <p v-else-if="block.t === 'paragraph'" class="q-md__p">
         <template v-for="(node, ni) in block.content" :key="ni">
           <strong v-if="node.t === 'bold'">{{ node.v }}</strong>
           <code v-else-if="node.t === 'code'" class="q-md__code">{{ node.v }}</code>
+          <MathText v-else-if="node.t === 'math'" :src="node.v" />
           <a v-else-if="node.t === 'link'" :href="node.href" target="_blank" rel="noopener">{{ node.v }}</a>
           <template v-else>{{ node.v }}</template>
         </template>
@@ -90,6 +104,15 @@ const blocks = computed(() => parseMarkdown(props.source));
   letter-spacing: 0.04em;
   color: var(--q-mut);
 }
+/* Display math gets room and scrolls on its own rather than widening the
+ * page — a long derivation on a phone is otherwise unreadable or, worse,
+ * pans the whole layout. */
+.q-md__mathblock {
+  margin: 10px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .q-md__p {
   margin: 8px 0;
 }

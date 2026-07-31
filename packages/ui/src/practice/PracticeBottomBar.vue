@@ -111,6 +111,9 @@ const emit = defineEmits<{
           />
         </div>
       </template>
+
+      <!-- Forwarded straight through: the bar has no opinion about AI. -->
+      <template v-if="$slots.explain" #explain><slot name="explain" /></template>
     </SolutionSheet>
 
     <div class="practice-bar__row">
