@@ -21,9 +21,9 @@ const channel = process.argv[2] === 'preview' ? 'preview' : 'stable';
 const dist = join(process.cwd(), 'dist');
 
 const PREVIEW_TOKENS = [
-  'preview.qed.barcarolle.studio',
-  'preview.qedcore.barcarolle.studio',
-  'preview.qedsync.barcarolle.studio',
+  'qed-pv.barcarolle.studio',
+  'qedcore-pv.barcarolle.studio',
+  'qedsync-pv.barcarolle.studio',
   'QED2-CHANNEL:preview',
 ];
 

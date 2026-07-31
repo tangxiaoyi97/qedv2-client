@@ -47,12 +47,12 @@ describe('release channel', () => {
   it('passes the preview endpoints through verbatim', () => {
     const endpoints = withEnv(
       {
-        QED2_DEFAULT_CORE: 'https://preview.qedcore.barcarolle.studio',
-        QED2_DEFAULT_SERVER: 'https://preview.qedsync.barcarolle.studio',
+        QED2_DEFAULT_CORE: 'https://qedcore-pv.barcarolle.studio',
+        QED2_DEFAULT_SERVER: 'https://qedsync-pv.barcarolle.studio',
       },
       resolveEndpoints,
     );
-    expect(endpoints.core).toBe('https://preview.qedcore.barcarolle.studio');
-    expect(endpoints.server).toBe('https://preview.qedsync.barcarolle.studio');
+    expect(endpoints.core).toBe('https://qedcore-pv.barcarolle.studio');
+    expect(endpoints.server).toBe('https://qedsync-pv.barcarolle.studio');
   });
 });

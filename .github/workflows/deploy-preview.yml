@@ -47,8 +47,8 @@ jobs:
       - name: Build (preview channel)
         env:
           QED2_CHANNEL: preview
-          QED2_DEFAULT_CORE: https://preview.qedcore.barcarolle.studio
-          QED2_DEFAULT_SERVER: https://preview.qedsync.barcarolle.studio
+          QED2_DEFAULT_CORE: https://qedcore-pv.barcarolle.studio
+          QED2_DEFAULT_SERVER: https://qedsync-pv.barcarolle.studio
           # The changelog dialog belongs to real releases.
           CHANGELOG_CHANGED: '0'
         run: pnpm --filter @qed2/web build
@@ -88,4 +88,4 @@ jobs:
           ssh "$USER@$HOST" "ln -sfn '$REL' '$ROOT/current.tmp' && mv -Tf '$ROOT/current.tmp' '$ROOT/current'"
           # Keep the last five so a rollback is one symlink swap.
           ssh "$USER@$HOST" "cd '$ROOT/releases' && ls -1dt */ | tail -n +6 | xargs -r rm -rf"
-          echo "deployed ${GITHUB_SHA::7} to preview.qed.barcarolle.studio"
+          echo "deployed ${GITHUB_SHA::7} to qed-pv.barcarolle.studio"

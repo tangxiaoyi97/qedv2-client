@@ -13,8 +13,8 @@ import { PWA_MANIFEST } from './scripts/pwa-manifest.mjs';
 /**
  * Release channel, chosen at build time.
  *  stable  → GitHub Pages, qed.barcarolle.studio (production core + server)
- *  preview → self-hosted :1408, preview.qed.barcarolle.studio
- *            (preview.qedcore :1709 + preview.qedsync :2810)
+ *  preview → self-hosted :1408, qed-pv.barcarolle.studio
+ *            (qedcore-pv :1709 + qedsync-pv :2810)
  * The two must never share an origin: same origin means one IndexedDB, and a
  * preview build with a changed archive shape would sync corruption into real
  * accounts with a perfectly valid checksum.
