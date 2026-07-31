@@ -14,6 +14,7 @@ import { computed, ref } from 'vue';
 import { QButton, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
 import { useAppStore } from '../../stores/app.js';
+import { historyLog } from '../../services.js';
 
 const ai = useAiStore();
 const app = useAppStore();
@@ -69,6 +70,28 @@ async function save(): Promise<void> {
     error.value = (e as { message?: string })?.message ?? 'Konnte nicht gespeichert werden.';
   } finally {
     saving.value = false;
+  }
+}
+
+const exporting = ref(false);
+
+async function exportHistory(): Promise<void> {
+  exporting.value = true;
+  try {
+    const entries = await historyLog.exportAll();
+    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), entries }, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `qed2-verlauf-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    error.value = (e as { message?: string })?.message ?? 'Export fehlgeschlagen.';
+  } finally {
+    exporting.value = false;
   }
 }
 
@@ -245,6 +268,23 @@ async function remove(): Promise<void> {
         <p class="ai-set__hint">
           Wird an jede Anfrage angehängt. Die Regeln der App haben Vorrang — Punkte vergibst
           weiterhin nur du selbst. {{ customInstructions.length }}/600
+        </p>
+      </div>
+
+      <!--
+        The answers and self-assessed ticks live only on this device. Handing
+        them over has to be a deliberate act, so it is a button and not a sync.
+      -->
+      <div class="ai-set__field">
+        <label class="ai-set__label">Verlauf exportieren <span class="ai-set__opt">optional</span></label>
+        <div class="ai-set__actions ai-set__actions--start">
+          <QButton variant="secondary" :disabled="exporting" @click="exportHistory">
+            {{ exporting ? 'Wird erstellt …' : 'Als JSON speichern' }}
+          </QButton>
+        </div>
+        <p class="ai-set__hint">
+          Deine Antworten und Selbstbewertungen von diesem Gerät — für den Vergleich
+          „bewertet die KI so wie ich?". Verlässt das Gerät nur, wenn du sie weitergibst.
         </p>
       </div>
 
@@ -438,5 +478,8 @@ async function remove(): Promise<void> {
 .ai-set__actions {
   display: flex;
   justify-content: flex-end;
+}
+.ai-set__actions--start {
+  justify-content: flex-start;
 }
 </style>

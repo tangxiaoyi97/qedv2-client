@@ -68,6 +68,17 @@ export class HistoryLog {
     await this.storage.set(STORAGE.history, HISTORY_KEY, entries);
   }
 
+  /**
+   * Everything, for the user to take with them.
+   *
+   * Exists so the AI-agreement study has an input at all: the answers and the
+   * self-assessed ticks live only on this device, so there is no way to
+   * analyse them without the person handing them over deliberately.
+   */
+  async exportAll(): Promise<HistoryEntry[]> {
+    return this.read();
+  }
+
   /** Newest-first slice. */
   async list(limit = 200, offset = 0): Promise<HistoryEntry[]> {
     const entries = await this.read();
