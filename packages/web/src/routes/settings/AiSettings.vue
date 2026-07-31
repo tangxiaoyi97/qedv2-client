@@ -14,9 +14,22 @@ import { computed, ref } from 'vue';
 import { QButton, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
 import { useAuthStore } from '../../stores/auth.js';
+import { useAppStore } from '../../stores/app.js';
 
 const ai = useAiStore();
 const auth = useAuthStore();
+const app = useAppStore();
+
+const language = ref(app.config.aiLanguage ?? '');
+const customInstructions = ref(app.config.aiCustomInstructions ?? '');
+
+function saveLanguage(): void {
+  void app.updateConfig({ aiLanguage: language.value.trim() });
+}
+
+function saveInstructions(): void {
+  void app.updateConfig({ aiCustomInstructions: customInstructions.value.trim() });
+}
 
 const PROVIDERS = [
   { id: 'openai' as const, label: 'OpenAI / ChatGPT', hint: 'auch Azure, OpenRouter, DeepSeek, Ollama' },
@@ -170,7 +183,54 @@ async function remove(): Promise<void> {
           <p class="ai-set__hint">Für Azure, OpenRouter, DeepSeek oder ein lokales Ollama.</p>
         </div>
 
-        <QNotice v-if="error" tone="error">{{ error }}</QNotice>
+        <!--
+        Prompt preferences. They ride every request rather than being stored:
+        two strings do not justify a server table, and the client already owns
+        user settings.
+      -->
+      <div class="ai-set__field">
+        <label class="ai-set__label" for="ai-language">
+          Antwortsprache <span class="ai-set__opt">optional</span>
+        </label>
+        <input
+          id="ai-language"
+          v-model="language"
+          type="text"
+          class="ai-set__input"
+          spellcheck="false"
+          maxlength="80"
+          placeholder="Deutsch"
+          @change="saveLanguage"
+        />
+        <!-- Free text on purpose: a fixed list would need extending for
+             Slovenian or Bosnian, and could not express a mixed request. -->
+        <p class="ai-set__hint">
+          Schreib die Sprache so, wie du sie willst — auch „Kroatisch, Fachbegriffe auf Deutsch".
+          Leer = Deutsch.
+        </p>
+      </div>
+
+      <div class="ai-set__field">
+        <label class="ai-set__label" for="ai-prompt">
+          Eigene Anweisungen <span class="ai-set__opt">optional · English</span>
+        </label>
+        <textarea
+          id="ai-prompt"
+          v-model="customInstructions"
+          class="ai-set__input ai-set__textarea"
+          rows="3"
+          spellcheck="false"
+          maxlength="600"
+          placeholder="e.g. Explain like I am a beginner. Always show the intermediate steps."
+          @change="saveInstructions"
+        ></textarea>
+        <p class="ai-set__hint">
+          Wird an jede Anfrage angehängt. Die Regeln der App haben Vorrang — Punkte vergibst
+          weiterhin nur du selbst. {{ customInstructions.length }}/600
+        </p>
+      </div>
+
+      <QNotice v-if="error" tone="error">{{ error }}</QNotice>
         <p v-else-if="saved" class="ai-set__saved" role="status">Schlüssel gespeichert.</p>
 
         <div class="ai-set__actions">
@@ -336,6 +396,19 @@ async function remove(): Promise<void> {
 .ai-set__provider-hint {
   font-size: 11px;
   color: var(--q-faint);
+}
+
+.ai-set__textarea {
+  min-height: 80px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+}
+.ai-set__provider--compact {
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 10px;
 }
 
 .ai-set__saved {

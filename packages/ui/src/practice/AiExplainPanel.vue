@@ -28,6 +28,10 @@ const props = defineProps<{
   model?: string | undefined;
   /** 'byo' | 'pool' — whose key paid for it. */
   source?: string | undefined;
+  /** The idle row's label; the panel serves more than one kind of question. */
+  offerLabel?: string;
+  /** Heading once there is an answer. */
+  titleLabel?: string;
 }>();
 
 const emit = defineEmits<{ ask: []; dismiss: [] }>();
@@ -45,14 +49,13 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
       is one quiet row that offers, and nothing else.
     -->
     <button v-if="idle" type="button" class="q-aix__offer" @click="emit('ask')">
-      <span class="q-aix__offer-label">Warum?</span>
-      <span class="q-aix__offer-sub">KI erklärt deinen Fehler</span>
+      <span class="q-aix__offer-label">{{ offerLabel ?? 'Warum?' }}</span>
       <span class="q-aix__badge">KI</span>
     </button>
 
     <template v-else>
     <div class="q-aix__head">
-      <h4 id="q-aix-title" class="q-aix__title">Erklärung</h4>
+      <h4 id="q-aix-title" class="q-aix__title">{{ titleLabel ?? 'Erklärung' }}</h4>
       <span class="q-aix__badge">KI</span>
       <button
         v-if="hasAnswer || error"
@@ -88,7 +91,7 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
         be able to tell at a glance which is which.
       -->
       <p class="q-aix__foot">
-        Von einer KI erzeugt — kann Fehler enthalten. Maßgeblich ist der offizielle Lösungsweg.
+        Generiert von KI — kann Fehler enthalten. Maßgeblich ist der offizielle Lösungsweg.
         <span v-if="model" class="q-aix__model">{{ model }}<template v-if="source"> · {{ source === 'pool' ? 'Kontingent' : 'eigener Schlüssel' }}</template></span>
       </p>
     </template>
@@ -144,14 +147,6 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
   font-size: 13.5px;
   font-weight: 700;
   flex: none;
-}
-.q-aix__offer-sub {
-  font-size: 11.5px;
-  color: var(--q-faint);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .q-aix__offer .q-aix__badge {
   margin-left: auto;

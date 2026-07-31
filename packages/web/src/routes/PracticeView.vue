@@ -243,22 +243,60 @@ const explainState = computed(() => {
 });
 
 async function askForExplanation(): Promise<void> {
+  await runExplain('answer');
+}
+
+/* --- whole-question walkthrough -------------------------------------------
+ * A different question from „why is mine wrong": how is this done at all.
+ * Wanted most when the official Lösungsweg is one line of result.
+ */
+const walkLoading = ref(false);
+const walkError = ref<string | null>(null);
+
+const showWalkthrough = computed(
+  () => playerState.value.phase === 'reviewed' && current.value != null && ai.canExplain,
+);
+
+const walkState = computed(() => {
+  const part = current.value;
+  const hit = part ? ai.cached(part.part.id, explainSubmission.value, 'walkthrough') : undefined;
+  return {
+    markdown: hit?.markdown,
+    model: hit?.model,
+    source: hit?.source,
+    loading: walkLoading.value,
+    error: walkError.value ?? undefined,
+  };
+});
+
+async function askForWalkthrough(): Promise<void> {
+  await runExplain('walkthrough');
+}
+
+function dismissWalkthrough(): void {
+  walkError.value = null;
+}
+
+async function runExplain(mode: 'answer' | 'walkthrough'): Promise<void> {
   const part = current.value;
   const result = playerState.value.result;
-  if (!part || !result || explainLoading.value) return;
-  explainLoading.value = true;
-  explainError.value = null;
+  const busy = mode === 'answer' ? explainLoading : walkLoading;
+  const error = mode === 'answer' ? explainError : walkError;
+  if (!part || !result || busy.value) return;
+  busy.value = true;
+  error.value = null;
   try {
     await ai.explain({
       question: part.question,
       part: part.part,
       submitted: explainSubmission.value,
       result,
+      mode,
     });
   } catch (e) {
-    explainError.value = explainMessage(e);
+    error.value = explainMessage(e);
   } finally {
-    explainLoading.value = false;
+    busy.value = false;
   }
 }
 
@@ -911,8 +949,15 @@ const currentCompetencyCodes = computed(() =>
             />
           </template>
 
-          <template v-if="showExplain" #explain>
+          <!--
+            All of the AI lives in the drawer. On a phone that is the only
+            surface tall enough for a conversation, and splitting it between
+            the drawer and the scrolling question meant the two halves of the
+            same feature never appeared together.
+          -->
+          <template v-if="showExplain || showWalkthrough" #explain>
             <AiExplainPanel
+              v-if="showExplain"
               :markdown="explainState.markdown"
               :loading="explainState.loading"
               :error="explainState.error"
@@ -920,6 +965,21 @@ const currentCompetencyCodes = computed(() =>
               :source="explainState.source"
               @ask="askForExplanation"
               @dismiss="dismissExplanation"
+            />
+            <!-- A different question: not "why is mine wrong" but "how is this
+                 done at all". Its own offer, so one ask never spends the other. -->
+            <AiExplainPanel
+              v-if="showWalkthrough"
+              class="practice__walkthrough"
+              :markdown="walkState.markdown"
+              :loading="walkState.loading"
+              :error="walkState.error"
+              :model="walkState.model"
+              :source="walkState.source"
+              offer-label="Aufgabe erklären"
+              title-label="Lösungsweg erklärt"
+              @ask="askForWalkthrough"
+              @dismiss="dismissWalkthrough"
             />
           </template>
         </PracticeBottomBar>
@@ -1083,6 +1143,10 @@ const currentCompetencyCodes = computed(() =>
     var(--practice-sheet-height, 0px) + 110px + var(--q-keyboard-inset, 0px)
   );
 }
+.practice__walkthrough {
+  margin-top: 6px;
+}
+
 .practice__verdict {
   margin-top: 16px;
   scroll-margin-bottom: 140px; /* keep clear of the fixed bottom bar */

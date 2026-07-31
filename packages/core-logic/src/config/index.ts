@@ -21,6 +21,17 @@ export interface ClientConfig {
   coreRepoUrl: string;
   /** Question-bank repository (git) — desktop clones/updates the bank from it. */
   bankRepoUrl: string;
+  /**
+   * Language the AI answers in, as free text. Empty = German.
+   * A preference, not a credential — it rides the request, nothing is stored
+   * server-side.
+   */
+  aiLanguage?: string;
+  /**
+   * Extra instructions appended to every AI prompt, written by the user.
+   * The prompt's own rules always take precedence over these.
+   */
+  aiCustomInstructions?: string;
 }
 
 export const DEFAULT_CONFIG: ClientConfig = {
@@ -37,7 +48,11 @@ export function normalizeBaseUrl(url: string): string {
 
 export function mergeConfig(overrides: Partial<ClientConfig> | undefined): ClientConfig {
   const merged = { ...DEFAULT_CONFIG, ...(overrides ?? {}) };
+  // Spread first, then normalise the URLs. Rebuilding the object from four
+  // named keys silently dropped every field added later — the AI language and
+  // custom-prompt settings looked like they saved and then did nothing.
   return {
+    ...merged,
     coreBaseUrl: normalizeBaseUrl(merged.coreBaseUrl),
     serverBaseUrl: normalizeBaseUrl(merged.serverBaseUrl),
     coreRepoUrl: normalizeBaseUrl(merged.coreRepoUrl),

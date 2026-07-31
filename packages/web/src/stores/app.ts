@@ -98,10 +98,25 @@ export const useAppStore = defineStore('app', () => {
       });
   }
 
+  /** Keys whose change means the app must talk to a different service. */
+  const ENDPOINT_KEYS: (keyof ClientConfig)[] = [
+    'coreBaseUrl',
+    'serverBaseUrl',
+    'coreRepoUrl',
+    'bankRepoUrl',
+  ];
+
   async function updateConfig(partial: Partial<ClientConfig>): Promise<void> {
     await configStore.setConfig(partial);
     const overrides = await configStore.getOverrides();
     config.value = mergeConfig({ ...envConfigDefaults(), ...overrides });
+
+    // Only an endpoint change justifies re-resolving and re-probing. Doing it
+    // for a preference blanked serverInfo, which the AI settings section is
+    // derived from — so changing the AI language made that whole section
+    // disappear and come back, and the change looked like it had not stuck.
+    if (!ENDPOINT_KEYS.some((k) => k in partial)) return;
+
     setCurrentCoreUrl(config.value.coreBaseUrl);
     await resolveCoreEndpoint();
     coreInfo.value = undefined;

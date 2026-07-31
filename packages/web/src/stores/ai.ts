@@ -14,6 +14,7 @@ import {
   isAiGradable,
   type AiAssessResponse,
   type AiCapabilities,
+  type AiExplainMode,
   type AiExplainResponse,
   type AiStatus,
   type GradeResult,
@@ -125,8 +126,24 @@ export const useAiStore = defineStore('ai', () => {
     { immediate: true },
   );
 
-  function cacheKey(partId: string, submitted: string): string {
-    return `${capabilities.value?.promptVersion ?? '0'}|${partId}|${submitted}`;
+  /**
+   * Prompt preferences live in the app config, so they ride every request and
+   * nothing is stored server-side.
+   */
+  const promptPrefs = computed(() => ({
+    ...(app.config.aiLanguage ? { language: app.config.aiLanguage } : {}),
+    ...(app.config.aiCustomInstructions
+      ? { customInstructions: app.config.aiCustomInstructions }
+      : {}),
+  }));
+
+  /**
+   * Cache key. Includes the mode and the preferences: asking for a walkthrough
+   * after an explanation, or switching language, must not replay the old text.
+   */
+  function cacheKey(partId: string, submitted: string, mode: AiExplainMode): string {
+    const prefs = `${app.config.aiLanguage ?? ''}~${app.config.aiCustomInstructions ?? ''}`;
+    return `${capabilities.value?.promptVersion ?? '0'}|${mode}|${partId}|${submitted}|${prefs}`;
   }
 
   /**
@@ -140,12 +157,16 @@ export const useAiStore = defineStore('ai', () => {
     part: QuestionPart;
     submitted: string;
     result: GradeResult;
+    mode?: AiExplainMode;
   }): Promise<AiExplainResponse> {
-    const key = cacheKey(input.part.id, input.submitted);
+    const mode = input.mode ?? 'answer';
+    const key = cacheKey(input.part.id, input.submitted, mode);
     const hit = cache.value.get(key);
     if (hit) return hit;
 
-    const answer = await app.serverClient.aiExplain(buildExplainRequest(input));
+    const answer = await app.serverClient.aiExplain(
+      buildExplainRequest({ ...input, mode, options: promptPrefs.value }),
+    );
     cache.value.set(key, answer);
     // Oldest-first eviction; Map preserves insertion order.
     if (cache.value.size > CACHE_LIMIT) {
@@ -172,11 +193,15 @@ export const useAiStore = defineStore('ai', () => {
   }): Promise<AiAssessResponse | null> {
     const request = buildAssessRequest(input);
     if (!request) return null;
-    return app.serverClient.aiAssess(request);
+    return app.serverClient.aiAssess({ ...request, ...promptPrefs.value });
   }
 
-  function cached(partId: string, submitted: string): AiExplainResponse | undefined {
-    return cache.value.get(cacheKey(partId, submitted));
+  function cached(
+    partId: string,
+    submitted: string,
+    mode: AiExplainMode = 'answer',
+  ): AiExplainResponse | undefined {
+    return cache.value.get(cacheKey(partId, submitted, mode));
   }
 
   return {

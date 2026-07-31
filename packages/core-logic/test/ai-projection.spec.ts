@@ -235,3 +235,45 @@ describe('submittedText', () => {
     expect(submittedText(undefined)).toBe('');
   });
 });
+
+/**
+ * Language and custom instructions are preferences the client owns and sends
+ * per request — no server table, no migration for two strings.
+ */
+describe('prompt options', () => {
+  const base = { question: question(), part: part(), submitted: 'x = 5', result };
+
+  it('rides the explain request', () => {
+    const req = buildExplainRequest({
+      ...base,
+      options: { language: 'English', customInstructions: '  Use simple words.  ' },
+    });
+    expect(req.language).toBe('English');
+    expect(req.customInstructions).toBe('Use simple words.');
+  });
+
+  it('rides the assess request too', () => {
+    const req = buildAssessRequest({
+      question: question(),
+      part: part(),
+      submitted: 'x = 4',
+      maxPoints: 2,
+      options: { language: '中文' },
+    });
+    expect(req?.language).toBe('中文');
+  });
+
+  it('sends nothing rather than blanks the server has to ignore', () => {
+    const req = buildExplainRequest({ ...base, options: { language: '  ', customInstructions: '' } });
+    expect(req.language).toBeUndefined();
+    expect(req.customInstructions).toBeUndefined();
+    expect(buildExplainRequest(base).language).toBeUndefined();
+  });
+
+  it('marks a walkthrough, and leaves the default unmarked', () => {
+    // `answer` is the default, so it costs nothing on the wire.
+    expect(buildExplainRequest({ ...base, mode: 'walkthrough' }).mode).toBe('walkthrough');
+    expect(buildExplainRequest({ ...base, mode: 'answer' }).mode).toBeUndefined();
+    expect(buildExplainRequest(base).mode).toBeUndefined();
+  });
+});

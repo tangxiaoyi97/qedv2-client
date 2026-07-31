@@ -34,13 +34,35 @@ export interface AiQuestionContext {
   maxPoints: number;
 }
 
-export interface AiExplainRequest extends AiQuestionContext {
+/**
+ * Per-user prompt preferences, sent with every request.
+ *
+ * Stateless on purpose: they are settings the client already owns, and two
+ * strings do not justify a server table plus a migration.
+ */
+export interface AiPromptOptions {
+  /**
+   * Output language, as the user typed it — free text, not a tag. The model
+   * reads it, so "Kroatisch, Fachbegriffe auf Deutsch" works and no list has
+   * to be maintained.
+   */
+  language?: string;
+  /** Free text from the settings page — the rules always take precedence. */
+  customInstructions?: string;
+}
+
+/** `answer` = why mine is wrong. `walkthrough` = how the question is done. */
+export type AiExplainMode = 'answer' | 'walkthrough';
+
+export interface AiExplainRequest extends AiQuestionContext, AiPromptOptions {
+  mode?: AiExplainMode;
   verdict: Verdict;
   awardedPoints: number;
 }
 
 export interface AiExplainResponse {
   markdown: string;
+  mode?: AiExplainMode;
   model: string;
   promptVersion: string;
   source: AiSource;
@@ -59,7 +81,7 @@ export interface AiRubricCriterion {
  * tiered parts have nothing to decompose, so they send the point values the
  * part allows and get one decision back.
  */
-export interface AiAssessRequest extends AiQuestionContext {
+export interface AiAssessRequest extends AiQuestionContext, AiPromptOptions {
   criteria?: AiRubricCriterion[];
   scoreOptions?: number[];
   /** The part's rubric prose — guidance even when it is not scored criteria. */

@@ -13,7 +13,13 @@
 import type { GradeResult, Submission } from '../grading/types.js';
 import type { Answer, Question, QuestionPart, RubricScoring } from '../model/question.js';
 import { isRichTextEmpty, richTextToPlain } from '../model/richtext.js';
-import type { AiAssessRequest, AiExplainRequest, AiRubricCriterion } from './types.js';
+import type {
+  AiAssessRequest,
+  AiExplainMode,
+  AiExplainRequest,
+  AiPromptOptions,
+  AiRubricCriterion,
+} from './types.js';
 
 /**
  * Alt text of every figure attached to the question or the part.
@@ -71,13 +77,28 @@ export function buildExplainRequest(input: {
   part: QuestionPart;
   submitted: string;
   result: GradeResult;
+  /** `walkthrough` explains the question itself rather than the answer. */
+  mode?: AiExplainMode;
+  options?: AiPromptOptions;
 }): AiExplainRequest {
   const { question, part, submitted, result } = input;
   return {
     ...shared(question, part, submitted, result.maxPoints),
+    ...promptOptions(input.options),
+    ...(input.mode && input.mode !== 'answer' ? { mode: input.mode } : {}),
     verdict: result.verdict,
     awardedPoints: result.awardedPoints,
   };
+}
+
+/** Drop empty preferences rather than sending blanks the server must ignore. */
+export function promptOptions(options: AiPromptOptions | undefined): AiPromptOptions {
+  const out: AiPromptOptions = {};
+  const language = options?.language?.trim();
+  const custom = options?.customInstructions?.trim();
+  if (language) out.language = language;
+  if (custom) out.customInstructions = custom;
+  return out;
 }
 
 /**
@@ -100,12 +121,13 @@ export function buildAssessRequest(input: {
   maxPoints: number;
   /** Point values the part permits — required for non-rubric scoring. */
   scoreOptions?: number[];
+  options?: AiPromptOptions;
 }): AiAssessRequest | null {
   const { question, part, submitted, maxPoints } = input;
   if (!isAiGradable(part)) return null;
   if (!submitted.trim()) return null;
 
-  const base = shared(question, part, submitted, maxPoints);
+  const base = { ...shared(question, part, submitted, maxPoints), ...promptOptions(input.options) };
   const answer = part.answer;
   const rubricText =
     answer?.kind === 'open' && !isRichTextEmpty(answer.rubric)

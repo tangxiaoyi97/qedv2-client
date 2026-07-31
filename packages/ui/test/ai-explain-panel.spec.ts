@@ -72,6 +72,7 @@ describe('AiExplainPanel', () => {
     const wrapper = mount(AiExplainPanel, { props: { markdown: 'Text.', model: 'gpt-5-mini' } });
     expect(wrapper.find('.q-aix__badge').text()).toBe('KI');
     const foot = wrapper.get('.q-aix__foot').text();
+    expect(foot).toContain('Generiert von KI');
     expect(foot).toContain('kann Fehler enthalten');
     expect(foot).toContain('offizielle');
     expect(foot).toContain('gpt-5-mini');
