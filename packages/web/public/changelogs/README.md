@@ -52,3 +52,13 @@ beta, or main before the bump) ships `latest.md` as a draft entry instead, so
 the dialog can be checked before it is real.
 
 Only this README and `latest.md` live here in git; `index.json` is build output.
+
+## Setup
+
+The hook is `core.hooksPath`, which is per-clone and does not travel with the
+repository — `pnpm install` sets it (root `prepare` script). If a bump ever
+lands without its changelog section, that config is the first thing to check:
+
+```
+git config --get core.hooksPath   # → .githooks
+```

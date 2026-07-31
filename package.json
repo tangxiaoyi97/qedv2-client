@@ -9,6 +9,7 @@
     "pnpm": ">=9"
   },
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks || true",
     "dev": "pnpm --filter @qed2/web dev",
     "build": "pnpm --filter @qed2/web build",
     "test": "pnpm -r test",
