@@ -199,12 +199,12 @@ export const useProgressStore = defineStore('progress', () => {
     competencyCodes: string[];
     result: GradeResult;
     elapsedMs?: number;
-    /** Local-only evaluation material — see HistoryEntry.submittedText. */
-    submittedText?: string;
-    criteriaMet?: boolean[];
+    /** One event timestamp shared by archive, local history and cloud outbox. */
+    gradedAt?: string;
   }): Promise<{ grading: Grading; previousFsrs: FsrsState | undefined }> {
     return enqueueArchiveMutation(async () => {
-      const now = new Date();
+      const parsed = input.gradedAt ? new Date(input.gradedAt) : new Date();
+      const now = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
       const res = await archiveStore.applyGrade({
         partId: input.partId,
         competencyCodes: input.competencyCodes,
@@ -224,10 +224,6 @@ export const useProgressStore = defineStore('progress', () => {
         gradedAt: now.toISOString(),
       };
       if (input.elapsedMs !== undefined) entry.elapsedMs = input.elapsedMs;
-      // Kept locally so the AI grading evaluation has real labelled data —
-      // the score alone cannot be replayed against a grader (see history-log).
-      if (input.submittedText) entry.submittedText = input.submittedText;
-      if (input.criteriaMet) entry.criteriaMet = input.criteriaMet;
       await historyLog.append(entry);
       historyVersion.value += 1;
       return { grading: res.grading, previousFsrs: res.previousFsrs };

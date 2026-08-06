@@ -1,9 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import { VitePWA } from 'vite-plugin-pwa';
-// Node-only helper (untyped .mjs, declared ambiently in src/env.d.ts) shared
-// with the changelog archive step so the injected commit and the archived
-// file name always match.
+// Node-only build metadata helpers (untyped .mjs, declared ambiently in
+// src/env.d.ts). Version identifies changelog entries; commit remains useful
+// for diagnostics.
 import { resolveCommit, resolveVersion } from './scripts/commit.mjs';
 import { resolveChannel, resolveEndpoints } from './scripts/channel.mjs';
 // The manifest lives next to it so a test can assert its colors against the
@@ -26,8 +26,8 @@ const ENDPOINTS = resolveEndpoints();
 // qed.barcarolle.studio, i.e. served from the root path.
 export default defineConfig({
   base: '/',
-  // Build-identifying commit, read at runtime for the changelog-on-update
-  // dialog (a static site can't query git — it must be baked in).
+  // Build-identifying commit for diagnostics (a static site cannot query git,
+  // so it must be baked in).
   define: {
     __APP_COMMIT__: JSON.stringify(resolveCommit()),
     /*

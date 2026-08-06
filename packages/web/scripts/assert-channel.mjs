@@ -16,12 +16,23 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveVersion } from './commit.mjs';
 
 const channel = process.argv[2] === 'preview' ? 'preview' : 'stable';
 const dist = join(process.cwd(), 'dist');
+const version = resolveVersion();
 
 const PREVIEW_TOKENS = [
   'qed-pv.barcarolle.studio',
+  'qedcore-pv.barcarolle.studio',
+  'qedsync-pv.barcarolle.studio',
+  'QED2-CHANNEL:preview',
+];
+const REQUIRED_STABLE_TOKENS = [
+  'qedcore.barcarolle.studio',
+  'qedsync.barcarolle.studio',
+];
+const REQUIRED_PREVIEW_TOKENS = [
   'qedcore-pv.barcarolle.studio',
   'qedsync-pv.barcarolle.studio',
   'QED2-CHANNEL:preview',
@@ -50,13 +61,28 @@ for (const file of files) {
 }
 
 if (channel === 'stable') {
+  // A push to main publishes immediately. Channel-correct endpoints are not
+  // enough: an RC build must never become the production artifact merely
+  // because it happened to be built with stable hosts.
+  if (version.includes('-')) {
+    problems.push(`stable bundle uses prerelease version "${version}"`);
+  }
   for (const [token, file] of found) {
     problems.push(`production bundle contains preview token "${token}" (${file})`);
   }
-} else if (!found.has('QED2-CHANNEL:preview')) {
+  for (const token of REQUIRED_STABLE_TOKENS) {
+    if (!files.some((file) => {
+      if (/\.(png|jpg|jpeg|ico|woff2?)$/i.test(file)) return false;
+      return readFileSync(file, 'utf8').includes(token);
+    })) problems.push(`stable bundle is missing production endpoint "${token}"`);
+  }
+} else {
   // The reverse mistake — a preview deploy built with production config —
-  // would point testers straight at real user data.
-  problems.push('preview bundle is missing the QED2-CHANNEL:preview sentinel');
+  // would point testers straight at real user data. Require both services,
+  // not just the visual/channel sentinel.
+  for (const token of REQUIRED_PREVIEW_TOKENS) {
+    if (!found.has(token)) problems.push(`preview bundle is missing required token "${token}"`);
+  }
 }
 
 // Positive assertion: the installed app identity must match the channel.

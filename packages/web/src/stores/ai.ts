@@ -9,6 +9,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import {
+  aiCacheDigest,
   buildAssessRequest,
   buildExplainRequest,
   isAiGradable,
@@ -25,6 +26,14 @@ import { aiCache } from '../services.js';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 
+interface ExplainInput {
+  question: Question;
+  part: QuestionPart;
+  submitted: string;
+  result: GradeResult;
+  mode?: AiExplainMode;
+}
+
 export const useAiStore = defineStore('ai', () => {
   const app = useAppStore();
   const auth = useAuthStore();
@@ -38,6 +47,7 @@ export const useAiStore = defineStore('ai', () => {
 
   const status = ref<AiStatus | null>(null);
   const statusError = ref<string | null>(null);
+  let statusRequest = 0;
 
   /**
    * Answers already fetched.
@@ -47,7 +57,8 @@ export const useAiStore = defineStore('ai', () => {
    * only layer, which made the cache worth very little — the commonest way to
    * look at an explanation again is to come back to the question later.
    */
-  const cache = ref(new Map<string, AiExplainResponse>());
+  const explainCache = ref(new Map<string, AiExplainResponse>());
+  const assessCache = ref(new Map<string, AiAssessResponse>());
 
   /**
    * Explanation is offered only when the server has it switched on AND the
@@ -59,7 +70,9 @@ export const useAiStore = defineStore('ai', () => {
       auth.isLoggedIn &&
       capabilities.value?.explain === true &&
       status.value !== null &&
-      status.value.active !== 'none',
+      status.value.features.explain === true &&
+      status.value.active !== 'none' &&
+      selectedSourceReady.value,
   );
 
   /** Nothing works until one of the two modes is actually usable. */
@@ -75,7 +88,12 @@ export const useAiStore = defineStore('ai', () => {
    * an entry point that exists but always refuses is worse than no entry
    * point. Guests see nothing.
    */
-  const available = computed(() => auth.isLoggedIn && capabilities.value !== null);
+  const available = computed(
+    () =>
+      auth.isLoggedIn &&
+      capabilities.value !== null &&
+      (capabilities.value.explain || capabilities.value.assess),
+  );
 
   const poolOnlyServer = computed(() => capabilities.value?.poolAvailable === true);
 
@@ -91,20 +109,27 @@ export const useAiStore = defineStore('ai', () => {
       auth.isLoggedIn &&
       capabilities.value?.assess === true &&
       status.value !== null &&
+      status.value.features.assess === true &&
       status.value.active !== 'none' &&
+      selectedSourceReady.value &&
       isAiGradable(part)
     );
   }
 
   async function refreshStatus(): Promise<void> {
+    const request = ++statusRequest;
     if (!auth.isLoggedIn || capabilities.value === null) {
       status.value = null;
+      statusError.value = null;
       return;
     }
     try {
-      status.value = await app.serverClient.aiStatus();
+      const next = await app.serverClient.aiStatus();
+      if (request !== statusRequest) return;
+      status.value = next;
       statusError.value = null;
     } catch (e) {
+      if (request !== statusRequest) return;
       status.value = null;
       statusError.value = messageOf(e);
     }
@@ -114,14 +139,19 @@ export const useAiStore = defineStore('ai', () => {
     provider: 'openai' | 'gemini';
     apiKey: string;
     model?: string;
-    baseUrl?: string;
   }): Promise<void> {
-    status.value = await app.serverClient.saveAiCredential(input);
+    const request = ++statusRequest;
+    const next = await app.serverClient.saveAiCredential(input);
+    if (request !== statusRequest) return;
+    status.value = next;
     statusError.value = null;
   }
 
   async function deleteCredential(): Promise<void> {
-    status.value = await app.serverClient.deleteAiCredential();
+    const request = ++statusRequest;
+    const next = await app.serverClient.deleteAiCredential();
+    if (request !== statusRequest) return;
+    status.value = next;
     // A stored explanation was produced by a key that is now gone; the text
     // stays valid, so there is no reason to throw it away.
   }
@@ -136,11 +166,25 @@ export const useAiStore = defineStore('ai', () => {
    * offered an explanation.
    */
   watch(
-    [() => auth.isLoggedIn, capabilities],
+    [() => auth.isLoggedIn, () => auth.session?.user.id, () => app.config.serverBaseUrl, capabilities],
     () => {
       void refreshStatus();
     },
     { immediate: true },
+  );
+
+  /** Never let one account/server identity see another identity's memory map. */
+  watch(
+    [
+      () => auth.session?.user.id,
+      () => app.config.serverBaseUrl,
+      () => app.serverInfo?.commit,
+      () => capabilities.value?.promptVersion,
+    ],
+    () => {
+      explainCache.value = new Map();
+      assessCache.value = new Map();
+    },
   );
 
   /**
@@ -155,40 +199,72 @@ export const useAiStore = defineStore('ai', () => {
    * three of them meant anything. `pool` is selectable only where the server
    * has actually granted it.
    */
-  const poolOffered = computed(() => status.value?.pool.eligible === true);
+  const sourceAllowed = (source: 'pool' | 'byo'): boolean => {
+    const explicit = status.value?.allowedSources;
+    // Early RC servers did not expose entitlement policy. Preserve their UI
+    // behaviour, while every stable v2 server supplies the authoritative list.
+    if (!explicit) return source === 'pool' ? status.value?.pool.eligible === true : true;
+    return explicit.includes(source);
+  };
+
+  const poolAllowed = computed(() => sourceAllowed('pool'));
+  const poolOffered = computed(
+    () => poolAllowed.value && status.value?.pool.eligible === true,
+  );
+  const byoOffered = computed(() => sourceAllowed('byo'));
 
   const mode = computed<'pool' | 'byo'>(() => {
     const chosen = app.config.aiPreferPool;
-    // Never chosen: follow what actually works. An account granted the pool
-    // and holding no key of its own opened the settings to find the mode it
-    // cannot use already selected.
-    if (chosen === undefined) return poolOffered.value ? 'pool' : 'byo';
-    return chosen && poolOffered.value ? 'pool' : 'byo';
+    if (chosen === true && sourceAllowed('pool')) return 'pool';
+    if (chosen === false && sourceAllowed('byo')) return 'byo';
+    // No valid saved choice: follow the server's actual default, then the
+    // entitlement policy. A stale preference can never select a forbidden payer.
+    if (status.value?.active === 'pool' && sourceAllowed('pool')) return 'pool';
+    if (status.value?.active === 'byo' && sourceAllowed('byo')) return 'byo';
+    return sourceAllowed('pool') ? 'pool' : 'byo';
   });
 
   function setMode(next: 'pool' | 'byo'): void {
-    if (next === 'pool' && !poolOffered.value) return;
+    if (!sourceAllowed(next)) return;
     void app.updateConfig({ aiPreferPool: next === 'pool' });
   }
 
   /** The request flag the server reads. */
   const preferPool = computed(() => mode.value === 'pool');
 
+  /** The selected payer must itself be usable; never silently fall back. */
+  const selectedSourceReady = computed(() =>
+    mode.value === 'pool'
+      ? poolOffered.value
+      : byoOffered.value && status.value?.byo.configured === true,
+  );
+
   const promptPrefs = computed(() => ({
-    ...(preferPool.value ? { preferPool: true } : {}),
+    preferPool: preferPool.value,
     ...(app.config.aiLanguage ? { language: app.config.aiLanguage } : {}),
     ...(app.config.aiCustomInstructions
       ? { customInstructions: app.config.aiCustomInstructions }
       : {}),
   }));
 
-  /**
-   * Cache key. Includes the mode and the preferences: asking for a walkthrough
-   * after an explanation, or switching language, must not replay the old text.
-   */
-  function cacheKey(partId: string, submitted: string, mode: AiExplainMode): string {
-    const prefs = `${app.config.aiLanguage ?? ''}~${app.config.aiCustomInstructions ?? ''}`;
-    return `${capabilities.value?.promptVersion ?? '0'}|${mode}|${partId}|${submitted}|${prefs}`;
+  function persistentKey(kind: 'explain' | 'assess', request: unknown): string {
+    const source = mode.value;
+    const route = source === 'pool' ? status.value?.pool : status.value?.byo;
+    return aiCacheDigest({
+      kind,
+      userId: auth.session?.user.id ?? 'guest',
+      serverUrl: app.config.serverBaseUrl,
+      serverCommit: app.serverInfo?.commit ?? 'unknown',
+      promptVersion: capabilities.value?.promptVersion ?? '0',
+      source,
+      provider: route?.provider,
+      model: route?.model,
+      request,
+    });
+  }
+
+  function isCurrentKey(kind: 'explain' | 'assess', request: unknown, key: string): boolean {
+    return persistentKey(kind, request) === key;
   }
 
   /**
@@ -197,29 +273,30 @@ export const useAiStore = defineStore('ai', () => {
    * Cached by prompt version + part + the exact answer, because the same wrong
    * answer to the same question recurs — and every miss costs real money.
    */
-  async function explain(input: {
-    question: Question;
-    part: QuestionPart;
-    submitted: string;
-    result: GradeResult;
-    mode?: AiExplainMode;
-  }): Promise<AiExplainResponse> {
+  async function explain(input: ExplainInput, signal?: AbortSignal): Promise<AiExplainResponse> {
     const mode = input.mode ?? 'answer';
-    const key = cacheKey(input.part.id, input.submitted, mode);
+    const request = buildExplainRequest({ ...input, mode, options: promptPrefs.value });
+    const key = persistentKey('explain', request);
 
-    const inMemory = cache.value.get(key);
+    const inMemory = explainCache.value.get(key);
     if (inMemory) return inMemory;
 
     const stored = await aiCache.get<AiExplainResponse>(key);
+    if (!isCurrentKey('explain', request, key)) throw staleRequestError();
     if (stored) {
-      cache.value.set(key, stored);
+      explainCache.value.set(key, stored);
       return stored;
     }
 
-    const answer = await app.serverClient.aiExplain(
-      buildExplainRequest({ ...input, mode, options: promptPrefs.value }),
-    );
-    cache.value.set(key, answer);
+    let answer: AiExplainResponse;
+    try {
+      answer = await app.serverClient.aiExplain(request, signal);
+    } finally {
+      // Quota/revocation may have changed on either a success or a refusal.
+      void refreshStatus();
+    }
+    if (!isCurrentKey('explain', request, key)) throw staleRequestError();
+    explainCache.value.set(key, answer);
     await aiCache.set(key, answer);
     return answer;
   }
@@ -238,10 +315,28 @@ export const useAiStore = defineStore('ai', () => {
     maxPoints: number;
     /** Point values the part allows — used when it has no scored criteria. */
     scoreOptions?: number[];
-  }): Promise<AiAssessResponse | null> {
-    const request = buildAssessRequest(input);
+  }, signal?: AbortSignal): Promise<AiAssessResponse | null> {
+    const request = buildAssessRequest({ ...input, options: promptPrefs.value });
     if (!request) return null;
-    return app.serverClient.aiAssess({ ...request, ...promptPrefs.value });
+    const key = persistentKey('assess', request);
+    const inMemory = assessCache.value.get(key);
+    if (inMemory) return inMemory;
+    const stored = await aiCache.get<AiAssessResponse>(key);
+    if (!isCurrentKey('assess', request, key)) throw staleRequestError();
+    if (stored) {
+      assessCache.value.set(key, stored);
+      return stored;
+    }
+    let answer: AiAssessResponse;
+    try {
+      answer = await app.serverClient.aiAssess(request, signal);
+    } finally {
+      void refreshStatus();
+    }
+    if (!isCurrentKey('assess', request, key)) throw staleRequestError();
+    assessCache.value.set(key, answer);
+    await aiCache.set(key, answer);
+    return answer;
   }
 
   /**
@@ -249,17 +344,16 @@ export const useAiStore = defineStore('ai', () => {
    * what `explain()` fills on the way through — the panel asks for an answer
    * before it shows one, so the stored layer is always promoted by then.
    */
-  function cached(
-    partId: string,
-    submitted: string,
-    mode: AiExplainMode = 'answer',
-  ): AiExplainResponse | undefined {
-    return cache.value.get(cacheKey(partId, submitted, mode));
+  function cached(input: ExplainInput): AiExplainResponse | undefined {
+    const mode = input.mode ?? 'answer';
+    const request = buildExplainRequest({ ...input, mode, options: promptPrefs.value });
+    return explainCache.value.get(persistentKey('explain', request));
   }
 
   /** Belongs next to „Schlüssel entfernen": forgetting should mean all of it. */
   async function clearCache(): Promise<void> {
-    cache.value = new Map();
+    explainCache.value = new Map();
+    assessCache.value = new Map();
     await aiCache.clear();
   }
 
@@ -273,7 +367,9 @@ export const useAiStore = defineStore('ai', () => {
     poolOnlyServer,
     mode,
     setMode,
+    poolAllowed,
     poolOffered,
+    byoOffered,
     refreshStatus,
     saveCredential,
     deleteCredential,
@@ -287,4 +383,10 @@ export const useAiStore = defineStore('ai', () => {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : 'Unbekannter Fehler';
+}
+
+function staleRequestError(): Error {
+  const error = new Error('AI request context changed');
+  error.name = 'AbortError';
+  return error;
 }

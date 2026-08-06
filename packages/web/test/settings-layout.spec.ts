@@ -20,7 +20,15 @@ describe('settings appearance layout', () => {
 describe('AI settings information hierarchy', () => {
   it('keeps secondary disclosure and maintenance behind explicit summaries', () => {
     expect(aiSettingsSource).toContain('<summary>Datenschutz · Aufgabe und Antwort werden übertragen</summary>');
+    expect(aiSettingsSource).toContain('<summary>Antwortstil</summary>');
     expect(aiSettingsSource).toContain('<summary>Daten &amp; Speicher</summary>');
     expect(aiSettingsSource).toContain(':open="!configured"');
+  });
+
+  it('makes selected modes explicit and does not offer arbitrary AI endpoints', () => {
+    expect(aiSettingsSource).toContain('✓</span> Ausgewählt');
+    expect(aiSettingsSource).not.toContain('ai-base');
+    expect(aiSettingsSource).not.toContain('OpenRouter');
+    expect(aiSettingsSource).not.toContain('Verlauf exportieren');
   });
 });

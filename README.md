@@ -116,24 +116,21 @@ shell's capability.
 New builds can greet the user with a "what's new" dialog, driven entirely by
 the static site — no backend.
 
-1. **Write** the notes in `packages/web/public/changelogs/latest.md` (Markdown:
-   `#`/`##`/`###`, `-`/`1.` lists, `**bold**`, `` `code` ``, `[text](url)`),
-   in the SAME commit as the change.
-2. **On deploy**, `scripts/archive-changelog.mjs` (run by `pnpm build`)
-   archives it as `dist/changelogs/<commit-sha>.md` — but only when `latest.md`
-   is non-empty AND was changed in this push (the workflow passes
-   `CHANGELOG_CHANGED`; local builds always archive so you can preview). The
-   draft and this folder's README are stripped from the published output.
-3. **The app** bakes in its own build commit (`__APP_COMMIT__`, injected by
-   `vite.config`) and, on first load after an update, fetches
-   `/changelogs/<commit>.md`. If it exists → the dialog pops; 404/empty/first
-   run → nothing pops; the last-seen commit is remembered in `localStorage`.
+1. Write the draft in `packages/web/public/changelogs/latest.md`; the root
+   `package.json` remains the only source of the version number.
+2. Bump the root version and commit. The pre-commit hook syncs every workspace
+   package, folds the draft into the top of `CHANGELOG.md`, and empties the
+   draft. Prerelease versions deliberately keep the draft unfolded.
+3. `pnpm build` compiles the complete released history into
+   `dist/changelogs/index.json`. An unreleased build includes the current draft
+   as a preview entry; the working draft and its README are never published.
+4. The app remembers the last version it showed in `localStorage`. After an
+   update it announces only the running version; Optionen → Änderungen opens
+   the complete shipped history.
 
-You do **not** need to empty `latest.md` between releases: an unchanged draft
-is never re-archived, so a version with no new notes simply never pops a
-dialog. Overwrite it when you have something to announce. The Markdown is
-rendered through `@qed2/ui`'s `MarkdownView` (a restricted, `v-html`-free
-subset — unsafe link schemes are dropped).
+See `packages/web/public/changelogs/README.md` for the release procedure and
+supported Markdown subset. Notes render through `@qed2/ui`'s `MarkdownView`
+(restricted and `v-html`-free; unsafe link schemes are dropped).
 
 ## What's where (quick map)
 

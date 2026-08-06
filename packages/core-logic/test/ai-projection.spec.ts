@@ -3,6 +3,7 @@ import {
   buildAssessRequest,
   buildExplainRequest,
   figureAlts,
+  hasFigures,
   isAiGradable,
   submittedText,
 } from '../src/ai/projection.js';
@@ -103,12 +104,31 @@ describe('figures', () => {
       'Graph von f',
       'Skizze',
     ]);
+    expect(buildExplainRequest({ question: q, part: p, submitted: 'x', result }).hasFigures).toBe(true);
+  });
+
+  it('detects inline and solution figures, including figures without alt text', () => {
+    const q = question({
+      prompt: [...text('Lies ab:'), { t: 'fig', src: 'inline.svg' }],
+    });
+    const p = part({
+      solution: [
+        {
+          result: [{ t: 'fig', src: 'solution.svg', alt: 'Lösungsskizze' }],
+          figures: [{ kind: 'image', src: 'extra.svg' }],
+        },
+      ],
+    });
+    const req = buildExplainRequest({ question: q, part: p, submitted: 'x', result });
+    expect(hasFigures(q, p)).toBe(true);
+    expect(req.hasFigures).toBe(true);
+    expect(req.figureAlts).toEqual(['Lösungsskizze']);
   });
 
   it('omits the key entirely when there is nothing to warn about', () => {
-    expect(
-      buildExplainRequest({ question: question(), part: part(), submitted: 'x', result }).figureAlts,
-    ).toBeUndefined();
+    const req = buildExplainRequest({ question: question(), part: part(), submitted: 'x', result });
+    expect(req.figureAlts).toBeUndefined();
+    expect(req.hasFigures).toBeUndefined();
   });
 });
 
@@ -263,6 +283,12 @@ describe('prompt options', () => {
       options: { language: '中文' },
     });
     expect(req?.language).toBe('中文');
+  });
+
+  it('preserves both billing choices instead of treating BYO as automatic routing', () => {
+    expect(buildExplainRequest({ ...base, options: { preferPool: true } }).preferPool).toBe(true);
+    expect(buildExplainRequest({ ...base, options: { preferPool: false } }).preferPool).toBe(false);
+    expect(buildExplainRequest(base).preferPool).toBeUndefined();
   });
 
   it('sends nothing rather than blanks the server has to ignore', () => {

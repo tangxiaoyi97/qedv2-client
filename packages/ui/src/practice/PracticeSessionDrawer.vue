@@ -131,6 +131,21 @@ useModalA11y(panel, isOpen, () => emit('close'));
   transform: translateX(20px);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .practice-session-drawer-enter-active,
+  .practice-session-drawer-leave-active {
+    transition: opacity 100ms linear;
+  }
+  .practice-session-drawer-enter-active .practice-session-drawer__panel,
+  .practice-session-drawer-leave-active .practice-session-drawer__panel {
+    transition: none;
+  }
+  .practice-session-drawer-enter-from .practice-session-drawer__panel,
+  .practice-session-drawer-leave-to .practice-session-drawer__panel {
+    transform: none;
+  }
+}
+
 @media (max-width: 1023px) {
   .practice-session-drawer {
     display: block;

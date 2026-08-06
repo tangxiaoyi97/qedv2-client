@@ -9,7 +9,7 @@
  */
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
-import { questionContentHash, submittedText, STORAGE } from '@qed2/core-logic';
+import { questionContentHash, STORAGE } from '@qed2/core-logic';
 import type {
   FsrsState,
   GradeResult,
@@ -420,13 +420,7 @@ export const usePracticeStore = defineStore('practice', () => {
       competencyCodes: payload.part.competencies.map((c) => c.code),
       result: payload.result,
       elapsedMs,
-      // The submission was already here and unused. Keeping it locally is what
-      // makes an AI-grading evaluation possible at all — every store recorded
-      // the score an answer got and none recorded the answer.
-      submittedText: submittedText(payload.submission),
-      ...(payload.submission.kind === 'open' && payload.submission.selfAssessment.criteriaMet
-        ? { criteriaMet: payload.submission.selfAssessment.criteriaMet }
-        : {}),
+      gradedAt,
     });
     preAnswerFsrs.set(payload.part.id, previousFsrs);
     // The grade and its session marker must both be durable before any

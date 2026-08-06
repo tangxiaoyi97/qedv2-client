@@ -276,6 +276,18 @@ export interface HistoryResponse {
   total: number;
 }
 
+export interface HistoryActivityQuery {
+  /** Inclusive ISO bounds. */
+  since: string;
+  until: string;
+  /** IANA name, e.g. Europe/Vienna, used for local-calendar grouping. */
+  timeZone: string;
+}
+
+export interface HistoryActivityResponse {
+  activity: Record<string, number>;
+}
+
 /* --- Authenticated opt-in leaderboard --- */
 
 export type LeaderboardPeriod = 'today' | 'week';

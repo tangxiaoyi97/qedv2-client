@@ -22,9 +22,12 @@ export function resolveChannel() {
  * preview host name at all, so the deploy guard has nothing to find because
  * there is nothing there — not because something stripped it.
  */
-export function resolveEndpoints() {
+export function resolveEndpoints(channel = resolveChannel()) {
+  // Stable is deliberately immutable. A stale shell/CI variable must not be
+  // able to point the production bundle at preview (or at an arbitrary host).
+  if (channel === 'stable') return { core: '', server: '' };
   return {
-    core: process.env.QED2_DEFAULT_CORE ?? '',
-    server: process.env.QED2_DEFAULT_SERVER ?? '',
+    core: process.env.QED2_DEFAULT_CORE ?? 'https://qedcore-pv.barcarolle.studio',
+    server: process.env.QED2_DEFAULT_SERVER ?? 'https://qedsync-pv.barcarolle.studio',
   };
 }

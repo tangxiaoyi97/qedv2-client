@@ -13,6 +13,7 @@
  * instead of taking its word.
  */
 import { computed } from 'vue';
+import { AI_SUGGESTION_CONFIDENCE_FLOOR } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
@@ -56,16 +57,13 @@ const emit = defineEmits<{ ask: [] }>();
 const hasResult = computed(() => (props.criteria?.length ?? 0) > 0 || props.overall != null);
 const idle = computed(() => !hasResult.value && !props.loading && !props.error);
 
-/** Below this the verdict is shown but never pre-ticked. */
-const CONFIDENCE_FLOOR = 0.75;
-
 const shaky = (c: AssessedCriterion): boolean =>
-  c.confidence < CONFIDENCE_FLOOR || (c.met && !c.quoteVerified);
+  c.confidence < AI_SUGGESTION_CONFIDENCE_FLOOR || (c.met && !c.quoteVerified);
 
 const metCount = computed(() => props.criteria?.filter((criterion) => criterion.met).length ?? 0);
 const overallShaky = computed(() =>
   props.overall != null &&
-  (props.overall.confidence < CONFIDENCE_FLOOR ||
+  (props.overall.confidence < AI_SUGGESTION_CONFIDENCE_FLOOR ||
     (props.overall.points > 0 && !props.overall.quoteVerified)),
 );
 </script>

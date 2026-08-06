@@ -3,12 +3,11 @@ import { readFileSync } from 'node:fs';
 
 /**
  * The commit that identifies THIS build. Injected into the bundle as
- * __APP_COMMIT__ (vite.config) AND used to name the archived changelog
- * (archive-changelog.mjs), so the two always agree.
+ * __APP_COMMIT__ for diagnostics; release notes are keyed by app version.
  *
  *  - CI: GITHUB_SHA (the pushed commit)
  *  - local build: current git HEAD
- *  - no git at all: 'dev' (changelog check is skipped)
+ *  - no git at all: 'dev'
  */
 export function resolveCommit() {
   if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;

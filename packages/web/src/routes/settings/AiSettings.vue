@@ -13,9 +13,10 @@
 import { computed, ref } from 'vue';
 import { QButton, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
-import { historyLog } from '../../services.js';
+import { useAppStore } from '../../stores/app.js';
 
 const ai = useAiStore();
+const app = useAppStore();
 
 /**
  * A hint is for what OUR side supports, not for what a vendor currently gives
@@ -23,14 +24,13 @@ const ai = useAiStore();
  * belongs in nobody's settings page.
  */
 const PROVIDERS: { id: 'openai' | 'gemini'; label: string; hint?: string }[] = [
-  { id: 'openai', label: 'OpenAI / ChatGPT', hint: 'auch Azure, OpenRouter, DeepSeek, Ollama' },
+  { id: 'openai', label: 'OpenAI / ChatGPT' },
   { id: 'gemini', label: 'Google Gemini' },
 ];
 
 const provider = ref<'openai' | 'gemini'>('openai');
 const apiKey = ref('');
 const model = ref('');
-const baseUrl = ref('');
 const saving = ref(false);
 const error = ref<string | null>(null);
 const saved = ref(false);
@@ -38,9 +38,6 @@ const saved = ref(false);
 const status = computed(() => ai.status);
 const configured = computed(() => status.value?.byo.configured === true);
 const pool = computed(() => status.value?.pool);
-
-/** Only OpenAI-compatible endpoints take a custom base URL. */
-const showBaseUrl = computed(() => provider.value === 'openai');
 
 async function save(): Promise<void> {
   if (!apiKey.value.trim() || saving.value) return;
@@ -52,7 +49,6 @@ async function save(): Promise<void> {
       provider: provider.value,
       apiKey: apiKey.value.trim(),
       ...(model.value.trim() ? { model: model.value.trim() } : {}),
-      ...(showBaseUrl.value && baseUrl.value.trim() ? { baseUrl: baseUrl.value.trim() } : {}),
     });
     // Clear it from the form immediately — it is stored server-side now, and
     // leaving it in a DOM input is one screenshot away from a leak.
@@ -65,8 +61,26 @@ async function save(): Promise<void> {
   }
 }
 
-const exporting = ref(false);
 const clearing = ref(false);
+const language = ref(app.config.aiLanguage ?? '');
+const customInstructions = ref(app.config.aiCustomInstructions ?? '');
+const savingPreferences = ref(false);
+const preferencesSaved = ref(false);
+
+async function savePreferences(): Promise<void> {
+  if (savingPreferences.value) return;
+  savingPreferences.value = true;
+  preferencesSaved.value = false;
+  try {
+    await app.updateConfig({
+      aiLanguage: language.value.trim().slice(0, 80),
+      aiCustomInstructions: customInstructions.value.trim().slice(0, 600),
+    });
+    preferencesSaved.value = true;
+  } finally {
+    savingPreferences.value = false;
+  }
+}
 
 async function clearCache(): Promise<void> {
   clearing.value = true;
@@ -74,26 +88,6 @@ async function clearCache(): Promise<void> {
     await ai.clearCache();
   } finally {
     clearing.value = false;
-  }
-}
-
-async function exportHistory(): Promise<void> {
-  exporting.value = true;
-  try {
-    const entries = await historyLog.exportAll();
-    const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), entries }, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `qed2-verlauf-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    error.value = (e as { message?: string })?.message ?? 'Export fehlgeschlagen.';
-  } finally {
-    exporting.value = false;
   }
 }
 
@@ -160,9 +154,12 @@ async function remove(): Promise<void> {
             :disabled="!ai.poolOffered"
             @click="ai.setMode('pool')"
           >
-            <span class="ai-set__mode-title">Vom Server bereitgestellt</span>
+            <span class="ai-set__mode-title">
+              <span>Vom Server bereitgestellt</span>
+              <span v-if="ai.mode === 'pool'" class="ai-set__selected"><span aria-hidden="true">✓</span> Ausgewählt</span>
+            </span>
             <span class="ai-set__mode-hint">
-              {{ ai.poolOffered ? 'Kein eigener Schlüssel nötig' : 'Für dieses Konto nicht freigeschaltet' }}
+              {{ !ai.poolAllowed ? 'Für dieses Konto nicht freigeschaltet' : ai.poolOffered ? 'Kein eigener Schlüssel nötig' : 'Kontingent derzeit nicht verfügbar' }}
             </span>
           </button>
           <button
@@ -171,14 +168,30 @@ async function remove(): Promise<void> {
             :class="{ 'ai-set__mode--on': ai.mode === 'byo' }"
             role="radio"
             :aria-checked="ai.mode === 'byo'"
+            :disabled="!ai.byoOffered"
             @click="ai.setMode('byo')"
           >
-            <span class="ai-set__mode-title">Eigener Schlüssel</span>
+            <span class="ai-set__mode-title">
+              <span>Eigener Schlüssel</span>
+              <span v-if="ai.mode === 'byo'" class="ai-set__selected"><span aria-hidden="true">✓</span> Ausgewählt</span>
+            </span>
             <span class="ai-set__mode-hint">
-              {{ configured ? `${status?.byo.provider === 'gemini' ? 'Gemini' : 'OpenAI'} · ···${status?.byo.last4}` : 'Noch keiner hinterlegt' }}
+              {{ !ai.byoOffered ? 'Für dieses Konto nicht freigeschaltet' : configured ? `${status?.byo.provider === 'gemini' ? 'Gemini' : 'OpenAI'} · ···${status?.byo.last4}` : 'Noch keiner hinterlegt' }}
             </span>
           </button>
         </div>
+      </div>
+
+      <div v-if="configured && !ai.byoOffered" class="ai-set__current">
+        <div class="ai-set__current-main">
+          <span class="ai-set__current-label">Gespeichert, derzeit nicht verwendet</span>
+          <span class="ai-set__current-value">
+            {{ status?.byo.provider === 'gemini' ? 'Google Gemini' : 'OpenAI' }}
+            <template v-if="status?.byo.model"> · {{ status.byo.model }}</template>
+            · ···{{ status?.byo.last4 }}
+          </span>
+        </div>
+        <QButton variant="ghost" :disabled="saving" @click="remove">Entfernen</QButton>
       </div>
 
       <!-- The key form belongs to exactly one of the two modes. -->
@@ -211,7 +224,10 @@ async function remove(): Promise<void> {
                 :aria-checked="provider === p.id"
                 @click="provider = p.id"
               >
-                <span class="ai-set__provider-label">{{ p.label }}</span>
+                <span class="ai-set__provider-label">
+                  <span>{{ p.label }}</span>
+                  <span v-if="provider === p.id" class="ai-set__selected"><span aria-hidden="true">✓</span> Ausgewählt</span>
+                </span>
                 <span v-if="p.hint" class="ai-set__provider-hint">{{ p.hint }}</span>
               </button>
             </div>
@@ -222,19 +238,13 @@ async function remove(): Promise<void> {
               {{ configured ? 'Schlüssel ersetzen' : 'API-Schlüssel' }}
             </label>
             <input id="ai-key" v-model="apiKey" type="password" class="ai-set__input"
-                   autocomplete="off" spellcheck="false" placeholder="sk-…" />
+                   maxlength="512" autocomplete="off" spellcheck="false" placeholder="sk-…" />
             <p class="ai-set__hint">Wird verschlüsselt gespeichert und nie wieder angezeigt — auch nicht dir.</p>
           </div>
 
-          <div class="ai-set__row2">
-            <div class="ai-set__field">
-              <label class="ai-set__label" for="ai-model">Modell <span class="ai-set__opt">optional</span></label>
-              <input id="ai-model" v-model="model" type="text" class="ai-set__input" spellcheck="false" placeholder="gpt-5-mini" />
-            </div>
-            <div v-if="showBaseUrl" class="ai-set__field">
-              <label class="ai-set__label" for="ai-base">Endpunkt <span class="ai-set__opt">optional</span></label>
-              <input id="ai-base" v-model="baseUrl" type="url" class="ai-set__input" spellcheck="false" placeholder="https://api.openai.com/v1" />
-            </div>
+          <div class="ai-set__field">
+            <label class="ai-set__label" for="ai-model">Modell <span class="ai-set__opt">optional</span></label>
+            <input id="ai-model" v-model="model" type="text" maxlength="200" class="ai-set__input" spellcheck="false" placeholder="gpt-5-mini" />
           </div>
 
           <div class="ai-set__actions">
@@ -246,20 +256,44 @@ async function remove(): Promise<void> {
         </details>
       </template>
 
+      <details class="ai-set__details ai-set__preferences">
+        <summary>Antwortstil</summary>
+        <form class="ai-set__form" @submit.prevent="savePreferences">
+          <div class="ai-set__field">
+            <label class="ai-set__label" for="ai-language">Antwortsprache</label>
+            <input
+              id="ai-language"
+              v-model="language"
+              type="text"
+              maxlength="80"
+              class="ai-set__input"
+              placeholder="Deutsch"
+            />
+            <p class="ai-set__hint">Frei formulierbar, z. B. „Kroatisch, Fachbegriffe auf Deutsch“.</p>
+          </div>
+          <div class="ai-set__field">
+            <label class="ai-set__label" for="ai-instructions">Eigene Hinweise <span class="ai-set__opt">optional</span></label>
+            <textarea
+              id="ai-instructions"
+              v-model="customInstructions"
+              maxlength="600"
+              rows="3"
+              class="ai-set__input ai-set__textarea"
+              placeholder="Kurz und mit einem Beispiel erklären."
+            />
+            <p class="ai-set__hint">Gilt für Erklärungen und Vorschläge; die Bewertungsregeln haben immer Vorrang.</p>
+          </div>
+          <div class="ai-set__actions">
+            <QButton type="submit" :disabled="savingPreferences">
+              {{ savingPreferences ? 'Speichern …' : 'Speichern' }}
+            </QButton>
+            <span v-if="preferencesSaved" class="ai-set__saved" role="status">Gespeichert.</span>
+          </div>
+        </form>
+      </details>
+
       <details class="ai-set__details ai-set__maintenance">
         <summary>Daten &amp; Speicher</summary>
-        <!-- The answers and self-assessed ticks live only on this device.
-             Handing them over stays a deliberate button action. -->
-        <div class="ai-set__maintenance-row">
-          <div>
-            <span class="ai-set__label">Verlauf exportieren</span>
-            <p class="ai-set__hint">Antworten und Selbstbewertungen dieses Geräts als JSON.</p>
-          </div>
-          <QButton variant="secondary" :disabled="exporting" @click="exportHistory">
-            {{ exporting ? 'Wird erstellt …' : 'Speichern' }}
-          </QButton>
-        </div>
-
         <div class="ai-set__maintenance-row">
           <div>
             <span class="ai-set__label">Gespeicherte KI-Antworten</span>
@@ -323,6 +357,11 @@ async function remove(): Promise<void> {
   font-size: 13.5px;
   font-weight: 700;
   color: var(--q-ink);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 .ai-set__mode-hint {
   font-size: 11.5px;
@@ -415,6 +454,9 @@ async function remove(): Promise<void> {
 .ai-set__key-details .ai-set__form {
   margin-top: 14px;
 }
+.ai-set__preferences .ai-set__form {
+  margin-top: 14px;
+}
 .ai-set__details {
   padding: 11px 13px;
   border: 1px solid var(--q-border-soft);
@@ -475,6 +517,13 @@ async function remove(): Promise<void> {
   outline: 2px solid var(--q-accent);
   outline-offset: 1px;
 }
+.ai-set__textarea {
+  resize: vertical;
+  min-height: 78px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  line-height: 1.45;
+}
 .ai-set__hint {
   margin: 0;
   font-size: 11.5px;
@@ -517,6 +566,20 @@ async function remove(): Promise<void> {
   font-size: 13px;
   font-weight: 700;
   color: var(--q-ink);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ai-set__selected {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--q-accent-strong);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .ai-set__provider-hint {
   font-size: 11px;
@@ -532,6 +595,8 @@ async function remove(): Promise<void> {
 
 .ai-set__actions {
   display: flex;
+  align-items: center;
+  gap: 10px;
   justify-content: flex-end;
 }
 @media (max-width: 480px) {

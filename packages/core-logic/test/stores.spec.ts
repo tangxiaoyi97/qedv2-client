@@ -403,6 +403,39 @@ describe('ArchiveStore', () => {
 });
 
 describe('HistoryLog', () => {
+  it('scrubs raw answer fields left by prerelease builds on first read', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE.history, 'log', [
+      {
+        partId: 'p1',
+        questionId: 'q1',
+        verdict: 'partial',
+        awardedPoints: 0.5,
+        maxPoints: 1,
+        grading: 'meh',
+        gradedAt: '2026-07-02T11:30:00.000Z',
+        submittedText: 'private answer',
+        criteriaMet: [true, false],
+      },
+    ]);
+
+    const log = new HistoryLog(storage);
+    expect(await log.list()).toEqual([
+      {
+        partId: 'p1',
+        questionId: 'q1',
+        verdict: 'partial',
+        awardedPoints: 0.5,
+        maxPoints: 1,
+        grading: 'meh',
+        gradedAt: '2026-07-02T11:30:00.000Z',
+      },
+    ]);
+    expect(await storage.get(STORAGE.history, 'log')).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ submittedText: 'private answer' })]),
+    );
+  });
+
   it('appends newest-first, lists with limit/offset, and aggregates daily activity', async () => {
     const log = new HistoryLog(new MemoryStorage());
     await log.append({ partId: 'p1', questionId: 'q1', verdict: 'correct', awardedPoints: 1, maxPoints: 1, grading: 'good', gradedAt: '2026-07-01T10:00:00.000Z' });

@@ -11,8 +11,9 @@
  * that has to be testable without a browser.
  */
 import type { GradeResult, Submission } from '../grading/types.js';
-import type { Answer, Question, QuestionPart, RubricScoring } from '../model/question.js';
+import type { Answer, Figure, Question, QuestionPart, RubricScoring } from '../model/question.js';
 import { isRichTextEmpty, richTextToPlain } from '../model/richtext.js';
+import type { FigNode, RichText } from '../model/richtext.js';
 import type {
   AiAssessRequest,
   AiExplainMode,
@@ -29,13 +30,54 @@ import type {
  * cannot fetch them (that would mean calling core). Callers use this to soften
  * the explanation and to refuse pre-filling a grade entirely.
  */
+function answerRichTexts(answer: Answer | undefined): RichText[] {
+  if (!answer) return [];
+  switch (answer.kind) {
+    case 'choice':
+      return answer.options;
+    case 'matching':
+      return [
+        ...answer.left,
+        ...answer.right,
+        ...(answer.candidateGroups ?? []).flatMap((group) => (group.label ? [group.label] : [])),
+      ];
+    case 'open':
+      return [answer.rubric];
+    default:
+      return [];
+  }
+}
+
+function inlineFigures(text: RichText | undefined): FigNode[] {
+  return (text ?? []).filter((node): node is FigNode => node.t === 'fig');
+}
+
+function allFigures(question: Question, part: QuestionPart): (Figure | FigNode)[] {
+  const solution = part.solution ?? [];
+  const richTexts = [
+    question.prompt,
+    part.prompt,
+    ...answerRichTexts(part.answer),
+    ...solution.map((entry) => entry.result),
+  ];
+  return [
+    ...(question.figures ?? []),
+    ...(part.figures ?? []),
+    ...solution.flatMap((entry) => entry.figures ?? []),
+    ...richTexts.flatMap((text) => inlineFigures(text)),
+  ];
+}
+
+function altOf(figure: Figure | FigNode): string {
+  return 'alt' in figure && typeof figure.alt === 'string' ? figure.alt.trim() : '';
+}
+
 export function figureAlts(question: Question, part: QuestionPart): string[] {
-  const figures = [...(question.figures ?? []), ...(part.figures ?? [])];
-  return figures.map((f) => (typeof f.alt === 'string' ? f.alt.trim() : '')).filter(Boolean);
+  return [...new Set(allFigures(question, part).map(altOf).filter(Boolean))];
 }
 
 export function hasFigures(question: Question, part: QuestionPart): boolean {
-  return [...(question.figures ?? []), ...(part.figures ?? [])].length > 0;
+  return allFigures(question, part).length > 0;
 }
 
 /** First solution entry's text, plus its grading note, as plain text. */
@@ -50,6 +92,7 @@ function solutionText(part: QuestionPart): { officialSolution?: string; gradingN
 
 function shared(question: Question, part: QuestionPart, submitted: string, maxPoints: number) {
   const alts = figureAlts(question, part);
+  const includesFigures = hasFigures(question, part);
   const questionPrompt = richTextToPlain(question.prompt);
   const partPrompt = richTextToPlain(part.prompt);
   return {
@@ -59,6 +102,7 @@ function shared(question: Question, part: QuestionPart, submitted: string, maxPo
     ...(partPrompt ? { partPrompt } : {}),
     ...(part.format ? { format: part.format } : {}),
     ...(alts.length > 0 ? { figureAlts: alts } : {}),
+    ...(includesFigures ? { hasFigures: true } : {}),
     submitted,
     ...solutionText(part),
     maxPoints,
@@ -98,7 +142,9 @@ export function promptOptions(options: AiPromptOptions | undefined): AiPromptOpt
   const custom = options?.customInstructions?.trim();
   if (language) out.language = language;
   if (custom) out.customInstructions = custom;
-  if (options?.preferPool === true) out.preferPool = true;
+  // Both values are billing instructions in v2: false explicitly requires
+  // BYO, while an omitted field lets the server choose its automatic default.
+  if (options?.preferPool !== undefined) out.preferPool = options.preferPool;
   return out;
 }
 

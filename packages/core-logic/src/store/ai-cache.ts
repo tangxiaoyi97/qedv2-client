@@ -22,7 +22,8 @@ export interface CachedAiAnswer<T = unknown> {
   storedAt: string;
 }
 
-const CACHE_KEY = 'answers';
+const CACHE_KEY = 'answers-v2';
+const LEGACY_CACHE_KEY = 'answers';
 
 /**
  * Upper bound, oldest-first. The whole cache is one document that is read and
@@ -35,9 +36,20 @@ export const MAX_CACHED_ANSWERS = 120;
 export const CACHE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 
 export class AiCache {
+  private legacyCleared = false;
+
   constructor(private readonly storage: StoragePort) {}
 
+  private async clearLegacyKeys(): Promise<void> {
+    if (this.legacyCleared) return;
+    this.legacyCleared = true;
+    // RC builds placed the submitted answer directly in the cache key. Drop
+    // that beta-only layout once; v2 keys are opaque SHA-256 digests.
+    await this.storage.delete(STORAGE.aiCache, LEGACY_CACHE_KEY);
+  }
+
   private async read(): Promise<CachedAiAnswer[]> {
+    await this.clearLegacyKeys();
     return (await this.storage.get<CachedAiAnswer[]>(STORAGE.aiCache, CACHE_KEY)) ?? [];
   }
 
@@ -60,6 +72,7 @@ export class AiCache {
 
   /** Offered in the settings alongside the key, so "forget it" means all of it. */
   async clear(): Promise<void> {
+    await this.clearLegacyKeys();
     await this.storage.set(STORAGE.aiCache, CACHE_KEY, []);
   }
 

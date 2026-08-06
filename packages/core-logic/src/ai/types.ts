@@ -28,6 +28,11 @@ export interface AiQuestionContext {
   format?: string;
   /** Non-empty means the model is working blind on a figure this question uses. */
   figureAlts?: string[];
+  /**
+   * True even when a figure has no alt text. This is the safety signal used
+   * to keep a vision-less model from silently pre-filling a grade.
+   */
+  hasFigures?: boolean;
   submitted: string;
   officialSolution?: string;
   gradingNote?: string;
@@ -145,9 +150,14 @@ export interface AiStatus {
   };
   pool: {
     eligible: boolean;
+    /** Resolved pool route; lets local caches stay isolated across model changes. */
+    provider?: AiProviderId;
+    model?: string;
     remaining?: { tokens?: number; costCents?: number };
     periodEndsAt?: string;
   };
   active: AiSource | 'none';
   features: { explain: boolean; assess: boolean };
+  /** Sources this entitlement permits the user to select. Absent on early RC servers. */
+  allowedSources?: AiSource[];
 }

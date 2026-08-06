@@ -24,6 +24,8 @@ import type {
   AuthResponse,
   HealthResponse,
   HistoryQuery,
+  HistoryActivityQuery,
+  HistoryActivityResponse,
   HistoryResponse,
   LeaderboardDetail,
   LeaderboardPeriod,
@@ -129,6 +131,17 @@ export class ServerClient {
     );
   }
 
+  /** One snapshot query, grouped by the user's local calendar day. */
+  getHistoryActivity(query: HistoryActivityQuery): Promise<HistoryActivityResponse> {
+    return requestJson<HistoryActivityResponse>(
+      this.baseUrl,
+      '/me/history/activity',
+      this.authed({
+        query: { since: query.since, until: query.until, timeZone: query.timeZone },
+      }),
+    );
+  }
+
   /** GET /leaderboard — authenticated, opt-in aggregate rankings. */
   getLeaderboard(
     query: { period?: LeaderboardPeriod; page?: number; pageSize?: number } = {},
@@ -199,7 +212,6 @@ export class ServerClient {
     provider: AiProviderId;
     apiKey: string;
     model?: string;
-    baseUrl?: string;
   }): Promise<AiStatus> {
     return requestJson<AiStatus>(
       this.baseUrl,

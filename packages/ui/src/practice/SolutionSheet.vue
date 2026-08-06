@@ -227,6 +227,10 @@ function onHandleDown(event: PointerEvent): void {
   const liveHeight = sheetEl.value?.getBoundingClientRect().height ?? 0;
   dragStartHeight = liveHeight > 0 ? liveHeight : detentHeights.value[props.detent];
   dragHeight.value = dragStartHeight;
+  // Freeze an in-flight snap at its presentation value on pointer-down. The
+  // sheet must be grabbable immediately, not only after the finger clears the
+  // movement threshold.
+  dragging.value = true;
   moved = false;
   dragSamples = [{ height: dragStartHeight, time: event.timeStamp }];
 }
@@ -237,7 +241,6 @@ function onHandleMove(event: PointerEvent): void {
   const height = dragStartHeight + (dragStartY - event.clientY);
   if (!moved && Math.abs(dragStartY - event.clientY) < TAP_SLOP_PX) return;
   moved = true;
-  dragging.value = true;
   dragHeight.value = Math.max(0, Math.min(detentHeights.value.full, height));
   rememberSample(dragHeight.value, event.timeStamp);
 }
@@ -246,6 +249,12 @@ function onHandleUp(event: PointerEvent): void {
   pointerDown = false;
   dragStartY = 0;
   if (!dragging.value) return;
+  if (!moved) {
+    dragging.value = false;
+    dragSamples = [];
+    void nextTick(measureAnswer);
+    return;
+  }
   rememberSample(dragHeight.value, event.timeStamp);
   const snapped = resolveSheetRelease({
     detent: props.detent,
@@ -260,6 +269,15 @@ function onHandleUp(event: PointerEvent): void {
   // meantime (a figure finishing to load) would otherwise stay stale forever.
   void nextTick(measureAnswer);
   if (snapped !== props.detent) emit('update:detent', snapped);
+}
+
+function onHandleCancel(): void {
+  pointerDown = false;
+  dragStartY = 0;
+  dragging.value = false;
+  moved = false;
+  dragSamples = [];
+  void nextTick(measureAnswer);
 }
 
 function stepDetent(direction: -1 | 1): void {
@@ -341,7 +359,7 @@ onBeforeUnmount(() => {
         @pointerdown="onHandleDown"
         @pointermove="onHandleMove"
         @pointerup="onHandleUp"
-        @pointercancel="onHandleUp"
+        @pointercancel="onHandleCancel"
         @keydown.up.prevent="stepDetent(1)"
         @keydown.down.prevent="stepDetent(-1)"
         @click="onHandleClick"
@@ -588,6 +606,9 @@ onBeforeUnmount(() => {
 .q-ssheet__handle:focus-visible .q-ssheet__grip {
   width: 64px;
 }
+.q-ssheet__handle:active .q-ssheet__grip {
+  transform: scaleX(1.08);
+}
 
 .q-ssheet__verdict {
   display: flex;
@@ -634,7 +655,10 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .q-ssheet {
-    transition: height 120ms ease-out;
+    transition: none;
+  }
+  .q-ssheet__grip {
+    transition: none;
   }
 }
 .q-ssheet--open {

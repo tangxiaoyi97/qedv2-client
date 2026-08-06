@@ -209,6 +209,21 @@ describe('ServerClient auth wiring', () => {
     expect(JSON.parse(calls[0]?.init.body ?? '')).toEqual({ attempts: [attempt] });
   });
 
+  it('requests one authenticated, timezone-aware history activity snapshot', async () => {
+    const calls = stubFetch(() => ({ activity: { '2026-08-06': 3 } }));
+    const result = await new ServerClient('http://server.test', () => 'tok').getHistoryActivity({
+      since: '2026-08-01T00:00:00.000Z',
+      until: '2026-08-06T23:59:59.999Z',
+      timeZone: 'Europe/Vienna',
+    });
+
+    expect(calls[0]?.url).toBe(
+      'http://server.test/me/history/activity?since=2026-08-01T00%3A00%3A00.000Z&until=2026-08-06T23%3A59%3A59.999Z&timeZone=Europe%2FVienna',
+    );
+    expect(calls[0]?.init.headers.Authorization).toBe('Bearer tok');
+    expect(result).toEqual({ activity: { '2026-08-06': 3 } });
+  });
+
   it('supports the authenticated leaderboard list, detail and profile lifecycle', async () => {
     const calls = stubFetch((call) => {
       if (call.url.includes('/leaderboard/users/')) return { profileId: 'p/1', nickname: 'Mira' };

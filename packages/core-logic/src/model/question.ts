@@ -103,7 +103,7 @@ export interface ExpressionAnswer {
 export interface OpenAnswer {
   kind: 'open';
   rubric: RichText;
-  /** v1 always self-assesses; "ai" is reserved (server-side, disabled). */
+  /** `ai` requests an advisory proposal; the learner still confirms the grade. */
   grader: 'self' | 'ai';
 }
 

@@ -28,7 +28,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.0.3
 
       - uses: actions/setup-node@v4
         with:
@@ -50,6 +50,10 @@ jobs:
       # CHANGELOG.md, which the release commit already carries.
       - name: Build web
         run: pnpm --filter @qed2/web build
+
+      - name: Assert stable channel artifact
+        working-directory: packages/web
+        run: node scripts/assert-channel.mjs stable
 
       - uses: actions/configure-pages@v5
 

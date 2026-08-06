@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE } from '@qed2/core-logic';
 import HistoryView from '../src/routes/HistoryView.vue';
 import { historyLog, storage } from '../src/services.js';
+import { useAppStore } from '../src/stores/app.js';
+import { useAuthStore } from '../src/stores/auth.js';
 
 function localDayKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -93,6 +95,79 @@ describe('HistoryView activity filter', () => {
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
     await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(2));
     expect(host.querySelector(`[data-key="${todayKey}"]`)).not.toBeNull();
+
+    app.unmount();
+  });
+
+  it('loads account activity from the aggregate endpoint in one local-time-zone request', async () => {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const todayKey = localDayKey(today);
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/me/history/activity?')) {
+        return new Response(JSON.stringify({ activity: { [todayKey]: 7 } }), { status: 200 });
+      }
+      if (url.includes('/me/history?')) {
+        return new Response(JSON.stringify({
+          items: [{
+            id: 'attempt-1',
+            questionId: 'question-cloud',
+            partId: 'part-cloud',
+            correct: true,
+            awardedPoints: 1,
+            gradedAt: today.toISOString(),
+          }],
+          page: 1,
+          pageSize: 50,
+          total: 1,
+        }), { status: 200 });
+      }
+      if (url.endsWith('/content/questions/batch')) {
+        return new Response(JSON.stringify({ questions: [], missing: ['question-cloud'] }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'u1', username: 'tester' },
+    };
+    useAppStore().setTokenProvider(() => auth.session?.token);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(HistoryView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+
+    await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(1));
+    await vi.waitFor(() => {
+      expect(host.querySelector(`[data-key="${todayKey}"]`)?.getAttribute('aria-label')).toContain('7 Aufgaben');
+    });
+
+    const aggregateCalls = calls.filter((url) => url.includes('/me/history/activity?'));
+    expect(aggregateCalls).toHaveLength(1);
+    const decoded = decodeURIComponent(aggregateCalls[0]!);
+    expect(decoded).toContain('since=');
+    expect(decoded).toContain('until=');
+    expect(decoded).toContain('timeZone=');
+    expect(calls.some((url) => url.includes('pageSize=200'))).toBe(false);
 
     app.unmount();
   });

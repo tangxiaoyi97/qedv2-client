@@ -103,6 +103,27 @@ describe('SolutionSheet click', () => {
 });
 
 describe('SolutionSheet drag', () => {
+  it('interrupts an in-flight snap as soon as the handle is pressed', async () => {
+    const wrapper = mountSheet({ detent: 'default' });
+    const handle = wrapper.get('.q-ssheet__handle');
+    await handle.trigger('pointerdown', at(500));
+    expect(wrapper.get('.q-ssheet').classes()).toContain('q-ssheet--dragging');
+    await handle.trigger('pointerup', at(500));
+    expect(wrapper.get('.q-ssheet').classes()).not.toContain('q-ssheet--dragging');
+    expect(wrapper.emitted('update:detent')).toBeUndefined();
+  });
+
+  it('returns to the controlled detent when the browser cancels the gesture', async () => {
+    const wrapper = mountSheet({ detent: 'default' });
+    const handle = wrapper.get('.q-ssheet__handle');
+    await handle.trigger('pointerdown', at(500));
+    await handle.trigger('pointermove', at(400));
+    await handle.trigger('pointercancel', at(400));
+    expect(wrapper.get('.q-ssheet').classes()).not.toContain('q-ssheet--dragging');
+    expect(heightOf(wrapper)).toBe(HEIGHTS.default);
+    expect(wrapper.emitted('update:detent')).toBeUndefined();
+  });
+
   it('tracks the finger one-to-one and suspends its transition', async () => {
     const wrapper = mountSheet({ detent: 'default' });
     const handle = wrapper.get('.q-ssheet__handle');

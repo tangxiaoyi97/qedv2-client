@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import rootPkg from '../../../package.json';
 import { entriesToAnnounce, parseChangelogIndex, type ChangelogEntry } from '../src/changelog.js';
 import {
   parseChangelog,
@@ -80,8 +81,8 @@ describe('CHANGELOG.md format', () => {
   it('parses the real file', () => {
     const entries = parseChangelog(CHANGELOG);
     expect(entries.length).toBeGreaterThan(5);
-    expect(entries[0]?.version).toBe('1.9.7');
-    expect(entries[0]?.body).toContain('Offizieller Lösungsweg');
+    if (!isPrerelease(rootPkg.version)) expect(entries[0]?.version).toBe(rootPkg.version);
+    expect(entries.find((entry) => entry.version === '1.9.7')?.body).toContain('Offizieller Lösungsweg');
     expect(entries.at(-1)?.version).toBe('1.0.0');
   });
 

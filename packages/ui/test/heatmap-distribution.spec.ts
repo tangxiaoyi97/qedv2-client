@@ -227,7 +227,7 @@ describe('SolutionSheet', () => {
         provideAssetResolver((src) => `https://core.example/content/assets/${src}`);
         return { solution };
       },
-      template: '<SolutionSheet :solution="solution" :open="true" />',
+      template: '<SolutionSheet :solution="solution" detent="default" />',
     });
     const w = mount(Host);
     expect(w.find('.q-zfig__img').attributes('src')).toBe(

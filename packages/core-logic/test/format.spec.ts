@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatScore,
   formatScoreRatio,
+  localActivityRange,
   localDayRange,
   parseLocalDayKey,
   roundScore,
@@ -67,5 +68,24 @@ describe('local day keys', () => {
   it('survives a malformed key instead of producing an Invalid Date', () => {
     const day = parseLocalDayKey('nonsense');
     expect(Number.isNaN(day.getTime())).toBe(false);
+  });
+
+  it('builds an inclusive range from local midnights, not a rolling duration', () => {
+    const { since, until } = localActivityRange(3, new Date(2026, 6, 3, 20, 15));
+    const start = new Date(since);
+    const end = new Date(until);
+    expect([start.getFullYear(), start.getMonth(), start.getDate(), start.getHours()]).toEqual([
+      2026, 6, 1, 0,
+    ]);
+    expect([end.getFullYear(), end.getMonth(), end.getDate(), end.getHours()]).toEqual([
+      2026, 6, 3, 23,
+    ]);
+    expect(end.getMilliseconds()).toBe(999);
+  });
+
+  it('clamps invalid activity lengths to at least the current local day', () => {
+    const now = new Date(2026, 6, 3, 20, 15);
+    expect(localActivityRange(0, now)).toEqual(localDayRange('2026-07-03'));
+    expect(localActivityRange(Number.NaN, now)).toEqual(localDayRange('2026-07-03'));
   });
 });

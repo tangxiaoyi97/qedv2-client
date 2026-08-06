@@ -38,7 +38,11 @@ describe('release channel', () => {
 
   it('compiles empty endpoints on stable, so no preview host can be in the bundle', () => {
     const endpoints = withEnv(
-      { QED2_DEFAULT_CORE: undefined, QED2_DEFAULT_SERVER: undefined },
+      {
+        QED2_CHANNEL: 'stable',
+        QED2_DEFAULT_CORE: 'https://qedcore-pv.barcarolle.studio',
+        QED2_DEFAULT_SERVER: 'https://qedsync-pv.barcarolle.studio',
+      },
       resolveEndpoints,
     );
     expect(endpoints).toEqual({ core: '', server: '' });
@@ -47,6 +51,7 @@ describe('release channel', () => {
   it('passes the preview endpoints through verbatim', () => {
     const endpoints = withEnv(
       {
+        QED2_CHANNEL: 'preview',
         QED2_DEFAULT_CORE: 'https://qedcore-pv.barcarolle.studio',
         QED2_DEFAULT_SERVER: 'https://qedsync-pv.barcarolle.studio',
       },
@@ -54,5 +59,20 @@ describe('release channel', () => {
     );
     expect(endpoints.core).toBe('https://qedcore-pv.barcarolle.studio');
     expect(endpoints.server).toBe('https://qedsync-pv.barcarolle.studio');
+  });
+
+  it('defaults an explicit preview build to the isolated preview services', () => {
+    const endpoints = withEnv(
+      {
+        QED2_CHANNEL: 'preview',
+        QED2_DEFAULT_CORE: undefined,
+        QED2_DEFAULT_SERVER: undefined,
+      },
+      resolveEndpoints,
+    );
+    expect(endpoints).toEqual({
+      core: 'https://qedcore-pv.barcarolle.studio',
+      server: 'https://qedsync-pv.barcarolle.studio',
+    });
   });
 });

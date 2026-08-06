@@ -22,6 +22,11 @@ export function formatScoreRatio(awarded: number, max: number): string {
   return `${formatScore(awarded)} / ${formatScore(max)} P`;
 }
 
+/** A Date grouped by the user's local calendar, not by UTC. */
+export function localDayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 /**
  * A `YYYY-MM-DD` activity key back into a LOCAL midnight Date.
  *
@@ -43,4 +48,14 @@ export function localDayRange(key: string): { since: string; until: string } {
   const start = parseLocalDayKey(key);
   const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1, 0, 0, 0, -1);
   return { since: start.toISOString(), until: end.toISOString() };
+}
+
+/** Inclusive ISO window covering complete local calendar days. */
+export function localActivityRange(days: number, now: Date): { since: string; until: string } {
+  const safeDays = Number.isFinite(days) ? Math.max(1, Math.floor(days)) : 1;
+  const first = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (safeDays - 1));
+  return {
+    since: localDayRange(localDayKey(first)).since,
+    until: localDayRange(localDayKey(now)).until,
+  };
 }

@@ -23,6 +23,7 @@ import {
   type QuestionPart,
   type QuestionsFilter,
   type SelfAssessment,
+  suggestedSelfAssessment,
   type Submission,
   type Term,
 } from '@qed2/core-logic';
@@ -218,6 +219,7 @@ const ai = useAiStore();
 const explainDismissed = ref(new Set<string>());
 const explainLoading = ref(false);
 const explainError = ref<string | null>(null);
+const explainControllers: Partial<Record<'answer' | 'walkthrough', AbortController>> = {};
 
 /** What the user actually wrote — see PartPlayerState.submittedText. */
 const explainSubmission = computed(() => playerState.value.submittedText);
@@ -232,7 +234,16 @@ const showExplain = computed(() => {
 const explainKey = computed(() => `${current.value?.part.id ?? ''}|${explainSubmission.value}`);
 
 const explainState = computed(() => {
-  const hit = current.value ? ai.cached(current.value.part.id, explainSubmission.value) : undefined;
+  const part = current.value;
+  const result = playerState.value.result;
+  const hit = part && result
+    ? ai.cached({
+        question: part.question,
+        part: part.part,
+        submitted: explainSubmission.value,
+        result,
+      })
+    : undefined;
   return {
     markdown: hit?.markdown,
     model: hit?.model,
@@ -259,7 +270,16 @@ const showWalkthrough = computed(
 
 const walkState = computed(() => {
   const part = current.value;
-  const hit = part ? ai.cached(part.part.id, explainSubmission.value, 'walkthrough') : undefined;
+  const result = playerState.value.result;
+  const hit = part && result
+    ? ai.cached({
+        question: part.question,
+        part: part.part,
+        submitted: explainSubmission.value,
+        result,
+        mode: 'walkthrough',
+      })
+    : undefined;
   return {
     markdown: hit?.markdown,
     model: hit?.model,
@@ -294,20 +314,36 @@ async function runExplain(mode: 'answer' | 'walkthrough'): Promise<void> {
   const busy = mode === 'answer' ? explainLoading : walkLoading;
   const error = mode === 'answer' ? explainError : walkError;
   if (!part || !result || busy.value) return;
+  const partId = part.part.id;
+  const userId = auth.session?.user.id;
+  const submitted = explainSubmission.value;
+  const controller = new AbortController();
+  explainControllers[mode]?.abort();
+  explainControllers[mode] = controller;
   busy.value = true;
   error.value = null;
   try {
     await ai.explain({
       question: part.question,
       part: part.part,
-      submitted: explainSubmission.value,
+      submitted,
       result,
       mode,
-    });
+    }, controller.signal);
   } catch (e) {
-    error.value = explainMessage(e);
+    if (
+      !controller.signal.aborted &&
+      current.value?.part.id === partId &&
+      auth.session?.user.id === userId &&
+      explainSubmission.value === submitted
+    ) {
+      error.value = explainMessage(e);
+    }
   } finally {
-    busy.value = false;
+    if (explainControllers[mode] === controller) {
+      delete explainControllers[mode];
+      busy.value = false;
+    }
   }
 }
 
@@ -317,6 +353,7 @@ async function runExplain(mode: 'answer' | 'walkthrough'): Promise<void> {
 const assistLoading = ref(false);
 const assistError = ref<string | null>(null);
 const assistResult = ref<AiAssessResponse | null>(null);
+let assistController: AbortController | undefined;
 
 const showAssist = computed(
   () => playerState.value.phase === 'self-assessing' && current.value != null && ai.canAssess(current.value.part),
@@ -337,12 +374,23 @@ const assist = computed(() => ({
   error: assistError.value ?? undefined,
 }));
 
-/** Reset when the part changes — a suggestion is about one answer only. */
+/** Abort and reset when the part or signed-in identity changes. */
 watch(
-  () => current.value?.part.id,
+  [() => current.value?.part.id, () => auth.session?.user.id],
   () => {
+    assistController?.abort();
+    assistController = undefined;
+    explainControllers.answer?.abort();
+    explainControllers.walkthrough?.abort();
+    delete explainControllers.answer;
+    delete explainControllers.walkthrough;
     assistResult.value = null;
     assistError.value = null;
+    assistLoading.value = false;
+    explainError.value = null;
+    walkError.value = null;
+    explainLoading.value = false;
+    walkLoading.value = false;
   },
 );
 
@@ -350,6 +398,12 @@ async function askForAssessment(): Promise<void> {
   const part = current.value;
   const self = playerState.value.selfAssessment;
   if (!part || !self || assistLoading.value) return;
+  const partId = part.part.id;
+  const userId = auth.session?.user.id;
+  const assessmentAtStart = JSON.stringify(self.assessment);
+  const controller = new AbortController();
+  assistController?.abort();
+  assistController = controller;
   assistLoading.value = true;
   assistError.value = null;
   try {
@@ -361,49 +415,46 @@ async function askForAssessment(): Promise<void> {
       // Non-rubric parts are judged against the values the part allows, so the
       // model can never return a score this part cannot represent.
       scoreOptions: self.scoreOptions.map((o) => o.points),
-    });
+    }, controller.signal);
+    if (
+      controller.signal.aborted ||
+      current.value?.part.id !== partId ||
+      auth.session?.user.id !== userId ||
+      playerState.value.phase !== 'self-assessing'
+    ) return;
     assistResult.value = answer;
-    if (answer && !answer.advisoryOnly) applySuggestion(answer);
+    // Never overwrite a choice the user made while the model was thinking.
+    if (
+      answer &&
+      JSON.stringify(playerState.value.selfAssessment?.assessment) === assessmentAtStart
+    ) applySuggestion(answer);
   } catch (e) {
-    assistError.value = explainMessage(e);
+    if (
+      !controller.signal.aborted &&
+      current.value?.part.id === partId &&
+      auth.session?.user.id === userId
+    ) {
+      assistError.value = explainMessage(e);
+    }
   } finally {
-    assistLoading.value = false;
+    if (assistController === controller) {
+      assistController = undefined;
+      assistLoading.value = false;
+    }
   }
 }
-
-/**
- * Tick the boxes the model is BOTH confident about and able to quote for.
- *
- * A low-confidence or unevidenced positive is shown with its reasoning but
- * never pre-ticked: an unticked box the user has to think about costs a
- * moment, a wrongly ticked one costs a distorted revision schedule.
- */
-const CONFIDENCE_FLOOR = 0.75;
 
 function applySuggestion(answer: AiAssessResponse): void {
   const self = playerState.value.selfAssessment;
   if (!self) return;
-
-  if (answer.overall) {
-    const { points, confidence, quoteVerified } = answer.overall;
-    // A zero needs no quote — having nothing to cite IS the finding. Awarding
-    // marks without one is the case that would silently inflate a grade.
-    const trustworthy = confidence >= CONFIDENCE_FLOOR && (points === 0 || quoteVerified);
-    if (!trustworthy) return;
-    onSelfAssessmentUpdate({
-      ...self.assessment,
-      awardedPoints: points,
-      overall: points >= self.maxPoints ? 'full' : points > 0 ? 'partial' : 'none',
-    });
-    return;
-  }
-
-  const criteriaMet = rubricLabels.value.map((_, i) => {
-    const verdict = answer.criteria?.find((c) => c.index === i);
-    if (!verdict?.met) return false;
-    return verdict.confidence >= CONFIDENCE_FLOOR && verdict.quoteVerified;
+  const suggestion = suggestedSelfAssessment({
+    answer,
+    current: self.assessment,
+    maxPoints: self.maxPoints,
+    criterionCount: rubricLabels.value.length,
+    allowedPoints: self.scoreOptions.map((option) => option.points),
   });
-  onSelfAssessmentUpdate({ ...self.assessment, criteriaMet });
+  if (suggestion) onSelfAssessmentUpdate(suggestion);
 }
 
 function dismissExplanation(): void {
@@ -417,11 +468,17 @@ function explainMessage(e: unknown): string {
   switch (code) {
     case 'AI_NO_CREDENTIAL':
       return 'Kein KI-Schlüssel hinterlegt — unter Optionen einrichten.';
+    case 'AI_NOT_ENTITLED':
+      return 'Diese KI-Quelle ist für dein Konto nicht freigeschaltet — bitte Optionen prüfen.';
+    case 'AI_POOL_UNAVAILABLE':
+      return 'Das bereitgestellte KI-Kontingent ist gerade nicht verfügbar.';
     case 'AI_QUOTA_EXCEEDED':
     case 'AI_PROVIDER_QUOTA':
       return 'Dein KI-Kontingent für diesen Monat ist aufgebraucht.';
     case 'AI_KEY_REJECTED':
       return 'Der KI-Anbieter hat den Schlüssel abgelehnt — bitte unter Optionen prüfen.';
+    case 'AI_CREDENTIAL_CHANGED':
+      return 'Der KI-Schlüssel wurde geändert — bitte noch einmal versuchen.';
     case 'AI_RATE_LIMITED':
       return 'Zu viele Anfragen — bitte kurz warten.';
     case 'AI_TIMEOUT':
@@ -639,6 +696,9 @@ onMounted(() => {
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
 onBeforeUnmount(() => {
+  assistController?.abort();
+  explainControllers.answer?.abort();
+  explainControllers.walkthrough?.abort();
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('resize', measureTopbar);
   topbarObserver?.disconnect();

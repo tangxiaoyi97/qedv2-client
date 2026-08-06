@@ -15,6 +15,7 @@ import {
   NetworkError,
   VERDICT_LABELS,
   formatScore,
+  localActivityRange,
   localDayRange,
   parseLocalDayKey,
   type Verdict,
@@ -33,7 +34,6 @@ const progress = useProgressStore();
 const PAGE_SIZE = 50;
 const ACTIVITY_WEEKS = 52;
 const ACTIVITY_DAYS = ACTIVITY_WEEKS * 7;
-const ACTIVITY_PAGE_SIZE = 200;
 interface Row {
   key: string;
   partId: string;
@@ -180,10 +180,6 @@ const activity = ref<Record<string, number>>({});
 const activityLoading = ref(false);
 const activityError = ref<string | undefined>();
 
-function localDayKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
 async function loadActivity(): Promise<void> {
   const request = ++activityRequest;
   activityLoading.value = true;
@@ -195,30 +191,11 @@ async function loadActivity(): Promise<void> {
       return;
     }
 
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (ACTIVITY_DAYS - 1));
-    const counts: Record<string, number> = {};
-    let targetPage = 1;
-    let loaded = 0;
-    let expected = Number.POSITIVE_INFINITY;
-
-    while (loaded < expected) {
-      const res = await app.serverClient.getHistory({
-        since: firstDay.toISOString(),
-        page: targetPage,
-        pageSize: ACTIVITY_PAGE_SIZE,
-      });
-      if (request !== activityRequest) return;
-      expected = res.total;
-      for (const item of res.items) {
-        const key = localDayKey(new Date(item.gradedAt));
-        counts[key] = (counts[key] ?? 0) + 1;
-      }
-      loaded += res.items.length;
-      if (res.items.length === 0) break;
-      targetPage += 1;
-    }
-    activity.value = counts;
+    const range = localActivityRange(ACTIVITY_DAYS, new Date());
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const res = await app.serverClient.getHistoryActivity({ ...range, timeZone });
+    if (request !== activityRequest) return;
+    activity.value = res.activity;
   } catch {
     if (request !== activityRequest) return;
     activity.value = {};
