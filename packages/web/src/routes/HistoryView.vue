@@ -19,7 +19,7 @@ import {
   parseLocalDayKey,
   type Verdict,
 } from '@qed2/core-logic';
-import { ActivityHeatmap, GradingDot, QButton, QSkeleton, StateIcon } from '@qed2/ui';
+import { ActivityHeatmap, QButton, QSkeleton, StateIcon } from '@qed2/ui';
 import { historyLog, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -31,6 +31,9 @@ const auth = useAuthStore();
 const progress = useProgressStore();
 
 const PAGE_SIZE = 50;
+const ACTIVITY_WEEKS = 52;
+const ACTIVITY_DAYS = ACTIVITY_WEEKS * 7;
+const ACTIVITY_PAGE_SIZE = 200;
 interface Row {
   key: string;
   partId: string;
@@ -50,6 +53,7 @@ const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
 const selectedDate = ref<string | null>(null);
 let loadRequest = 0;
+let activityRequest = 0;
 
 const cloudMode = computed(() => auth.isLoggedIn);
 
@@ -156,25 +160,75 @@ async function loadPage(reset: boolean): Promise<void> {
 
 onMounted(() => void loadPage(true));
 // login/logout switches the source — reload from page 1, never mixing the two
-watch(cloudMode, () => void loadPage(true));
+watch(cloudMode, () => {
+  void loadPage(true);
+  void loadActivity();
+});
 // new answers land in the local log (and in /me/attempts at session end)
 watch(
   () => progress.historyVersion,
   () => {
     if (!cloudMode.value) void loadPage(true);
+    void loadActivity();
   },
 );
 
-/* heatmap: local activity is the honest per-device signal for both modes;
-   for cloud mode it still reflects what was practiced ON THIS DEVICE. */
+/* Heatmap and list now use the same authority. Previously the account list
+   showed all devices while the heatmap silently counted only this device —
+   both internally consistent datasets, but an incorrect screen. */
 const activity = ref<Record<string, number>>({});
-watch(
-  () => progress.historyVersion,
-  async () => {
-    activity.value = await historyLog.dailyActivity(182, new Date());
-  },
-  { immediate: true },
-);
+const activityLoading = ref(false);
+const activityError = ref<string | undefined>();
+
+function localDayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+async function loadActivity(): Promise<void> {
+  const request = ++activityRequest;
+  activityLoading.value = true;
+  activityError.value = undefined;
+  try {
+    if (!cloudMode.value) {
+      const local = await historyLog.dailyActivity(ACTIVITY_DAYS, new Date());
+      if (request === activityRequest) activity.value = local;
+      return;
+    }
+
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (ACTIVITY_DAYS - 1));
+    const counts: Record<string, number> = {};
+    let targetPage = 1;
+    let loaded = 0;
+    let expected = Number.POSITIVE_INFINITY;
+
+    while (loaded < expected) {
+      const res = await app.serverClient.getHistory({
+        since: firstDay.toISOString(),
+        page: targetPage,
+        pageSize: ACTIVITY_PAGE_SIZE,
+      });
+      if (request !== activityRequest) return;
+      expected = res.total;
+      for (const item of res.items) {
+        const key = localDayKey(new Date(item.gradedAt));
+        counts[key] = (counts[key] ?? 0) + 1;
+      }
+      loaded += res.items.length;
+      if (res.items.length === 0) break;
+      targetPage += 1;
+    }
+    activity.value = counts;
+  } catch {
+    if (request !== activityRequest) return;
+    activity.value = {};
+    activityError.value = 'Aktivität konnte nicht geladen werden.';
+  } finally {
+    if (request === activityRequest) activityLoading.value = false;
+  }
+}
+
+onMounted(() => void loadActivity());
 
 /* group rows by local day for display */
 const dayFmt = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' });
@@ -263,14 +317,17 @@ function redo(questionId: string): void {
       </div>
       <ActivityHeatmap
         :data="activity"
-        :weeks="52"
+        :weeks="ACTIVITY_WEEKS"
         :selected-date="selectedDate"
         @select="selectDate"
       />
+      <p v-if="activityLoading" class="hist__heatmap-note" role="status">Aktivität wird geladen …</p>
+      <p v-else-if="activityError" class="hist__heatmap-note hist__heatmap-note--error" role="alert">
+        {{ activityError }}
+      </p>
       <p v-if="selectedDate" class="hist__filter-status" role="status">
         Verlauf gefiltert: {{ selectedDateLabel }}
       </p>
-      <p v-if="cloudMode" class="hist__heatmap-note">Aktivität nur von diesem Gerät.</p>
     </section>
 
     <div class="hist__stage q-crossfade">
@@ -318,11 +375,6 @@ function redo(questionId: string): void {
             />
             <span class="hist__row-title">{{ titles.get(r.questionId) ?? r.questionId }}</span>
             <span class="hist__row-part">{{ r.partId }}</span>
-            <GradingDot
-              :grading="progress.partState.get(r.partId)?.grading ?? 'unseen'"
-              :size="13"
-              title="Aktueller Status"
-            />
             <span class="hist__row-points">{{ fmtPoints(r) }}</span>
             <span class="hist__row-time">{{ timeFmt.format(new Date(r.gradedAt)) }}</span>
           </button>
@@ -508,6 +560,9 @@ function redo(questionId: string): void {
   margin: 10px 0 0;
   font-size: 11px;
   color: var(--q-faint);
+}
+.hist__heatmap-note--error {
+  color: var(--q-err-ink);
 }
 @media (max-width: 640px) {
   .hist__row-part {

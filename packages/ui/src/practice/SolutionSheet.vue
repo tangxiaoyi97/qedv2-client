@@ -4,8 +4,8 @@
  * composed into the sticky footer above the action row.
  *
  * Three detents: shut, the usual reading height, and (swipe only) full
- * screen. Dragging the handle moves the sheet 1:1 with the finger and snaps
- * to the nearest detent on release; clicking is a smooth two-way toggle
+ * screen. Dragging the handle moves the sheet 1:1 with the finger; a short
+ * pull or flick advances one detent. Clicking is a smooth two-way toggle
  * between shut and the reading height. Full screen is deliberately out of
  * the click cycle — a tap should never swallow the question.
  *
@@ -17,7 +17,11 @@ import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
-import { resolveDetentHeights, type SheetDetent } from './sheet-detents.js';
+import {
+  resolveDetentHeights,
+  resolveSheetRelease,
+  type SheetDetent,
+} from './sheet-detents.js';
 
 export type SheetVerdict = 'correct' | 'partial' | 'incorrect';
 export type { SheetDetent };
@@ -191,26 +195,40 @@ let pointerDown = false;
 let dragStartY = 0;
 let dragStartHeight = 0;
 let moved = false;
+let dragSamples: Array<{ height: number; time: number }> = [];
 
 /** What the sheet is actually this tall right now. */
 const sheetHeight = computed(() =>
   dragging.value ? dragHeight.value : detentHeights.value[props.detent],
 );
 
-function nearestDetent(height: number): SheetDetent {
-  const entries = Object.entries(detentHeights.value) as [SheetDetent, number][];
-  return entries.reduce((best, entry) =>
-    Math.abs(entry[1] - height) < Math.abs(best[1] - height) ? entry : best,
-  )[0];
+function rememberSample(height: number, time: number): void {
+  dragSamples.push({ height, time });
+  const cutoff = time - 120;
+  while (dragSamples.length > 2 && dragSamples[0]!.time < cutoff) dragSamples.shift();
+}
+
+function releaseVelocity(): number {
+  const first = dragSamples[0];
+  const last = dragSamples[dragSamples.length - 1];
+  if (!first || !last) return 0;
+  const elapsed = last.time - first.time;
+  // Synthetic events and two samples from the same browser frame do not
+  // contain a meaningful velocity signal.
+  return elapsed >= 8 ? ((last.height - first.height) / elapsed) * 1000 : 0;
 }
 
 function onHandleDown(event: PointerEvent): void {
-  (event.target as Element).setPointerCapture?.(event.pointerId);
+  (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
   pointerDown = true;
   dragStartY = event.clientY;
-  dragStartHeight = detentHeights.value[props.detent];
+  // If a spring is interrupted, begin at its visible position rather than at
+  // the old logical target. jsdom has no layout, hence the target fallback.
+  const liveHeight = sheetEl.value?.getBoundingClientRect().height ?? 0;
+  dragStartHeight = liveHeight > 0 ? liveHeight : detentHeights.value[props.detent];
   dragHeight.value = dragStartHeight;
   moved = false;
+  dragSamples = [{ height: dragStartHeight, time: event.timeStamp }];
 }
 
 function onHandleMove(event: PointerEvent): void {
@@ -221,18 +239,34 @@ function onHandleMove(event: PointerEvent): void {
   moved = true;
   dragging.value = true;
   dragHeight.value = Math.max(0, Math.min(detentHeights.value.full, height));
+  rememberSample(dragHeight.value, event.timeStamp);
 }
 
-function onHandleUp(): void {
+function onHandleUp(event: PointerEvent): void {
   pointerDown = false;
   dragStartY = 0;
   if (!dragging.value) return;
-  const snapped = nearestDetent(dragHeight.value);
+  rememberSample(dragHeight.value, event.timeStamp);
+  const snapped = resolveSheetRelease({
+    detent: props.detent,
+    heights: detentHeights.value,
+    startHeight: dragStartHeight,
+    height: dragHeight.value,
+    velocity: releaseVelocity(),
+  });
   dragging.value = false;
+  dragSamples = [];
   // Measuring is suppressed while dragging; anything that resized in the
   // meantime (a figure finishing to load) would otherwise stay stale forever.
   void nextTick(measureAnswer);
   if (snapped !== props.detent) emit('update:detent', snapped);
+}
+
+function stepDetent(direction: -1 | 1): void {
+  const order: readonly SheetDetent[] = ['collapsed', 'default', 'full'];
+  const current = order.indexOf(props.detent);
+  const target = order[Math.max(0, Math.min(order.length - 1, current + direction))]!;
+  if (target !== props.detent) emit('update:detent', target);
 }
 
 function onHandleClick(): void {
@@ -308,6 +342,8 @@ onBeforeUnmount(() => {
         @pointermove="onHandleMove"
         @pointerup="onHandleUp"
         @pointercancel="onHandleUp"
+        @keydown.up.prevent="stepDetent(1)"
+        @keydown.down.prevent="stepDetent(-1)"
         @click="onHandleClick"
       >
         <span
@@ -494,7 +530,10 @@ onBeforeUnmount(() => {
 }
 @media (pointer: coarse) {
   .q-ssheet__handle {
-    padding: 12px 0 10px;
+    min-height: 44px;
+    display: grid;
+    place-items: center;
+    padding: 0;
   }
 }
 .q-ssheet__grip {
@@ -586,12 +625,17 @@ onBeforeUnmount(() => {
    * one — the content would visibly reflow mid-animation. */
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
-  transition: height var(--q-transition-normal);
+  transition: height 320ms cubic-bezier(0.2, 0.9, 0.3, 1);
   border-bottom: 1px solid transparent;
   outline: none;
 }
 .q-ssheet--dragging {
   transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-ssheet {
+    transition: height 120ms ease-out;
+  }
 }
 .q-ssheet--open {
   border-bottom: 1px solid var(--q-border);

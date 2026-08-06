@@ -269,6 +269,17 @@ const walkState = computed(() => {
   };
 });
 
+const aiConversationActive = computed(() =>
+  Boolean(
+    explainState.value.markdown ||
+    explainState.value.loading ||
+    explainState.value.error ||
+    walkState.value.markdown ||
+    walkState.value.loading ||
+    walkState.value.error,
+  ),
+);
+
 async function askForWalkthrough(): Promise<void> {
   await runExplain('walkthrough');
 }
@@ -958,31 +969,35 @@ const currentCompetencyCodes = computed(() =>
             same feature never appeared together.
           -->
           <template v-if="showExplain || showWalkthrough" #explain>
-            <AiExplainPanel
-              v-if="showExplain"
-              :markdown="explainState.markdown"
-              :loading="explainState.loading"
-              :error="explainState.error"
-              :model="explainState.model"
-              :source="explainState.source"
-              @ask="askForExplanation"
-              @dismiss="dismissExplanation"
-            />
-            <!-- A different question: not "why is mine wrong" but "how is this
-                 done at all". Its own offer, so one ask never spends the other. -->
-            <AiExplainPanel
-              v-if="showWalkthrough"
-              class="practice__walkthrough"
-              :markdown="walkState.markdown"
-              :loading="walkState.loading"
-              :error="walkState.error"
-              :model="walkState.model"
-              :source="walkState.source"
-              offer-label="Aufgabe erklären"
-              title-label="Lösungsweg erklärt"
-              @ask="askForWalkthrough"
-              @dismiss="dismissWalkthrough"
-            />
+            <div
+              class="practice__ai-panels"
+              :class="{ 'practice__ai-panels--active': aiConversationActive }"
+            >
+              <AiExplainPanel
+                v-if="showExplain"
+                :markdown="explainState.markdown"
+                :loading="explainState.loading"
+                :error="explainState.error"
+                :model="explainState.model"
+                :source="explainState.source"
+                @ask="askForExplanation"
+                @dismiss="dismissExplanation"
+              />
+              <!-- A different question: not "why is mine wrong" but "how is this
+                   done at all". Its own offer, so one ask never spends the other. -->
+              <AiExplainPanel
+                v-if="showWalkthrough"
+                :markdown="walkState.markdown"
+                :loading="walkState.loading"
+                :error="walkState.error"
+                :model="walkState.model"
+                :source="walkState.source"
+                offer-label="Aufgabe erklären"
+                title-label="Lösungsweg erklärt"
+                @ask="askForWalkthrough"
+                @dismiss="dismissWalkthrough"
+              />
+            </div>
           </template>
         </PracticeBottomBar>
 
@@ -1145,8 +1160,14 @@ const currentCompetencyCodes = computed(() =>
     var(--practice-sheet-height, 0px) + 110px + var(--q-keyboard-inset, 0px)
   );
 }
-.practice__walkthrough {
-  margin-top: 6px;
+.practice__ai-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+.practice__ai-panels--active {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .practice__verdict {

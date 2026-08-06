@@ -72,7 +72,7 @@ describe('AiExplainPanel', () => {
     const wrapper = mount(AiExplainPanel, { props: { markdown: 'Text.', model: 'gpt-5-mini' } });
     expect(wrapper.find('.q-aix__badge').text()).toBe('KI');
     const foot = wrapper.get('.q-aix__foot').text();
-    expect(foot).toContain('Generiert von KI');
+    expect(foot).toContain('KI-Inhalt');
     expect(foot).toContain('kann Fehler enthalten');
     expect(foot).toContain('offizielle');
     expect(foot).toContain('gpt-5-mini');
@@ -104,6 +104,6 @@ describe('AiExplainPanel', () => {
     expect(pool.get('.q-aix__foot').text()).not.toContain('gemini');
     expect(pool.get('.q-aix__foot').text()).not.toContain('Kontingent');
     // The warning that it is machine-written stays either way.
-    expect(pool.get('.q-aix__foot').text()).toContain('Generiert von KI');
+    expect(pool.get('.q-aix__foot').text()).toContain('KI-Inhalt');
   });
 });

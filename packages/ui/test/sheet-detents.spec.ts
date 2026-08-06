@@ -4,7 +4,9 @@ import {
   TOP_BAR_RESERVE_PX,
   HALF_MAX_PX,
   HALF_MIN_PX,
+  SHEET_FLICK_VELOCITY_PX_S,
   resolveDetentHeights,
+  resolveSheetRelease,
 } from '../src/practice/sheet-detents.js';
 
 /**
@@ -74,5 +76,40 @@ describe('solution drawer detents', () => {
 
   it('falls back to a ratio before anything has been measured', () => {
     expect(heights({ answerHeight: 0 }).default).toBe(Math.round(Math.min(PHONE * 0.55, HALF_MAX_PX)));
+  });
+});
+
+describe('solution drawer release intent', () => {
+  const detents = { collapsed: 0, default: 420, full: 672 };
+  const release = (over: Partial<Parameters<typeof resolveSheetRelease>[0]> = {}) =>
+    resolveSheetRelease({
+      detent: 'collapsed',
+      heights: detents,
+      startHeight: 0,
+      height: 0,
+      velocity: 0,
+      ...over,
+    });
+
+  it('opens after a short deliberate pull instead of requiring half the drawer', () => {
+    expect(release({ height: 48 })).toBe('default');
+  });
+
+  it('commits a small fast flick in its direction', () => {
+    expect(release({ height: 16, velocity: SHEET_FLICK_VELOCITY_PX_S + 1 })).toBe('default');
+    expect(release({
+      detent: 'default',
+      startHeight: 420,
+      height: 404,
+      velocity: -(SHEET_FLICK_VELOCITY_PX_S + 1),
+    })).toBe('collapsed');
+  });
+
+  it('returns a hesitant movement to the current detent', () => {
+    expect(release({ detent: 'default', startHeight: 420, height: 400 })).toBe('default');
+  });
+
+  it('moves only one stop per gesture so a flick stays predictable', () => {
+    expect(release({ height: 500, velocity: 1800 })).toBe('default');
   });
 });

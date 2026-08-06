@@ -63,6 +63,20 @@ describe('AiAssessPanel', () => {
   it('leaves a confident, evidenced verdict unflagged', () => {
     const wrapper = mount(AiAssessPanel, { props: { labels: LABELS, criteria: [crit()] } });
     expect(wrapper.get('.q-aia__item').classes()).not.toContain('q-aia__item--shaky');
+    expect(wrapper.get('.q-aia__evidence').attributes()).not.toHaveProperty('open');
+  });
+
+  it('keeps normal evidence collapsed but opens evidence that needs review', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: LABELS,
+        criteria: [crit(), crit({ index: 1, confidence: 0.4 })],
+      },
+    });
+    const evidence = wrapper.findAll('.q-aia__evidence');
+    expect(evidence[0]!.attributes()).not.toHaveProperty('open');
+    expect(evidence[1]!.attributes()).toHaveProperty('open');
+    expect(wrapper.get('.q-aia__summary').text()).toContain('2 / 2');
   });
 
   it('says the ticks are not saved yet', () => {

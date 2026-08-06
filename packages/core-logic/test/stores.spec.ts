@@ -419,6 +419,16 @@ describe('HistoryLog', () => {
     expect(daily['2026-07-01']).toBe(1);
     expect((await log.listByLocalDay('2026-07-02')).map((e) => e.partId)).toEqual(['p3', 'p2']);
   });
+
+  it('counts the complete first local day instead of a rolling 24-hour cutoff', async () => {
+    const log = new HistoryLog(new MemoryStorage());
+    await log.append({ partId: 'early', questionId: 'q1', verdict: 'correct', awardedPoints: 1, maxPoints: 1, grading: 'good', gradedAt: '2026-07-01T06:00:00.000Z' });
+    await log.append({ partId: 'late', questionId: 'q2', verdict: 'correct', awardedPoints: 1, maxPoints: 1, grading: 'good', gradedAt: '2026-07-03T10:00:00.000Z' });
+
+    const daily = await log.dailyActivity(3, new Date(2026, 6, 3, 20));
+    expect(daily['2026-07-01']).toBe(1);
+    expect(daily['2026-07-03']).toBe(1);
+  });
 });
 
 describe('AuthStore', () => {

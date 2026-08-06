@@ -5,7 +5,7 @@ import { FULL_OVERSHOOT_PX, TOP_BAR_RESERVE_PX } from '../src/practice/sheet-det
 
 /**
  * The drawer has three detents. Dragging the handle moves it with the finger
- * and snaps to the nearest one; clicking only ever toggles shut ↔ reading
+ * and advances one stop in the swipe direction; clicking toggles shut ↔ reading
  * height, so a stray tap can never bury the question under a full-screen
  * solution.
  */
@@ -124,6 +124,16 @@ describe('SolutionSheet drag', () => {
     expect(lastDetent(wrapper)).toBe('full');
   });
 
+  it('changes detent after a short intentional swipe', async () => {
+    const open = mountSheet({ detent: 'collapsed' });
+    await drag(open, 500, 450);
+    expect(lastDetent(open)).toBe('default');
+
+    const shut = mountSheet({ detent: 'default' });
+    await drag(shut, 400, 450);
+    expect(lastDetent(shut)).toBe('collapsed');
+  });
+
   it('snaps to the nearest detent rather than the nearest edge', async () => {
     const up = mountSheet({ detent: 'collapsed' });
     await drag(up, 500, 200); // +300 → nearest is default (420), not full
@@ -166,6 +176,16 @@ describe('SolutionSheet drag', () => {
     await drag(wrapper, 500, 200);
     await wrapper.get('.q-ssheet__handle').trigger('click');
     expect(wrapper.emitted('update:detent')).toEqual([['default']]);
+  });
+});
+
+describe('SolutionSheet keyboard', () => {
+  it('moves through detents with arrow keys on desktop', async () => {
+    const wrapper = mountSheet({ detent: 'default' });
+    await wrapper.get('.q-ssheet__handle').trigger('keydown', { key: 'ArrowUp' });
+    expect(lastDetent(wrapper)).toBe('full');
+    await wrapper.get('.q-ssheet__handle').trigger('keydown', { key: 'ArrowDown' });
+    expect(lastDetent(wrapper)).toBe('collapsed');
   });
 });
 

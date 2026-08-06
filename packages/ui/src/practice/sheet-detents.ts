@@ -6,6 +6,16 @@
  * layout. SolutionSheet supplies the measurements; this decides the sizes.
  */
 export type SheetDetent = 'collapsed' | 'default' | 'full';
+const DETENT_ORDER: readonly SheetDetent[] = ['collapsed', 'default', 'full'];
+
+/** A deliberate short pull should be enough; distance is capped so a tall
+ * phone never asks the thumb to travel half the screen. */
+export const SHEET_SWIPE_DISTANCE_PX = 44;
+/** A quick flick commits even when it travelled only a few pixels. */
+export const SHEET_FLICK_VELOCITY_PX_S = 320;
+/** Short momentum look-ahead, used only to decide which side of a snap point
+ * the gesture was heading toward. */
+export const SHEET_PROJECTION_MS = 180;
 
 /**
  * Room left above the sheet at full screen: the practice top bar (56px plus
@@ -49,6 +59,47 @@ export interface DetentInput {
    * passes that instead — no constant here can know the safe-area inset.
    */
   topReserve?: number;
+}
+
+export interface SheetReleaseInput {
+  detent: SheetDetent;
+  heights: Record<SheetDetent, number>;
+  startHeight: number;
+  height: number;
+  /** Positive grows the sheet (an upward finger movement), in px/s. */
+  velocity: number;
+}
+
+/**
+ * Resolve one drag into one adjacent detent.
+ *
+ * Distance alone made a phone user pull the drawer most of the way before it
+ * would move. This decision combines intent, release velocity and a short
+ * momentum projection. One gesture advances at most one stop, keeping a
+ * small flick predictable instead of unexpectedly swallowing the question.
+ */
+export function resolveSheetRelease(input: SheetReleaseInput): SheetDetent {
+  const currentIndex = DETENT_ORDER.indexOf(input.detent);
+  const displacement = input.height - input.startHeight;
+  const projected = input.height + input.velocity * (SHEET_PROJECTION_MS / 1000);
+  const intent = Math.abs(input.velocity) >= SHEET_FLICK_VELOCITY_PX_S
+    ? Math.sign(input.velocity)
+    : Math.sign(displacement);
+  if (intent === 0) return input.detent;
+
+  const nextIndex = Math.max(0, Math.min(DETENT_ORDER.length - 1, currentIndex + intent));
+  if (nextIndex === currentIndex) return input.detent;
+  const next = DETENT_ORDER[nextIndex]!;
+  const gap = Math.abs(input.heights[next] - input.heights[input.detent]);
+  const distanceThreshold = Math.min(SHEET_SWIPE_DISTANCE_PX, Math.max(18, gap * 0.16));
+  const midpoint = (input.heights[input.detent] + input.heights[next]) / 2;
+  const crossesProjectedMidpoint = intent > 0 ? projected >= midpoint : projected <= midpoint;
+  const committed =
+    Math.abs(displacement) >= distanceThreshold ||
+    Math.abs(input.velocity) >= SHEET_FLICK_VELOCITY_PX_S ||
+    crossesProjectedMidpoint;
+
+  return committed ? next : input.detent;
 }
 
 export function resolveDetentHeights(input: DetentInput): Record<SheetDetent, number> {

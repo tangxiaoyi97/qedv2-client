@@ -105,11 +105,15 @@ export class HistoryLog {
    */
   async dailyActivity(days: number, now: Date): Promise<Record<string, number>> {
     const entries = await this.read();
-    const cutoff = now.getTime() - days * 86_400_000;
+    // Calendar days, not rolling 24-hour windows. The old cutoff started at
+    // the current clock time `days` ago, so answers from the morning of the
+    // first visible day disappeared from the heatmap. Constructing a local
+    // midnight also stays correct across daylight-saving transitions.
+    const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
     const out: Record<string, number> = {};
     for (const e of entries) {
       const t = new Date(e.gradedAt);
-      if (t.getTime() < cutoff) break; // newest-first: everything after is older
+      if (t.getTime() < cutoff.getTime()) break; // newest-first: everything after is older
       const key = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
       out[key] = (out[key] ?? 0) + 1;
     }

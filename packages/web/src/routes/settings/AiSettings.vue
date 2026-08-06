@@ -13,22 +13,9 @@
 import { computed, ref } from 'vue';
 import { QButton, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
-import { useAppStore } from '../../stores/app.js';
 import { historyLog } from '../../services.js';
 
 const ai = useAiStore();
-const app = useAppStore();
-
-const language = ref(app.config.aiLanguage ?? '');
-const customInstructions = ref(app.config.aiCustomInstructions ?? '');
-
-function saveLanguage(): void {
-  void app.updateConfig({ aiLanguage: language.value.trim() });
-}
-
-function saveInstructions(): void {
-  void app.updateConfig({ aiCustomInstructions: customInstructions.value.trim() });
-}
 
 /**
  * A hint is for what OUR side supports, not for what a vendor currently gives
@@ -133,9 +120,10 @@ async function remove(): Promise<void> {
       </div>
     </div>
 
-      <!-- What leaves the device. Stated before anything is sent. -->
-      <div class="ai-set__disclosure">
-        <p class="ai-set__disclosure-title">Was dabei übertragen wird</p>
+      <!-- The compact summary keeps the essential privacy fact visible; the
+           complete disclosure remains one tap away before any request. -->
+      <details class="ai-set__details ai-set__disclosure">
+        <summary>Datenschutz · Aufgabe und Antwort werden übertragen</summary>
         <ul class="ai-set__disclosure-list">
           <li>Die Aufgabenstellung, die offizielle Lösung und <b>deine Antwort</b></li>
           <li>An den Anbieter, dessen Schlüssel gerade verwendet wird</li>
@@ -144,7 +132,7 @@ async function remove(): Promise<void> {
         <p class="ai-set__disclosure-foot">
           Ohne hinterlegten Schlüssel und ohne Kontingent wird nichts gesendet.
         </p>
-      </div>
+      </details>
 
       <!-- Pool allowance, when the account has one. -->
       <div v-if="pool?.eligible" class="ai-set__pool">
@@ -207,7 +195,9 @@ async function remove(): Promise<void> {
           <QButton variant="ghost" :disabled="saving" @click="remove">Entfernen</QButton>
         </div>
 
-        <form class="ai-set__form" @submit.prevent="save">
+        <details class="ai-set__details ai-set__key-details" :open="!configured">
+          <summary>{{ configured ? 'Schlüssel ersetzen' : 'Eigenen Schlüssel einrichten' }}</summary>
+          <form class="ai-set__form" @submit.prevent="save">
           <div class="ai-set__field">
             <span class="ai-set__label">Anbieter</span>
             <div class="ai-set__providers" role="radiogroup" aria-label="Anbieter">
@@ -252,40 +242,34 @@ async function remove(): Promise<void> {
               {{ saving ? 'Speichern …' : 'Speichern' }}
             </QButton>
           </div>
-        </form>
+          </form>
+        </details>
       </template>
 
-      <!--
-        The answers and self-assessed ticks live only on this device. Handing
-        them over has to be a deliberate act, so it is a button and not a sync.
-      -->
-      <div class="ai-set__field">
-        <label class="ai-set__label">Verlauf exportieren <span class="ai-set__opt">optional</span></label>
-        <div class="ai-set__actions ai-set__actions--start">
+      <details class="ai-set__details ai-set__maintenance">
+        <summary>Daten &amp; Speicher</summary>
+        <!-- The answers and self-assessed ticks live only on this device.
+             Handing them over stays a deliberate button action. -->
+        <div class="ai-set__maintenance-row">
+          <div>
+            <span class="ai-set__label">Verlauf exportieren</span>
+            <p class="ai-set__hint">Antworten und Selbstbewertungen dieses Geräts als JSON.</p>
+          </div>
           <QButton variant="secondary" :disabled="exporting" @click="exportHistory">
-            {{ exporting ? 'Wird erstellt …' : 'Als JSON speichern' }}
+            {{ exporting ? 'Wird erstellt …' : 'Speichern' }}
           </QButton>
         </div>
-        <p class="ai-set__hint">
-          Deine Antworten und Selbstbewertungen von diesem Gerät — für den Vergleich
-          „bewertet die KI so wie ich?". Verlässt das Gerät nur, wenn du sie weitergibst.
-        </p>
-      </div>
 
-      <!-- Answers already paid for. Kept so the same question is not bought
-           twice; forgetting them should be one button, not a mystery. -->
-      <div class="ai-set__field">
-        <span class="ai-set__label">Gespeicherte KI-Antworten</span>
-        <div class="ai-set__actions ai-set__actions--start">
+        <div class="ai-set__maintenance-row">
+          <div>
+            <span class="ai-set__label">Gespeicherte KI-Antworten</span>
+            <p class="ai-set__hint">Lokalen Zwischenspeicher für Erklärungen leeren.</p>
+          </div>
           <QButton variant="ghost" :disabled="clearing" @click="clearCache">
-            {{ clearing ? 'Wird gelöscht …' : 'Zwischenspeicher leeren' }}
+            {{ clearing ? 'Wird gelöscht …' : 'Leeren' }}
           </QButton>
         </div>
-        <p class="ai-set__hint">
-          Bereits erzeugte Erklärungen bleiben auf diesem Gerät, damit dieselbe Aufgabe
-          nicht zweimal abgefragt wird. Löschen erzwingt neue Anfragen.
-        </p>
-      </div>
+      </details>
 
       <QNotice v-if="error" tone="error">{{ error }}</QNotice>
       <p v-else-if="saved" class="ai-set__saved" role="status">Schlüssel gespeichert.</p>
@@ -356,26 +340,13 @@ async function remove(): Promise<void> {
   .ai-set__row2 {
     grid-template-columns: 1fr 1fr;
   }
-  .ai-set__field--half {
-    max-width: 320px;
-  }
 }
 
 .ai-set__disclosure {
-  padding: 12px 14px;
-  border: 1px solid var(--q-border-soft);
   background: var(--q-panel);
-  border-radius: 10px;
-  margin-bottom: 14px;
-}
-.ai-set__disclosure-title {
-  margin: 0 0 6px;
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--q-ink);
 }
 .ai-set__disclosure-list {
-  margin: 0;
+  margin: 10px 0 0;
   padding-left: 18px;
   font-size: 12.5px;
   line-height: 1.6;
@@ -440,6 +411,40 @@ async function remove(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+.ai-set__key-details .ai-set__form {
+  margin-top: 14px;
+}
+.ai-set__details {
+  padding: 11px 13px;
+  border: 1px solid var(--q-border-soft);
+  border-radius: 10px;
+  background: var(--q-card);
+}
+.ai-set__details > summary {
+  cursor: pointer;
+  color: var(--q-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.ai-set__details > summary:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.ai-set__maintenance[open] > summary {
+  margin-bottom: 4px;
+}
+.ai-set__maintenance-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 12px;
+}
+.ai-set__maintenance-row + .ai-set__maintenance-row {
+  margin-top: 12px;
+  border-top: 1px solid var(--q-border-soft);
 }
 .ai-set__field {
   display: flex;
@@ -518,19 +523,6 @@ async function remove(): Promise<void> {
   color: var(--q-faint);
 }
 
-.ai-set__textarea {
-  min-height: 80px;
-  padding: 10px 12px;
-  line-height: 1.5;
-  resize: vertical;
-  font-family: inherit;
-}
-.ai-set__provider--compact {
-  align-items: center;
-  min-height: 40px;
-  padding: 8px 10px;
-}
-
 .ai-set__saved {
   margin: 0;
   font-size: 12.5px;
@@ -542,7 +534,11 @@ async function remove(): Promise<void> {
   display: flex;
   justify-content: flex-end;
 }
-.ai-set__actions--start {
-  justify-content: flex-start;
+@media (max-width: 480px) {
+  .ai-set__maintenance-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 9px;
+  }
 }
 </style>

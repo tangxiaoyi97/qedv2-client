@@ -91,15 +91,16 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
         official solution above is checked; this is not, and the reader has to
         be able to tell at a glance which is which.
       -->
-      <p class="q-aix__foot">
-        Generiert von KI — kann Fehler enthalten. Maßgeblich ist der offizielle Lösungsweg.
+      <details class="q-aix__foot">
+        <summary>KI-Inhalt · kann Fehler enthalten</summary>
+        <p>Maßgeblich ist der offizielle Lösungsweg.</p>
         <!--
           Provenance only when the reader chose it. On the shared key the
           server picks the model, so naming it tells the user nothing they
           decided and leaks a deployment detail into a study aid.
         -->
         <span v-if="model && source !== 'pool'" class="q-aix__model">{{ model }}</span>
-      </p>
+      </details>
     </template>
     </template>
   </section>
@@ -264,6 +265,15 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
   font-size: 11px;
   line-height: 1.5;
   color: var(--q-faint);
+}
+.q-aix__foot summary {
+  width: max-content;
+  max-width: 100%;
+  cursor: pointer;
+  font-weight: 650;
+}
+.q-aix__foot p {
+  margin: 5px 0 0;
 }
 .q-aix__model {
   display: block;

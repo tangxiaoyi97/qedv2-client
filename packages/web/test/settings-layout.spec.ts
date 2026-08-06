@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import settingsSource from '../src/routes/SettingsView.vue?raw';
+import aiSettingsSource from '../src/routes/settings/AiSettings.vue?raw';
 
 describe('settings appearance layout', () => {
   it('keeps the intrinsic theme-card height in normal document flow', () => {
@@ -13,5 +14,13 @@ describe('settings appearance layout', () => {
     expect(settingsSource).toContain(
       'grid-template-columns: repeat(2, minmax(0, 1fr));',
     );
+  });
+});
+
+describe('AI settings information hierarchy', () => {
+  it('keeps secondary disclosure and maintenance behind explicit summaries', () => {
+    expect(aiSettingsSource).toContain('<summary>Datenschutz · Aufgabe und Antwort werden übertragen</summary>');
+    expect(aiSettingsSource).toContain('<summary>Daten &amp; Speicher</summary>');
+    expect(aiSettingsSource).toContain(':open="!configured"');
   });
 });
