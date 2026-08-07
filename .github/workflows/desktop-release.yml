@@ -1178,7 +1178,8 @@ jobs:
           elif grep -Fq 'HTTP 404' "$RELEASE_LOOKUP_ERROR"; then
             # Never expose a release while assets are still being transferred.
             # A failed upload leaves only a resumable draft.
-            gh release create "$RELEASE_TAG" --draft --verify-tag --generate-notes \
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --draft --verify-tag --generate-notes \
               --title "QED2 $RELEASE_VERSION"
             RELEASE_JSON="$(gh api "$RELEASE_API")"
           else
@@ -1215,7 +1216,7 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
           done
 
-          gh release upload "$RELEASE_TAG" release-assets/*
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" release-assets/*
 
           EXPECTED_API_ASSETS="$RUNNER_TEMP/qed2-expected-release-assets.tsv"
           REMOTE_API_ASSETS="$RUNNER_TEMP/qed2-remote-release-assets.tsv"
@@ -1237,7 +1238,7 @@ jobs:
           REMOTE_ASSET_ROOT="$(mktemp -d)"
           cleanup_remote_assets() { rm -rf "$REMOTE_ASSET_ROOT"; }
           trap cleanup_remote_assets EXIT
-          gh release download "$RELEASE_TAG" --dir "$REMOTE_ASSET_ROOT"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$REMOTE_ASSET_ROOT"
           find "$REMOTE_ASSET_ROOT" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort \
             > "$RUNNER_TEMP/qed2-downloaded-release-assets.txt"
           cut -f1 "$EXPECTED_API_ASSETS" > "$RUNNER_TEMP/qed2-expected-release-assets.txt"
@@ -1269,5 +1270,6 @@ jobs:
             echo "origin/main moved before publication: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
             exit 1
           fi
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest \
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft=false --prerelease=false --latest \
             --title "QED2 $RELEASE_VERSION"
