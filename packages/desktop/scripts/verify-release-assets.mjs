@@ -345,6 +345,27 @@ async function digest(filePath, algorithm, encoding) {
   return hash.digest(encoding)
 }
 
+async function releaseDigests(filePath) {
+  const sha256 = createHash('sha256')
+  const sha512 = createHash('sha512')
+  for await (const chunk of createReadStream(filePath)) {
+    sha256.update(chunk)
+    sha512.update(chunk)
+  }
+  return { sha256: sha256.digest('hex'), sha512: sha512.digest('base64') }
+}
+
+function manualInstallTargets(version) {
+  return new Map([
+    [`QED2-${version}-mac-arm64.dmg`, { platform: 'darwin', arch: 'arm64', installMode: 'manual-package' }],
+    [`QED2-${version}-mac-x64.dmg`, { platform: 'darwin', arch: 'x64', installMode: 'manual-package' }],
+    [`QED2-${version}-win-x64.exe`, { platform: 'win32', arch: 'x64', installMode: 'manual-package' }],
+    [`QED2-${version}-linux-x64.AppImage`, { platform: 'linux', arch: 'x64', installMode: 'manual-package' }],
+    [`QED2-${version}-linux-x64.deb`, { platform: 'linux', arch: 'x64', installMode: 'manual-package' }],
+    [`QED2-${version}-linux-x64.rpm`, { platform: 'linux', arch: 'x64', installMode: 'manual-package' }],
+  ])
+}
+
 function safeAssetName(rawName, manifestName) {
   let decoded
   try {
@@ -540,14 +561,29 @@ export async function verifyReleaseAssets({ root, version, tag, clientSha, coreS
   }
 
   const outputNames = names.filter((name) => name !== 'SHA256SUMS' && name !== 'release-manifest.json')
+  const manualTargets = manualInstallTargets(version)
+  for (const expectedName of manualTargets.keys()) {
+    if (!outputNames.includes(expectedName)) {
+      throw new Error(`Missing manual-install release asset ${expectedName}`)
+    }
+  }
+  const manualPackageNames = binaries.filter((name) => /\.(?:dmg|exe|AppImage|deb|rpm)$/u.test(name))
+  if (
+    manualPackageNames.length !== manualTargets.size ||
+    manualPackageNames.some((name) => !manualTargets.has(name))
+  ) {
+    throw new Error('Manual-install release asset inventory does not match the supported platform targets')
+  }
   const assets = []
   for (const name of outputNames) {
     const filePath = path.join(root, name)
     const fileStat = await stat(filePath)
-    assets.push({ name, size: fileStat.size, sha256: await digest(filePath, 'sha256', 'hex') })
+    const hashes = await releaseDigests(filePath)
+    const target = manualTargets.get(name)
+    assets.push({ name, size: fileStat.size, ...hashes, ...(target ? { target } : {}) })
   }
   const releaseManifest = {
-    formatVersion: 1,
+    formatVersion: 2,
     tag,
     version,
     sources: { client: clientSha, core: coreSha, bank: bankSha },
