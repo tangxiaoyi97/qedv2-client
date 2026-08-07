@@ -124,6 +124,12 @@ describe('release asset verification', () => {
     expect(new URL(desktopPackage.homepage)).toMatchObject({ protocol: 'https:' })
   })
 
+  it('uses one canonical architecture name for every public Linux package', async () => {
+    const builderConfig = await readFile(new URL('../electron-builder.yml', import.meta.url), 'utf8')
+    const linuxConfig = builderConfig.slice(builderConfig.indexOf('\nlinux:'))
+    expect(linuxConfig).toContain('artifactName: QED2-${version}-linux-x64.${ext}')
+  })
+
   it('parses the bounded electron-updater metadata shape', () => {
     expect(
       parseUpdateManifest(

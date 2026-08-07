@@ -894,6 +894,10 @@ jobs:
           test "${#APPIMAGES[@]}" -eq 1
           test "${#DEBS[@]}" -eq 1
           test "${#RPMS[@]}" -eq 1
+          RELEASE_VERSION="$(node -p "require('./packages/desktop/package.json').version")"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.AppImage"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.deb"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.rpm"
           dpkg-deb --info "${DEBS[0]}" >/dev/null
           rpm --query --package --info "${RPMS[0]}" >/dev/null
           MARKER="$ARTIFACT_ROOT/linux-unpacked/resources/qed2-unsigned-release.json"

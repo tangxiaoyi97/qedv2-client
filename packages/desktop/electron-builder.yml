@@ -83,6 +83,10 @@ nsis:
 linux:
   # Scoped package names sanitize to an unusable `@qed2desktop` binary by
   # default. Keep the native command, desktop entry and smoke contract stable.
+  # electron-builder expands `${arch}` differently for AppImage (`x86_64`)
+  # and distro packages (`amd64`/`x86_64`). The release/update protocol uses
+  # one architecture vocabulary, so keep every public Linux asset canonical.
+  artifactName: QED2-${version}-linux-x64.${ext}
   executableName: qed2
   icon: build/theme-icons/weed/icon-512.png
   category: Education
