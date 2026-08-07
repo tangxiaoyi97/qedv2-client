@@ -8,6 +8,7 @@ interface RecordedCall {
   init: {
     method: string;
     headers: Record<string, string>;
+    credentials: 'omit';
     body?: string;
     signal?: unknown;
   };
@@ -35,6 +36,7 @@ function stubFetch(reply: StubReply = {}): RecordedCall[] {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -95,11 +97,51 @@ describe('requestJson headers and body', () => {
     expect(calls[0]?.init.headers).not.toHaveProperty('Authorization');
   });
 
-  it('forwards the abort signal to fetch', async () => {
+  it('never sends ambient browser or Electron cookies', async () => {
     const calls = stubFetch({ body: '{}' });
-    const signal = { aborted: false };
-    await requestJson('http://x.test', '/p', { signal });
-    expect(calls[0]?.init.signal).toBe(signal);
+    await requestJson('http://x.test', '/p', { token: 'explicit-bearer' });
+    expect(calls[0]?.init.credentials).toBe('omit');
+  });
+
+  it('forwards caller cancellation through the combined deadline signal', async () => {
+    const caller = new AbortController();
+    let received: AbortSignal | undefined;
+    vi.stubGlobal('fetch', (_url: string, init: { signal?: AbortSignal }) => {
+      received = init.signal;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const request = requestJson('http://x.test', '/p', { signal: caller.signal });
+    const rejected = expect(request).rejects.toBeInstanceOf(NetworkError);
+    caller.abort();
+    await rejected;
+    expect(received).not.toBe(caller.signal);
+    expect(received?.aborted).toBe(true);
+  });
+
+  it('aborts a request that exceeds its bounded deadline', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', (_url: string, init: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      }),
+    );
+    const request = requestJson('http://x.test', '/p', { timeoutMs: 25 });
+    const rejected = expect(request).rejects.toBeInstanceOf(NetworkError);
+    await vi.advanceTimersByTimeAsync(25);
+    await rejected;
+  });
+
+  it('allows bounded protocol-specific deadlines up to 150 seconds', async () => {
+    const calls = stubFetch({ body: '{}' });
+    await expect(
+      requestJson('http://x.test', '/slow', { timeoutMs: 150_000 }),
+    ).resolves.toEqual({});
+    expect(calls).toHaveLength(1);
+    await expect(
+      requestJson('http://x.test', '/too-slow', { timeoutMs: 150_001 }),
+    ).rejects.toThrow('timeoutMs must be between 0 and 150000');
   });
 });
 

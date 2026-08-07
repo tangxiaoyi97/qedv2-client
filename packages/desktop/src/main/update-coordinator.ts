@@ -1,5 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { extname, isAbsolute } from 'node:path';
 import type {
   UpdateCheckResult as QedUpdateCheckResult,
   UpdateSnapshot,
@@ -7,6 +6,46 @@ import type {
 } from '@qed2/core-logic';
 import { shell } from 'electron';
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
+import {
+  buildReleaseAssetUrl,
+  codedReleaseError,
+  expectedManualReleaseTargets,
+  fetchApprovedDesktopRelease,
+  isCanonicalSha512,
+  releaseFeedPatterns,
+  type ApprovedDesktopRelease,
+} from './release-feed.js';
+import {
+  ResumableArtifactDownloader,
+  type ArtifactDescriptor,
+  type VerifiedArtifact,
+} from './resumable-downloader.js';
+import {
+  configureUpdaterInstallPolicy,
+  inspectSelfUpdateAvailability,
+  selectManualReleaseAsset,
+  selfUpdateUnavailableMessage,
+  verifiedManualInstallPackage,
+  type SelfUpdateAvailability,
+} from './self-update-install-policy.js';
+import {
+  classifyUpdateError,
+  publicUpdateError,
+  retryAtFromError,
+  type ClassifiedUpdateError,
+} from './update-error-policy.js';
+import {
+  MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS,
+  UpdateRecoveryJournal,
+  type PendingAppDownload,
+  type UpdateRecoveryStore,
+} from './update-recovery-journal.js';
+
+export { fetchApprovedDesktopRelease } from './release-feed.js';
+export type { ApprovedDesktopRelease } from './release-feed.js';
+export { inspectSelfUpdateAvailability } from './self-update-install-policy.js';
+export type { SelfUpdateAvailability } from './self-update-install-policy.js';
+export type { UpdateRecoveryStore } from './update-recovery-journal.js';
 
 export interface UpdateCoordinatorLogger {
   info(message: string, detail?: unknown): void;
@@ -22,12 +61,6 @@ export interface RuntimeVersions {
   bankRepoUrl: string;
 }
 
-export interface UpdateRecoveryStore {
-  get<T>(collection: string, key: string): T | undefined;
-  set(collection: string, key: string, value: unknown): void;
-  delete(collection: string, key: string): void;
-}
-
 export interface UpdateInstallLifecycle {
   /** Electron's native `before-quit-for-update` handoff confirmation. */
   onBeforeQuitForUpdate(callback: () => void): () => void;
@@ -36,7 +69,8 @@ export interface UpdateInstallLifecycle {
 export interface UpdateCoordinatorOptions {
   updater?: AppUpdater;
   recoveryStore?: UpdateRecoveryStore;
-  repositoryHead?: (repoUrl: string, branch: string) => Promise<string | undefined>;
+  approvedRelease?: () => Promise<ApprovedDesktopRelease | undefined>;
+  selfUpdateAvailability?: SelfUpdateAvailability;
   /** Test seam; production uses bounded exponential-ish retry delays. */
   retryDelaysMs?: readonly number[];
   wait?: (delayMs: number) => Promise<void>;
@@ -45,280 +79,28 @@ export interface UpdateCoordinatorOptions {
   installHandoffTimeoutMs?: number;
   /** Test seam; production reveals verified manager packages in the OS file manager. */
   revealInstallPackage?: (packagePath: string) => void;
-}
-
-interface PendingAppDownload {
-  fromVersion: string;
-  latestVersion?: string;
-  requestedAt: string;
-  attempts: number;
-  /**
-   * `verified-ready` is only a recovery hint. After a process restart we
-   * always ask electron-updater to re-open and re-verify its platform cache
-   * before exposing restart-required again.
-   */
-  status: 'downloading' | 'verified-ready';
+  /** Persistent update cache. Production passes userData/updates/v1. */
+  downloadRoot?: string;
+  downloader?: ResumableArtifactDownloader;
+  platform?: NodeJS.Platform;
+  arch?: string;
 }
 
 type UpdateOperation = 'idle' | 'checking' | 'downloading' | 'installing';
-type UpdateErrorContext = Exclude<UpdateOperation, 'idle'>;
-
-interface ClassifiedUpdateError {
-  code: string;
-  message: string;
-  retryable: boolean;
-  automaticRetry: boolean;
-}
-
-interface ErrorLike {
-  code?: unknown;
-  statusCode?: unknown;
-  name?: unknown;
-  message?: unknown;
-}
-
-const UPDATE_RECOVERY_COLLECTION = 'desktop-update';
-const PENDING_APP_DOWNLOAD_KEY = 'pending-app-download';
-const DEFAULT_RETRY_DELAYS_MS = [0, 2_000, 10_000] as const;
-const RECOVERY_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-const RECOVERY_CLOCK_SKEW_MS = 5 * 60 * 1_000;
-const MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS = 24;
-const MAX_PERSISTED_DOWNLOAD_ATTEMPTS = 10_000;
+const DEFAULT_RETRY_DELAYS_MS = [0, 2_000, 10_000, 30_000] as const;
 const DEFAULT_INSTALL_HANDOFF_TIMEOUT_MS = 30_000;
-const MANUAL_LINUX_PACKAGE_EXTENSIONS = new Set(['.deb', '.rpm']);
-const MANUAL_LINUX_UPDATER_NAMES = new Set(['DebUpdater', 'RpmUpdater', 'PacmanUpdater']);
 
-const TRANSIENT_NETWORK_CODES = new Set([
-  'EAI_AGAIN',
-  'ECONNABORTED',
-  'ECONNREFUSED',
-  'ECONNRESET',
-  'EHOSTDOWN',
-  'EHOSTUNREACH',
-  'ENETDOWN',
-  'ENETRESET',
-  'ENETUNREACH',
-  'ETIMEDOUT',
-  'ERR_INTERNET_DISCONNECTED',
-  'ERR_NETWORK',
-  'ERR_NETWORK_CHANGED',
-  'ERR_TIMED_OUT',
-]);
-
-const STORAGE_ERROR_CODES = new Set(['EACCES', 'EDQUOT', 'ENOSPC', 'EPERM', 'EROFS']);
-
-const INTEGRITY_ERROR_CODES = new Set([
-  'ERR_CHECKSUM_MISMATCH',
-  'ERR_UPDATER_VERSION_MISMATCH',
-  'ERR_UPDATER_INVALID_SIGNATURE',
-  'ERR_UPDATER_NO_CHECKSUM',
-]);
-
-const RELEASE_ERROR_CODES = new Set([
-  'ERR_UPDATER_ASSET_NOT_FOUND',
-  'ERR_UPDATER_BLOCKMAP_FILE_NOT_FOUND',
-  'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
-  'ERR_UPDATER_INVALID_RELEASE_FEED',
-  'ERR_UPDATER_INVALID_UPDATE_INFO',
-  'ERR_UPDATER_LATEST_VERSION_NOT_FOUND',
-  'ERR_UPDATER_NO_FILES_PROVIDED',
-  'ERR_UPDATER_NO_PUBLISHED_VERSIONS',
-  'ERR_UPDATER_RELEASE_NOT_FOUND',
-  'ERR_UPDATER_WEB_INSTALLER_DISABLED',
-  'ERR_UPDATER_ZIP_FILE_NOT_FOUND',
-]);
-
-const CONFIGURATION_ERROR_CODES = new Set([
-  'ERR_UPDATER_INVALID_CHANNEL',
-  'ERR_UPDATER_INVALID_PROVIDER_CONFIGURATION',
-  'ERR_UPDATER_INVALID_VERSION',
-  'ERR_UPDATER_OLD_FILE_NOT_FOUND',
-  'ERR_UPDATER_UNSUPPORTED_PROVIDER',
-]);
-
-function errorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const code = (error as ErrorLike).code;
-  return typeof code === 'string' && code.length > 0 ? code.toUpperCase() : undefined;
+function hasExactOwnKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  const keys = Object.keys(value);
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key));
 }
 
-function httpStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const direct = (error as ErrorLike).statusCode;
-  if (typeof direct === 'number' && Number.isInteger(direct)) return direct;
-  const code = errorCode(error);
-  const matched = code?.match(/^HTTP_ERROR_(\d{3})$/);
-  if (matched?.[1]) return Number(matched[1]);
-  const message = (error as ErrorLike).message;
-  if (typeof message !== 'string') return undefined;
-  // electron-updater 6.8.x uses a plain Error for artifact downloads:
-  // `Cannot download "…", status 503: Service Unavailable`.
-  const statusMatch = message.match(/\bstatus(?:\s+code)?\s+(\d{3})\b/i);
-  return statusMatch?.[1] ? Number(statusMatch[1]) : undefined;
-}
-
-function hasTransientNetworkMessage(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const message = (error as ErrorLike).message;
-  if (typeof message !== 'string') return false;
-  return (
-    /\brequest timed out\b/i.test(message) ||
-    /\bsocket hang up\b/i.test(message) ||
-    /\brequest (?:was |has been )?aborted\b/i.test(message) ||
-    /\b(?:EAI_AGAIN|ECONNRESET|ENETUNREACH|ETIMEDOUT)\b/i.test(message) ||
-    /\bnet::ERR_(?:CONNECTION_RESET|INTERNET_DISCONNECTED|NETWORK_CHANGED|TIMED_OUT)\b/i.test(message)
-  );
-}
-
-function isCancellation(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as ErrorLike;
-  return (
-    errorCode(error) === 'ERR_CANCELLED' ||
-    candidate.name === 'CancellationError' ||
-    candidate.name === 'AbortError'
-  );
-}
-
-function usesSynchronousLinuxPackageManager(updater: AppUpdater): boolean {
-  return MANUAL_LINUX_UPDATER_NAMES.has(updater.constructor?.name ?? '');
-}
-
-function verifiedLinuxManagerPackage(paths: readonly string[]): string | undefined {
-  return paths.find((candidate) =>
-    isAbsolute(candidate) && MANUAL_LINUX_PACKAGE_EXTENSIONS.has(extname(candidate).toLowerCase()));
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
-}
-
-/**
- * Converts implementation details into stable, path-free user-facing state.
- * Raw updater errors are logged separately and never copied into UpdatePort.
- */
-function classifyUpdateError(error: unknown, context: UpdateErrorContext): ClassifiedUpdateError {
-  const code = errorCode(error);
-  const status = httpStatus(error);
-
-  if (code && INTEGRITY_ERROR_CODES.has(code)) {
-    return {
-      code: 'APP_UPDATE_INTEGRITY_FAILED',
-      message: 'Das Update konnte nicht sicher verifiziert werden und wurde nicht angewendet.',
-      retryable: false,
-      automaticRetry: false,
-    };
-  }
-  if (code === 'ERR_UPDATER_VERIFICATION_EVENT_MISSING') {
-    return {
-      code: 'APP_UPDATE_VERIFICATION_INCOMPLETE',
-      message: 'Der Updater hat die sichere Prüfung nicht vollständig bestätigt. Das Update wurde nicht angewendet.',
-      retryable: false,
-      automaticRetry: false,
-    };
-  }
-  if (code === 'ERR_UPDATER_MANUAL_PACKAGE_PATH_MISSING') {
-    return {
-      code: 'APP_UPDATE_MANUAL_PACKAGE_UNAVAILABLE',
-      message: 'Das verifizierte Linux-Paket konnte nicht sicher an die Systeminstallation übergeben werden.',
-      retryable: true,
-      automaticRetry: false,
-    };
-  }
-  if (code && STORAGE_ERROR_CODES.has(code)) {
-    return {
-      code: 'APP_UPDATE_STORAGE_UNAVAILABLE',
-      message: 'Für das Update ist nicht genügend beschreibbarer Speicher verfügbar.',
-      retryable: true,
-      automaticRetry: false,
-    };
-  }
-  if (code && CONFIGURATION_ERROR_CODES.has(code)) {
-    return {
-      code: code === 'ERR_UPDATER_OLD_FILE_NOT_FOUND'
-        ? 'APP_UPDATE_UNSUPPORTED_INSTALL'
-        : 'APP_UPDATE_CONFIGURATION_INVALID',
-      message: code === 'ERR_UPDATER_OLD_FILE_NOT_FOUND'
-        ? 'Diese Installationsart unterstützt keine automatische Aktualisierung.'
-        : 'Die Aktualisierung ist für diese Installation nicht korrekt konfiguriert.',
-      retryable: false,
-      automaticRetry: false,
-    };
-  }
-  if (code && RELEASE_ERROR_CODES.has(code)) {
-    return {
-      code: 'APP_UPDATE_RELEASE_INVALID',
-      message: 'Die GitHub-Veröffentlichung ist unvollständig oder nicht mit dieser Installation kompatibel.',
-      retryable: false,
-      automaticRetry: false,
-    };
-  }
-  if (isCancellation(error)) {
-    return {
-      code: 'APP_UPDATE_CANCELLED',
-      message: 'Die Aktualisierung wurde abgebrochen und kann erneut gestartet werden.',
-      retryable: true,
-      automaticRetry: false,
-    };
-  }
-  if (
-    (code && TRANSIENT_NETWORK_CODES.has(code)) ||
-    hasTransientNetworkMessage(error) ||
-    status === 408 ||
-    status === 425 ||
-    status === 429 ||
-    (status !== undefined && status >= 500 && status <= 599)
-  ) {
-    return {
-      code: 'APP_UPDATE_NETWORK_FAILED',
-      message: status === 429
-        ? 'Der Update-Dienst ist ausgelastet. Der Download wird später erneut versucht.'
-        : 'Die Update-Verbindung wurde unterbrochen. Der Vorgang wird automatisch erneut versucht.',
-      retryable: true,
-      automaticRetry: true,
-    };
-  }
-  if (status !== undefined && status >= 400 && status <= 499) {
-    return {
-      code: 'APP_UPDATE_RELEASE_UNAVAILABLE',
-      message: 'Das angeforderte Update ist in der GitHub-Veröffentlichung nicht verfügbar.',
-      retryable: false,
-      automaticRetry: false,
-    };
-  }
-
-  return {
-    code: context === 'checking'
-      ? 'APP_UPDATE_CHECK_FAILED'
-      : context === 'installing'
-        ? 'APP_UPDATE_INSTALL_FAILED'
-        : 'APP_UPDATE_DOWNLOAD_FAILED',
-    message: context === 'checking'
-      ? 'Die Aktualisierung konnte nicht geprüft werden.'
-      : context === 'installing'
-        ? 'Das verifizierte Update konnte nicht gestartet werden.'
-        : 'Das Update konnte nicht vollständig heruntergeladen werden.',
-    retryable: true,
-    // Unknown failures may be deterministic. Require an explicit retry rather
-    // than looping automatically and risking repeated disk/process damage.
-    automaticRetry: false,
-  };
-}
-
-function publicUpdateError(classification: ClassifiedUpdateError): Error & { code: string } {
-  return Object.assign(new Error(classification.message), {
-    name: 'UpdateError',
-    code: classification.code,
-  });
-}
-
-function isSafeSemver(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= 128 &&
-    /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(value)
-  );
 }
 
 function initialTarget(target: UpdateTargetState['target'], version: string): UpdateTargetState {
@@ -329,47 +111,19 @@ function shortCommit(commit: string | undefined): string {
   return commit ? commit.slice(0, 12) : 'unbekannt';
 }
 
-function parseGitHubRepository(repoUrl: string): { owner: string; repo: string } | undefined {
-  try {
-    const url = new URL(repoUrl);
-    if (url.hostname !== 'github.com') return undefined;
-    const [owner, rawRepo] = url.pathname.replace(/^\/+|\/+$/g, '').split('/');
-    if (!owner || !rawRepo) return undefined;
-    return { owner, repo: rawRepo.replace(/\.git$/i, '') };
-  } catch {
-    return undefined;
-  }
-}
-
-async function githubHead(repoUrl: string, branch: string): Promise<string | undefined> {
-  const parsed = parseGitHubRepository(repoUrl);
-  if (!parsed) return undefined;
-  const response = await fetch(
-    `https://api.github.com/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/commits/${encodeURIComponent(branch)}`,
-    {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'QED2-Desktop',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-      signal: AbortSignal.timeout(12_000),
-      cache: 'no-store',
-    },
-  );
-  if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-  const body = (await response.json()) as { sha?: string };
-  return body.sha;
-}
-
 export class UpdateCoordinator extends EventEmitter {
   private readonly updater: AppUpdater;
-  private readonly recoveryStore: UpdateRecoveryStore | undefined;
-  private readonly repositoryHead: (repoUrl: string, branch: string) => Promise<string | undefined>;
+  private readonly recoveryJournal: UpdateRecoveryJournal;
+  private readonly approvedRelease: () => Promise<ApprovedDesktopRelease | undefined>;
+  private readonly selfUpdateAvailability: SelfUpdateAvailability;
   private readonly retryDelaysMs: readonly number[];
   private readonly wait: (delayMs: number) => Promise<void>;
   private readonly now: () => number;
   private readonly installHandoffTimeoutMs: number;
   private readonly revealInstallPackage: (packagePath: string) => void;
+  private readonly downloader: ResumableArtifactDownloader | undefined;
+  private readonly platform: NodeJS.Platform;
+  private readonly arch: string;
   private state: UpdateSnapshot;
   private checking: Promise<QedUpdateCheckResult[]> | undefined;
   private runtimeVersions: RuntimeVersions;
@@ -382,15 +136,17 @@ export class UpdateCoordinator extends EventEmitter {
   private downloadAttemptNumber = 0;
   private acceptingDownloadEvents = false;
   private installFailure: ClassifiedUpdateError | undefined;
-  private resumingPendingDownload = false;
+  private resumeInFlight: Promise<boolean> | undefined;
   private manualPackageInstall: boolean;
   private verifiedInstallPackagePath: string | undefined;
+  private verifiedInstallArtifact: VerifiedArtifact | undefined;
   private installHandoffConfirmed = false;
   private installWatchdog: NodeJS.Timeout | undefined;
+  private checkedRelease: ApprovedDesktopRelease | undefined;
 
   constructor(
     private readonly appVersion: string,
-    private readonly packaged: boolean,
+    packaged: boolean,
     runtimeVersions: RuntimeVersions,
     private readonly logger: UpdateCoordinatorLogger,
     options: UpdateCoordinatorOptions = {},
@@ -399,29 +155,35 @@ export class UpdateCoordinator extends EventEmitter {
     this.runtimeVersions = { ...runtimeVersions };
     const { autoUpdater } = electronUpdater;
     this.updater = options.updater ?? autoUpdater;
-    this.recoveryStore = options.recoveryStore;
-    this.repositoryHead = options.repositoryHead ?? githubHead;
+    this.approvedRelease = options.approvedRelease ?? fetchApprovedDesktopRelease;
+    const requestedAvailability = options.selfUpdateAvailability ?? (
+      packaged
+        ? { available: true, reason: 'ready' as const }
+        : { available: false, reason: 'development' as const }
+    );
+    this.selfUpdateAvailability = packaged
+      ? requestedAvailability
+      : { available: false, reason: 'development' };
     this.retryDelaysMs = options.retryDelaysMs?.length
       ? [...options.retryDelaysMs]
       : DEFAULT_RETRY_DELAYS_MS;
     this.wait = options.wait ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
     this.now = options.now ?? Date.now;
+    this.recoveryJournal = new UpdateRecoveryJournal(options.recoveryStore, logger, this.now);
     this.installHandoffTimeoutMs = options.installHandoffTimeoutMs ?? DEFAULT_INSTALL_HANDOFF_TIMEOUT_MS;
     this.revealInstallPackage = options.revealInstallPackage ?? ((packagePath) => shell.showItemInFolder(packagePath));
-    this.manualPackageInstall = usesSynchronousLinuxPackageManager(this.updater);
+    this.platform = options.platform ?? process.platform;
+    this.arch = options.arch ?? process.arch;
+    this.downloader = options.downloader ?? (
+      options.downloadRoot
+        ? new ResumableArtifactDownloader(options.downloadRoot, logger)
+        : undefined
+    );
+    this.manualPackageInstall = configureUpdaterInstallPolicy(
+      this.updater,
+      this.selfUpdateAvailability,
+    ).manualPackageInstall;
     options.installLifecycle?.onBeforeQuitForUpdate(() => this.confirmInstallHandoff());
-    this.updater.autoDownload = false;
-    // electron-updater's deb/rpm/pacman installers synchronously invoke sudo
-    // and the system package manager, including from its automatic quit hook.
-    // Never let that path block Electron's main thread.
-    this.updater.autoInstallOnAppQuit = !this.manualPackageInstall;
-    this.updater.autoRunAppAfterInstall = true;
-    this.updater.allowPrerelease = false;
-    this.updater.allowDowngrade = false;
-    this.updater.fullChangelog = true;
-    // A full NSIS installer is published; silently accepting web installers
-    // would weaken signature guarantees on Windows.
-    this.updater.disableWebInstaller = true;
     this.state = {
       targets: [
         initialTarget('app', appVersion),
@@ -430,25 +192,32 @@ export class UpdateCoordinator extends EventEmitter {
       ],
       busy: false,
     };
+    if (!this.selfUpdateAvailability.available) {
+      const message = selfUpdateUnavailableMessage(this.selfUpdateAvailability.reason);
+      this.state.targets = this.state.targets.map((target) => ({ ...target, phase: 'complete', message }));
+    }
     const pending = this.readPendingDownload();
+    const hasFileRecovery = this.downloader?.hasRecoverySync() === true;
     if (pending && pending.fromVersion !== this.appVersion) {
       this.clearPendingDownload();
-    } else if (pending && !this.packaged) {
+      this.discardDownloadCache();
+    } else if (!this.selfUpdateAvailability.available && (pending || hasFileRecovery)) {
       this.clearPendingDownload();
-    } else if (pending) {
+      this.discardDownloadCache();
+    } else if (pending || hasFileRecovery) {
       this.state.targets[0] = {
         target: 'app',
         phase: 'error',
         currentVersion: appVersion,
-        ...(pending.latestVersion ? { latestVersion: pending.latestVersion } : {}),
-        message: pending.status === 'verified-ready'
+        ...(pending?.latestVersion ? { latestVersion: pending.latestVersion } : {}),
+        message: pending?.status === 'verified-ready'
           ? 'Ein zuvor verifiziertes Update wird vor der Installation erneut sicher bestätigt.'
           : 'Ein unterbrochener Desktop-Download kann automatisch erneut gestartet werden.',
         error: {
-          code: pending.status === 'verified-ready'
+          code: pending?.status === 'verified-ready'
             ? 'APP_UPDATE_REVALIDATION_REQUIRED'
             : 'APP_UPDATE_INTERRUPTED',
-          message: pending.status === 'verified-ready'
+          message: pending?.status === 'verified-ready'
             ? 'Der verifizierte Cache muss nach dem Neustart erneut bestätigt werden.'
             : 'Der letzte Download wurde nicht abgeschlossen.',
           retryable: true,
@@ -458,8 +227,8 @@ export class UpdateCoordinator extends EventEmitter {
     this.bindUpdaterEvents();
   }
 
-  setRepositories(coreRepoUrl: string, bankRepoUrl: string): void {
-    this.runtimeVersions = { ...this.runtimeVersions, coreRepoUrl, bankRepoUrl };
+  isSelfUpdateAvailable(): boolean {
+    return this.selfUpdateAvailability.available;
   }
 
   getState(): UpdateSnapshot {
@@ -467,13 +236,22 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   hasPendingDownload(): boolean {
+    if (!this.selfUpdateAvailability.available) {
+      this.clearPendingDownload();
+      this.discardDownloadCache();
+      return false;
+    }
     const pending = this.readPendingDownload();
-    if (!pending) return false;
+    if (!pending) return this.downloader?.hasRecoverySync() === true;
     if (
       pending.status === 'downloading' &&
       pending.attempts >= MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS
     ) {
-      this.clearPendingDownload();
+      // Keep the exhausted record. Removing it while a byte journal remains
+      // would make the next timer/process mistake that journal for a fresh
+      // recovery and silently reset the safety budget. An explicit apply
+      // request writes a new intent with attempts=0.
+      if (!this.downloader) this.clearPendingDownload();
       this.patchTarget('app', {
         phase: 'error',
         message: 'Die automatische Wiederherstellung wurde begrenzt. Bitte prüfe das Update manuell erneut.',
@@ -489,22 +267,59 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   /** Re-enters the normal platform updater flow after restart/network recovery. */
-  async resumePendingDownload(): Promise<boolean> {
-    if (!this.packaged || !this.hasPendingDownload() || this.state.busy) return false;
+  resumePendingDownload(): Promise<boolean> {
+    if (this.resumeInFlight) return this.resumeInFlight;
+    let tracked: Promise<boolean>;
+    tracked = this.performPendingDownloadResume().finally(() => {
+      if (this.resumeInFlight === tracked) this.resumeInFlight = undefined;
+    });
+    this.resumeInFlight = tracked;
+    return tracked;
+  }
+
+  private async performPendingDownloadResume(): Promise<boolean> {
+    if (!this.selfUpdateAvailability.available || !this.hasPendingDownload() || this.state.busy) return false;
+    if (this.downloader) {
+      try {
+        const journal = await this.downloader.inspect();
+        if (journal && journal.automaticAttempts >= MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS) {
+          const message = 'Die automatische Wiederherstellung wurde begrenzt. Bitte prüfe das Update manuell erneut.';
+          this.patchTarget('app', {
+            phase: 'error',
+            message,
+            error: { code: 'APP_UPDATE_RECOVERY_LIMIT_REACHED', message, retryable: true },
+          });
+          return false;
+        }
+        if (journal?.manualRetryRequired) {
+          const message = 'Der Download wartet auf freien Speicher. Bitte gib Speicher frei und starte ihn danach ausdrücklich erneut.';
+          this.patchTarget('app', {
+            phase: 'error',
+            message,
+            error: { code: 'APP_UPDATE_STORAGE_UNAVAILABLE', message, retryable: true },
+          });
+          return false;
+        }
+        if (journal?.nextRetryAt && Date.parse(journal.nextRetryAt) > this.now()) return false;
+      } catch (error) {
+        this.logger.warn('Desktop update recovery journal could not be inspected', error);
+        return false;
+      }
+    }
     this.logger.info('Revalidating persisted desktop update intent through electron-updater');
-    this.resumingPendingDownload = true;
     try {
-      await this.applyUpdates(['app']);
+      await this.applyUpdatesInternal(['app'], true);
       return this.target('app').phase === 'restart-required';
     } catch (error) {
       this.logger.warn('Interrupted desktop update could not yet be resumed', error);
       return false;
-    } finally {
-      this.resumingPendingDownload = false;
     }
   }
 
   checkForUpdates(): Promise<QedUpdateCheckResult[]> {
+    if (!this.selfUpdateAvailability.available) {
+      return Promise.resolve(this.unavailableResults());
+    }
     if (this.target('app').phase === 'restart-required') {
       const app = this.target('app');
       return Promise.resolve([{
@@ -528,6 +343,13 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   async applyUpdates(targets: Array<'app' | 'core' | 'bank'>): Promise<void> {
+    await this.applyUpdatesInternal(targets, false);
+  }
+
+  private async applyUpdatesInternal(
+    targets: Array<'app' | 'core' | 'bank'>,
+    automaticRecovery: boolean,
+  ): Promise<void> {
     if (this.state.busy) {
       throw Object.assign(new Error('Eine andere Aktualisierung läuft bereits.'), {
         name: 'UpdateError',
@@ -543,36 +365,57 @@ export class UpdateCoordinator extends EventEmitter {
       requested.add('app');
     }
     if (!requested.has('app')) return;
-    if (!this.packaged) {
-      throw Object.assign(new Error('App-Updates sind nur in installierten Builds verfügbar.'), {
+    if (!this.selfUpdateAvailability.available) {
+      throw Object.assign(new Error(selfUpdateUnavailableMessage(this.selfUpdateAvailability.reason)), {
         name: 'UpdateError',
-        code: 'APP_UPDATE_DEVELOPMENT_BUILD',
+        code: 'APP_UPDATE_UNAVAILABLE',
       });
     }
     const appState = this.target('app');
     if (appState.phase === 'restart-required' || appState.phase === 'installing') return;
     if (appState.phase !== 'available') {
-      await this.checkForUpdates();
+      try {
+        await this.checkForUpdates();
+      } catch {
+        // The renderer reads the canonical state after every apply request.
+        // A failed prerequisite check must remain a check failure there; if
+        // we reject, the legacy UI mislabels it as a download failure even
+        // though downloadUpdate() was never entered.
+        return;
+      }
     }
     if (this.target('app').phase !== 'available') return;
 
     const latestVersion = this.target('app').latestVersion;
+    if (latestVersion === undefined) {
+      throw publicUpdateError({
+        code: 'APP_UPDATE_RELEASE_INVALID',
+        message: 'Die GitHub-Veröffentlichung enthält keine gültige Zielversion.',
+        retryable: false,
+        automaticRetry: false,
+      });
+    }
     const existingPending = this.readPendingDownload();
     const sameRelease =
       existingPending !== undefined &&
       existingPending.fromVersion === this.appVersion &&
       existingPending.latestVersion === latestVersion;
-    const preserveRecoveryBudget = sameRelease && this.resumingPendingDownload;
+    const preserveRecoveryBudget = sameRelease && automaticRecovery;
     this.writePendingDownload({
       fromVersion: this.appVersion,
-      ...(latestVersion ? { latestVersion } : {}),
+      latestVersion,
       requestedAt: preserveRecoveryBudget
         ? existingPending.requestedAt
         : new Date(this.now()).toISOString(),
       attempts: preserveRecoveryBudget ? existingPending.attempts : 0,
       status: 'downloading',
     });
+    if (this.manualPackageInstall) {
+      await this.downloadManualPackage(latestVersion, automaticRecovery);
+      return;
+    }
     this.verifiedInstallPackagePath = undefined;
+    this.verifiedInstallArtifact = undefined;
     this.downloadProgressCompleted = 0;
     this.downloadProgressTotal = undefined;
     this.downloadTransactionHighWaterPercent = 0;
@@ -618,7 +461,7 @@ export class UpdateCoordinator extends EventEmitter {
               code: 'ERR_UPDATER_VERIFICATION_EVENT_MISSING',
             });
           }
-          const managerPackagePath = verifiedLinuxManagerPackage(downloadedPaths);
+          const managerPackagePath = verifiedManualInstallPackage(downloadedPaths);
           if (this.manualPackageInstall && managerPackagePath === undefined) {
             throw Object.assign(new Error('electron-updater did not return a verified manager package path'), {
               code: 'ERR_UPDATER_MANUAL_PACKAGE_PATH_MISSING',
@@ -627,6 +470,7 @@ export class UpdateCoordinator extends EventEmitter {
           if (managerPackagePath !== undefined) {
             this.manualPackageInstall = true;
             this.verifiedInstallPackagePath = managerPackagePath;
+            this.verifiedInstallArtifact = undefined;
             // BaseUpdater installs again from its normal quit handler unless
             // this flag is disabled after a manager package is identified.
             this.updater.autoInstallOnAppQuit = false;
@@ -636,27 +480,22 @@ export class UpdateCoordinator extends EventEmitter {
             ...(this.downloadedEventVersion ? { latestVersion: this.downloadedEventVersion } : {}),
             installMode: this.manualPackageInstall ? 'manual-package' : 'self',
             message: this.manualPackageInstall
-              ? 'Das Linux-Paket ist verifiziert und bereit zur Installation mit der System-Paketverwaltung.'
+              ? 'Das Installationspaket ist verifiziert und für die manuelle Installation bereit.'
               : 'Update ist verifiziert und wird beim Neustart installiert.',
           });
           return;
         } catch (error) {
           this.acceptingDownloadEvents = false;
+          const classified = classifyUpdateError(error, 'downloading');
           const pending = this.readPendingDownload();
           let recoveryBudgetExhausted = false;
-          if (pending) {
-            const nextAttempts = pending.attempts + 1;
-            this.writePendingDownload({
-              ...pending,
-              attempts: nextAttempts,
-              status: 'downloading',
-            });
+          if (pending && classified.automaticRetry) {
+            const failure = this.recoveryJournal.recordFailure(pending);
             recoveryBudgetExhausted =
-              this.resumingPendingDownload &&
-              nextAttempts >= MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS;
+              automaticRecovery &&
+              failure.automaticLimitReached;
           }
           this.logger.warn('Desktop update download attempt failed', { attempt: attempt + 1, error });
-          const classified = classifyUpdateError(error, 'downloading');
           const terminalClassification = recoveryBudgetExhausted && classified.automaticRetry
             ? {
                 code: 'APP_UPDATE_RECOVERY_LIMIT_REACHED',
@@ -689,7 +528,158 @@ export class UpdateCoordinator extends EventEmitter {
     }
   }
 
-  relaunchToApply(): void {
+  private async downloadManualPackage(
+    latestVersion: string | undefined,
+    automaticRecovery: boolean,
+  ): Promise<void> {
+    const release = this.checkedRelease;
+    const asset = release
+      ? selectManualReleaseAsset(release, this.platform, this.arch, this.updater)
+      : undefined;
+    if (!release || !asset || latestVersion !== release.version || !this.downloader) {
+      this.clearPendingDownload();
+      const invalid: ClassifiedUpdateError = {
+        code: 'APP_UPDATE_RELEASE_INVALID',
+        message: 'Die GitHub-Veröffentlichung enthält kein passendes manuelles Installationspaket.',
+        retryable: false,
+        automaticRetry: false,
+      };
+      this.patchTarget('app', {
+        phase: 'error',
+        message: invalid.message,
+        error: { code: invalid.code, message: invalid.message, retryable: false },
+      });
+      throw publicUpdateError(invalid);
+    }
+
+    const descriptor: ArtifactDescriptor = {
+      fromVersion: this.appVersion,
+      targetVersion: release.version,
+      releaseTag: release.tag,
+      assetName: asset.name,
+      size: asset.size,
+      sha256: asset.sha256,
+      sha512: asset.sha512,
+      installMode: 'manual-package',
+    };
+    this.verifiedInstallPackagePath = undefined;
+    this.verifiedInstallArtifact = undefined;
+    this.activeOperation = 'downloading';
+    this.setBusy(true);
+    this.patchTarget('app', {
+      phase: 'downloading',
+      message: 'Desktop-Update wird sicher heruntergeladen …',
+      progress: { completed: 0, total: asset.size, unit: 'bytes' },
+    });
+    try {
+      for (let attempt = 0; attempt < this.retryDelaysMs.length; attempt += 1) {
+        const delay = this.retryDelaysMs[attempt] ?? 0;
+        if (delay > 0) await this.wait(delay);
+        try {
+          if (attempt === 0 && !automaticRecovery) {
+            // A visible user retry creates a fresh automatic-recovery budget
+            // but keeps already persisted bytes available for safe reuse.
+            await this.downloader.resetAutomaticRecovery();
+          }
+          const verified = await this.downloader.stage(descriptor, {
+            onProgress: ({ persistedBytes, totalBytes }) => {
+              if (this.activeOperation !== 'downloading') return;
+              this.patchTarget('app', {
+                phase: 'downloading',
+                progress: { completed: persistedBytes, total: totalBytes, unit: 'bytes' },
+                message: attempt > 0
+                  ? `Download wird ab ${persistedBytes} Byte fortgesetzt (Versuch ${attempt + 1}/${this.retryDelaysMs.length}) …`
+                  : 'Desktop-Update wird sicher heruntergeladen …',
+              });
+            },
+          });
+          this.patchTarget('app', {
+            phase: 'verifying',
+            latestVersion: release.version,
+            message: 'Paketgröße und Prüfsumme wurden sicher bestätigt.',
+          });
+          this.verifiedInstallPackagePath = verified.path;
+          this.verifiedInstallArtifact = verified;
+          this.updater.autoInstallOnAppQuit = false;
+          const pending = this.readPendingDownload();
+          this.writePendingDownload({
+            fromVersion: this.appVersion,
+            latestVersion: release.version,
+            requestedAt: pending?.requestedAt ?? new Date(this.now()).toISOString(),
+            attempts: pending?.attempts ?? 0,
+            status: 'verified-ready',
+          });
+          this.patchTarget('app', {
+            phase: 'restart-required',
+            latestVersion: release.version,
+            installMode: 'manual-package',
+            message: 'Das Installationspaket ist verifiziert und für die manuelle Installation bereit.',
+          });
+          return;
+        } catch (error) {
+          const classified = classifyUpdateError(error, 'downloading');
+          const pending = this.readPendingDownload();
+          let recoveryBudgetExhausted = false;
+          let persistedAttempts = 0;
+          if (pending && classified.automaticRetry) {
+            const failure = this.recoveryJournal.recordFailure(pending);
+            persistedAttempts = failure.pending.attempts;
+            recoveryBudgetExhausted = failure.automaticLimitReached;
+          } else if (pending) {
+            persistedAttempts = pending.attempts;
+          }
+          try {
+            const recovery = await this.downloader.recordAutomaticFailure(
+              classified.code,
+              retryAtFromError(error, this.now()),
+              persistedAttempts,
+            );
+            recoveryBudgetExhausted = recoveryBudgetExhausted || (
+              recovery !== undefined &&
+              recovery.automaticAttempts >= MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS
+            );
+          } catch (journalError) {
+            this.logger.warn('Could not persist the desktop update recovery budget', journalError);
+          }
+          this.logger.warn('Resumable desktop update download attempt failed', {
+            attempt: attempt + 1,
+            error,
+          });
+          const terminalClassification = recoveryBudgetExhausted && classified.retryable
+            ? {
+                code: 'APP_UPDATE_RECOVERY_LIMIT_REACHED',
+                message: 'Die automatische Wiederherstellung wurde begrenzt. Bitte prüfe das Update manuell erneut.',
+                retryable: true,
+                automaticRetry: false,
+              }
+            : classified;
+          if (terminalClassification.automaticRetry && attempt + 1 < this.retryDelaysMs.length) continue;
+          if (!terminalClassification.retryable || terminalClassification.code === 'APP_UPDATE_INTEGRITY_FAILED') {
+            this.clearPendingDownload();
+            await this.downloader.discard().catch((discardError) => {
+              this.logger.warn('Could not discard an invalid desktop update cache', discardError);
+            });
+          }
+          this.patchTarget('app', {
+            phase: 'error',
+            latestVersion: release.version,
+            message: terminalClassification.message,
+            error: {
+              code: terminalClassification.code,
+              message: terminalClassification.message,
+              retryable: terminalClassification.retryable,
+            },
+          });
+          throw publicUpdateError(terminalClassification);
+        }
+      }
+    } finally {
+      if (this.activeOperation === 'downloading') this.activeOperation = 'idle';
+      this.setBusy(false);
+    }
+  }
+
+  async relaunchToApply(): Promise<void> {
     if (this.state.busy || this.activeOperation !== 'idle') {
       throw Object.assign(new Error('Eine andere Aktualisierung läuft bereits.'), {
         name: 'UpdateError',
@@ -704,11 +694,15 @@ export class UpdateCoordinator extends EventEmitter {
     }
     if (this.manualPackageInstall) {
       const packagePath = this.verifiedInstallPackagePath;
-      if (packagePath === undefined) {
+      const artifact = this.verifiedInstallArtifact;
+      const downloader = this.downloader;
+      if (packagePath === undefined || artifact === undefined || downloader === undefined) {
         this.clearPendingDownload();
+        this.verifiedInstallPackagePath = undefined;
+        this.verifiedInstallArtifact = undefined;
         const unavailable: ClassifiedUpdateError = {
           code: 'APP_UPDATE_MANUAL_PACKAGE_UNAVAILABLE',
-          message: 'Der sichere Pfad zum verifizierten Linux-Paket ist nicht mehr verfügbar. Bitte lade das Update erneut.',
+          message: 'Der sichere Pfad zum verifizierten Installationspaket ist nicht mehr verfügbar. Bitte lade das Update erneut.',
           retryable: true,
           automaticRetry: false,
         };
@@ -723,12 +717,51 @@ export class UpdateCoordinator extends EventEmitter {
         });
         throw publicUpdateError(unavailable);
       }
+      this.activeOperation = 'installing';
+      this.setBusy(true);
+      this.patchTarget('app', {
+        phase: 'verifying',
+        installMode: 'manual-package',
+        message: 'Das Installationspaket wird unmittelbar vor der Übergabe erneut geprüft …',
+      });
+      try {
+        const revalidated = await downloader.revalidate(artifact);
+        if (revalidated.path !== packagePath) {
+          throw Object.assign(new Error('Verified manual package path changed'), {
+            code: 'ERR_DOWNLOAD_INTEGRITY',
+          });
+        }
+      } catch (error) {
+        this.logger.error('Manual update package failed final integrity verification', error);
+        this.clearPendingDownload();
+        this.verifiedInstallPackagePath = undefined;
+        this.verifiedInstallArtifact = undefined;
+        await downloader.discard().catch((discardError) => {
+          this.logger.warn('Could not discard the invalid manual update package', discardError);
+        });
+        const invalid = classifyUpdateError(
+          Object.assign(new Error('Manual update package integrity verification failed'), {
+            code: 'ERR_DOWNLOAD_INTEGRITY',
+          }),
+          'installing',
+        );
+        this.activeOperation = 'idle';
+        this.setBusy(false);
+        this.patchTarget('app', {
+          phase: 'error',
+          message: invalid.message,
+          error: { code: invalid.code, message: invalid.message, retryable: invalid.retryable },
+        });
+        throw publicUpdateError(invalid);
+      }
       try {
         this.revealInstallPackage(packagePath);
       } catch (error) {
-        this.logger.error('Could not reveal the verified Linux update package', error);
-        const message = 'Das verifizierte Linux-Paket konnte nicht im Dateimanager angezeigt werden. Bitte versuche es erneut.';
+        this.logger.error('Could not reveal the verified update package', error);
+        const message = 'Das verifizierte Installationspaket konnte nicht im Dateimanager angezeigt werden. Bitte versuche es erneut.';
         this.patchTarget('app', { phase: 'restart-required', installMode: 'manual-package', message });
+        this.activeOperation = 'idle';
+        this.setBusy(false);
         throw publicUpdateError({
           code: 'APP_UPDATE_MANUAL_PACKAGE_REVEAL_FAILED',
           message,
@@ -736,8 +769,10 @@ export class UpdateCoordinator extends EventEmitter {
           automaticRetry: false,
         });
       }
-      const message = 'Das verifizierte Linux-Paket wurde im Dateimanager markiert. Installiere es mit der System-Paketverwaltung; QED2 bleibt geöffnet.';
+      const message = 'Das verifizierte Installationspaket wurde im Dateimanager markiert. Installiere es manuell; QED2 bleibt geöffnet.';
       this.patchTarget('app', { phase: 'restart-required', installMode: 'manual-package', message });
+      this.activeOperation = 'idle';
+      this.setBusy(false);
       // The existing UpdatePort is command-shaped and the renderer assumes a
       // fulfilled relaunch request will terminate the app. Reject explicitly
       // so the UI unlocks while preserving verified-ready state for another
@@ -801,84 +836,137 @@ export class UpdateCoordinator extends EventEmitter {
       this.patchTarget(target, { phase: 'checking', message: 'Nach Updates wird gesucht …' });
     }
     const results: QedUpdateCheckResult[] = [];
-    const repositoryChecksPromise = Promise.allSettled([
-      this.repositoryHead(this.runtimeVersions.coreRepoUrl, 'main'),
-      this.repositoryHead(this.runtimeVersions.bankRepoUrl, 'pastpapers'),
-    ]);
-    let appFailure: ClassifiedUpdateError | undefined;
     try {
-      if (this.packaged) {
-        try {
-          const appResult = await this.checkAppUpdaterWithRetry();
-          if (appResult === null) {
-            this.clearPendingDownload();
-            appFailure = {
-              code: 'APP_UPDATE_UNSUPPORTED_INSTALL',
-              message: 'Diese Installationsart unterstützt keine automatische Aktualisierung.',
-              retryable: false,
-              automaticRetry: false,
-            };
-            this.patchTarget('app', {
-              phase: 'error',
-              message: appFailure.message,
-              error: {
-                code: appFailure.code,
-                message: appFailure.message,
-                retryable: false,
-              },
-            });
-          } else {
-            const latest = appResult.updateInfo.version;
-            // electron-updater owns semver, channel, downgrade and staged-
-            // rollout policy. Never second-guess its authoritative decision.
-            const available = appResult.isUpdateAvailable === true;
-            if (!available) this.clearPendingDownload();
-            this.patchTarget('app', {
-              phase: available ? 'available' : 'complete',
-              ...(latest ? { latestVersion: latest } : {}),
-              message: available ? 'Ein verifiziertes Desktop-Update ist verfügbar.' : 'Desktop-App ist aktuell.',
-            });
-            results.push({
-              target: 'app',
-              currentVersion: this.appVersion,
-              ...(latest ? { latestVersion: latest } : {}),
-              updateAvailable: available,
-            });
-          }
-        } catch (error) {
-          this.logger.error('Desktop update check failed', error);
-          appFailure = classifyUpdateError(error, 'checking');
-          if (!appFailure.automaticRetry) this.clearPendingDownload();
-          this.patchTarget('app', {
-            phase: 'error',
+      let approvedRelease: ApprovedDesktopRelease | undefined;
+      try {
+        approvedRelease = await this.checkApprovedReleaseWithRetry();
+      } catch (error) {
+        this.checkedRelease = undefined;
+        this.logger.error('Public Desktop release check failed', error);
+        const appFailure = classifyUpdateError(error, 'checking');
+        if (!appFailure.retryable) this.clearPendingDownload();
+        this.patchTarget('app', {
+          phase: 'error',
+          message: appFailure.message,
+          error: {
+            code: appFailure.code,
             message: appFailure.message,
-            error: {
-              code: appFailure.code,
-              message: appFailure.message,
-              retryable: appFailure.retryable,
-            },
-          });
-        }
-      } else {
-        this.patchTarget('app', { phase: 'complete', message: 'Entwicklungsbuild – App-Update übersprungen.' });
-        results.push({ target: 'app', currentVersion: this.appVersion, updateAvailable: false });
+            retryable: appFailure.retryable,
+          },
+        }, { clearLatestVersion: true });
+        this.finishReleaseChannelFailure('core', appFailure);
+        this.finishReleaseChannelFailure('bank', appFailure);
+        this.recordCheckedAt();
+        throw publicUpdateError(appFailure);
       }
 
-      const repositoryChecks = await repositoryChecksPromise;
-      const coreLatest = repositoryChecks[0].status === 'fulfilled' ? repositoryChecks[0].value : undefined;
-      const bankLatest = repositoryChecks[1].status === 'fulfilled' ? repositoryChecks[1].value : undefined;
+      if (approvedRelease === undefined) {
+        this.checkedRelease = undefined;
+        this.clearPendingDownload();
+        this.discardDownloadCache();
+        for (const target of ['app', 'core', 'bank'] as const) {
+          results.push(this.finishUnpublishedCheck(target));
+        }
+        this.recordCheckedAt();
+        return results;
+      }
+
+      this.checkedRelease = approvedRelease;
+
+      let appFailure: ClassifiedUpdateError | undefined;
+      try {
+        const appResult = await this.checkAppUpdaterWithRetry();
+        if (appResult === null) {
+          throw Object.assign(new Error('electron-updater does not support this installed format'), {
+            code: 'ERR_UPDATER_OLD_FILE_NOT_FOUND',
+          });
+        }
+        const latest = appResult.updateInfo.version;
+        if (latest !== approvedRelease.version) {
+          throw codedReleaseError(
+            'electron-updater and the approved Desktop release disagree',
+            'ERR_UPDATER_INVALID_RELEASE_FEED',
+          );
+        }
+        // electron-updater remains authoritative for platform eligibility,
+        // staged rollout and downgrade policy, after the public manifest pins
+        // the exact release and bundled Core/bank commits.
+        const available = appResult.isUpdateAvailable === true;
+        if (!available) {
+          this.clearPendingDownload();
+          this.discardDownloadCache();
+        }
+        this.patchTarget('app', {
+          phase: available ? 'available' : 'complete',
+          latestVersion: latest,
+          message: available ? 'Ein verifiziertes Desktop-Update ist verfügbar.' : 'Desktop-App ist aktuell.',
+        });
+        results.push({
+          target: 'app',
+          currentVersion: this.appVersion,
+          latestVersion: latest,
+          updateAvailable: available,
+        });
+      } catch (error) {
+        this.logger.error('Desktop platform update check failed', error);
+        appFailure = classifyUpdateError(error, 'checking');
+        if (!appFailure.retryable) this.clearPendingDownload();
+        this.patchTarget('app', {
+          phase: 'error',
+          latestVersion: approvedRelease.version,
+          message: appFailure.message,
+          error: {
+            code: appFailure.code,
+            message: appFailure.message,
+            retryable: appFailure.retryable,
+          },
+        });
+      }
+
       results.push(
-        this.finishRepositoryCheck('core', this.runtimeVersions.coreCommit, coreLatest),
-        this.finishRepositoryCheck('bank', this.runtimeVersions.bankCommit, bankLatest),
+        this.finishApprovedComponentCheck('core', this.runtimeVersions.coreCommit, approvedRelease.coreCommit),
+        this.finishApprovedComponentCheck('bank', this.runtimeVersions.bankCommit, approvedRelease.bankCommit),
       );
-      this.state = { ...this.state, checkedAt: new Date().toISOString() };
-      this.emitState();
+      this.recordCheckedAt();
       if (appFailure) throw publicUpdateError(appFailure);
       return results;
     } finally {
       if (this.activeOperation === 'checking') this.activeOperation = 'idle';
       this.setBusy(false);
     }
+  }
+
+  private async checkApprovedReleaseWithRetry(): Promise<ApprovedDesktopRelease | undefined> {
+    for (let attempt = 0; attempt < this.retryDelaysMs.length; attempt += 1) {
+      const delay = this.retryDelaysMs[attempt] ?? 0;
+      if (delay > 0) {
+        for (const target of ['app', 'core', 'bank'] as const) {
+          this.patchTarget(target, {
+            phase: 'checking',
+            message: `Release-Prüfung wird erneut versucht (Versuch ${attempt + 1}/${this.retryDelaysMs.length}) …`,
+          });
+        }
+        await this.wait(delay);
+      }
+      try {
+        const release = await this.approvedRelease();
+        if (release !== undefined && !this.isValidApprovedRelease(release)) {
+          throw codedReleaseError(
+            'Approved Desktop release seam returned invalid data',
+            'ERR_UPDATER_INVALID_RELEASE_FEED',
+          );
+        }
+        return release;
+      } catch (error) {
+        const classified = classifyUpdateError(error, 'checking');
+        this.logger.warn('Public Desktop release check attempt failed', { attempt: attempt + 1, error });
+        if (classified.automaticRetry && attempt + 1 < this.retryDelaysMs.length) continue;
+        throw error;
+      }
+    }
+    throw Object.assign(new Error('No public release check attempt was configured'), {
+      code: 'ERR_UPDATER_INVALID_PROVIDER_CONFIGURATION',
+    });
   }
 
   private async checkAppUpdaterWithRetry(): ReturnType<AppUpdater['checkForUpdates']> {
@@ -906,44 +994,152 @@ export class UpdateCoordinator extends EventEmitter {
     });
   }
 
-  private finishRepositoryCheck(
+  private finishApprovedComponentCheck(
     target: 'core' | 'bank',
     current: string | undefined,
-    latest: string | undefined,
+    approved: string,
   ): QedUpdateCheckResult {
     const currentVersion = shortCommit(current);
-    if (!current || !latest) {
+    if (!current) {
       const label = target === 'core' ? 'Core' : 'Aufgabenbank';
-      const code = target === 'core' ? 'CORE_UPDATE_CHECK_FAILED' : 'BANK_UPDATE_CHECK_FAILED';
-      const message = `${label}-Repository konnte nicht automatisch geprüft werden.`;
+      const code = target === 'core' ? 'CORE_VERSION_METADATA_MISSING' : 'BANK_VERSION_METADATA_MISSING';
+      const message = `${label}-Versionsdaten fehlen in dieser Installation.`;
       this.patchTarget(target, {
         phase: 'error',
-        ...(latest ? { latestVersion: shortCommit(latest) } : {}),
+        latestVersion: shortCommit(approved),
         message,
-        error: { code, message, retryable: true },
+        error: { code, message, retryable: false },
       });
       return {
         target,
         currentVersion,
-        ...(latest ? { latestVersion: shortCommit(latest) } : {}),
+        latestVersion: shortCommit(approved),
         updateAvailable: false,
       };
     }
 
-    const available = current !== latest;
+    const includedInAvailableRelease = current !== approved;
+    const message = includedInAvailableRelease
+      ? 'Dieser Stand ist im verfügbaren Desktop-Release enthalten und wird nicht separat installiert.'
+      : 'Dieser Stand ist im installierten Desktop-Release enthalten.';
     this.patchTarget(target, {
-      phase: available ? 'available' : 'complete',
-      latestVersion: shortCommit(latest),
-      message: available
-        ? 'Eine neuere Version wird mit dem nächsten verifizierten Desktop-Release installiert.'
-        : 'Aktuell.',
+      phase: 'complete',
+      latestVersion: shortCommit(approved),
+      message,
     });
     return {
       target,
       currentVersion,
-      latestVersion: shortCommit(latest),
-      updateAvailable: available,
+      latestVersion: shortCommit(approved),
+      updateAvailable: false,
+      detail: message,
     };
+  }
+
+  private finishUnpublishedCheck(target: 'app' | 'core' | 'bank'): QedUpdateCheckResult {
+    const currentVersion = this.target(target).currentVersion;
+    const detail = 'Noch keine öffentliche Desktop-Veröffentlichung vorhanden.';
+    this.patchTarget(target, { phase: 'complete', message: detail }, { clearLatestVersion: true });
+    // The shared renderer treats a missing latestVersion as a partial failure.
+    // Echoing the installed version keeps this explicitly neutral while the
+    // target message explains that no public channel exists yet.
+    return { target, currentVersion, latestVersion: currentVersion, updateAvailable: false, detail };
+  }
+
+  private finishReleaseChannelFailure(
+    target: 'core' | 'bank',
+    _appFailure: ClassifiedUpdateError,
+  ): void {
+    const message = 'In Desktop-Releases enthalten; kein eigener Update-Kanal.';
+    this.patchTarget(target, {
+      phase: 'complete',
+      message,
+    }, { clearLatestVersion: true });
+  }
+
+  private unavailableResults(): QedUpdateCheckResult[] {
+    const detail = selfUpdateUnavailableMessage(this.selfUpdateAvailability.reason);
+    this.state = {
+      ...this.state,
+      targets: this.state.targets.map((target) => {
+        const next = { ...target, phase: 'complete' as const, message: detail };
+        delete next.error;
+        delete next.progress;
+        delete next.installMode;
+        delete next.latestVersion;
+        return next;
+      }),
+      busy: false,
+    };
+    this.emitState();
+    return this.state.targets.map((target) => ({
+      target: target.target,
+      currentVersion: target.currentVersion,
+      updateAvailable: false,
+      detail,
+    }));
+  }
+
+  private isValidApprovedRelease(release: ApprovedDesktopRelease): boolean {
+    if (
+      !releaseFeedPatterns.stableVersion.test(release.version) ||
+      release.tag !== `v${release.version}` ||
+      !releaseFeedPatterns.gitCommit.test(release.clientCommit) ||
+      !releaseFeedPatterns.gitCommit.test(release.coreCommit) ||
+      !releaseFeedPatterns.gitCommit.test(release.bankCommit) ||
+      !isRecord(release.assets) ||
+      Object.keys(release.assets).length === 0 ||
+      !isRecord(release.updateMetadata)
+    ) return false;
+    const manualTargets = expectedManualReleaseTargets(release.version);
+    for (const [name, asset] of Object.entries(release.assets)) {
+      const expectedTarget = manualTargets.get(name);
+      if (
+        !isRecord(asset) ||
+        asset.name !== name ||
+        !releaseFeedPatterns.assetName.test(name) ||
+        !Number.isSafeInteger(asset.size) ||
+        (asset.size as number) <= 0 ||
+        typeof asset.sha256 !== 'string' ||
+        !releaseFeedPatterns.sha256.test(asset.sha256) ||
+        typeof asset.sha512 !== 'string' ||
+        !isCanonicalSha512(asset.sha512) ||
+        asset.downloadUrl !== buildReleaseAssetUrl(release.tag, name) ||
+        (expectedTarget === undefined && releaseFeedPatterns.manualPackageName.test(name)) ||
+        (expectedTarget
+          ? !isRecord(asset.target) ||
+            asset.target.platform !== expectedTarget.platform ||
+            asset.target.arch !== expectedTarget.arch ||
+            asset.target.installMode !== 'manual-package' ||
+            !hasExactOwnKeys(asset.target, ['platform', 'arch', 'installMode'])
+          : asset.target !== undefined)
+      ) return false;
+    }
+    if ([...manualTargets.keys()].some((name) => !Object.hasOwn(release.assets, name))) return false;
+    const expectedMetadata = {
+      'latest.yml': [`QED2-${release.version}-win-x64.exe`],
+      'latest-mac.yml': [
+        `QED2-${release.version}-mac-arm64.zip`,
+        `QED2-${release.version}-mac-x64.zip`,
+      ],
+      'latest-linux.yml': [
+        `QED2-${release.version}-linux-x64.AppImage`,
+        `QED2-${release.version}-linux-x64.deb`,
+        `QED2-${release.version}-linux-x64.rpm`,
+      ],
+    } as const;
+    return (Object.keys(expectedMetadata) as Array<keyof typeof expectedMetadata>).every((name) => {
+      const actual = release.updateMetadata[name];
+      const expected = expectedMetadata[name];
+      return Array.isArray(actual) &&
+        actual.length === expected.length &&
+        actual.every((assetName, index) => assetName === expected[index] && Object.hasOwn(release.assets, assetName));
+    });
+  }
+
+  private recordCheckedAt(): void {
+    this.state = { ...this.state, checkedAt: new Date(this.now()).toISOString() };
+    this.emitState();
   }
 
   private bindUpdaterEvents(): void {
@@ -1127,7 +1323,7 @@ export class UpdateCoordinator extends EventEmitter {
   private patchTarget(
     target: UpdateTargetState['target'],
     patch: Partial<UpdateTargetState>,
-    options: { clearProgress?: boolean } = {},
+    options: { clearProgress?: boolean; clearLatestVersion?: boolean } = {},
   ): void {
     this.state = {
       ...this.state,
@@ -1138,6 +1334,7 @@ export class UpdateCoordinator extends EventEmitter {
         if (patch.phase && patch.phase !== 'downloading') delete next.progress;
         if (patch.phase && patch.phase !== 'restart-required') delete next.installMode;
         if (options.clearProgress) delete next.progress;
+        if (options.clearLatestVersion) delete next.latestVersion;
         return next;
       }),
     };
@@ -1155,67 +1352,20 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   private readPendingDownload(): PendingAppDownload | undefined {
-    try {
-      const pending = this.recoveryStore?.get<Partial<PendingAppDownload>>(
-        UPDATE_RECOVERY_COLLECTION,
-        PENDING_APP_DOWNLOAD_KEY,
-      );
-      if (
-        !pending ||
-        !isSafeSemver(pending.fromVersion) ||
-        !isSafeSemver(pending.latestVersion) ||
-        typeof pending.requestedAt !== 'string' ||
-        !Number.isFinite(Date.parse(pending.requestedAt)) ||
-        Date.parse(pending.requestedAt) > this.now() + RECOVERY_CLOCK_SKEW_MS ||
-        this.now() - Date.parse(pending.requestedAt) > RECOVERY_TTL_MS ||
-        typeof pending.attempts !== 'number' ||
-        !Number.isInteger(pending.attempts) ||
-        pending.attempts < 0 ||
-        pending.attempts > MAX_PERSISTED_DOWNLOAD_ATTEMPTS ||
-        (pending.status !== undefined &&
-          pending.status !== 'downloading' &&
-          pending.status !== 'verified-ready')
-      ) {
-        if (pending !== undefined) {
-          this.logger.warn('Discarding invalid persisted desktop update recovery state');
-          this.recoveryStore?.delete(UPDATE_RECOVERY_COLLECTION, PENDING_APP_DOWNLOAD_KEY);
-        }
-        return undefined;
-      }
-      return {
-        fromVersion: pending.fromVersion,
-        ...(pending.latestVersion ? { latestVersion: pending.latestVersion } : {}),
-        requestedAt: pending.requestedAt,
-        attempts: pending.attempts,
-        // Backward compatibility for recovery records created before the
-        // verified-ready distinction existed: never upgrade intent to trust.
-        status: pending.status ?? 'downloading',
-      };
-    } catch (error) {
-      this.logger.warn('Could not read persisted desktop update recovery state', error);
-      return undefined;
-    }
+    return this.recoveryJournal.read();
   }
 
   private writePendingDownload(pending: PendingAppDownload): void {
-    try {
-      this.recoveryStore?.set(
-        UPDATE_RECOVERY_COLLECTION,
-        PENDING_APP_DOWNLOAD_KEY,
-        pending,
-      );
-    } catch (error) {
-      // Persistence strengthens recovery, but a full userData disk must not
-      // crash the already-running platform updater operation.
-      this.logger.warn('Could not persist desktop update recovery state', error);
-    }
+    this.recoveryJournal.write(pending);
   }
 
   private clearPendingDownload(): void {
-    try {
-      this.recoveryStore?.delete(UPDATE_RECOVERY_COLLECTION, PENDING_APP_DOWNLOAD_KEY);
-    } catch (error) {
-      this.logger.warn('Could not clear desktop update recovery state', error);
-    }
+    this.recoveryJournal.clear();
+  }
+
+  private discardDownloadCache(): void {
+    void this.downloader?.discard().catch((error) => {
+      this.logger.warn('Could not clear the desktop update download cache', error);
+    });
   }
 }

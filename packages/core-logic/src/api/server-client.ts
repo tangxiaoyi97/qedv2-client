@@ -41,6 +41,15 @@ import type {
   UserInfo,
 } from './types.js';
 
+/**
+ * AI providers routinely need longer than the ordinary API deadline. Keep the
+ * request bounded, but leave protocol/transport grace beyond the server's
+ * documented 120-second provider deadline. Using the exact same deadline on
+ * both sides lets the client abort before the server can return its structured
+ * timeout response.
+ */
+const AI_REQUEST_TIMEOUT_MS = 135_000;
+
 export class ServerClient {
   constructor(
     private baseUrl: string,
@@ -234,7 +243,12 @@ export class ServerClient {
     return requestJson<AiExplainResponse>(
       this.baseUrl,
       '/me/ai-explain',
-      this.authed({ method: 'POST', body: req, ...(signal ? { signal } : {}) }),
+      this.authed({
+        method: 'POST',
+        body: req,
+        timeoutMs: AI_REQUEST_TIMEOUT_MS,
+        ...(signal ? { signal } : {}),
+      }),
     );
   }
 
@@ -246,7 +260,12 @@ export class ServerClient {
     return requestJson<AiAssessResponse>(
       this.baseUrl,
       '/me/ai-grade',
-      this.authed({ method: 'POST', body: req, ...(signal ? { signal } : {}) }),
+      this.authed({
+        method: 'POST',
+        body: req,
+        timeoutMs: AI_REQUEST_TIMEOUT_MS,
+        ...(signal ? { signal } : {}),
+      }),
     );
   }
 

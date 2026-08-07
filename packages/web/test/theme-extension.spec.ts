@@ -78,7 +78,10 @@ describe('CSS theme-extension runtime', () => {
 
     await activateThemeExtension(extension);
 
-    expect(fetchMock).toHaveBeenCalledWith(extension.cssUrl, { cache: 'no-store' });
+    expect(fetchMock).toHaveBeenCalledWith(extension.cssUrl, {
+      cache: 'no-store',
+      credentials: 'omit',
+    });
     expect(document.getElementById(externalStyleId)?.textContent).toBe(css);
     expect(window.localStorage.getItem(THEME_STORAGE_KEYS.externalUrl)).toBe(extension.cssUrl);
     expect(window.localStorage.getItem(THEME_STORAGE_KEYS.externalCss)).toBe(css);

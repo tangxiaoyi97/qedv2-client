@@ -29,7 +29,7 @@ export class WebCoreRuntime implements CoreRuntimePort {
 }
 
 export class WebUpdate implements UpdatePort {
-  readonly capabilities = { selfUpdate: false } as const;
+  readonly capabilities = { selfUpdate: false, manualAppInstall: false } as const;
 
   constructor(private readonly appVersion: string) {}
 
