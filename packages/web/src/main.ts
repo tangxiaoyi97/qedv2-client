@@ -16,6 +16,8 @@ import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
 import { watchForBuildUpdates } from './platform/sw-update.js';
+import { installShellCommandRouter } from './platform/shell-commands.js';
+import { ports } from './services.js';
 
 /** Drive the boot splash (index.html #boot-bar / #boot-label). */
 function bootProgress(pct: number, text: string): void {
@@ -36,7 +38,6 @@ async function boot(): Promise<void> {
   const app = createApp(App);
   app.use(createPinia());
   app.use(router);
-
   // Ports/config first, then local archive, then token validation — the app
   // is fully usable as a guest even if the network never comes up.
   bootProgress(30, 'Einstellungen werden geladen …');
@@ -54,23 +55,25 @@ async function boot(): Promise<void> {
   }
 
   // After a deploy, long-lived sessions can hold a router that still points
-  // at the OLD hashed chunks (now replaced) — a lazy route import then 404s
-  // and the app dies on a blank screen. Reload once to fetch the new build.
+  // at old hashed chunks. Keep the existing one-reload recovery behavior.
   router.onError((error) => {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (/fetch dynamically imported module|Failed to fetch|dynamically imported/i.test(msg)) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/fetch dynamically imported module|Failed to fetch|dynamically imported/i.test(message)) {
       window.location.reload();
     }
   });
 
   bootProgress(100, 'Bereit');
   app.mount('#app');
+  const removeShellCommandListener = installShellCommandRouter(router);
+  window.addEventListener('beforeunload', removeShellCommandListener, { once: true });
 
   // After mount: announce what changed if this is a new build (non-blocking).
   void useUiStore().checkForChangelog();
   // …and keep looking for newer builds, so an installed PWA that never gets
-  // closed does not sit on this one forever.
-  watchForBuildUpdates();
+  // closed does not sit on this one forever. Native shells own their update
+  // lifecycle and must never race the PWA service-worker poller.
+  if (!ports.shell.capabilities.desktop) watchForBuildUpdates();
 }
 
 function showBootError(err: unknown): void {

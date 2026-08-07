@@ -20,10 +20,12 @@ import {
   HistoryLog,
   QuestionCache,
   type PlatformPorts,
+  type StoragePort,
 } from '@qed2/core-logic';
 import { channelDefaults } from './platform/channel.js';
+import { DesktopCoordinatedStorage } from './platform/desktop-storage.js';
 import { WebStorage } from './platform/web-storage.js';
-import { WebCoreRuntime, WebNetwork, WebUpdate } from './platform/web-ports.js';
+import { WebCoreRuntime, WebNetwork, WebShell, WebUpdate } from './platform/web-ports.js';
 
 /** Injected from package.json at build time (vite.config define) — the
  *  fallback only covers dev/type-check contexts without the define. */
@@ -33,7 +35,15 @@ export const APP_VERSION: string = typeof __APP_VERSION__ === 'string' ? __APP_V
 const injected: Partial<PlatformPorts> =
   (globalThis as { __QED2_PLATFORM_PORTS__?: Partial<PlatformPorts> }).__QED2_PLATFORM_PORTS__ ?? {};
 
-export const storage = injected.storage ?? new WebStorage();
+const baseStorage = injected.storage ?? new WebStorage();
+/**
+ * Only a native desktop shell opts into origin-wide mutation locking. The
+ * browser/PWA keeps using WebStorage directly, even though some browsers also
+ * expose navigator.locks.
+ */
+export const storage: StoragePort = injected.shell?.capabilities.desktop
+  ? new DesktopCoordinatedStorage(baseStorage)
+  : baseStorage;
 export const configStore = new ConfigStore(storage);
 export const authStore = new AuthStore(storage);
 export const archiveStore = new ArchiveStore(storage);
@@ -65,6 +75,7 @@ export const ports: PlatformPorts = {
   coreRuntime: injected.coreRuntime ?? new WebCoreRuntime(() => currentCoreUrl),
   update: injected.update ?? new WebUpdate(APP_VERSION),
   network: injected.network ?? new WebNetwork(),
+  shell: injected.shell ?? new WebShell(),
 };
 
 export function setCurrentCoreUrl(url: string): void {

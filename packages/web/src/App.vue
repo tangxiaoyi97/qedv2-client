@@ -9,7 +9,8 @@
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { provideAssetResolver, useKeyboardInset } from '@qed2/ui';
-import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid } from 'lucide-vue-next';
+import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid, Server } from 'lucide-vue-next';
+import { ports } from './services.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
@@ -32,6 +33,25 @@ provideAssetResolver((src) => app.assetUrl(src));
 useKeyboardInset();
 
 const focusMode = computed(() => route.meta.focus === true);
+const desktopToolWindow = computed(
+  () =>
+    ports.shell.capabilities.desktop &&
+    route.path === '/settings' &&
+    (route.query.desktopWindow === 'updates' || route.query.desktopWindow === 'node'),
+);
+const chromeHidden = computed(() => focusMode.value || desktopToolWindow.value);
+
+// Durable archive/attempt work survives an outage. Retry both channels when
+// the platform reports connectivity again so an empty cloud view cannot stay
+// stale until the next answer or app restart.
+watch(
+  () => app.online,
+  (online, wasOnline) => {
+    if (!online || wasOnline !== false || !auth.isLoggedIn) return;
+    void progress.flushAttemptOutbox();
+    void progress.syncNow({ quiet: true });
+  },
+);
 
 /** Two practice entries, visually grouped (supplement §7). */
 const practiceItems = [
@@ -82,8 +102,16 @@ watch(
 </script>
 
 <template>
-  <div class="app q-app">
-    <aside class="app__sidebar" :class="{ 'app__sidebar--hidden': focusMode }">
+  <div
+    class="app q-app"
+    :data-platform="ports.shell.capabilities.desktop ? 'desktop' : 'web'"
+  >
+    <aside
+      class="app__sidebar"
+      :class="{ 'app__sidebar--hidden': chromeHidden }"
+      :aria-hidden="chromeHidden || undefined"
+      :inert="chromeHidden || undefined"
+    >
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
         <nav class="app__nav" aria-label="Hauptnavigation">
           <RouterLink
@@ -119,6 +147,16 @@ watch(
             <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
             <span>{{ item.label }}</span>
           </RouterLink>
+          <RouterLink
+            v-if="ports.shell.capabilities.desktop"
+            to="/settings?section=desktop"
+            class="app__nav-item"
+            :class="{ 'app__nav-item--active': route.path === '/settings' && route.query.section === 'desktop' }"
+            data-desktop-capability-entry
+          >
+            <Server class="app__nav-icon" aria-hidden="true" />
+            <span>Desktop &amp; Knoten</span>
+          </RouterLink>
         </nav>
         <div v-if="!auth.isLoggedIn" class="app__guest-card">
           <div class="app__guest-header">
@@ -136,10 +174,14 @@ watch(
             <div class="app__guest-info">
               <div class="app__guest-title">{{ auth.username }}</div>
               <div class="app__guest-text">
-                <template v-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
+                <template v-if="progress.attemptUploadStatus.state === 'uploading'">⟳ Verlauf wird hochgeladen …</template>
+                <template v-else-if="progress.attemptUploadStatus.state === 'pending'">⚠ Verlauf wartet auf Upload</template>
+                <template v-else-if="progress.attemptUploadStatus.state === 'error'">⚠ Verlauf-Upload fehlgeschlagen</template>
+                <template v-else-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
                 <template v-else-if="progress.syncStatus.state === 'syncing'">⟳ Sync …</template>
                 <template v-else-if="progress.syncStatus.state === 'offline'">Offline</template>
                 <template v-else-if="progress.syncStatus.state === 'conflict'">⚠ Konflikt</template>
+                <template v-else-if="progress.syncStatus.state === 'error'">⚠ Synchronisierung fehlgeschlagen</template>
                 <template v-else>Cloud aktiv</template>
               </div>
             </div>
@@ -147,7 +189,13 @@ watch(
         </div>
       </aside>
 
-      <nav class="app__tabbar" :class="{ 'app__tabbar--hidden': focusMode }" aria-label="Hauptnavigation">
+      <nav
+        class="app__tabbar"
+        :class="{ 'app__tabbar--hidden': chromeHidden }"
+        :aria-hidden="chromeHidden || undefined"
+        :inert="chromeHidden || undefined"
+        aria-label="Hauptnavigation"
+      >
         <RouterLink
           v-for="item in tabItems"
           :key="item.to"
@@ -240,6 +288,8 @@ watch(
   display: flex;
   align-items: center;
   gap: 11px;
+  min-height: var(--q-control-height);
+  box-sizing: border-box;
   padding: 9px 12px;
   border-radius: 9px;
   color: var(--q-mut);

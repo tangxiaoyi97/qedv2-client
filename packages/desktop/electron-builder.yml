@@ -1,0 +1,84 @@
+appId: studio.barcarolle.qed2
+productName: QED2
+copyright: Copyright © 2026 Tang Xiaoyi
+asar: true
+compression: maximum
+# Every app/file resource below is explicitly allowlisted. The prepared Core
+# carries a production-only node_modules graph covered by runtime-manifest.json;
+# electron-builder's default ignore set would otherwise silently remove it.
+disableDefaultIgnoredFiles: true
+directories:
+  output: dist-packages
+  buildResources: build
+files:
+  - dist/**
+  - package.json
+extraResources:
+  - from: ../web/dist
+    to: web
+  - from: runtime/core
+    to: runtime/core
+    filter:
+      - "**/*"
+      - "!node_modules{,/**/*}"
+  # Use node_modules itself as the FileSet root. Treating it as a nested path
+  # makes electron-builder apply application dependency pruning to an already
+  # production-pruned, integrity-inventoried external runtime.
+  - from: runtime/core/node_modules
+    to: runtime/core/node_modules
+    filter:
+      - "**/*"
+  - from: runtime/bank
+    to: runtime/bank
+  - from: runtime/runtime-manifest.json
+    to: runtime/runtime-manifest.json
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  loadBrowserProcessSpecificV8Snapshot: false
+  grantFileProtocolExtraPrivileges: false
+publish:
+  provider: github
+  owner: tangxiaoyi97
+  repo: qedv2-client
+  releaseType: release
+artifactName: QED2-${version}-${os}-${arch}.${ext}
+mac:
+  icon: ../web/public/icons/icon-512.png
+  category: public.app-category.education
+  minimumSystemVersion: "12.0"
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  darkModeSupport: true
+win:
+  icon: ../web/public/icons/icon-512.png
+  target:
+    - nsis
+  verifyUpdateCodeSignature: true
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+linux:
+  icon: ../web/public/icons/icon-512.png
+  category: Education
+  target:
+    - AppImage
+    - deb
+    - rpm
+  maintainer: Tang Xiaoyi
+  synopsis: Local-first Austrian Matura mathematics trainer
+  description: QED2 is a reliable local learning node with a bundled content engine and offline question bank.
+electronUpdaterCompatibility: ">=2.16"

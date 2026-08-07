@@ -22,6 +22,8 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 <style scoped>
 .q-btn {
   font: 700 13.5px 'Public Sans', system-ui, sans-serif;
+  min-height: var(--q-control-height);
+  box-sizing: border-box;
   padding: 11px 20px;
   border-radius: 9px;
   cursor: pointer;

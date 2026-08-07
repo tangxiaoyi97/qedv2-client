@@ -58,6 +58,7 @@ import {
 } from '@qed2/core-logic';
 import GradingDot from '../shared/GradingDot.vue';
 import QButton from '../shared/QButton.vue';
+import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
 
 
@@ -144,9 +145,7 @@ const countText = computed(() =>
       <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
           <h2 class="fdlg__title">Filter</h2>
-          <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="emit('close')">
-            ✕
-          </button>
+          <QIconButton aria-label="Schließen" data-autofocus @click="emit('close')" />
         </div>
 
         <div class="fdlg__body">

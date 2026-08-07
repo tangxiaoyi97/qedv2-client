@@ -17,22 +17,47 @@ permissions:
 
 concurrency:
   group: preview
-  cancel-in-progress: false
+  # Uploads are staged and the live symlink changes only after rsync succeeds,
+  # so a newer preview can safely supersede stale queued/building work.
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: preview
+      url: https://qed-pv.barcarolle.studio
     steps:
-      - uses: actions/checkout@v4
+      - name: Validate preview deployment configuration
+        shell: bash
+        env:
+          PREVIEW_DEPLOY_KEY: ${{ secrets.PREVIEW_DEPLOY_KEY }}
+          PREVIEW_KNOWN_HOSTS: ${{ secrets.PREVIEW_KNOWN_HOSTS }}
+          PREVIEW_SSH_HOST: ${{ secrets.PREVIEW_SSH_HOST }}
+          PREVIEW_SSH_USER: ${{ secrets.PREVIEW_SSH_USER }}
+        run: |
+          set -euo pipefail
+          MISSING=()
+          for NAME in PREVIEW_DEPLOY_KEY PREVIEW_KNOWN_HOSTS PREVIEW_SSH_HOST PREVIEW_SSH_USER; do
+            if [[ -z "${!NAME}" ]]; then MISSING+=("$NAME"); fi
+          done
+          if (( ${#MISSING[@]} > 0 )); then
+            echo "Missing preview environment secrets: ${MISSING[*]}" >&2
+            exit 1
+          fi
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          node-version: 20
+          version: 11.0.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install (workspace)
         run: pnpm install --frozen-lockfile

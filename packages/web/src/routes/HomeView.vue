@@ -5,17 +5,18 @@
  * Zuletzt/Aktivität → Verlauf) and reuse the shared review components
  * (supplement §6/§8).
  */
-import { computed, onUnmounted, ref, watch } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { groupMasteryByCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
-import { historyLog } from '../services.js';
+import { useActivityStore } from '../stores/activity.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useUiStore } from '../stores/ui.js';
 
 const router = useRouter();
 const auth = useAuthStore();
+const activityStore = useActivityStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 
@@ -81,15 +82,9 @@ const recent = computed(() =>
     })),
 );
 
-/** Heatmap feed — local log; re-queried whenever the log changes. */
-const activity = ref<Record<string, number>>({});
-watch(
-  () => progress.historyVersion,
-  async () => {
-    activity.value = await historyLog.dailyActivity(84, new Date());
-  },
-  { immediate: true },
-);
+/** Guests use this device; accounts use the authoritative cloud activity. */
+const activity = computed(() => activityStore.activity);
+void activityStore.ensure(84, new Date());
 
 const hasProgress = computed(() => progress.practicedParts > 0);
 
@@ -191,7 +186,20 @@ function openCategoryFilter(code: string): void {
           <div class="home__card-label">Aktivität</div>
           <RouterLink to="/history" class="home__card-link">Details →</RouterLink>
         </div>
-        <ActivityHeatmap :data="activity" :weeks="12" />
+        <div
+          v-if="activityStore.cloudIncompleteMessage"
+          class="home__empty-note"
+          :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
+        >
+          {{ activityStore.cloudIncompleteMessage }}
+        </div>
+        <div v-else-if="activityStore.loading" class="home__empty-note" role="status">
+          Aktivität wird geladen …
+        </div>
+        <div v-else-if="activityStore.error" class="home__empty-note" role="alert">
+          {{ activityStore.error }}
+        </div>
+        <ActivityHeatmap v-else :data="activity" :weeks="12" />
       </div>
 
       <div

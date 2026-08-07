@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "core": {
+    "repository": "tangxiaoyi97/qedv2-core",
+    "ref": "main",
+    "commit": "559c162a514dfd7c69d603192e4d056a3b86ee46"
+  },
+  "bank": {
+    "repository": "tangxiaoyi97/srdpmppr",
+    "ref": "pastpapers",
+    "commit": "ff304623607463386026ebeebdbc17a576db1925"
+  }
+}

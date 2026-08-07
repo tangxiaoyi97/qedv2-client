@@ -2,15 +2,16 @@
 /**
  * Einstellungen (prototype 4c): theme, language, advanced server addresses
  * (collapsed), version info for ALL services (web / core / server), manual
- * archive upload (supplement §9), logout. The disabled update button is the
- * reserved seam for the desktop shell's UpdatePort.
+ * archive upload (supplement §9), logout, and the capability-gated desktop
+ * runtime/update surface backed by typed platform ports.
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
-import { ChevronDown, CollapsePanel, QButton, useModalA11y } from '@qed2/ui';
+import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
-import { APP_VERSION } from '../services.js';
+import DesktopSettings from './settings/DesktopSettings.vue';
+import { APP_VERSION, ports } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
   BUILTIN_THEME_EXTENSIONS,
@@ -32,6 +33,12 @@ const leaderboard = useLeaderboardStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 const router = useRouter();
+const route = useRoute();
+const desktopToolWindow = computed(
+  () =>
+    ports.shell.capabilities.desktop &&
+    (route.query.desktopWindow === 'updates' || route.query.desktopWindow === 'node'),
+);
 
 /* ---- Versionen: rows are clickable, each opens a detail modal ---- */
 const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
@@ -250,9 +257,12 @@ async function openChangelog(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings q-page">
-    <h1 class="settings__title q-page-title">Einstellungen</h1>
+  <div class="settings q-page" :class="{ 'settings--desktop-tool': desktopToolWindow }">
+    <h1 v-if="!desktopToolWindow" class="settings__title q-page-title">Einstellungen</h1>
 
+    <DesktopSettings />
+
+    <template v-if="!desktopToolWindow">
     <section class="settings__section">
       <div class="settings__row">
         <div>
@@ -387,9 +397,6 @@ async function openChangelog(): Promise<void> {
         <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
           {{ changelogState === 'none' ? 'Keine Versionshinweise gefunden' : 'Änderungen' }}
         </QButton>
-        <QButton variant="secondary" disabled title="Updates in der Desktop-App" class="settings__update-btn">
-          Nach Updates suchen
-        </QButton>
       </div>
     </section>
 
@@ -491,9 +498,7 @@ async function openChangelog(): Promise<void> {
           <div ref="detailCard" class="vdetail__card">
             <div class="vdetail__head">
               <div class="vdetail__title">{{ versionDetailTitle }}</div>
-              <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="versionDetail = null">
-                ✕
-              </button>
+              <QIconButton aria-label="Schließen" data-autofocus @click="versionDetail = null" />
             </div>
             <dl class="vdetail__list">
               <div v-for="row in versionDetailRows" :key="row.label" class="vdetail__row">
@@ -508,6 +513,7 @@ async function openChangelog(): Promise<void> {
         </div>
       </transition>
     </Teleport>
+    </template>
   </div>
 </template>
 
@@ -517,6 +523,10 @@ async function openChangelog(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.settings--desktop-tool {
+  width: 100%;
+  max-width: 720px;
 }
 /* Only the bottom gap differs from .q-page-title. */
 .settings__title {
@@ -869,9 +879,6 @@ async function openChangelog(): Promise<void> {
 .settings__vmeta {
   font: 500 10.5px ui-monospace, Menlo, monospace;
   color: var(--q-faint);
-}
-.settings__update-btn {
-  align-self: flex-start;
 }
 .settings__versions-actions {
   display: flex;

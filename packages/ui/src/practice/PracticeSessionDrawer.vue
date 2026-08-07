@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import SessionItemList from './SessionItemList.vue';
 import type { SessionItem } from './SessionItemList.vue';
+import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
 
 
@@ -39,9 +40,7 @@ useModalA11y(panel, isOpen, () => emit('close'));
             <span class="practice-session-drawer__title">Programm</span>
             <span class="practice-session-drawer__count">{{ gradedCount }}/{{ total }}</span>
           </div>
-          <button type="button" class="q-dialog-close" aria-label="Programmliste schließen" @click="emit('close')">
-            ✕
-          </button>
+          <QIconButton aria-label="Programmliste schließen" @click="emit('close')" />
         </div>
 
         <SessionItemList :items="items" @jump="emit('jump', $event)" />

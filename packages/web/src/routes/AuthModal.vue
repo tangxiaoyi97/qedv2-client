@@ -8,7 +8,7 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { ApiError, NetworkError } from '@qed2/core-logic';
-import { QButton, useModalA11y } from '@qed2/ui';
+import { QButton, QIconButton, useModalA11y } from '@qed2/ui';
 
 import { useAuthStore } from '../stores/auth.js';
 import { useUiStore } from '../stores/ui.js';
@@ -117,7 +117,7 @@ watch(
     >
       <!-- login face -->
       <form v-if="ui.authModalMode === 'login'" class="authm__card" @submit.prevent="doLogin">
-        <button type="button" class="authm__close q-dialog-close" aria-label="Schließen" @click="ui.closeAuthModal()">✕</button>
+        <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
         <div class="authm__brand">QED<span class="authm__brand-accent">2</span></div>
         <div class="authm__sub">Willkommen zurück</div>
 
@@ -143,7 +143,7 @@ watch(
 
       <!-- register face (same modal, redrawn in place — supplement §10) -->
       <form v-else class="authm__card" @submit.prevent="doRedeem">
-        <button type="button" class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()">✕</button>
+        <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
         <div class="authm__invite-head">
           <div class="authm__invite-title">Einladungscode einlösen</div>
           <div class="authm__invite-sub">Registrierung nur mit Code</div>

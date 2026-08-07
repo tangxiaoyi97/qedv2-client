@@ -15,7 +15,9 @@ Authoritative upstream documents, in priority order:
 - **Grading is client-side and pure** — `grade(part, submission)` has no I/O, no clock, no side effects.
 - **Checksum must be byte-identical to the server's** (`qedv2-server/src/sync/checksum.ts` is the authority — reproduced below).
 - **Login/logout NEVER clears the local archive.**
-- **Web never spawns a local core** (that's the desktop shell's future job — the `CoreRuntimePort` interface already models it).
+- **Web/PWA never spawns a local core**. The Desktop shell owns its bundled
+  runtime exclusively through `CoreRuntimePort`; shared Web code only consumes
+  that typed capability when Electron provides it.
 - Progress-state writes go through **`POST /me/sync` only**; `/me/attempts`
   remains an archive-independent audit stream, now durably queued and used
   for private history plus opt-in leaderboard aggregates.
@@ -26,7 +28,7 @@ Authoritative upstream documents, in priority order:
 packages/core-logic   @qed2/core-logic  — pure TS. src/{api,model,grading,fsrs,sync,store,ports,config}
 packages/ui           @qed2/ui          — Vue 3 components, platform-free. src/{question,practice,review,leaderboard,shared,styles}
 packages/web          @qed2/web         — Vite app (shell only). src/{routes,stores,platform,styles}
-packages/desktop      (future Electron shell — structure reserved only)
+packages/desktop      @qed2/desktop — Electron shell, local Core supervision, native ports/windows
 packages/mobile       (future iOS shell — structure reserved only)
 ```
 
@@ -54,7 +56,7 @@ Test vectors in `packages/core-logic/test/fixtures/checksum-vectors.json` are ge
 - Auto after answering: correct→good, partial→meh, incorrect→baffled. Manual pick ALWAYS overrides; within the same answer event the manual override REBASES FSRS on the pre-answer snapshot (ApplyGradeResult.previousFsrs).
 - FSRS mapping (fsrs/grading-map.ts): good→Good; careless→Hard **without lapse**; meh→Again + 1–3-day comeback; baffled→Again + full reset (S=w0, due now); excluded→frozen (no advance, never due, far-future due sentinel in recommend userState, results filtered). Answering an excluded part records the result but does NOT thaw it — `applyGrade` honours the freeze too.
 - Grading dots (6 visuals, never color-only): good=filled green; careless=half-filled orange; meh=outlined orange; baffled=dashed-outline orange; excluded=grey ⊗; unseen=grey outline.
-- Verlauf/history: signed in, the cloud audit trail is authoritative (`GET /me/history`, paginated); guests keep the local log (`store/history-log.ts`, "this device only"). Guest history is NOT backfilled on login.
+- Verlauf/history: signed in, the cloud audit trail is authoritative (`GET /me/history`, paginated); guests keep the local log (`store/history-log.ts`, "this device only"). Invite redemption claims guest attempts for the newly created account; ordinary login never claims them on a shared device.
 
 ## Sync protocol client behavior (contract §5, real server verified)
 
@@ -63,9 +65,10 @@ Test vectors in `packages/core-logic/test/fixtures/checksum-vectors.json` are ge
   - `merged` → replace local content with `mergedArchive`, update baseVersion; **user never notified**.
   - `conflict` → `{serverVersion, serverChecksum, conflicts: ConflictEntry[], autoMergeable}`; `ConflictEntry` is a **mixed array**: part conflicts `{partId, server, local}`, competency conflicts `{competencyCode, server, local}`. UI dialog lets the user pick per entry (or all-cloud / all-local); assemble `resolvedArchive` = autoMergeable + picks; `POST /me/sync/resolve {baseServerVersion: serverVersion, resolvedArchive}`. A resolve can conflict again (optimistic concurrency) → new round.
 - Sync triggers: after login, app start (if logged in), every N graded parts (N=3) and on session end.
-- Attempt audit uploads use a persistent per-account outbox and stable
+- Attempt audit uploads use a persistent per-owner outbox and stable
   `clientAttemptId`; retry acknowledgement removes the local queue entry while
-  the server's unique key makes ambiguous-response retries harmless.
+  the server's unique key makes ambiguous-response retries harmless. Guest
+  attempts use a local-only owner and are atomically claimed on registration.
 - Before requesting recommendations while logged in: compare local checksum to server checksum; equal → skip sync.
 - HTTP conflict semantics: **200 + `result` field** (never 409).
 

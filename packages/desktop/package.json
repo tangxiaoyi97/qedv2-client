@@ -1,0 +1,39 @@
+{
+  "name": "@qed2/desktop",
+  "version": "2.0.0",
+  "description": "QED2 local-first Electron node for macOS, Windows and Linux",
+  "author": "Tang Xiaoyi",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.0.3",
+  "main": "dist/main.mjs",
+  "scripts": {
+    "build:main": "node scripts/build.mjs",
+    "build:web": "pnpm --filter @qed2/web build",
+    "build": "pnpm build:web && pnpm build:main",
+    "dev": "pnpm build && electron .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify": "pnpm typecheck && pnpm test && pnpm build",
+    "verify:release-assets": "node scripts/verify-release-assets.mjs",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "runtime:smoke": "node scripts/smoke-runtime.mjs",
+    "package:smoke": "node scripts/smoke-packaged-app.mjs",
+    "qa:running": "node scripts/qa-running-desktop.mjs",
+    "package": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --dir",
+    "dist": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml",
+    "release": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "devDependencies": {
+    "@qed2/core-logic": "workspace:*",
+    "@types/node": "^24.10.0",
+    "electron": "42.3.2",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -11,6 +11,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { X } from 'lucide-vue-next';
 import {
   type AiAssessResponse,
   TEIL_LABELS,
@@ -823,7 +824,7 @@ const currentCompetencyCodes = computed(() =>
         :aria-label="exitArmed ? 'Programm verlassen bestätigen' : 'Programm verlassen'"
         @click.stop="exit"
       >
-        <span class="practice__close-mark" aria-hidden="true">✕</span>
+        <X class="practice__close-mark" :size="20" :stroke-width="2" aria-hidden="true" />
         <span v-if="exitArmed" class="practice__close-text">Beenden?</span>
       </button>
       <div class="practice__progress">
@@ -1102,13 +1103,15 @@ const currentCompetencyCodes = computed(() =>
   z-index: 30;
 }
 .practice__close {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: var(--q-icon-control-size);
+  min-width: var(--q-icon-control-size);
+  height: var(--q-icon-control-size);
+  flex: none;
+  border-radius: 9px;
   border: none;
   background: none;
   color: var(--q-mut-2);
-  font-size: 17px;
+  line-height: 0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1138,6 +1141,9 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__close-mark {
   flex: none;
+  display: block;
+  width: var(--q-icon-glyph-size);
+  height: var(--q-icon-glyph-size);
 }
 .practice__close-text {
   font-size: 12px;

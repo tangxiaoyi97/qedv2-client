@@ -7,8 +7,16 @@
  * - UpdatePort: web updates ship with the Pages deployment — version display
  *   only, no self-update.
  * - NetworkPort: navigator.onLine + events.
+ * - ShellPort: no native chrome or commands in a browser.
  */
-import type { CoreEndpoint, CoreRuntimePort, NetworkPort, UpdatePort, UpdateCheckResult } from '@qed2/core-logic';
+import type {
+  CoreEndpoint,
+  CoreRuntimePort,
+  NetworkPort,
+  ShellPort,
+  UpdateCheckResult,
+  UpdatePort,
+} from '@qed2/core-logic';
 
 export class WebCoreRuntime implements CoreRuntimePort {
   readonly capabilities = { localCore: false } as const;
@@ -55,5 +63,18 @@ export class WebNetwork implements NetworkPort {
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
     };
+  }
+}
+
+/** Browser fallback for the native-shell seam. */
+export class WebShell implements ShellPort {
+  readonly capabilities = {
+    desktop: false,
+    nativeMenu: false,
+    nativeTitleBar: false,
+  } as const;
+
+  onCommand(_cb: Parameters<ShellPort['onCommand']>[0]): () => void {
+    return () => undefined;
   }
 }

@@ -171,4 +171,106 @@ describe('HistoryView activity filter', () => {
 
     app.unmount();
   });
+
+  it('discards in-flight rows and heatmap data when the account changes', async () => {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const todayKey = localDayKey(today);
+    let releaseAHistory!: (response: Response) => void;
+    let releaseAActivity!: (response: Response) => void;
+    const aHistory = new Promise<Response>((resolve) => { releaseAHistory = resolve; });
+    const aActivity = new Promise<Response>((resolve) => { releaseAActivity = resolve; });
+    let aRequests = 0;
+
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      if (url.includes('/me/history/activity?')) {
+        if (authorization === 'Bearer token-a') {
+          aRequests += 1;
+          return aActivity;
+        }
+        return new Response(JSON.stringify({ activity: { [todayKey]: 2 } }), { status: 200 });
+      }
+      if (url.includes('/me/history?')) {
+        if (authorization === 'Bearer token-a') {
+          aRequests += 1;
+          return aHistory;
+        }
+        return new Response(JSON.stringify({
+          items: [{
+            id: 'attempt-b',
+            questionId: 'question-b',
+            partId: 'part-b',
+            correct: true,
+            awardedPoints: 1,
+            gradedAt: today.toISOString(),
+          }],
+          page: 1,
+          pageSize: 50,
+          total: 1,
+        }), { status: 200 });
+      }
+      if (url.endsWith('/content/questions/batch')) {
+        return new Response(JSON.stringify({ questions: [], missing: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'token-a',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-a', username: 'a' },
+    };
+    useAppStore().setTokenProvider(() => auth.session?.token);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(HistoryView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+
+    await vi.waitFor(() => expect(aRequests).toBe(2));
+    auth.session = {
+      token: 'token-b',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-b', username: 'b' },
+    };
+    await vi.waitFor(() => expect(host.textContent).toContain('question-b'));
+    await vi.waitFor(() => {
+      expect(host.querySelector(`[data-key="${todayKey}"]`)?.getAttribute('aria-label')).toContain('2 Aufgaben');
+    });
+
+    releaseAHistory(new Response(JSON.stringify({
+      items: [{
+        id: 'attempt-a',
+        questionId: 'question-a',
+        partId: 'part-a',
+        correct: false,
+        awardedPoints: 0,
+        gradedAt: today.toISOString(),
+      }],
+      page: 1,
+      pageSize: 50,
+      total: 1,
+    }), { status: 200 }));
+    releaseAActivity(new Response(JSON.stringify({ activity: { [todayKey]: 99 } }), { status: 200 }));
+    await settle();
+
+    expect(host.textContent).toContain('question-b');
+    expect(host.textContent).not.toContain('question-a');
+    expect(host.querySelector(`[data-key="${todayKey}"]`)?.getAttribute('aria-label')).toContain('2 Aufgaben');
+    app.unmount();
+  });
 });

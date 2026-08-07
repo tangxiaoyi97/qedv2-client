@@ -4,6 +4,7 @@
   "description": "Platform-agnostic QED2 client logic: API clients, grading, FSRS, mastery, archive store, sync protocol (incl. server-identical checksum). Pure TypeScript — no browser, Node or UI framework dependencies; platform capabilities are injected through ports.",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
