@@ -145,11 +145,9 @@ jobs:
       - name: Start and identify bundled Core
         run: pnpm --filter @qed2/desktop runtime:smoke
 
-      # PRs stop after source, Web-build, Core-build and runtime-layout checks.
-      # Unpacked Electron packaging is intentionally reserved for main/manual
-      # runs; full installers belong exclusively to desktop-release.yml.
+      # Every candidate must boot as a real unpacked application on all three
+      # platforms. Full signed installers still belong to desktop-release.yml.
       - name: Smoke-test unpacked package
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: >-
@@ -161,7 +159,7 @@ jobs:
       # signature is sufficient to let macOS execute the unpacked application;
       # release builds below are still required to carry the real Developer ID.
       - name: Ad-hoc sign unpacked macOS application for boot smoke
-        if: runner.os == 'macOS' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
@@ -175,17 +173,15 @@ jobs:
           codesign --verify --deep --strict "${APPS[0]}"
 
       - name: Verify runtime copied into unpacked package
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: pnpm --filter @qed2/desktop exec node scripts/smoke-runtime.mjs --packaged
 
       - name: Install virtual display for packaged Linux smoke
-        if: runner.os == 'Linux' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes xvfb
 
       - name: Boot-smoke unpacked Desktop application
-        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         run: >-
           pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
           --diagnostics-dir "${{ runner.temp }}/qed2-packaged-smoke"
