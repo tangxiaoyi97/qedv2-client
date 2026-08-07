@@ -22,11 +22,28 @@ export interface StoragePort {
   keys(collection: string): Promise<string[]>;
   clear(collection: string): Promise<void>;
   /**
+   * Read several addresses together with opaque, monotonically changing
+   * revisions.  Adapters that implement this method MUST return entries in the
+   * same order as `addresses` and MUST retain revisions across deletion (an
+   * absent value can therefore have a non-zero revision).  The retained
+   * tombstone prevents an absent -> present -> absent ABA cycle from satisfying
+   * a stale compare-and-swap.
+   */
+  readBatch?(addresses: readonly StorageAddress[]): Promise<StorageVersionedEntry[]>;
+  /**
+   * Atomically compare revisions and apply a bounded declarative mutation set.
+   * Every mutated address must also occur exactly once in `ifRevisions`.
+   * `committed: false` is a normal CAS conflict and means that no mutation was
+   * applied.  A rejection means the outcome may be unknown to the caller, so
+   * durable workflows must reload their idempotency marker before retrying.
+   */
+  commitBatch?(request: StorageBatchCommit): Promise<StorageBatchCommitResult>;
+  /**
    * Desktop shells with multiple renderer windows may provide an origin-wide
    * exclusive mutation. Callers keep the callback limited to local
    * read/modify/write work; network requests must happen outside this lock.
-   * Web/PWA adapters intentionally omit it and retain their existing
-   * single-renderer behaviour.
+   * Web/PWA adapters intentionally omit this coarse mutex; their durable
+   * multi-document workflows coordinate across tabs through revisioned CAS.
    */
   runExclusiveMutation?<T>(mutation: () => Promise<T>): Promise<T>;
   /**
@@ -35,6 +52,45 @@ export interface StoragePort {
    * feedback loops while its in-memory state is already authoritative.
    */
   onChange?(cb: (change: StorageChange) => void): () => void;
+}
+
+export interface StorageAddress {
+  collection: string;
+  key: string;
+}
+
+export interface StorageVersionedEntry extends StorageAddress {
+  /** Monotonic per-address adapter revision. Zero denotes an untouched key. */
+  revision: number;
+  exists: boolean;
+  /** Present exactly when `exists` is true. Storage values may not be undefined. */
+  value?: unknown;
+}
+
+export interface StorageRevisionPrecondition extends StorageAddress {
+  revision: number;
+}
+
+export type StorageBatchMutation =
+  | (StorageAddress & { operation: 'set'; value: unknown })
+  | (StorageAddress & { operation: 'delete' });
+
+export interface StorageBatchCommit {
+  ifRevisions: StorageRevisionPrecondition[];
+  mutations: StorageBatchMutation[];
+}
+
+export interface StorageBatchCommitResult {
+  committed: boolean;
+}
+
+export interface AtomicStoragePort extends StoragePort {
+  readBatch(addresses: readonly StorageAddress[]): Promise<StorageVersionedEntry[]>;
+  commitBatch(request: StorageBatchCommit): Promise<StorageBatchCommitResult>;
+}
+
+export function hasAtomicStorage(storage: StoragePort): storage is AtomicStoragePort {
+  return typeof storage.readBatch === 'function' && typeof storage.commitBatch === 'function';
 }
 
 export type StorageChangeOperation = 'set' | 'delete' | 'clear';
@@ -70,9 +126,17 @@ export const STORAGE = {
  * contract §8.2). Desktop may spawn a local core process and
  * return a localhost endpoint, switching between remote and local.
  * ------------------------------------------------------------------ */
+export type CoreSourcePreference = 'remote' | 'local';
+
 export interface CoreEndpoint {
   baseUrl: string;
-  source: 'remote' | 'local';
+  source: CoreSourcePreference;
+  /**
+   * Immutable question-bank identity when the shell can prove it without a
+   * network probe (the bundled Desktop runtime does). Callers use it to keep
+   * offline caches and resumed practice sessions revision-scoped.
+   */
+  contentId?: string;
 }
 
 export type CoreRuntimePhase =
@@ -95,8 +159,13 @@ export interface OperationProgress {
 /** Serializable state emitted by a desktop-managed local core. */
 export interface CoreRuntimeStatus {
   phase: CoreRuntimePhase;
-  source: 'remote' | 'local';
+  /** Source currently selected for new content requests. */
+  source: CoreSourcePreference;
+  /** User-selected source, even while Desktop is temporarily degraded. */
+  preferredSource: CoreSourcePreference;
   endpoint: string;
+  /** Verified bank commit when known. */
+  contentId?: string;
   operation?:
     | 'prepare-runtime'
     | 'start-core'
@@ -116,8 +185,12 @@ export interface CoreRuntimeStatus {
 export type CoreRecoveryAction = 'retry' | 'use-remote' | 'repair';
 
 export interface CoreRuntimePort {
-  /** Resolve the core endpoint to use right now. */
-  getEndpoint(): Promise<CoreEndpoint>;
+  /**
+   * Resolve the selected endpoint, or a source-pinned endpoint for a practice
+   * session. A source-pinned endpoint must never silently cross over to the
+   * other bank.
+   */
+  getEndpoint(source?: CoreSourcePreference): Promise<CoreEndpoint>;
   /** Whether this platform can run a local core at all (desktop only). */
   readonly capabilities: {
     localCore: boolean;
@@ -130,6 +203,8 @@ export interface CoreRuntimePort {
   onStatusChange?(cb: (status: CoreRuntimeStatus) => void): () => void;
   /** Desktop: bounded, explicit recovery actions. */
   recover?(action: CoreRecoveryAction): Promise<CoreEndpoint>;
+  /** Desktop: persist and select the source used by new content requests. */
+  selectSource?(source: CoreSourcePreference): Promise<CoreEndpoint>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -183,6 +258,8 @@ export interface UpdatePort {
   readonly capabilities: {
     /** Can check & apply core/bank updates (desktop). Web: false. */
     selfUpdate: boolean;
+    /** This build downloads a verified app package but hands installation to the OS/user. */
+    manualAppInstall?: boolean;
   };
   /** Present when capabilities.selfUpdate — desktop implements. */
   checkForUpdates?(): Promise<UpdateCheckResult[]>;
@@ -223,6 +300,8 @@ export type ShellCommand =
 
 /** Native singleton windows the Desktop renderer may explicitly reveal. */
 export type DesktopWindowTarget = 'practice' | 'updates' | 'node';
+/** Stable renderer scope supplied by Electron; absent in Web/PWA. */
+export type DesktopRendererKind = 'main' | DesktopWindowTarget;
 
 export interface ShellPort {
   readonly capabilities: {
@@ -230,6 +309,12 @@ export interface ShellPort {
     nativeMenu: boolean;
     nativeTitleBar: boolean;
   };
+  /**
+   * Identifies the stable native window role without exposing BrowserWindow
+   * or IPC. Local session snapshots use it to prevent main/practice renderers
+   * from overwriting one another.
+   */
+  readonly windowKind?: DesktopRendererKind;
   onCommand(cb: (command: ShellCommand) => void): () => void;
   /**
    * Desktop-only typed bridge. It cannot open arbitrary routes, URLs or

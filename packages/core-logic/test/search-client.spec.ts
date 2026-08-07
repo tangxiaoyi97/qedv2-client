@@ -87,7 +87,7 @@ describe.skipIf(!coreUp)('search + t2 regression (live core)', () => {
     // question, it is playable, and every part carries a known answer kind.
     const res = await client.getQuestionsBatch(['2025-ht-t2-01']);
     expect(res.missing).toEqual([]);
-    const q = res.questions[0]!;
+    const q = res.questions[0]!.question;
     expect(q.playable).toBe(true);
     expect(q.parts.length).toBeGreaterThan(0);
     for (const part of q.parts) {

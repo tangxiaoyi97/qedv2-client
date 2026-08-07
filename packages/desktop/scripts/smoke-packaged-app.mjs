@@ -6,12 +6,28 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { THEME_ACCENTS } from '../../web/scripts/gen-icons.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(here, '..')
 const defaultOutputRoot = path.join(desktopRoot, 'dist-packages')
 const MAX_CAPTURE_BYTES = 512 * 1024
 const DEFAULT_TIMEOUT_MS = 60_000
+const ELECTRON_FUSE_SENTINEL = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX')
+const EXPECTED_ELECTRON_FUSES = Object.freeze([
+  ['RunAsNode', false],
+  ['EnableCookieEncryption', false],
+  ['EnableNodeOptionsEnvironmentVariable', false],
+  ['EnableNodeCliInspectArguments', false],
+  ['EnableEmbeddedAsarIntegrityValidation', true],
+  ['OnlyLoadAppFromAsar', true],
+  ['LoadBrowserProcessSpecificV8Snapshot', false],
+  ['GrantFileProtocolExtraPrivileges', false],
+  // Electron 42 added this ninth fuse. Keeping it enabled lets V8 trap
+  // out-of-bounds WebAssembly access; an older @electron/fuses reader prints
+  // it as "undefined", so packaged smoke verifies the wire directly.
+  ['WasmTrapHandlers', true],
+])
 
 function usageError(message) {
   throw new Error(
@@ -136,6 +152,72 @@ export async function discoverPackagedExecutable(outputRoot = defaultOutputRoot,
     throw new Error(`More than one unpacked QED2 executable was found below ${root}:\n${candidates.join('\n')}`)
   }
   return candidates[0]
+}
+
+export async function verifyPackagedThemeIcons(executable, platform = process.platform) {
+  const resources = platform === 'darwin'
+    ? path.resolve(path.dirname(executable), '..', 'Resources')
+    : path.join(path.dirname(executable), 'resources')
+  const filename = platform === 'win32'
+    ? 'icon.ico'
+    : platform === 'darwin'
+      ? 'icon-1024.png'
+      : 'icon-512.png'
+  const missing = []
+  for (const theme of Object.keys(THEME_ACCENTS)) {
+    const candidate = path.join(resources, 'theme-icons', theme, filename)
+    if (!(await regularFile(candidate))) missing.push(candidate)
+  }
+  if (missing.length > 0) {
+    throw new Error(`Packaged theme icon resources are incomplete:\n${missing.join('\n')}`)
+  }
+  return resources
+}
+
+export async function verifyPackagedElectronFuses(executable, platform = process.platform) {
+  const fuseBinary = platform === 'darwin'
+    ? path.resolve(
+        path.dirname(executable),
+        '..',
+        'Frameworks',
+        'Electron Framework.framework',
+        'Electron Framework',
+      )
+    : executable
+  const bytes = await readFile(fuseBinary)
+  const sentinelOffsets = []
+  let cursor = 0
+  while (cursor < bytes.length) {
+    const offset = bytes.indexOf(ELECTRON_FUSE_SENTINEL, cursor)
+    if (offset < 0) break
+    sentinelOffsets.push(offset)
+    cursor = offset + ELECTRON_FUSE_SENTINEL.length
+  }
+  if (sentinelOffsets.length === 0) {
+    throw new Error(`Packaged Electron fuse sentinel is missing: ${fuseBinary}`)
+  }
+  for (const offset of sentinelOffsets) {
+    const wireOffset = offset + ELECTRON_FUSE_SENTINEL.length
+    const version = bytes[wireOffset]
+    const length = bytes[wireOffset + 1]
+    if (version !== 1 || length !== EXPECTED_ELECTRON_FUSES.length) {
+      throw new Error(
+        `Packaged Electron fuse wire is unsupported: version=${String(version)} length=${String(length)}`,
+      )
+    }
+    for (let index = 0; index < EXPECTED_ELECTRON_FUSES.length; index += 1) {
+      const [name, enabled] = EXPECTED_ELECTRON_FUSES[index]
+      const expectedState = enabled ? 0x31 : 0x30
+      const actualState = bytes[wireOffset + 2 + index]
+      if (actualState !== expectedState) {
+        throw new Error(
+          `Packaged Electron fuse ${name} is ${actualState === 0x31 ? 'enabled' : 'not explicitly configured'}, ` +
+            `expected ${enabled ? 'enabled' : 'disabled'}.`,
+        )
+      }
+    }
+  }
+  return { fuseBinary, slices: sentinelOffsets.length }
 }
 
 export function buildLaunchCommand({ executable, applicationArguments, platform, useXvfb }) {
@@ -319,6 +401,10 @@ function pageTarget(targets, predicate) {
       return false
     }
   })
+}
+
+function isDesktopToolRoute(url, target) {
+  return url.pathname === `/desktop/${target}`
 }
 
 async function findFiles(root, predicate, depth = 7) {
@@ -527,6 +613,8 @@ export async function runSmoke(argv = process.argv.slice(2)) {
   const options = parseArguments(argv)
   const executable = options.executable ?? (await discoverPackagedExecutable(options.outputRoot))
   if (!(await regularFile(executable))) throw new Error(`Packaged executable does not exist: ${executable}`)
+  await verifyPackagedElectronFuses(executable)
+  await verifyPackagedThemeIcons(executable)
 
   const isolatedRoot = await mkdtemp(path.join(os.tmpdir(), 'qed2-packaged-smoke-'))
   const userData = path.join(isolatedRoot, 'user-data')
@@ -606,7 +694,10 @@ export async function runSmoke(argv = process.argv.slice(2)) {
         latestTargets = await fetchJson(cdpOrigin, '/json/list')
         return pageTarget(
           latestTargets,
-          (url) => !url.searchParams.has('desktopWindow') && url.pathname !== '/practice',
+          (url) =>
+            url.pathname !== '/practice' &&
+            !isDesktopToolRoute(url, 'updates') &&
+            !isDesktopToolRoute(url, 'node'),
         )
       },
       deadline,
@@ -638,13 +729,16 @@ export async function runSmoke(argv = process.argv.slice(2)) {
 
     await mainClient.evaluate(`document.querySelector('[data-desktop-capability-entry]')?.click()`)
     await waitFor(
-      'the embedded Desktop settings',
+      'the Desktop control centre',
       async () => {
         const value = await mainClient.evaluate(`({
-          section: new URLSearchParams(location.search).get('section'),
+          path: location.pathname,
+          controlCenter: Boolean(document.querySelector('[data-desktop-control-center]')),
           actions: document.querySelectorAll('[data-desktop-window-target]').length,
         })`)
-        return value.section === 'desktop' && value.actions === 3 ? value : undefined
+        return value.path === '/desktop' && value.controlCenter && value.actions === 3
+          ? value
+          : undefined
       },
       deadline,
       child,
@@ -680,7 +774,7 @@ export async function runSmoke(argv = process.argv.slice(2)) {
       'the native node diagnostics window',
       async () => {
         latestTargets = await fetchJson(cdpOrigin, '/json/list')
-        return pageTarget(latestTargets, (url) => url.searchParams.get('desktopWindow') === 'node')
+        return pageTarget(latestTargets, (url) => isDesktopToolRoute(url, 'node'))
       },
       deadline,
       child,
@@ -711,7 +805,7 @@ export async function runSmoke(argv = process.argv.slice(2)) {
     latestTargets = await fetchJson(cdpOrigin, '/json/list')
     const nodeWindows = latestTargets.filter((target) => {
       try {
-        return target.type === 'page' && new URL(target.url).searchParams.get('desktopWindow') === 'node'
+        return target.type === 'page' && isDesktopToolRoute(new URL(target.url), 'node')
       } catch {
         return false
       }

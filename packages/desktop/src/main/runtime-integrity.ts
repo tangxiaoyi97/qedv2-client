@@ -10,6 +10,8 @@ const HASH_CONCURRENCY = 8;
 const STREAM_HASH_THRESHOLD_BYTES = 1024 * 1024;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40,64}$/i;
+const FULL_GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const REVISION_CATALOG_PATH = 'bank/revisions/revision-catalog.v1.json';
 
 const INTEGRITY_ROOTS = [
   'core/dist',
@@ -17,6 +19,7 @@ const INTEGRITY_ROOTS = [
   'bank/content',
   'bank/assets',
   'bank/schema',
+  'bank/revisions',
 ] as const;
 const INTEGRITY_FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION'] as const;
 
@@ -28,10 +31,19 @@ export interface RuntimeIntegrityFile {
 }
 
 export interface RuntimeManifest {
-  formatVersion: 2;
+  formatVersion: 3;
   createdAt: string;
   core: { version: string; commit: string; entry: string };
   bank: { commit: string; schemaVersions: number[] };
+  revisions: {
+    catalog: typeof REVISION_CATALOG_PATH;
+    formatVersion: 1;
+    pinnedCommit: string;
+    commitCount: number;
+    questionRevisionCount: number;
+    objectCount: number;
+    objectBytes: number;
+  };
   files: RuntimeIntegrityFile[];
 }
 
@@ -82,20 +94,27 @@ function isCoveredPath(path: string): boolean {
 }
 
 function parseManifest(value: unknown): RuntimeManifest {
-  if (!isObject(value) || value.formatVersion !== 2) {
+  if (!isObject(value) || value.formatVersion !== 3) {
     fail('The bundled runtime manifest is missing or uses an unsupported integrity format.');
   }
   if (typeof value.createdAt !== 'string' || !Number.isFinite(Date.parse(value.createdAt))) {
     fail('The bundled runtime manifest has an invalid creation timestamp.');
   }
-  if (!isObject(value.core) || !isObject(value.bank)) {
-    fail('The bundled runtime manifest has invalid Core or bank metadata.');
+  if (!isObject(value.core) || !isObject(value.bank) || !isObject(value.revisions)) {
+    fail('The bundled runtime manifest has invalid Core, bank, or revision metadata.');
   }
   const coreVersion = value.core.version;
   const coreCommit = value.core.commit;
   const coreEntry = value.core.entry;
   const bankCommit = value.bank.commit;
   const schemaVersions = value.bank.schemaVersions;
+  const revisionCatalog = value.revisions.catalog;
+  const revisionFormatVersion = value.revisions.formatVersion;
+  const revisionPinnedCommit = value.revisions.pinnedCommit;
+  const revisionCommitCount = value.revisions.commitCount;
+  const questionRevisionCount = value.revisions.questionRevisionCount;
+  const revisionObjectCount = value.revisions.objectCount;
+  const revisionObjectBytes = value.revisions.objectBytes;
   if (typeof coreVersion !== 'string' || coreVersion.length === 0 || coreVersion.length > 100) {
     fail('The bundled runtime manifest has an invalid Core version.');
   }
@@ -104,6 +123,23 @@ function parseManifest(value: unknown): RuntimeManifest {
   }
   if (typeof bankCommit !== 'string' || !COMMIT_PATTERN.test(bankCommit)) {
     fail('The bundled runtime manifest does not contain a full question-bank commit.');
+  }
+  if (
+    revisionCatalog !== REVISION_CATALOG_PATH ||
+    revisionFormatVersion !== 1 ||
+    typeof revisionPinnedCommit !== 'string' ||
+    !FULL_GIT_SHA_PATTERN.test(revisionPinnedCommit) ||
+    revisionPinnedCommit !== bankCommit ||
+    !Number.isSafeInteger(revisionCommitCount) ||
+    (revisionCommitCount as number) <= 0 ||
+    !Number.isSafeInteger(questionRevisionCount) ||
+    (questionRevisionCount as number) <= 0 ||
+    !Number.isSafeInteger(revisionObjectCount) ||
+    (revisionObjectCount as number) <= 0 ||
+    !Number.isSafeInteger(revisionObjectBytes) ||
+    (revisionObjectBytes as number) < 0
+  ) {
+    fail('The bundled runtime manifest has invalid immutable-revision metadata.');
   }
   if (!safeManifestPath(coreEntry) || !coreEntry.startsWith('dist/')) {
     fail('The bundled runtime manifest contains an unsafe Core entry path.');
@@ -152,6 +188,7 @@ function parseManifest(value: unknown): RuntimeManifest {
     ...INTEGRITY_FILES,
     `core/${coreEntry}`,
     'core/dist/build-info.json',
+    REVISION_CATALOG_PATH,
   ];
   for (const path of requiredFiles) {
     if (paths.get(path)?.type !== 'file') fail(`Required runtime file is absent from the manifest: ${path}`);
@@ -163,10 +200,19 @@ function parseManifest(value: unknown): RuntimeManifest {
   }
 
   return {
-    formatVersion: 2,
+    formatVersion: 3,
     createdAt: value.createdAt,
     core: { version: coreVersion, commit: coreCommit, entry: coreEntry },
     bank: { commit: bankCommit, schemaVersions: [...schemaVersions] as number[] },
+    revisions: {
+      catalog: REVISION_CATALOG_PATH,
+      formatVersion: 1,
+      pinnedCommit: revisionPinnedCommit,
+      commitCount: revisionCommitCount as number,
+      questionRevisionCount: questionRevisionCount as number,
+      objectCount: revisionObjectCount as number,
+      objectBytes: revisionObjectBytes as number,
+    },
     files,
   };
 }
@@ -346,6 +392,93 @@ function compareRecord(expected: RuntimeIntegrityFile, actual: RuntimeIntegrityF
   }
 }
 
+async function verifyRevisionCatalogMetadata(
+  runtimeRoot: string,
+  manifest: RuntimeManifest,
+): Promise<void> {
+  let catalog: unknown;
+  try {
+    catalog = JSON.parse(
+      await readFile(runtimePath(runtimeRoot, manifest.revisions.catalog), 'utf8'),
+    ) as unknown;
+  } catch (error) {
+    fail('The immutable revision catalog is malformed.', error);
+  }
+  if (
+    !isObject(catalog) ||
+    catalog.formatVersion !== manifest.revisions.formatVersion ||
+    catalog.pinnedCommit !== manifest.bank.commit ||
+    !Array.isArray(catalog.commitOrder) ||
+    !isObject(catalog.commits) ||
+    !isObject(catalog.objects)
+  ) {
+    fail('The immutable revision catalog does not match the bundled runtime manifest.');
+  }
+  const commitOrder = catalog.commitOrder;
+  if (
+    commitOrder.length !== manifest.revisions.commitCount ||
+    commitOrder.at(-1) !== manifest.bank.commit ||
+    commitOrder.some((commit) => typeof commit !== 'string' || !FULL_GIT_SHA_PATTERN.test(commit)) ||
+    new Set(commitOrder).size !== commitOrder.length
+  ) {
+    fail('The immutable revision catalog has an invalid commit inventory.');
+  }
+  const commitKeys = Object.keys(catalog.commits).sort();
+  const orderedCommitKeys = [...commitOrder].sort();
+  if (
+    commitKeys.length !== orderedCommitKeys.length ||
+    commitKeys.some((commit, index) => commit !== orderedCommitKeys[index])
+  ) {
+    fail('The immutable revision catalog has an incomplete commit inventory.');
+  }
+
+  let questionRevisionCount = 0;
+  for (const commit of commitOrder) {
+    const record = catalog.commits[commit as string];
+    if (!isObject(record) || !isObject(record.questions) || !isObject(record.assets)) {
+      fail(`The immutable revision catalog has invalid metadata for ${String(commit)}.`);
+    }
+    questionRevisionCount += Object.keys(record.questions).length;
+  }
+  if (questionRevisionCount !== manifest.revisions.questionRevisionCount) {
+    fail('The immutable revision catalog question inventory does not match the runtime manifest.');
+  }
+
+  const objects = Object.entries(catalog.objects);
+  if (objects.length !== manifest.revisions.objectCount) {
+    fail('The immutable revision catalog object inventory does not match the runtime manifest.');
+  }
+  const manifestFiles = new Map(manifest.files.map((file) => [file.path, file]));
+  const revisionFiles = manifest.files.filter((file) => file.path.startsWith('bank/revisions/'));
+  if (revisionFiles.length !== objects.length + 1) {
+    fail('The immutable revision vault contains files outside its catalog.');
+  }
+  let objectBytes = 0;
+  for (const [sha256, record] of objects) {
+    if (
+      !SHA256_PATTERN.test(sha256) ||
+      !isObject(record) ||
+      !Number.isSafeInteger(record.bytes) ||
+      (record.bytes as number) < 0
+    ) {
+      fail(`The immutable revision catalog has invalid object metadata: ${sha256}.`);
+    }
+    const path = `bank/revisions/objects/${sha256.slice(0, 2)}/${sha256.slice(2)}`;
+    const file = manifestFiles.get(path);
+    if (
+      file?.type !== 'file' ||
+      file.size !== record.bytes ||
+      file.sha256 !== sha256
+    ) {
+      fail(`The immutable revision object does not match its content address: ${sha256}.`);
+    }
+    objectBytes += record.bytes as number;
+  }
+  if (objectBytes !== manifest.revisions.objectBytes) {
+    fail('The immutable revision catalog byte count does not match the runtime manifest.');
+  }
+}
+
 async function verifyMetadata(
   runtimeRoot: string,
   manifest: RuntimeManifest,
@@ -379,6 +512,8 @@ async function verifyMetadata(
   if (bankVersion !== manifest.bank.commit) {
     fail('Question-bank provenance does not match the bundled runtime manifest.');
   }
+
+  await verifyRevisionCatalogMetadata(runtimeRoot, manifest);
 
   if (!contentFiles) return;
   const schemaVersions = new Set<number>();
@@ -437,6 +572,7 @@ export async function verifyRuntimeIntegrity(
         'core/dist/build-info.json',
         `core/${runtime.manifest.core.entry}`,
         'bank/VERSION',
+        runtime.manifest.revisions.catalog,
       ];
       const actual = await mapLimit(criticalPaths, HASH_CONCURRENCY, async (path) => {
         const expected = expectedByPath.get(path);

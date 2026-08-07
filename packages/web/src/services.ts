@@ -18,6 +18,7 @@ import {
   ConfigStore,
   AiCache,
   HistoryLog,
+  LocalGradeCommitStore,
   QuestionCache,
   type PlatformPorts,
   type StoragePort,
@@ -52,6 +53,8 @@ export const historyLog = new HistoryLog(storage);
 /** AI answers already paid for — survives a reload, unlike a Map. */
 export const aiCache = new AiCache(storage);
 export const attemptOutbox = new AttemptOutbox(storage);
+/** One answer -> outbox/archive/history/session as a single CAS commit. */
+export const localGradeCommitStore = new LocalGradeCommitStore(storage);
 
 /** Env-provided dev defaults (fall back to production defaults otherwise). */
 export function envConfigDefaults(): Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> {

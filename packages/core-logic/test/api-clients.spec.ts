@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BATCH_CHUNK_SIZE, CoreClient } from '../src/api/core-client.js';
 import { ServerClient } from '../src/api/server-client.js';
+import { CoreProtocolError, NetworkError } from '../src/api/types.js';
 
 interface RecordedCall {
   url: string;
-  init: { method: string; headers: Record<string, string>; body?: string };
+  init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal };
 }
 
 /** Stub fetch with a per-call responder; records every invocation. */
@@ -24,6 +25,7 @@ function stubFetch(respond: (call: RecordedCall) => unknown): RecordedCall[] {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -53,6 +55,21 @@ describe('CoreClient.assetUrl', () => {
       'http://core.test/content/assets/assets/x.png',
     );
   });
+
+  it('adds a revision cache key without changing the Core asset route', () => {
+    expect(client.assetUrl('assets/fig/x.png', 'bank/a b')).toBe(
+      'http://core.test/content/assets/fig/x.png?qed2-content=bank%2Fa%20b',
+    );
+  });
+
+  it('builds an immutable revision asset URL and rejects ambiguous commits', () => {
+    const commit = 'a'.repeat(40);
+    expect(client.revisionAssetUrl('/assets/pdf/a b/ü.png', commit)).toBe(
+      `http://core.test/content/revisions/${commit}/assets/pdf/a%20b/%C3%BC.png`,
+    );
+    expect(() => client.revisionAssetUrl('x.png', 'main')).toThrow('full lowercase Git SHA');
+    expect(() => client.revisionAssetUrl('x.png', 'A'.repeat(40))).toThrow('full lowercase Git SHA');
+  });
 });
 
 describe('CoreClient requests', () => {
@@ -66,9 +83,32 @@ describe('CoreClient requests', () => {
   });
 
   it('getQuestion URL-encodes the id', async () => {
-    const calls = stubFetch(() => ({ id: 'a b', parts: [] }));
-    await new CoreClient('http://core.test').getQuestion('a b');
+    const calls = stubFetch(() => ({
+      id: 'a b',
+      parts: [],
+      contentHash: 'a'.repeat(64),
+      wireHash: 'b'.repeat(64),
+    }));
+    const result = await new CoreClient('http://core.test').getQuestion('a b');
     expect(calls[0]?.url).toBe('http://core.test/content/questions/a%20b');
+    expect(result).toMatchObject({
+      question: { id: 'a b', parts: [] },
+      contentHash: 'a'.repeat(64),
+      wireHash: 'b'.repeat(64),
+    });
+    expect(result.question).not.toHaveProperty('contentHash');
+  });
+
+  it('rejects non-canonical question integrity hashes', async () => {
+    stubFetch(() => ({
+      id: 'q-1',
+      parts: [],
+      contentHash: 'A'.repeat(64),
+      wireHash: 'b'.repeat(64),
+    }));
+    await expect(new CoreClient('http://core.test').getQuestion('q-1')).rejects.toMatchObject({
+      code: 'CORE_CONTENT_HASH_MISSING',
+    });
   });
 
   it('recommend POSTs the request body as-is', async () => {
@@ -76,6 +116,102 @@ describe('CoreClient requests', () => {
     await new CoreClient('http://core.test').recommend({ userState: {}, count: 5 });
     expect(calls[0]?.url).toBe('http://core.test/content/recommend');
     expect(JSON.parse(calls[0]?.init.body ?? '')).toEqual({ userState: {}, count: 5 });
+  });
+
+  it('uses the immutable revision manifest and question routes', async () => {
+    const commit = 'c'.repeat(40);
+    const calls = stubFetch((call) =>
+      call.url.endsWith('/manifest')
+        ? { commit, items: { 'q-1': 'a'.repeat(64) } }
+        : {
+            id: 'q 1',
+            parts: [],
+            contentHash: 'a'.repeat(64),
+            wireHash: 'b'.repeat(64),
+          },
+    );
+    const client = new CoreClient('http://core.test');
+    await client.revisionManifest(commit);
+    const question = await client.getRevisionQuestion(commit, 'q 1');
+    expect(calls.map((call) => call.url)).toEqual([
+      `http://core.test/content/revisions/${commit}/manifest`,
+      `http://core.test/content/revisions/${commit}/questions/q%201`,
+    ]);
+    expect(question.contentHash).toBe('a'.repeat(64));
+  });
+
+  describe('manifest validation', () => {
+    const commit = 'c'.repeat(40);
+    const validManifest = { commit, items: { '2019-ht-t1-01': 'a'.repeat(64) } };
+
+    it('accepts valid live and immutable manifests', async () => {
+      stubFetch(() => validManifest);
+      const client = new CoreClient('http://core.test');
+
+      await expect(client.manifest()).resolves.toEqual(validManifest);
+      await expect(client.revisionManifest(commit)).resolves.toEqual(validManifest);
+    });
+
+    it.each([
+      ['short', 'c'.repeat(39)],
+      ['uppercase', 'C'.repeat(40)],
+    ])('rejects a %s manifest commit', async (_label, invalidCommit) => {
+      stubFetch(() => ({ ...validManifest, commit: invalidCommit }));
+      await expect(new CoreClient('http://core.test').manifest()).rejects.toMatchObject({
+        name: 'CoreProtocolError',
+        code: 'CORE_MANIFEST_INVALID',
+      } satisfies Partial<CoreProtocolError>);
+    });
+
+    it.each([
+      ['short', 'a'.repeat(63)],
+      ['uppercase', 'A'.repeat(64)],
+    ])('rejects a %s item hash', async (_label, invalidHash) => {
+      stubFetch(() => ({ commit, items: { 'q-1': invalidHash } }));
+      await expect(new CoreClient('http://core.test').manifest()).rejects.toMatchObject({
+        code: 'CORE_MANIFEST_INVALID',
+      });
+    });
+
+    it.each([null, [], 'not-an-object'])('rejects non-object manifest items', async (items) => {
+      stubFetch(() => ({ commit, items }));
+      await expect(new CoreClient('http://core.test').manifest()).rejects.toMatchObject({
+        code: 'CORE_MANIFEST_INVALID',
+      });
+    });
+
+    it.each(['__proto__', 'constructor', 'prototype'])('rejects dangerous key %s', async (key) => {
+      stubFetch(() => ({ commit, items: { [key]: 'a'.repeat(64) } }));
+      await expect(new CoreClient('http://core.test').manifest()).rejects.toMatchObject({
+        code: 'CORE_MANIFEST_INVALID',
+      });
+    });
+
+    it('rejects invalid or oversized question ids', async () => {
+      const client = new CoreClient('http://core.test');
+      stubFetch(() => ({ commit, items: { '../q': 'a'.repeat(64) } }));
+      await expect(client.manifest()).rejects.toMatchObject({ code: 'CORE_MANIFEST_INVALID' });
+
+      stubFetch(() => ({ commit, items: { ['q'.repeat(257)]: 'a'.repeat(64) } }));
+      await expect(client.manifest()).rejects.toMatchObject({ code: 'CORE_MANIFEST_INVALID' });
+    });
+
+    it('rejects an oversized manifest item map', async () => {
+      const items = Object.fromEntries(
+        Array.from({ length: 10_001 }, (_, index) => [`q-${index}`, 'a'.repeat(64)]),
+      );
+      stubFetch(() => ({ commit, items }));
+      await expect(new CoreClient('http://core.test').manifest()).rejects.toMatchObject({
+        code: 'CORE_MANIFEST_INVALID',
+      });
+    });
+
+    it('rejects a revision manifest whose commit differs from the requested revision', async () => {
+      stubFetch(() => ({ ...validManifest, commit: 'd'.repeat(40) }));
+      await expect(
+        new CoreClient('http://core.test').revisionManifest(commit),
+      ).rejects.toMatchObject({ code: 'CORE_MANIFEST_INVALID' });
+    });
   });
 });
 
@@ -87,7 +223,11 @@ describe('CoreClient.getQuestionsBatch chunking', () => {
     const calls = stubFetch((call) => {
       const req = JSON.parse(call.init.body ?? '') as { ids: string[] };
       return {
-        questions: req.ids.filter((id) => id.startsWith('q-')).map((id) => ({ id })),
+        questions: req.ids.filter((id) => id.startsWith('q-')).map((id) => ({
+          id,
+          contentHash: 'a'.repeat(64),
+          wireHash: 'b'.repeat(64),
+        })),
         missing: req.ids.filter((id) => id.startsWith('missing-')),
       };
     });
@@ -105,8 +245,8 @@ describe('CoreClient.getQuestionsBatch chunking', () => {
     expect(res.questions).toHaveLength(225);
     expect(res.missing).toHaveLength(25);
     // Merge preserves request order across chunks.
-    expect(res.questions[0]?.id).toBe('q-1');
-    expect(res.questions.at(-1)?.id).toBe('q-249');
+    expect(res.questions[0]?.question.id).toBe('q-1');
+    expect(res.questions.at(-1)?.question.id).toBe('q-249');
     expect(res.missing[0]).toBe('missing-0');
     expect(res.missing.at(-1)).toBe('missing-240');
   });
@@ -118,16 +258,56 @@ describe('CoreClient.getQuestionsBatch chunking', () => {
     expect(res).toEqual({ questions: [], missing: [] });
   });
 
+  it('rejects a legacy Core batch that omits authoritative integrity metadata', async () => {
+    stubFetch(() => ({ questions: [{ id: 'q-1' }], missing: [] }));
+    await expect(
+      new CoreClient('http://core.test').getQuestionsBatch(['q-1']),
+    ).rejects.toMatchObject({
+      name: 'CoreProtocolError',
+      code: 'CORE_CONTENT_HASH_MISSING',
+    } satisfies Partial<CoreProtocolError>);
+  });
+
   it('sends exactly one request for exactly 200 ids', async () => {
     const calls = stubFetch((call) => {
       const req = JSON.parse(call.init.body ?? '') as { ids: string[] };
-      return { questions: req.ids.map((id) => ({ id })), missing: [] };
+      return {
+        questions: req.ids.map((id) => ({
+          id,
+          contentHash: 'a'.repeat(64),
+          wireHash: 'b'.repeat(64),
+        })),
+        missing: [],
+      };
     });
     const res = await new CoreClient('http://core.test').getQuestionsBatch(
       Array.from({ length: 200 }, (_, i) => `q-${i}`),
     );
     expect(calls).toHaveLength(1);
     expect(res.questions).toHaveLength(200);
+  });
+
+  it('chunks historical batches under the exact revision route', async () => {
+    const commit = 'd'.repeat(40);
+    const ids = Array.from({ length: BATCH_CHUNK_SIZE + 1 }, (_, index) => `q-${index}`);
+    const calls = stubFetch((call) => {
+      const request = JSON.parse(call.init.body ?? '') as { ids: string[] };
+      return {
+        questions: request.ids.map((id) => ({
+          id,
+          contentHash: 'a'.repeat(64),
+          wireHash: 'b'.repeat(64),
+        })),
+        missing: [],
+      };
+    });
+    const result = await new CoreClient('http://core.test')
+      .getRevisionQuestionsBatch(commit, ids);
+    expect(calls).toHaveLength(2);
+    expect(calls.every((call) =>
+      call.url === `http://core.test/content/revisions/${commit}/questions/batch`,
+    )).toBe(true);
+    expect(result.questions).toHaveLength(ids.length);
   });
 });
 
@@ -198,6 +378,8 @@ describe('ServerClient auth wiring', () => {
   it('recordAttempts wraps the array in {attempts} (contract §4.2)', async () => {
     const calls = stubFetch(() => ({ recorded: 1 }));
     const attempt = {
+      contentSource: 'local' as const,
+      contentId: 'c'.repeat(40),
       questionId: 'q1',
       partId: 'q1-a',
       correct: true,
@@ -258,5 +440,35 @@ describe('ServerClient auth wiring', () => {
     await client.info();
     expect(calls[0]?.url).toBe('http://server.test/health');
     expect(calls[1]?.url).toBe('http://server.test/info');
+  });
+
+  it('gives bounded AI generation transport grace beyond the server window', async () => {
+    vi.useFakeTimers();
+    let receivedSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', (_url: string, init: RecordedCall['init']) => {
+      receivedSignal = init.signal;
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const request = new ServerClient('http://server.test', () => 'tok').aiExplain({
+      questionId: 'q1',
+      partId: 'q1-a',
+      submitted: 'x',
+      maxPoints: 1,
+      verdict: 'incorrect',
+      awardedPoints: 0,
+    });
+    const rejected = expect(request).rejects.toBeInstanceOf(NetworkError);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(receivedSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(receivedSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(receivedSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(receivedSignal?.aborted).toBe(true);
   });
 });

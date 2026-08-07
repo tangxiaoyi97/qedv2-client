@@ -92,6 +92,7 @@ describe('web shell boot (guest, offline)', () => {
       routes: [
         { path: '/', component: { template: '<div>Home</div>' } },
         { path: '/settings', component: { template: '<div>Settings</div>' } },
+        { path: '/desktop', component: { template: '<div>Desktop</div>' } },
         { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
       ],
     });
@@ -110,7 +111,19 @@ describe('web shell boot (guest, offline)', () => {
       await nextTick();
 
       const entry = host.querySelector<HTMLAnchorElement>('[data-desktop-capability-entry]');
-      expect(entry?.getAttribute('href')).toBe('/settings?section=desktop');
+      expect(entry?.getAttribute('href')).toBe('/desktop');
+
+      await router.push('/settings');
+      await nextTick();
+      expect(
+        [...host.querySelectorAll('.app__nav-item--active')].map((item) => item.textContent?.trim()),
+      ).toEqual(['Einstellungen']);
+
+      await router.push('/desktop');
+      await nextTick();
+      expect(
+        [...host.querySelectorAll('.app__nav-item--active')].map((item) => item.textContent?.trim()),
+      ).toEqual(['Desktop & Knoten']);
     } finally {
       app.unmount();
       host.remove();

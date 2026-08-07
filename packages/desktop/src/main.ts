@@ -7,13 +7,19 @@ import {
   BrowserWindow,
   crashReporter,
   dialog,
+  nativeImage,
   nativeTheme,
   session,
   shell,
   type Event,
+  type NativeImage,
   type WebContents,
 } from 'electron';
-import { DEFAULT_CONFIG, type DesktopWindowTarget } from '@qed2/core-logic';
+import {
+  DEFAULT_CONFIG,
+  type CoreSourcePreference,
+  type DesktopWindowTarget,
+} from '@qed2/core-logic';
 import { CoreSupervisor } from './main/core-supervisor.js';
 import { ElectronCoreProcessLauncher } from './main/electron-process-launcher.js';
 import { installDesktopIpc } from './main/ipc.js';
@@ -29,7 +35,15 @@ import { RendererServer, DESKTOP_TOKEN_HEADER } from './main/renderer-server.js'
 import { resolveRuntime, type RuntimeDescriptor } from './main/runtime-layout.js';
 import { openSqliteStorageWithRecovery } from './main/storage.js';
 import { ElectronStorageCodec } from './main/storage-codec.js';
-import { UpdateCoordinator } from './main/update-coordinator.js';
+import {
+  desktopThemeIconPath,
+  loadDesktopThemeBackgrounds,
+  normalizeDesktopAccent,
+} from './main/theme-icon.js';
+import {
+  inspectSelfUpdateAvailability,
+  UpdateCoordinator,
+} from './main/update-coordinator.js';
 import { WindowManager } from './main/window-manager.js';
 
 const APP_NAME = 'QED2';
@@ -38,6 +52,8 @@ const DEFAULT_CORE_PORT = 1022;
 const SESSION_PARTITION = 'persist:qed2-desktop-v2';
 const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const UPDATE_RECOVERY_INTERVAL_MS = 5 * 60 * 1_000;
+const CORE_SOURCE_STORAGE_KEY = 'core-source';
+const ACCENT_STORAGE_KEY = 'accent';
 
 app.setName(APP_NAME);
 app.enableSandbox();
@@ -326,6 +342,21 @@ async function bootstrap(): Promise<void> {
     arch: process.arch,
     packaged: app.isPackaged,
   });
+  const selfUpdateAvailability = await inspectSelfUpdateAvailability(
+    app.isPackaged,
+    process.resourcesPath,
+  );
+  const updateAvailabilityDetail = {
+    available: selfUpdateAvailability.available,
+    reason: selfUpdateAvailability.reason,
+  };
+  if (selfUpdateAvailability.reason === 'unsigned-manual') {
+    logger.warn('Desktop update channel is manual-install only for this unsigned build', updateAvailabilityDetail);
+  } else if (selfUpdateAvailability.available) {
+    logger.info('Desktop self-update channel is available', updateAvailabilityDetail);
+  } else {
+    logger.warn('Desktop self-update channel is unavailable for this build', updateAvailabilityDetail);
+  }
 
   const preloadPath = resolve(app.getAppPath(), 'dist/preload.cjs');
   const uiSession = session.fromPartition(SESSION_PARTITION, { cache: true });
@@ -387,6 +418,15 @@ async function bootstrap(): Promise<void> {
       quarantinedPaths: storageResult.quarantinedPaths,
     });
   }
+  const themeIconRoot = app.isPackaged
+    ? resolve(process.resourcesPath, 'theme-icons')
+    : resolve(app.getAppPath(), 'build/theme-icons');
+  const themeBackgrounds = loadDesktopThemeBackgrounds(themeIconRoot);
+  let currentDesktopAccent = 'weed';
+  const currentDesktopBackground = (): string | undefined => {
+    const palette = themeBackgrounds[currentDesktopAccent] ?? themeBackgrounds.weed;
+    return palette?.[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+  };
   const applyThemePreference = (preference: unknown): void => {
     nativeTheme.themeSource =
       preference === 'light' || preference === 'dark' || preference === 'system'
@@ -395,6 +435,59 @@ async function bootstrap(): Promise<void> {
     windows?.refreshThemeBackgrounds();
   };
   applyThemePreference(storage.get('config', 'theme'));
+  let currentWindowIcon: NativeImage | undefined;
+  const applyAccentPreference = (preference: unknown): void => {
+    const requestedAccent = normalizeDesktopAccent(preference);
+    const requestedPath = desktopThemeIconPath(themeIconRoot, requestedAccent);
+    const loadThemeIcon = (accent: string): NativeImage | undefined => {
+      const iconPath = desktopThemeIconPath(themeIconRoot, accent);
+      try {
+        const candidate = nativeImage.createFromPath(iconPath);
+        return candidate.isEmpty() ? undefined : candidate;
+      } catch (error) {
+        logger.warn('Desktop theme icon could not be decoded', { accent, iconPath, error });
+        return undefined;
+      }
+    };
+    let icon = loadThemeIcon(requestedAccent);
+    let appliedAccent = requestedAccent;
+    if (!icon && requestedAccent !== 'weed') {
+      appliedAccent = 'weed';
+      icon = loadThemeIcon(appliedAccent);
+    }
+    if (!icon) {
+      logger.warn('Desktop theme icon is unavailable; retaining the installed application icon', {
+        requestedAccent,
+        requestedPath,
+      });
+      currentDesktopAccent = themeBackgrounds[requestedAccent] ? requestedAccent : 'weed';
+      windows?.refreshThemeBackgrounds();
+      return;
+    }
+    currentDesktopAccent = appliedAccent;
+    currentWindowIcon = icon;
+    if (process.platform === 'darwin') {
+      try {
+        app.dock?.setIcon(icon);
+      } catch (error) {
+        logger.warn('macOS Dock icon update failed; the installed icon remains available', error);
+      }
+    } else {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isDestroyed()) continue;
+        try {
+          window.setIcon(icon);
+        } catch (error) {
+          logger.warn('Native window icon update failed', { windowId: window.id, error });
+        }
+      }
+    }
+    windows?.refreshThemeBackgrounds();
+    logger.info('Desktop theme icon applied', { requestedAccent, appliedAccent });
+  };
+  applyAccentPreference(storage.get('config', ACCENT_STORAGE_KEY));
+  const storedCoreSource = storage.get<unknown>('config', CORE_SOURCE_STORAGE_KEY);
+  const initialCoreSource: CoreSourcePreference = storedCoreSource === 'remote' ? 'remote' : 'local';
   const onNativeThemeUpdated = (): void => windows?.refreshThemeBackgrounds();
   nativeTheme.on('updated', onNativeThemeUpdated);
   const core = new CoreSupervisor(
@@ -404,6 +497,7 @@ async function bootstrap(): Promise<void> {
     {
       preferredPort: DEFAULT_CORE_PORT,
       initialConfig: DEFAULT_CONFIG,
+      initialSource: initialCoreSource,
     },
   );
   const network = new NetworkMonitor();
@@ -421,6 +515,8 @@ async function bootstrap(): Promise<void> {
     logger,
     {
       recoveryStore: storage,
+      selfUpdateAvailability,
+      downloadRoot: resolve(app.getPath('userData'), 'updates', 'v1'),
       installLifecycle: {
         onBeforeQuitForUpdate(callback) {
           nativeAutoUpdater.on('before-quit-for-update', callback);
@@ -436,7 +532,7 @@ async function bootstrap(): Promise<void> {
   const renderer = new RendererServer({
     webRoot,
     preferredPort: DEFAULT_UI_PORT,
-    getCoreUpstream: () => core.getProxyEndpoint(),
+    getCoreUpstream: (source) => core.getProxyEndpoint(source),
     logger,
   });
   const rendererAddress = await renderer.start();
@@ -456,14 +552,28 @@ async function bootstrap(): Promise<void> {
       });
     },
   );
-  await uiSession.clearStorageData({ origin: rendererAddress.origin, storages: ['serviceworkers'] });
+  uiSession.webRequest.onHeadersReceived({ urls: ['*://*/*'] }, (details, callback) => {
+    const responseHeaders = { ...details.responseHeaders };
+    for (const name of Object.keys(responseHeaders)) {
+      const normalized = name.toLowerCase();
+      if (normalized === 'set-cookie' || normalized === 'set-cookie2') delete responseHeaders[name];
+    }
+    callback({ responseHeaders });
+  });
+  // Erase cookies left by preview builds and reject every future Set-Cookie.
+  // Auth SQLite continues to use Electron safeStorage and the real Keychain.
+  await uiSession.clearStorageData({ storages: ['cookies', 'serviceworkers'] });
 
   windows = new WindowManager({
     session: uiSession,
     preloadPath,
     rendererUrl: rendererAddress.bootUrl,
     appVersion: app.getVersion(),
+    selfUpdateAvailable: updates.isSelfUpdateAvailable(),
+    manualAppInstall: selfUpdateAvailability.reason === 'unsigned-manual',
     appName: APP_NAME,
+    windowIcon: () => currentWindowIcon,
+    backgroundColor: currentDesktopBackground,
     restoreWindowState: (kind) => storage.get('desktop-window', kind),
     persistWindowState: (kind, state) => storage.set('desktop-window', kind, state),
     onError: (error, context) => logger.error('Window operation failed', { context, error }),
@@ -479,6 +589,7 @@ async function bootstrap(): Promise<void> {
       windows?.openWindow(target);
     },
     applyThemePreference,
+    applyAccentPreference,
   });
   installApplicationMenu({
     appName: APP_NAME,
@@ -494,12 +605,14 @@ async function bootstrap(): Promise<void> {
   });
 
   windows.openMainWindow();
-  // App launch always brings up the local node. The renderer remains usable
-  // through remote fallback while the bounded health check is in progress.
+  // Local is the first-launch default. A persisted Remote choice deliberately
+  // keeps the bundled process dormant until a pinned Local session needs it.
+  // During Local startup the dynamic gateway remains usable through the
+  // explicit, visible Remote fallback.
   void core.getEndpoint();
 
   const maintainUpdates = async (): Promise<void> => {
-    if (!network.isOnline() || updates.getState().busy) return;
+    if (!updates.isSelfUpdateAvailable() || !network.isOnline() || updates.getState().busy) return;
     if (updates.hasPendingDownload()) {
       await updates.resumePendingDownload();
       return;
@@ -511,7 +624,12 @@ async function bootstrap(): Promise<void> {
   }, UPDATE_INTERVAL_MS);
   updateTimer.unref();
   const updateRecoveryTimer = setInterval(() => {
-    if (!network.isOnline() || !updates.hasPendingDownload() || updates.getState().busy) return;
+    if (
+      !updates.isSelfUpdateAvailable() ||
+      !network.isOnline() ||
+      !updates.hasPendingDownload() ||
+      updates.getState().busy
+    ) return;
     void updates.resumePendingDownload();
   }, UPDATE_RECOVERY_INTERVAL_MS);
   updateRecoveryTimer.unref();
@@ -520,7 +638,7 @@ async function bootstrap(): Promise<void> {
   }, 30_000);
   initialUpdateTimer.unref();
   const onNetworkRestored = (online: boolean) => {
-    if (!online || !updates.hasPendingDownload()) return;
+    if (!updates.isSelfUpdateAvailable() || !online || !updates.hasPendingDownload()) return;
     void updates.resumePendingDownload();
   };
   network.on('change', onNetworkRestored);

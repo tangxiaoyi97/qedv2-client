@@ -1,7 +1,8 @@
 {
   "name": "@qed2/desktop",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "QED2 local-first Electron node for macOS, Windows and Linux",
+  "homepage": "https://qed.barcarolle.studio",
   "author": "Tang Xiaoyi",
   "private": true,
   "type": "module",
@@ -10,19 +11,21 @@
   "scripts": {
     "build:main": "node scripts/build.mjs",
     "build:web": "pnpm --filter @qed2/web build",
-    "build": "pnpm build:web && pnpm build:main",
+    "build": "pnpm icons:generate && pnpm build:web && pnpm build:main",
     "dev": "pnpm build && electron .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify": "pnpm typecheck && pnpm test && pnpm build",
+    "icons:generate": "node scripts/generate-theme-icons.mjs",
     "verify:release-assets": "node scripts/verify-release-assets.mjs",
     "runtime:prepare": "node scripts/prepare-runtime.mjs",
     "runtime:smoke": "node scripts/smoke-runtime.mjs",
     "package:smoke": "node scripts/smoke-packaged-app.mjs",
     "qa:running": "node scripts/qa-running-desktop.mjs",
-    "package": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --dir",
-    "dist": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml",
-    "release": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --publish always"
+    "package": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.unsigned.yml --dir",
+    "dist": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.unsigned.yml",
+    "dist:signed": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml",
+    "release:signed": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --publish always"
   },
   "dependencies": {
     "electron-updater": "6.8.9"

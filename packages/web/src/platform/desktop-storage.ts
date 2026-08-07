@@ -7,7 +7,14 @@
  * Electron preload: business stores keep depending on StoragePort and the
  * normal Web/PWA adapter remains byte-for-byte behaviourally unchanged.
  */
-import type { StorageChange, StoragePort } from '@qed2/core-logic';
+import type {
+  StorageAddress,
+  StorageBatchCommit,
+  StorageBatchCommitResult,
+  StorageChange,
+  StoragePort,
+  StorageVersionedEntry,
+} from '@qed2/core-logic';
 
 export const DESKTOP_STORAGE_MUTATION_LOCK = 'qed2:desktop-storage-mutation:v1';
 
@@ -49,6 +56,16 @@ export class DesktopCoordinatedStorage implements StoragePort {
 
   clear(collection: string): Promise<void> {
     return this.delegate.clear(collection);
+  }
+
+  readBatch(addresses: readonly StorageAddress[]): Promise<StorageVersionedEntry[]> {
+    if (!this.delegate.readBatch) return Promise.reject(new Error('Atomic storage reads are unavailable.'));
+    return this.delegate.readBatch(addresses);
+  }
+
+  commitBatch(request: StorageBatchCommit): Promise<StorageBatchCommitResult> {
+    if (!this.delegate.commitBatch) return Promise.reject(new Error('Atomic storage commits are unavailable.'));
+    return this.delegate.commitBatch(request);
   }
 
   onChange(callback: (change: StorageChange) => void): () => void {

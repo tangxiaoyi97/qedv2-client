@@ -27,14 +27,20 @@ const mocks = vi.hoisted(() => {
     }),
     getOverrides: vi.fn(),
     getTheme: vi.fn(),
+    storageGet: vi.fn(),
+    storageSet: vi.fn(),
     setConfig: vi.fn(),
     setTheme: vi.fn(),
+    setBuiltinThemeExtension: vi.fn(),
     setCurrentCoreUrl: vi.fn(),
   };
 });
 
 vi.mock('../src/services.js', () => ({
-  storage: {},
+  storage: {
+    get: mocks.storageGet,
+    set: mocks.storageSet,
+  },
   configStore: {
     getOverrides: mocks.getOverrides,
     getTheme: mocks.getTheme,
@@ -43,6 +49,9 @@ vi.mock('../src/services.js', () => ({
   },
   envConfigDefaults: () => ({}),
   ports: {
+    shell: {
+      capabilities: { desktop: false },
+    },
     coreRuntime: {
       capabilities: { localCore: true },
       getEndpoint: mocks.getEndpoint,
@@ -59,6 +68,10 @@ vi.mock('../src/services.js', () => ({
 }));
 
 vi.mock('../src/platform/theme.js', () => ({
+  currentBuiltinThemeId: () => 'weed',
+  isBuiltinThemeId: (value: unknown) =>
+    value === 'weed' || value === 'sky' || value === 'raspberry' || value === 'violette',
+  setBuiltinThemeExtension: mocks.setBuiltinThemeExtension,
   syncThemeColorFromCss: vi.fn(),
 }));
 
@@ -67,6 +80,7 @@ import { useAppStore } from '../src/stores/app.js';
 const initialStatus: CoreRuntimeStatus = {
   phase: 'ready',
   source: 'local',
+  preferredSource: 'local',
   endpoint: 'http://127.0.0.1:41001',
 };
 
@@ -99,8 +113,11 @@ beforeEach(() => {
     mocks.onNetworkChange,
     mocks.getOverrides,
     mocks.getTheme,
+    mocks.storageGet,
+    mocks.storageSet,
     mocks.setConfig,
     mocks.setTheme,
+    mocks.setBuiltinThemeExtension,
     mocks.setCurrentCoreUrl,
   ]) {
     mock.mockClear();
@@ -111,6 +128,8 @@ beforeEach(() => {
     bankRepoUrl: 'https://git.test/bank',
   });
   mocks.getTheme.mockResolvedValue('system');
+  mocks.storageGet.mockResolvedValue(undefined);
+  mocks.storageSet.mockResolvedValue(undefined);
   mocks.getStatus.mockResolvedValue(initialStatus);
   stubBrowserApis();
 });
@@ -152,6 +171,7 @@ describe('desktop core runtime integration', () => {
     mocks.listeners.runtime?.({
       phase: 'ready',
       source: 'local',
+      preferredSource: 'local',
       endpoint: 'http://127.0.0.1:41002',
     });
     expect(app.coreEndpointUrl).toBe('http://127.0.0.1:41002');
@@ -171,5 +191,63 @@ describe('desktop core runtime integration', () => {
 
     expect(app.coreEndpointUrl).toBe('https://remote-core.test');
     expect(app.coreEndpointSource).toBe('remote');
+  });
+
+  it('discards a slow Local info probe after the renderer fails over to Remote', async () => {
+    let resolveLocal!: (response: Response) => void;
+    let resolveRemote!: (response: Response) => void;
+    const localResponse = new Promise<Response>((resolve) => { resolveLocal = resolve; });
+    const remoteResponse = new Promise<Response>((resolve) => { resolveRemote = resolve; });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === `${initialStatus.endpoint}/content/info`) return localResponse;
+      if (url === 'https://remote-core.test/content/info') return remoteResponse;
+      return Promise.reject(new TypeError('offline'));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.configure.mockResolvedValue({
+      baseUrl: initialStatus.endpoint,
+      source: 'local',
+    });
+    const app = useAppStore();
+    await app.init();
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${initialStatus.endpoint}/content/info`,
+        expect.objectContaining({ credentials: 'omit' }),
+      );
+    });
+
+    mocks.listeners.runtime?.({
+      phase: 'degraded',
+      source: 'remote',
+      preferredSource: 'local',
+      endpoint: 'https://remote-core.test',
+    });
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://remote-core.test/content/info',
+        expect.objectContaining({ credentials: 'omit' }),
+      );
+    });
+
+    resolveLocal(new Response(JSON.stringify({ version: 'local-old' }), { status: 200 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(app.coreInfo).toBeUndefined();
+
+    resolveRemote(new Response(JSON.stringify({ version: 'remote-current' }), { status: 200 }));
+    await vi.waitFor(() => expect(app.coreInfo?.version).toBe('remote-current'));
+    expect(app.coreEndpointSource).toBe('remote');
+  });
+
+  it('keeps the durable accent active when Desktop storage rejects the change', async () => {
+    mocks.storageSet.mockRejectedValueOnce(new Error('disk full'));
+    const app = useAppStore();
+
+    await expect(app.setAccentTheme('sky')).rejects.toThrow('disk full');
+
+    expect(app.accentTheme).toBe('weed');
+    expect(mocks.setBuiltinThemeExtension).not.toHaveBeenCalled();
   });
 });

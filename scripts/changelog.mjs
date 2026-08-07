@@ -20,6 +20,29 @@
 /** `## <version> — <date>`; the dash may be em or ascii, spacing is loose. */
 const HEADING = /^##\s+(\S+)\s*[—–-]\s*(\d{4}-\d{2}-\d{2})\s*$/;
 
+/** Releases are dated where QED2 is operated, not at UTC midnight. */
+export const RELEASE_TIME_ZONE = 'Asia/Shanghai';
+
+/** Return the calendar date for a release instant in the canonical timezone. */
+export function releaseDate(date = new Date()) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    throw new TypeError('releaseDate requires a valid Date');
+  }
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: RELEASE_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const value = (type) => parts.find((part) => part.type === type)?.value;
+  const year = value('year');
+  const month = value('month');
+  const day = value('day');
+  if (!year || !month || !day) throw new Error('Could not format release date');
+  return `${year}-${month}-${day}`;
+}
+
 export const CHANGELOG_PREAMBLE = `# Changelog
 
 <!--

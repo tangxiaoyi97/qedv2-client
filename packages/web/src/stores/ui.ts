@@ -81,7 +81,10 @@ export const useUiStore = defineStore('ui', () => {
     if (changelogIndex.value !== null) return changelogIndex.value;
     const base = import.meta.env.BASE_URL || '/';
     try {
-      const res = await fetch(`${base}changelogs/index.json`, { cache: 'no-store' });
+      const res = await fetch(`${base}changelogs/index.json`, {
+        cache: 'no-store',
+        credentials: 'omit',
+      });
       if (!res.ok) return null;
       const parsed = parseChangelogIndex(await res.text());
       if (parsed === null) return null;

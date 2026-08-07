@@ -14,6 +14,25 @@ import {
 const CORE_COMMIT = 'a'.repeat(40);
 const BANK_COMMIT = 'b'.repeat(40);
 const temporaryDirectories: string[] = [];
+const revisionObjectContent = '{"id":"example"}\n';
+const revisionObjectSha = createHash('sha256').update(revisionObjectContent).digest('hex');
+const revisionCatalog = JSON.stringify({
+  formatVersion: 1,
+  repository: 'https://github.com/tangxiaoyi97/srdpmppr',
+  ref: 'pastpapers',
+  pinnedCommit: BANK_COMMIT,
+  commitOrder: [BANK_COMMIT],
+  commits: {
+    [BANK_COMMIT]: { questions: { example: {} }, assets: {} },
+  },
+  objects: {
+    [revisionObjectSha]: {
+      kind: 'question',
+      bytes: Buffer.byteLength(revisionObjectContent),
+      mimeType: 'application/json',
+    },
+  },
+});
 
 const fixtureFiles: Record<string, string> = {
   'core/package.json': JSON.stringify({ name: 'qed2-core', version: '1.9.0' }),
@@ -24,6 +43,9 @@ const fixtureFiles: Record<string, string> = {
   'bank/content/example.json': JSON.stringify({ id: 'example', schemaVersion: 2 }),
   'bank/assets/example.txt': 'asset\n',
   'bank/schema/question.ts': 'export interface Question {}\n',
+  'bank/revisions/revision-catalog.v1.json': revisionCatalog,
+  [`bank/revisions/objects/${revisionObjectSha.slice(0, 2)}/${revisionObjectSha.slice(2)}`]:
+    revisionObjectContent,
   'bank/VERSION': `${BANK_COMMIT}\n`,
 };
 
@@ -52,10 +74,19 @@ async function createFixture(options: { schemaVersions?: number[] } = {}): Promi
     files.push({ path, type: 'file', size: content.byteLength, sha256: digest(content) });
   }
   const manifest: RuntimeManifest = {
-    formatVersion: 2,
+    formatVersion: 3,
     createdAt: '2026-08-07T00:00:00.000Z',
     core: { version: '1.9.0', commit: CORE_COMMIT, entry: 'dist/main.js' },
     bank: { commit: BANK_COMMIT, schemaVersions: options.schemaVersions ?? [2] },
+    revisions: {
+      catalog: 'bank/revisions/revision-catalog.v1.json',
+      formatVersion: 1,
+      pinnedCommit: BANK_COMMIT,
+      commitCount: 1,
+      questionRevisionCount: 1,
+      objectCount: 1,
+      objectBytes: Buffer.byteLength(revisionObjectContent),
+    },
     files,
   };
   const manifestPath = resolve(runtimeRoot, 'runtime-manifest.json');
@@ -218,11 +249,11 @@ describe('bundled runtime integrity', () => {
     );
   });
 
-  it('rejects legacy manifests that cannot prove per-file integrity', async () => {
+  it('rejects legacy v2 manifests without the immutable revision vault contract', async () => {
     const fixture = await createFixture();
     await writeFile(
       fixture.manifestPath,
-      JSON.stringify({ ...fixture.manifest, formatVersion: 1, files: undefined }),
+      JSON.stringify({ ...fixture.manifest, formatVersion: 2, revisions: undefined }),
     );
 
     await expect(readRuntimeManifest(fixture.manifestPath)).rejects.toThrow(

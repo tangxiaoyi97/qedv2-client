@@ -99,6 +99,51 @@ describe('HistoryView activity filter', () => {
     app.unmount();
   });
 
+  it('reopens a local history row through its original Core source and revision', async () => {
+    const commit = 'c'.repeat(40);
+    await historyLog.append({
+      partId: 'part-local',
+      questionId: 'question-local',
+      verdict: 'correct',
+      awardedPoints: 1,
+      maxPoints: 1,
+      grading: 'good',
+      gradedAt: new Date().toISOString(),
+      contentSource: 'local',
+      contentId: commit,
+    });
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(HistoryView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+
+    await vi.waitFor(() => expect(host.querySelector('.hist__row')).not.toBeNull());
+    expect(host.textContent).toContain('Lokal');
+    expect(host.querySelector('.hist__row-copy > .hist__row-source')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.hist__row')?.click();
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
+    expect(router.currentRoute.value.query).toMatchObject({
+      questions: 'question-local',
+      focus: 'question-local',
+      coreSource: 'local',
+      contentId: commit,
+    });
+    app.unmount();
+  });
+
   it('loads account activity from the aggregate endpoint in one local-time-zone request', async () => {
     const today = new Date();
     today.setHours(12, 0, 0, 0);
@@ -169,6 +214,91 @@ describe('HistoryView activity filter', () => {
     expect(decoded).toContain('timeZone=');
     expect(calls.some((url) => url.includes('pageSize=200'))).toBe(false);
 
+    // Rows written by pre-provenance clients must be honest about replaying
+    // against today's bank. They never receive a fabricated source/revision.
+    expect(host.textContent).toContain('Quellversion unbekannt · Wiederholung mit aktueller Bank');
+    const legacyRow = host.querySelector<HTMLButtonElement>('.hist__row');
+    expect(legacyRow?.title).toContain('mit der aktuellen Aufgabenbank');
+    expect(calls.some((url) => url.includes('/content/'))).toBe(false);
+    legacyRow?.click();
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
+    expect(router.currentRoute.value.query).toMatchObject({
+      questions: 'question-cloud',
+      focus: 'question-cloud',
+    });
+    expect(router.currentRoute.value.query).not.toHaveProperty('coreSource');
+    expect(router.currentRoute.value.query).not.toHaveProperty('contentId');
+
+    app.unmount();
+  });
+
+  it('reopens a cloud history row through the recorded Core source and revision', async () => {
+    const commit = 'd'.repeat(40);
+    const now = new Date().toISOString();
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/me/history/activity?')) {
+        return new Response(JSON.stringify({ activity: {} }), { status: 200 });
+      }
+      if (url.includes('/me/history?')) {
+        return new Response(JSON.stringify({
+          items: [{
+            id: 'attempt-provenance',
+            questionId: 'question-remote',
+            partId: 'part-remote',
+            correct: true,
+            awardedPoints: 1,
+            elapsedMs: null,
+            gradedAt: now,
+            recordedAt: now,
+            contentSource: 'remote',
+            contentId: commit,
+          }],
+          page: 1,
+          pageSize: 50,
+          total: 1,
+        }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'u1', username: 'tester' },
+    };
+    useAppStore().setTokenProvider(() => auth.session?.token);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(HistoryView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+
+    await vi.waitFor(() => expect(host.querySelector('.hist__row')).not.toBeNull());
+    expect(host.textContent).toContain('Remote');
+    expect(host.textContent).not.toContain('Quellversion unbekannt');
+    const source = host.querySelector<HTMLElement>('.hist__row-copy > .hist__row-source');
+    expect(source?.title).toBe(`Bank ${commit}`);
+    host.querySelector<HTMLButtonElement>('.hist__row')?.click();
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
+    expect(router.currentRoute.value.query).toMatchObject({
+      questions: 'question-remote',
+      focus: 'question-remote',
+      coreSource: 'remote',
+      contentId: commit,
+    });
     app.unmount();
   });
 

@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import {
   DEFAULT_CONFIG,
   type ClientConfig,
   type CoreEndpoint,
   type CoreRecoveryAction,
   type CoreRuntimeStatus,
+  type CoreSourcePreference,
 } from '@qed2/core-logic';
 import {
   allocateLoopbackPort,
@@ -54,6 +56,8 @@ const CORE_CRASH_LOOP_ERROR_MESSAGE =
 const CORE_STOP_ERROR_MESSAGE =
   'Der vorherige lokale Core konnte nicht sicher beendet werden.';
 const MAX_HEALTH_RESPONSE_BYTES = 64 * 1024;
+const BUNDLED_CORE_REPOSITORY = 'https://github.com/tangxiaoyi97/qedv2-core';
+const BUNDLED_BANK_REPOSITORY = 'https://github.com/tangxiaoyi97/srdpmppr';
 
 export type RuntimeIntegrityVerifier = (
   runtime: RuntimeDescriptor,
@@ -63,6 +67,7 @@ export type RuntimeIntegrityVerifier = (
 export interface CoreSupervisorOptions {
   preferredPort?: number;
   initialConfig?: ClientConfig;
+  initialSource?: CoreSourcePreference;
   integrityVerifier?: RuntimeIntegrityVerifier;
 }
 
@@ -141,6 +146,8 @@ export class CoreSupervisor extends EventEmitter {
   private readonly preferredPort: number;
   private readonly integrityVerifier: RuntimeIntegrityVerifier;
   private config: ClientConfig;
+  private preferredSource: CoreSourcePreference;
+  private localEndpoint: string | undefined;
   private status: CoreRuntimeStatus;
 
   constructor(
@@ -153,11 +160,16 @@ export class CoreSupervisor extends EventEmitter {
     this.preferredPort = options.preferredPort ?? 1022;
     this.integrityVerifier = options.integrityVerifier ?? verifyRuntimeIntegrity;
     this.config = structuredClone(options.initialConfig ?? DEFAULT_CONFIG);
+    this.preferredSource = options.initialSource ?? 'local';
     this.status = {
       phase: 'idle',
       source: 'remote',
+      preferredSource: this.preferredSource,
       endpoint: this.config.coreBaseUrl,
-      message: 'Lokaler Core ist noch nicht gestartet.',
+      message:
+        this.preferredSource === 'local'
+          ? 'Lokaler Core ist noch nicht gestartet.'
+          : 'Remote-Core ist ausgewählt.',
     };
   }
 
@@ -170,9 +182,11 @@ export class CoreSupervisor extends EventEmitter {
    * both health and identity checks. During startup/recovery the configured
    * remote endpoint remains the usable fallback.
    */
-  getProxyEndpoint(): string {
-    return this.status.phase === 'ready' && this.status.source === 'local'
-      ? this.status.endpoint
+  getProxyEndpoint(source?: CoreSourcePreference): string | undefined {
+    if (source === 'local') return this.localEndpoint;
+    if (source === 'remote') return this.config.coreBaseUrl;
+    return this.preferredSource === 'local'
+      ? this.localEndpoint ?? this.config.coreBaseUrl
       : this.config.coreBaseUrl;
   }
 
@@ -183,27 +197,55 @@ export class CoreSupervisor extends EventEmitter {
     });
   }
 
-  getEndpoint(): Promise<CoreEndpoint> {
-    return this.runLifecycle(async () => await this.currentOrStart());
+  getEndpoint(source?: CoreSourcePreference): Promise<CoreEndpoint> {
+    return this.runLifecycle(async () => {
+      if (source === 'remote') return this.remoteEndpoint();
+      if (source === 'local') return await this.requireLocalEndpoint();
+      return await this.currentOrStart();
+    });
+  }
+
+  selectSource(source: CoreSourcePreference): Promise<CoreEndpoint> {
+    return this.runLifecycle(async () => {
+      this.preferredSource = source;
+      if (source === 'remote') {
+        this.setStatus({
+          phase: 'ready',
+          source: 'remote',
+          endpoint: this.config.coreBaseUrl,
+          message: this.localEndpoint
+            ? 'Remote-Core ist ausgewählt. Der lokale Knoten bleibt für laufende Programme bereit.'
+            : 'Remote-Core ist ausgewählt.',
+        });
+        return this.remoteEndpoint();
+      }
+      const endpoint = await this.requireLocalEndpoint();
+      this.setStatus({
+        phase: 'ready',
+        source: 'local',
+        endpoint: endpoint.baseUrl,
+        message: 'Lokaler Core ist ausgewählt und bereit.',
+      });
+      return endpoint;
+    });
   }
 
   recover(action: CoreRecoveryAction): Promise<CoreEndpoint> {
     return this.runLifecycle(async () => {
       if (action === 'use-remote') {
         this.restartAttempt = 0;
-        this.startPromise = undefined;
-        this.intentionalStop = true;
-        this.generation += 1;
-        const stopped = await this.stopProcessOnly();
-        if (!stopped) this.throwStopFailure();
+        this.preferredSource = 'remote';
         this.setStatus({
-          phase: 'degraded',
+          phase: 'ready',
           source: 'remote',
           endpoint: this.config.coreBaseUrl,
-          message: 'Der entfernte Core wird vorübergehend verwendet.',
+          message: this.localEndpoint
+            ? 'Remote-Core ist ausgewählt. Der lokale Knoten bleibt für laufende Programme bereit.'
+            : 'Remote-Core ist ausgewählt.',
         });
-        return { baseUrl: this.config.coreBaseUrl, source: 'remote' };
+        return this.remoteEndpoint();
       }
+      this.preferredSource = 'local';
       this.restartAttempt = 0;
       this.startPromise = undefined;
       await this.replaceRunningProcess();
@@ -253,10 +295,35 @@ export class CoreSupervisor extends EventEmitter {
   }
 
   private currentOrStart(): Promise<CoreEndpoint> {
-    if (this.status.phase === 'ready' && this.status.source === 'local') {
-      return Promise.resolve({ baseUrl: this.status.endpoint, source: 'local' });
-    }
+    if (this.preferredSource === 'remote') return Promise.resolve(this.remoteEndpoint());
+    // New requests follow the selected local source when ready, but retain the
+    // long-standing remote fallback if startup fails. The status keeps
+    // preferredSource=local so the UI makes that degradation explicit.
+    if (this.localEndpoint) return Promise.resolve(this.localCoreEndpoint(this.localEndpoint));
     return this.ensureStarted();
+  }
+
+  private remoteEndpoint(): CoreEndpoint {
+    return { baseUrl: this.config.coreBaseUrl, source: 'remote' };
+  }
+
+  private async requireLocalEndpoint(): Promise<CoreEndpoint> {
+    if (this.localEndpoint) return this.localCoreEndpoint(this.localEndpoint);
+    const endpoint = await this.ensureStarted();
+    if (endpoint.source !== 'local') {
+      throw new Error('Der lokale Core ist nicht verfügbar. Remote wurde nicht automatisch gewählt.');
+    }
+    return endpoint;
+  }
+
+  private localCoreEndpoint(baseUrl: string): CoreEndpoint {
+    return {
+      baseUrl,
+      source: 'local',
+      ...(this.runtime.manifest?.bank.commit
+        ? { contentId: this.runtime.manifest.bank.commit }
+        : {}),
+    };
   }
 
   /** Serializes renderer/menu lifecycle commands while preserving failures. */
@@ -371,10 +438,19 @@ export class CoreSupervisor extends EventEmitter {
       PORT: String(port),
       BANK_PATH: this.runtime.bankDirectory,
       BANK_STRICT: 'true',
+      REVISION_VAULT_PATH: resolve(this.runtime.bankDirectory, 'revisions'),
+      REVISION_VAULT_REQUIRED: this.runtime.source === 'bundled' ? 'true' : 'false',
       REQUEST_LOG: 'false',
       CORS_ORIGINS: `http://${LOOPBACK_HOST}:*`,
-      CORE_SOURCE_REPO: this.config.coreRepoUrl,
-      BANK_REPO: this.config.bankRepoUrl,
+      // Stable releases never let legacy profile repository fields influence
+      // bundled executable code or revision-vault identity. Those fields are
+      // retained as read-only provenance for development runtimes only.
+      CORE_SOURCE_REPO: this.runtime.source === 'bundled'
+        ? BUNDLED_CORE_REPOSITORY
+        : this.config.coreRepoUrl,
+      BANK_REPO: this.runtime.source === 'bundled'
+        ? BUNDLED_BANK_REPOSITORY
+        : this.config.bankRepoUrl,
       BANK_BRANCH: 'pastpapers',
       ...(this.runtime.manifest?.core.commit
         ? { QED_BUILD_COMMIT: this.runtime.manifest.core.commit }
@@ -451,6 +527,9 @@ export class CoreSupervisor extends EventEmitter {
     }
     startupPhase = 'ready';
     if (generation !== this.generation) throw new Error('Core startup was superseded');
+    // Publish the verified loopback endpoint before the ready event. Renderer
+    // windows react to that event immediately and may issue a pinned request.
+    this.localEndpoint = endpoint;
     this.setStatus({
       phase: 'ready',
       source: 'local',
@@ -463,7 +542,7 @@ export class CoreSupervisor extends EventEmitter {
     });
     this.armStableRuntimeReset(generation);
     this.logger.info('Local core ready', { endpoint, pid: child.pid, source: this.runtime.source });
-    return { baseUrl: endpoint, source: 'local' };
+    return this.localCoreEndpoint(endpoint);
   }
 
   private async waitUntilHealthy(
@@ -482,6 +561,7 @@ export class CoreSupervisor extends EventEmitter {
         const health = await fetch(`${endpoint}/health`, {
           signal: AbortSignal.any([abortSignal, AbortSignal.timeout(1_500)]),
           cache: 'no-store',
+          credentials: 'omit',
         });
         if (!health.ok) throw new Error(`Health endpoint returned ${health.status}`);
         const healthBody = await readBoundedJson(health);
@@ -496,6 +576,7 @@ export class CoreSupervisor extends EventEmitter {
         const info = await fetch(`${endpoint}/info`, {
           signal: AbortSignal.any([abortSignal, AbortSignal.timeout(1_500)]),
           cache: 'no-store',
+          credentials: 'omit',
         });
         const infoBody = await readBoundedJson(info);
         this.assertCoreIdentity(info.ok, infoBody);
@@ -515,6 +596,7 @@ export class CoreSupervisor extends EventEmitter {
     // Invalidate any in-flight health loop and callbacks for this process.
     const recoveryGeneration = ++this.generation;
     this.process = undefined;
+    this.localEndpoint = undefined;
     this.startPromise = undefined;
     if (this.intentionalStop) return;
     this.logger.warn('Local core exited unexpectedly', { code, restartAttempt: this.restartAttempt });
@@ -553,6 +635,7 @@ export class CoreSupervisor extends EventEmitter {
   private async stopProcessOnly(): Promise<boolean> {
     const child = this.process;
     this.process = undefined;
+    this.localEndpoint = undefined;
     if (!child) return true;
     let exited = false;
     const exit = new Promise<void>((resolve) => {
@@ -680,8 +763,30 @@ export class CoreSupervisor extends EventEmitter {
     });
   }
 
-  private setStatus(status: CoreRuntimeStatus): void {
-    this.status = status;
+  private setStatus(
+    next: Omit<CoreRuntimeStatus, 'preferredSource'> &
+      Partial<Pick<CoreRuntimeStatus, 'preferredSource'>>,
+  ): void {
+    if (this.preferredSource === 'remote') {
+      const { contentId: _contentId, ...remoteStatus } = next;
+      this.status = {
+        ...remoteStatus,
+        source: 'remote',
+        endpoint: this.config.coreBaseUrl,
+        preferredSource: 'remote',
+      };
+      this.emit('status', this.getStatus());
+      return;
+    }
+    const localContent =
+      next.source === 'local' && this.runtime.manifest?.bank.commit
+        ? { contentId: this.runtime.manifest.bank.commit }
+        : {};
+    this.status = {
+      ...next,
+      ...localContent,
+      preferredSource: 'local',
+    };
     this.emit('status', this.getStatus());
   }
 }

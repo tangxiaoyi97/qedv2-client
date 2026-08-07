@@ -36,8 +36,7 @@ const focusMode = computed(() => route.meta.focus === true);
 const desktopToolWindow = computed(
   () =>
     ports.shell.capabilities.desktop &&
-    route.path === '/settings' &&
-    (route.query.desktopWindow === 'updates' || route.query.desktopWindow === 'node'),
+    (route.path === '/desktop/updates' || route.path === '/desktop/node'),
 );
 const chromeHidden = computed(() => focusMode.value || desktopToolWindow.value);
 
@@ -149,9 +148,9 @@ watch(
           </RouterLink>
           <RouterLink
             v-if="ports.shell.capabilities.desktop"
-            to="/settings?section=desktop"
+            to="/desktop"
             class="app__nav-item"
-            :class="{ 'app__nav-item--active': route.path === '/settings' && route.query.section === 'desktop' }"
+            :class="{ 'app__nav-item--active': route.path === '/desktop' }"
             data-desktop-capability-entry
           >
             <Server class="app__nav-icon" aria-hidden="true" />

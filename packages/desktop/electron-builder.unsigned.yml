@@ -1,0 +1,25 @@
+extends: ./electron-builder.yml
+
+# GitHub builds remain structurally signed so Apple Silicon can launch them,
+# but they intentionally carry no developer identity or notarization claim.
+# A packaged marker makes the runtime fail closed instead of attempting an
+# in-place self-update that cannot authenticate a replacement application.
+mac:
+  identity: "-"
+  hardenedRuntime: false
+  notarize: false
+  extraResources:
+    - from: build/unsigned-release.json
+      to: qed2-unsigned-release.json
+
+win:
+  signExecutable: false
+  verifyUpdateCodeSignature: false
+  extraResources:
+    - from: build/unsigned-release.json
+      to: qed2-unsigned-release.json
+
+linux:
+  extraResources:
+    - from: build/unsigned-release.json
+      to: qed2-unsigned-release.json

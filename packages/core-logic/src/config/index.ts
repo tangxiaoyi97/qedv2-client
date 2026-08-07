@@ -2,24 +2,22 @@
  * Client runtime configuration (contract §8.2): every upstream address is
  * user-configurable (official deployment, fork, intranet, localhost).
  *
- * Two kinds of addresses live here:
+ * Two kinds of addresses remain in the persisted schema:
  *  - SERVICE endpoints (coreBaseUrl, serverBaseUrl) — used by every shell at
  *    runtime for HTTP calls;
- *  - PULL locations (coreRepoUrl, bankRepoUrl) — git remotes the desktop/iOS
- *    shells clone and update from for offline self-hosting (contract §8.2:
- *    first install clones core source + bank once, then runs offline; update
- *    checks compare core `/info` version / bank.commit against these
- *    remotes). The web shell only stores and displays them — it never pulls
- *    (web/PWA runs no local core).
+ *  - PROVENANCE locations (coreRepoUrl, bankRepoUrl) — retained so existing
+ *    profiles and runtime metadata remain readable. Stable clients never
+ *    clone, execute or update from these values; Desktop accepts only the
+ *    Core/bank embedded in its verified release.
  */
 export interface ClientConfig {
   /** qed2-core base URL (content line, HTTP service). */
   coreBaseUrl: string;
   /** qed2-server base URL (user line, HTTP service). */
   serverBaseUrl: string;
-  /** qed2-core SOURCE repository (git) — desktop clones/updates the local core from it. */
+  /** Legacy/read-only qed2-core release provenance. Never an execution source. */
   coreRepoUrl: string;
-  /** Question-bank repository (git) — desktop clones/updates the bank from it. */
+  /** Legacy/read-only question-bank release provenance. Never an execution source. */
   bankRepoUrl: string;
   /**
    * Language the AI answers in, as free text. Empty = German.

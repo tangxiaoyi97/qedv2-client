@@ -1,7 +1,7 @@
 /**
- * App store: runtime config (four configurable upstream addresses), theme,
- * connectivity, API client instances. Contract §8.2: never hardcode hosts —
- * everything flows from ClientConfig.
+ * App store: runtime service endpoints, immutable release provenance, theme,
+ * connectivity and API clients. Repository fields survive for old profiles,
+ * but stable shells never execute or update from them.
  */
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
@@ -13,14 +13,35 @@ import {
   type CoreEndpoint,
   type CoreInfo,
   type CoreRuntimeStatus,
+  type CoreSourcePreference,
+  type ManifestResponse,
   type ServerInfo,
   STORAGE,
 } from '@qed2/core-logic';
 import { configStore, envConfigDefaults, ports, setCurrentCoreUrl, storage } from '../services.js';
 import { runStorageMutation } from '../platform/desktop-storage.js';
-import { syncThemeColorFromCss } from '../platform/theme.js';
+import {
+  currentBuiltinThemeId,
+  isBuiltinThemeId,
+  setBuiltinThemeExtension,
+  syncThemeColorFromCss,
+  type BuiltinThemeId,
+} from '../platform/theme.js';
 
 export type ThemePref = 'light' | 'dark' | 'system';
+const ACCENT_STORAGE_KEY = 'accent';
+
+export interface PinnedCoreContent {
+  baseUrl: string;
+  source: CoreSourcePreference;
+  mode: 'current' | 'revision';
+  contentId?: string;
+  /** Initial manifest snapshot used to authenticate the session load. */
+  manifest?: ManifestResponse;
+  /** True when that initial authentication request failed. */
+  manifestUnavailable?: true;
+  client: CoreClient;
+}
 
 function applyThemeToDom(pref: ThemePref): void {
   const dark =
@@ -33,6 +54,7 @@ function applyThemeToDom(pref: ThemePref): void {
 export const useAppStore = defineStore('app', () => {
   const config = ref<ClientConfig>(mergeConfig(envConfigDefaults()));
   const theme = ref<ThemePref>('system');
+  const accentTheme = ref<BuiltinThemeId>(currentBuiltinThemeId());
   const online = ref(ports.network.isOnline());
   const coreInfo = shallowRef<CoreInfo | undefined>();
   const serverInfo = shallowRef<ServerInfo | undefined>();
@@ -46,6 +68,8 @@ export const useAppStore = defineStore('app', () => {
   const coreEndpointSource = ref<CoreEndpoint['source']>('remote');
   /** Desktop lifecycle state; undefined on the web adapter. */
   const coreRuntimeStatus = shallowRef<CoreRuntimeStatus | undefined>();
+  /** Per-renderer content pin. Practice windows keep this when another window switches source. */
+  const pinnedCoreContent = shallowRef<PinnedCoreContent | undefined>();
 
   /** Token is injected by the auth store so ServerClient stays fresh. */
   let tokenProvider: () => string | undefined = () => undefined;
@@ -54,13 +78,28 @@ export const useAppStore = defineStore('app', () => {
   let networkSubscribed = false;
   let storageSubscribed = false;
   let externalSettingsTail: Promise<void> = Promise.resolve();
+  let coreInfoRequestGeneration = 0;
+  let serverInfoRequestGeneration = 0;
 
   const coreClient = computed(
     () => new CoreClient(coreEndpointUrl.value || config.value.coreBaseUrl),
   );
+  const coreSourcePreference = computed<CoreSourcePreference>(
+    () => coreRuntimeStatus.value?.preferredSource ?? coreEndpointSource.value,
+  );
   const serverClient = computed(() => new ServerClient(config.value.serverBaseUrl, () => tokenProvider()));
 
   function applyCoreEndpoint(endpoint: CoreEndpoint): void {
+    if (
+      endpoint.baseUrl !== coreEndpointUrl.value ||
+      endpoint.source !== coreEndpointSource.value
+    ) {
+      // Invalidate an in-flight probe before publishing the new source. A
+      // slow Local response must never overwrite fresher Remote metadata (or
+      // vice versa) while Desktop is failing over between the two.
+      coreInfoRequestGeneration += 1;
+      coreInfo.value = undefined;
+    }
     coreEndpointUrl.value = endpoint.baseUrl;
     coreEndpointSource.value = endpoint.source;
   }
@@ -73,6 +112,93 @@ export const useAppStore = defineStore('app', () => {
     if (!endpointChanged) return;
     applyCoreEndpoint({ baseUrl: status.endpoint, source: status.source });
     if (ready.value) refreshServiceInfo();
+  }
+
+  async function selectCoreSource(source: CoreSourcePreference): Promise<void> {
+    if (!ports.coreRuntime.selectSource) return;
+    try {
+      const endpoint = await ports.coreRuntime.selectSource(source);
+      applyCoreEndpoint(endpoint);
+    } finally {
+      // A failed Local selection may have deliberately entered a visible
+      // preferred-local/remote-fallback state. Always read that canonical
+      // status instead of leaving the controls on their previous snapshot.
+      await readCoreRuntimeStatus();
+      coreInfo.value = undefined;
+      refreshServiceInfo();
+    }
+  }
+
+  /**
+   * Resolve a source-specific gateway and hold it for this renderer. The main
+   * Browse window may change the device preference later; a running Practice
+   * window continues to read JSON and assets from the exact same source.
+   */
+  async function pinCoreContent(
+    source: CoreSourcePreference = coreEndpointSource.value,
+    knownContentId?: string,
+  ): Promise<PinnedCoreContent> {
+    const endpoint = await ports.coreRuntime.getEndpoint(source);
+    const client = new CoreClient(endpoint.baseUrl);
+    let contentId = endpoint.contentId ?? knownContentId;
+    let manifest: ManifestResponse | undefined;
+    let manifestUnavailable = false;
+    let mode: PinnedCoreContent['mode'] = 'current';
+    let currentManifest: ManifestResponse | undefined;
+    let currentManifestCause: unknown;
+    try {
+      currentManifest = await client.manifest();
+    } catch (cause) {
+      currentManifestCause = cause;
+    }
+
+    if (knownContentId && currentManifest?.commit !== knownContentId) {
+      try {
+        manifest = await client.revisionManifest(knownContentId);
+        if (manifest.commit !== knownContentId) {
+          throw new Error('Der Core hat die falsche historische Aufgabenbank geliefert.');
+        }
+        contentId = knownContentId;
+        mode = 'revision';
+      } catch (cause) {
+        const currentIsProvenLocally =
+          endpoint.source === 'local' && endpoint.contentId === knownContentId && !currentManifest;
+        if (!currentIsProvenLocally) {
+          throw new Error(
+            'Die ursprüngliche Version dieser Aufgaben ist nicht verfügbar. Es wird nicht auf eine neuere Bank gewechselt.',
+            { cause },
+          );
+        }
+        contentId = knownContentId;
+        manifestUnavailable = true;
+      }
+    } else if (currentManifest) {
+      manifest = currentManifest;
+      contentId = currentManifest.commit;
+    } else {
+      manifestUnavailable = true;
+      if (knownContentId && endpoint.source === 'remote') {
+        throw new Error(
+          'Die Version der Remote-Aufgabenbank konnte nicht bestätigt werden. Bitte stelle die Verbindung wieder her.',
+          { cause: currentManifestCause },
+        );
+      }
+    }
+    const pin: PinnedCoreContent = {
+      baseUrl: endpoint.baseUrl,
+      source: endpoint.source,
+      mode,
+      ...(contentId ? { contentId } : {}),
+      ...(manifest ? { manifest } : {}),
+      ...(manifestUnavailable ? { manifestUnavailable: true as const } : {}),
+      client,
+    };
+    pinnedCoreContent.value = pin;
+    return pin;
+  }
+
+  function releaseCoreContentPin(): void {
+    pinnedCoreContent.value = undefined;
   }
 
   /** Subscribe before configure(), so first-install progress is not missed. */
@@ -123,6 +249,7 @@ export const useAppStore = defineStore('app', () => {
   async function reloadExternalSettings(key?: string): Promise<void> {
     const reloadConfig = key === undefined || key === 'overrides';
     const reloadTheme = key === undefined || key === 'theme';
+    const reloadAccent = key === undefined || key === ACCENT_STORAGE_KEY;
     if (reloadConfig) {
       const previous = config.value;
       const overrides = await configStore.getOverrides();
@@ -139,6 +266,12 @@ export const useAppStore = defineStore('app', () => {
     if (reloadTheme) {
       theme.value = ((await configStore.getTheme()) as ThemePref | undefined) ?? 'system';
       applyThemeToDom(theme.value);
+    }
+    if (reloadAccent) {
+      const stored = await storage.get<string>(STORAGE.config, ACCENT_STORAGE_KEY);
+      const next = isBuiltinThemeId(stored) ? stored : 'weed';
+      accentTheme.value = next;
+      setBuiltinThemeExtension(next);
     }
   }
 
@@ -168,6 +301,12 @@ export const useAppStore = defineStore('app', () => {
     await resolveCoreEndpoint();
     theme.value = ((await configStore.getTheme()) as ThemePref | undefined) ?? 'system';
     applyThemeToDom(theme.value);
+    const storedAccent = await storage.get<string>(STORAGE.config, ACCENT_STORAGE_KEY);
+    accentTheme.value = isBuiltinThemeId(storedAccent) ? storedAccent : currentBuiltinThemeId();
+    setBuiltinThemeExtension(accentTheme.value);
+    if (ports.shell.capabilities.desktop && storedAccent !== accentTheme.value) {
+      await storage.set(STORAGE.config, ACCENT_STORAGE_KEY, accentTheme.value);
+    }
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (theme.value === 'system') applyThemeToDom('system');
     });
@@ -187,20 +326,40 @@ export const useAppStore = defineStore('app', () => {
 
   /** Best-effort version probes for the settings page (offline → undefined). */
   function refreshServiceInfo(): void {
-    void coreClient.value
+    const coreGeneration = ++coreInfoRequestGeneration;
+    const coreEndpoint = coreEndpointUrl.value || config.value.coreBaseUrl;
+    const coreSource = coreEndpointSource.value;
+    const requestedCore = coreClient.value;
+    const serverGeneration = ++serverInfoRequestGeneration;
+    const serverEndpoint = config.value.serverBaseUrl;
+    const requestedServer = serverClient.value;
+
+    const coreRequestIsCurrent = (): boolean =>
+      coreGeneration === coreInfoRequestGeneration &&
+      coreEndpoint === (coreEndpointUrl.value || config.value.coreBaseUrl) &&
+      coreSource === coreEndpointSource.value;
+    const serverRequestIsCurrent = (): boolean =>
+      serverGeneration === serverInfoRequestGeneration &&
+      serverEndpoint === config.value.serverBaseUrl;
+
+    void requestedCore
       .info()
       .then((i) => {
+        if (!coreRequestIsCurrent()) return;
         coreInfo.value = i;
       })
       .catch(() => {
+        if (!coreRequestIsCurrent()) return;
         coreInfo.value = undefined;
       });
-    void serverClient.value
+    void requestedServer
       .info()
       .then((i) => {
+        if (!serverRequestIsCurrent()) return;
         serverInfo.value = i;
       })
       .catch(() => {
+        if (!serverRequestIsCurrent()) return;
         serverInfo.value = undefined;
       });
   }
@@ -209,8 +368,6 @@ export const useAppStore = defineStore('app', () => {
   const ENDPOINT_KEYS: (keyof ClientConfig)[] = [
     'coreBaseUrl',
     'serverBaseUrl',
-    'coreRepoUrl',
-    'bankRepoUrl',
   ];
 
   async function updateConfig(partial: Partial<ClientConfig>): Promise<void> {
@@ -239,28 +396,45 @@ export const useAppStore = defineStore('app', () => {
     applyThemeToDom(pref);
   }
 
+  async function setAccentTheme(id: BuiltinThemeId): Promise<void> {
+    // Commit first. If disk/IPC fails, this window keeps the last durable
+    // theme instead of diverging from other windows and the native icon.
+    await runStorageMutation(storage, () =>
+      storage.set(STORAGE.config, ACCENT_STORAGE_KEY, id),
+    );
+    accentTheme.value = id;
+    setBuiltinThemeExtension(id);
+  }
+
   /** Resolve figure src (bank-root-relative) against the core endpoint. */
   function assetUrl(src: string): string {
-    return coreClient.value.assetUrl(src);
+    return (pinnedCoreContent.value?.client ?? coreClient.value).assetUrl(src);
   }
 
   return {
     config,
     theme,
+    accentTheme,
     online,
     coreInfo,
     serverInfo,
     coreEndpointUrl,
     coreEndpointSource,
+    coreSourcePreference,
     coreRuntimeStatus,
+    pinnedCoreContent,
     ready,
     coreClient,
     serverClient,
     init,
     updateConfig,
     setTheme,
+    setAccentTheme,
     assetUrl,
     setTokenProvider,
+    selectCoreSource,
+    pinCoreContent,
+    releaseCoreContentPin,
     resolveCoreEndpoint,
     refreshServiceInfo,
   };

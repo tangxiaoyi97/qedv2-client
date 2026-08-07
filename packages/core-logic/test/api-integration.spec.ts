@@ -85,13 +85,15 @@ describe.skipIf(!coreUp)(`core integration (${CORE_URL})`, () => {
 
   it('getQuestion(2019-ht-t1-01) is a choice part', async () => {
     const q = await core.getQuestion('2019-ht-t1-01');
-    expect(q.id).toBe('2019-ht-t1-01');
-    expect(q.parts[0]?.answer?.kind).toBe('choice');
+    expect(q.question.id).toBe('2019-ht-t1-01');
+    expect(q.question.parts[0]?.answer?.kind).toBe('choice');
+    expect(q.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(q.wireHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('rubric criteria follow the preview bank schema (plain desc strings)', async () => {
     const q = await core.getQuestion('2019-nt1-t1-11');
-    const scoring = q.parts[0]?.scoring;
+    const scoring = q.question.parts[0]?.scoring;
     expect(scoring?.mode).toBe('rubric');
     if (scoring?.mode !== 'rubric') throw new Error('expected rubric scoring');
     expect(typeof scoring.criteria[0]?.desc).toBe('string');
@@ -99,7 +101,7 @@ describe.skipIf(!coreUp)(`core integration (${CORE_URL})`, () => {
 
   it('batch reports unknown ids in missing and returns the rest', async () => {
     const res = await core.getQuestionsBatch(['2019-ht-t1-01', 'zz-does-not-exist']);
-    expect(res.questions.map((q) => q.id)).toContain('2019-ht-t1-01');
+    expect(res.questions.map((entry) => entry.question.id)).toContain('2019-ht-t1-01');
     expect(res.missing).toContain('zz-does-not-exist');
   });
 
@@ -146,7 +148,7 @@ describe.skipIf(!coreUp)(`core integration (${CORE_URL})`, () => {
     const list = await core.listQuestions({ pageSize: 100 });
     const withFigures = list.items.find((q) => q.parts.some((p) => p.hasFigures));
     expect(withFigures).toBeDefined();
-    const question = await core.getQuestion(withFigures!.id);
+    const { question } = await core.getQuestion(withFigures!.id);
     const src = findFigSrc(question);
     expect(src).toBeDefined();
     const res = await g.fetch(core.assetUrl(src!));

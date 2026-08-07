@@ -6,10 +6,19 @@ import { describe, expect, it } from 'vitest'
 import {
   discoverPackagedRuntimeRoot,
   parseArguments,
+  selectRevisionQuestionSample,
+  validateRevisionCommitOrder,
   verifyRuntimeInventory,
 } from '../scripts/smoke-runtime.mjs'
 
-const ROOTS = ['core/dist', 'core/node_modules', 'bank/content', 'bank/assets', 'bank/schema']
+const ROOTS = [
+  'core/dist',
+  'core/node_modules',
+  'bank/content',
+  'bank/assets',
+  'bank/schema',
+  'bank/revisions',
+]
 const FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION']
 
 async function runtimeFixture(root) {
@@ -96,5 +105,105 @@ describe('runtime smoke helpers', () => {
     const missingManifest = await runtimeFixture(missingRuntime)
     await unlink(path.join(missingRuntime, 'bank/assets/fixture.txt'))
     await expect(verifyRuntimeInventory(missingRuntime, missingManifest)).rejects.toThrow(/inventory mismatch/u)
+  })
+
+  it('keeps an empty root commit while sampling the earliest non-empty immutable revision', () => {
+    const emptyCommit = '1'.repeat(40)
+    const populatedCommit = '2'.repeat(40)
+    const pinnedCommit = '3'.repeat(40)
+    const manifest = {
+      revisions: {
+        commitCount: 3,
+        pinnedCommit,
+        questionRevisionCount: 2,
+      },
+    }
+    const firstHash = 'a'.repeat(64)
+    const secondHash = 'b'.repeat(64)
+    const catalog = {
+      commitOrder: [emptyCommit, populatedCommit, pinnedCommit],
+      commits: {
+        [emptyCommit]: { questions: {} },
+        [populatedCommit]: {
+          questions: { 'question-1': { contentHash: firstHash, wireHash: 'c'.repeat(64) } },
+        },
+        [pinnedCommit]: {
+          questions: { 'question-2': { contentHash: secondHash, wireHash: 'd'.repeat(64) } },
+        },
+      },
+    }
+    const commits = validateRevisionCommitOrder(catalog, manifest)
+    expect(commits).toEqual([emptyCommit, populatedCommit, pinnedCommit])
+
+    expect(
+      selectRevisionQuestionSample(
+        [
+          { commit: emptyCommit, items: {} },
+          { commit: populatedCommit, items: { 'question-1': firstHash } },
+          { commit: pinnedCommit, items: { 'question-2': secondHash } },
+        ],
+        commits,
+        2,
+        catalog,
+      ),
+    ).toEqual({ commit: populatedCommit, questionId: 'question-1', contentHash: firstHash })
+  })
+
+  it('rejects incomplete commit inventories and revision counts', () => {
+    const commit = '1'.repeat(40)
+    const manifest = {
+      revisions: { commitCount: 1, pinnedCommit: commit, questionRevisionCount: 1 },
+    }
+    expect(() => validateRevisionCommitOrder({ commitOrder: [commit], commits: {} }, manifest)).toThrow(
+      /inventory is incomplete/u,
+    )
+    expect(() =>
+      selectRevisionQuestionSample(
+        [{ commit, items: {} }],
+        [commit],
+        1,
+        { commits: { [commit]: { questions: {} } } },
+      ),
+    ).toThrow(/revision count mismatch/u)
+    expect(() =>
+      selectRevisionQuestionSample(
+        [{ commit, items: { question: 'not-a-hash' } }],
+        [commit],
+        1,
+        { commits: { [commit]: { questions: {} } } },
+      ),
+    ).toThrow(/invalid revision metadata/u)
+    expect(() =>
+      selectRevisionQuestionSample(
+        [{ commit, items: {} }],
+        [commit],
+        0,
+        { commits: { [commit]: { questions: {} } } },
+      ),
+    ).toThrow(/contains no historical questions/u)
+  })
+
+  it('rejects a repeated manifest even when every revision has the same item count', () => {
+    const firstCommit = '1'.repeat(40)
+    const secondCommit = '2'.repeat(40)
+    const firstHash = 'a'.repeat(64)
+    const secondHash = 'b'.repeat(64)
+    const catalog = {
+      commits: {
+        [firstCommit]: { questions: { question: { contentHash: firstHash } } },
+        [secondCommit]: { questions: { question: { contentHash: secondHash } } },
+      },
+    }
+    expect(() =>
+      selectRevisionQuestionSample(
+        [
+          { commit: firstCommit, items: { question: firstHash } },
+          { commit: secondCommit, items: { question: firstHash } },
+        ],
+        [firstCommit, secondCommit],
+        2,
+        catalog,
+      ),
+    ).toThrow(/does not match the catalog/u)
   })
 })

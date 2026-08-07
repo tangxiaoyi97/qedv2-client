@@ -46,7 +46,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   .q-btn--primary:not(:disabled):hover {
     filter: brightness(1.08);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(142, 156, 73, 0.25);
+    box-shadow: 0 4px 12px var(--q-accent-ring);
   }
 }
 .q-btn--secondary {

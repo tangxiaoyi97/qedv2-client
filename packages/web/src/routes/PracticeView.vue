@@ -9,9 +9,9 @@
  *    (SolutionSheet, collapsed by default, auto-opened for self-assessment);
  *  - PartPlayer runs chromeless: it reports state, the bar triggers it.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { X } from 'lucide-vue-next';
+import { Cloud, HardDrive } from 'lucide-vue-next';
 import {
   type AiAssessResponse,
   TEIL_LABELS,
@@ -33,6 +33,7 @@ import {
   FigureList,
   QButton,
   QChip,
+  QIconButton,
   RichTextView,
   AiAssessPanel,
   AiExplainPanel,
@@ -40,6 +41,7 @@ import {
   PracticeQuestionHeader,
   PracticeSessionDrawer,
   PracticeSessionRail,
+  provideAssetResolver,
   SessionProgressBar,
   type SessionItem,
   StateIcon,
@@ -53,12 +55,18 @@ import { useProgressStore } from '../stores/progress.js';
 import { useAiStore } from '../stores/ai.js';
 import { useAuthStore } from '../stores/auth.js';
 import { historyLog } from '../services.js';
+import { shortCommit } from '../version-info.js';
 
 const route = useRoute();
 const router = useRouter();
 const practice = usePracticeStore();
 const progress = useProgressStore();
 const auth = useAuthStore();
+
+// Practice owns an immutable content source for its whole session. Override
+// App.vue's live resolver for this subtree so figures cannot jump to another
+// Core when a different Desktop window changes the device preference.
+provideAssetResolver((src) => practice.assetUrl(src));
 
 
 const current = computed(() => practice.current);
@@ -121,7 +129,17 @@ async function flushPendingGrading(): Promise<void> {
 
 const mobileRailOpen = ref(false);
 const exitArmed = ref(false);
-const exitButton = ref<HTMLButtonElement | null>(null);
+const provenanceHeading = ref<HTMLHeadingElement | null>(null);
+
+watch(
+  () => practice.phase,
+  async (phase) => {
+    if (phase !== 'provenance-choice') return;
+    await nextTick();
+    provenanceHeading.value?.focus();
+  },
+  { flush: 'post' },
+);
 
 function onPlayerState(state: PartPlayerState): void {
   const wasSelfAssessing = playerState.value.phase === 'self-assessing';
@@ -576,6 +594,12 @@ function start(): void {
 
 async function startHistoryProgram(): Promise<void> {
   const q = route.query;
+  const fixedSource = q.coreSource === 'local' || q.coreSource === 'remote'
+    ? q.coreSource
+    : undefined;
+  const expectedContentId = typeof q.contentId === 'string' && q.contentId.length > 0
+    ? q.contentId
+    : undefined;
   const focusQuestionId = typeof q.focus === 'string' ? q.focus : undefined;
   let questionIds =
     typeof q.questions === 'string' && q.questions.length > 0
@@ -587,7 +611,8 @@ async function startHistoryProgram(): Promise<void> {
     questionIds = [...new Set(recent.map((entry) => entry.questionId))];
   }
   if (focusQuestionId && !questionIds.includes(focusQuestionId)) questionIds.unshift(focusQuestionId);
-  await practice.startQuestions(questionIds);
+  if (fixedSource) await practice.startQuestions(questionIds, fixedSource, expectedContentId);
+  else await practice.startQuestions(questionIds);
   if (focusQuestionId) {
     const idx = practice.items.findIndex((item) => item.questionId === focusQuestionId);
     if (idx > 0) practice.jumpTo(idx);
@@ -670,7 +695,7 @@ function exit(): void {
 function onDocumentPointerDown(ev: PointerEvent): void {
   if (!exitArmed.value) return;
   const target = ev.target;
-  if (target instanceof Node && exitButton.value?.contains(target)) return;
+  if (target instanceof Element && target.closest('[data-practice-exit]')) return;
   exitArmed.value = false;
 }
 
@@ -708,6 +733,7 @@ onBeforeUnmount(() => {
   // a held pick must never be dropped silently. Fire-and-forget is the best
   // available here — the write is local and the component is going away.
   void flushPendingGrading();
+  practice.suspendContentPin();
 });
 
 const multiPart = computed(() => (current.value?.question.parts.length ?? 0) > 1);
@@ -816,22 +842,32 @@ const currentCompetencyCodes = computed(() =>
   >
     <!-- top bar -->
     <div ref="topbarEl" class="practice__topbar">
-      <button
-        ref="exitButton"
-        type="button"
+      <QIconButton
+        data-practice-exit
         class="practice__close"
         :class="{ 'practice__close--armed': exitArmed }"
         :aria-label="exitArmed ? 'Programm verlassen bestätigen' : 'Programm verlassen'"
+        :title="exitArmed ? 'Erneut klicken, um das Programm zu verlassen' : 'Programm verlassen'"
         @click.stop="exit"
-      >
-        <X class="practice__close-mark" :size="20" :stroke-width="2" aria-hidden="true" />
-        <span v-if="exitArmed" class="practice__close-text">Beenden?</span>
-      </button>
+      />
       <div class="practice__progress">
         <div class="practice__progress-label">
           <template v-if="practice.phase === 'running'">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
           <template v-else-if="practice.phase === 'summary'">Programm abgeschlossen</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
+        </div>
+        <div
+          v-if="practice.phase === 'running' || practice.phase === 'summary'"
+          class="practice__source-badge"
+          :data-source="practice.contentSource"
+          :title="practice.contentId ? `Bank ${practice.contentId}` : undefined"
+        >
+          <HardDrive v-if="practice.contentSource === 'local'" :size="12" aria-hidden="true" />
+          <Cloud v-else :size="12" aria-hidden="true" />
+          <span>
+            {{ practice.contentSource === 'local' ? 'Lokale Bank' : 'Remote-Core' }}
+            · {{ practice.contentMode === 'revision' ? 'Archiv ' : '' }}{{ practice.contentId ? shortCommit(practice.contentId) : 'Version wird geprüft' }}
+          </span>
         </div>
         <SessionProgressBar
           :items="practice.items"
@@ -863,6 +899,32 @@ const currentCompetencyCodes = computed(() =>
           <div class="practice__skeleton-bar" style="width: 85%" />
         </div>
         <div class="practice__loading-text">Aufgaben werden geladen …</div>
+      </div>
+
+      <!-- Legacy snapshots did not record a bank revision. They stay intact
+           until the user explicitly accepts reopening those question ids
+           against today's selected bank; no Core request happens before it. -->
+      <div
+        v-else-if="practice.phase === 'provenance-choice'"
+        key="provenance-choice"
+        class="practice__center"
+      >
+        <div class="practice__error" role="status" aria-live="polite">
+          <h1 ref="provenanceHeading" class="practice__error-title" tabindex="-1">
+            Aufgabenversion unbekannt
+          </h1>
+          <div class="practice__error-text">
+            Dieses gespeicherte Programm stammt aus einer älteren QED2-Version und nennt
+            keine Aufgabenbank. Es wird nicht automatisch mit neueren Aufgaben vermischt.
+            Du kannst dieselben Aufgaben-IDs bewusst mit der aktuell gewählten Bank öffnen.
+          </div>
+          <div class="practice__actions-row">
+            <QButton variant="secondary" @click="exitNow">Später</QButton>
+            <QButton @click="practice.resumeWithCurrentContent()">
+              Aktuelle Aufgabenbank verwenden
+            </QButton>
+          </div>
+        </div>
       </div>
 
       <!-- error -->
@@ -1103,52 +1165,38 @@ const currentCompetencyCodes = computed(() =>
   z-index: 30;
 }
 .practice__close {
-  width: var(--q-icon-control-size);
-  min-width: var(--q-icon-control-size);
-  height: var(--q-icon-control-size);
-  flex: none;
-  border-radius: 9px;
-  border: none;
-  background: none;
-  color: var(--q-mut-2);
-  line-height: 0;
-  cursor: pointer;
+  flex: 0 0 var(--q-icon-control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
   overflow: hidden;
   transition:
-    width 0.16s ease,
-    color 0.16s ease,
-    background 0.16s ease;
-}
-@media (hover: hover) and (pointer: fine) {
-  .practice__close:hover {
-    background: var(--q-panel);
-  }
+    width var(--q-transition-fast),
+    min-width var(--q-transition-fast),
+    flex-basis var(--q-transition-fast),
+    background var(--q-transition-fast),
+    color var(--q-transition-fast),
+    opacity var(--q-transition-fast);
 }
 .practice__close--armed {
   width: 88px;
+  min-width: 88px;
+  flex-basis: 88px;
   background: var(--q-err-bg);
   color: var(--q-err);
+}
+.practice__close--armed::after {
+  content: 'Beenden?';
+  font-size: 12px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 @media (hover: hover) and (pointer: fine) {
   .practice__close--armed:hover {
     background: var(--q-err-bg);
   }
-}
-.practice__close-mark {
-  flex: none;
-  display: block;
-  width: var(--q-icon-glyph-size);
-  height: var(--q-icon-glyph-size);
-}
-.practice__close-text {
-  font-size: 12px;
-  line-height: 1;
-  white-space: nowrap;
 }
 .practice__progress {
   flex: 1;
@@ -1163,6 +1211,22 @@ const currentCompetencyCodes = computed(() =>
   font-weight: 600;
   text-align: center;
   color: var(--q-ink-2);
+}
+.practice__source-badge {
+  width: max-content;
+  max-width: 100%;
+  margin: 3px auto 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--q-neutral);
+  font-size: 9.5px;
+  font-weight: 680;
+  line-height: 1;
+  white-space: nowrap;
+}
+.practice__source-badge[data-source='local'] {
+  color: var(--q-ok-ink);
 }
 .practice__logo-accent {
   color: var(--q-accent);
@@ -1317,7 +1381,7 @@ const currentCompetencyCodes = computed(() =>
 .practice__error-title {
   font-weight: 700;
   font-size: 16px;
-  margin-bottom: 8px;
+  margin: 0 0 8px;
 }
 .practice__error-text {
   font-size: 13px;
@@ -1471,9 +1535,7 @@ const currentCompetencyCodes = computed(() =>
 }
 
 @media (pointer: coarse) {
-  /* 44px touch targets in the always-visible chrome (fits the 56px topbar);
-     min-width so the armed close button keeps its 88px width. */
-  .practice__close,
+  /* 44px touch targets in the always-visible chrome (fits the 56px topbar). */
   .practice__session-button,
   .practice__spacer {
     min-width: 44px;

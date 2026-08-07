@@ -47,4 +47,70 @@ describe('WebStorage (IndexedDB StoragePort adapter)', () => {
       baseVersion: 3,
     });
   });
+
+  it('retains monotonic revisions across overwrite and deletion', async () => {
+    const address = { collection: STORAGE.app, key: 'revision-lifecycle' };
+    expect(await storage.readBatch([address])).toEqual([
+      { ...address, revision: 0, exists: false },
+    ]);
+
+    await storage.set(address.collection, address.key, { value: 1 });
+    expect(await storage.readBatch([address])).toEqual([
+      { ...address, revision: 1, exists: true, value: { value: 1 } },
+    ]);
+    await storage.set(address.collection, address.key, { value: 2 });
+    await storage.delete(address.collection, address.key);
+    expect(await storage.readBatch([address])).toEqual([
+      { ...address, revision: 3, exists: false },
+    ]);
+  });
+
+  it('atomically commits across object stores and rejects a stale second window', async () => {
+    const peer = new WebStorage();
+    const archive = { collection: STORAGE.archive, key: 'cas-window' };
+    const history = { collection: STORAGE.history, key: 'cas-window' };
+    const [archiveSnapshot, historySnapshot] = await storage.readBatch([archive, history]);
+    const stale = await peer.readBatch([archive, history]);
+    const first = {
+      ifRevisions: [
+        { ...archive, revision: archiveSnapshot!.revision },
+        { ...history, revision: historySnapshot!.revision },
+      ],
+      mutations: [
+        { ...archive, operation: 'set' as const, value: { answer: 'first' } },
+        { ...history, operation: 'set' as const, value: [{ id: 'first' }] },
+      ],
+    };
+
+    await expect(storage.commitBatch(first)).resolves.toEqual({ committed: true });
+    await expect(peer.commitBatch({
+      ifRevisions: stale.map(({ collection, key, revision }) => ({ collection, key, revision })),
+      mutations: [
+        { ...archive, operation: 'set', value: { answer: 'stale' } },
+        { ...history, operation: 'set', value: [{ id: 'stale' }] },
+      ],
+    })).resolves.toEqual({ committed: false });
+    expect((await storage.readBatch([archive, history])).map((entry) => entry.value)).toEqual([
+      { answer: 'first' },
+      [{ id: 'first' }],
+    ]);
+  });
+
+  it('aborts the whole IndexedDB batch when one value cannot be cloned', async () => {
+    const archive = { collection: STORAGE.archive, key: 'abort-batch' };
+    const session = { collection: STORAGE.app, key: 'abort-batch' };
+    const snapshots = await storage.readBatch([archive, session]);
+
+    await expect(storage.commitBatch({
+      ifRevisions: snapshots.map(({ collection, key, revision }) => ({ collection, key, revision })),
+      mutations: [
+        { ...archive, operation: 'set', value: { safe: true } },
+        { ...session, operation: 'set', value: { notCloneable: () => undefined } },
+      ],
+    })).rejects.toThrow();
+    expect((await storage.readBatch([archive, session])).map((entry) => entry.exists)).toEqual([
+      false,
+      false,
+    ]);
+  });
 });

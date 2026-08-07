@@ -16,6 +16,13 @@ concurrency:
 env:
   QED2_CORE_SOURCE: ${{ github.workspace }}/qedv2-core
   QED2_BANK_SOURCE: ${{ github.workspace }}/srdpmppr
+  QED2_EXPECTED_CORE_REPOSITORY: tangxiaoyi97/qedv2-core
+  QED2_EXPECTED_CORE_REF: main
+  QED2_EXPECTED_CORE_VERSION: 1.10.0
+  QED2_EXPECTED_BANK_REPOSITORY: tangxiaoyi97/srdpmppr
+  QED2_EXPECTED_BANK_REF: pastpapers
+  QED2_EXPECTED_BANK_SHA: ff304623607463386026ebeebdbc17a576db1925
+  QED2_EXPECTED_BANK_COMMIT_COUNT: '5'
 
 jobs:
   native-verify:
@@ -76,10 +83,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RUNTIME_FORMAT_VERSION="$(node -p "require('./packages/desktop/runtime-sources.json').formatVersion")"
+          CORE_REPOSITORY="$(node -p "require('./packages/desktop/runtime-sources.json').core.repository")"
+          CORE_REF="$(node -p "require('./packages/desktop/runtime-sources.json').core.ref")"
+          BANK_REPOSITORY="$(node -p "require('./packages/desktop/runtime-sources.json').bank.repository")"
+          BANK_REF="$(node -p "require('./packages/desktop/runtime-sources.json').bank.ref")"
           CORE_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').core.commit")"
           BANK_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').bank.commit")"
+          if [[ "$RUNTIME_FORMAT_VERSION" != 1 ]]; then
+            echo "runtime-sources.json has an unsupported format version." >&2
+            exit 1
+          fi
+          if [[ "$CORE_REPOSITORY" != "$QED2_EXPECTED_CORE_REPOSITORY" || "$CORE_REF" != "$QED2_EXPECTED_CORE_REF" ]]; then
+            echo "runtime-sources.json must use the reviewed Core main source." >&2
+            exit 1
+          fi
+          if [[ "$BANK_REPOSITORY" != "$QED2_EXPECTED_BANK_REPOSITORY" || "$BANK_REF" != "$QED2_EXPECTED_BANK_REF" ]]; then
+            echo "runtime-sources.json must use the reviewed question-bank pastpapers source." >&2
+            exit 1
+          fi
           if [[ ! "$CORE_SHA" =~ ^[0-9a-f]{40}$ || ! "$BANK_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "runtime-sources.json must pin full Git commit IDs" >&2
+            exit 1
+          fi
+          if [[ "$BANK_SHA" != "$QED2_EXPECTED_BANK_SHA" ]]; then
+            echo "Desktop 2.1.0 must pin the reviewed question-bank commit $QED2_EXPECTED_BANK_SHA." >&2
             exit 1
           fi
           echo "core_sha=$CORE_SHA" >> "$GITHUB_OUTPUT"
@@ -90,6 +118,7 @@ jobs:
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ steps.runtime.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -99,8 +128,34 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ steps.runtime.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
+
+      - name: Prove locked Core main and bank source identities
+        shell: bash
+        working-directory: .
+        env:
+          CORE_SHA: ${{ steps.runtime.outputs.core_sha }}
+          BANK_SHA: ${{ steps.runtime.outputs.bank_sha }}
+        run: |
+          set -euo pipefail
+          CORE_HEAD="$(git -C "$QED2_CORE_SOURCE" rev-parse HEAD)"
+          CORE_MAIN="$(git -C "$QED2_CORE_SOURCE" rev-parse refs/remotes/origin/main)"
+          BANK_HEAD="$(git -C "$QED2_BANK_SOURCE" rev-parse HEAD)"
+          if [[ "$CORE_HEAD" != "$CORE_SHA" || "$CORE_MAIN" != "$CORE_SHA" ]]; then
+            echo "Pinned Core must be exactly the current origin/main head: pin=$CORE_SHA head=$CORE_HEAD main=$CORE_MAIN" >&2
+            exit 1
+          fi
+          CORE_VERSION="$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version))" "$QED2_CORE_SOURCE/package.json")"
+          if [[ "$CORE_VERSION" != "$QED2_EXPECTED_CORE_VERSION" ]]; then
+            echo "Pinned Core version must be $QED2_EXPECTED_CORE_VERSION, found $CORE_VERSION." >&2
+            exit 1
+          fi
+          if [[ "$BANK_SHA" != "$QED2_EXPECTED_BANK_SHA" || "$BANK_HEAD" != "$QED2_EXPECTED_BANK_SHA" ]]; then
+            echo "Question-bank checkout does not match the reviewed fixed commit." >&2
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
@@ -145,32 +200,201 @@ jobs:
       - name: Start and identify bundled Core
         run: pnpm --filter @qed2/desktop runtime:smoke
 
-      # Every candidate must boot as a real unpacked application on all three
-      # platforms. Full signed installers still belong to desktop-release.yml.
-      - name: Smoke-test unpacked package
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: >-
-          pnpm --filter @qed2/desktop exec electron-builder
-          --config electron-builder.yml
-          ${{ matrix.builder }} ${{ matrix.arch }} --dir --publish never
-
-      # CI deliberately has no distribution certificate. A local ad-hoc
-      # signature is sufficient to let macOS execute the unpacked application;
-      # release builds below are still required to carry the real Developer ID.
-      - name: Ad-hoc sign unpacked macOS application for boot smoke
-        if: runner.os == 'macOS'
+      - name: Verify complete and deterministic revision vault
+        if: runner.os == 'Linux'
         shell: bash
+        env:
+          BANK_SHA: ${{ steps.runtime.outputs.bank_sha }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          APPS=(packages/desktop/dist-packages/mac*/QED2.app)
-          if [[ "${#APPS[@]}" -ne 1 ]]; then
-            echo "Expected one unpacked QED2.app, found ${#APPS[@]}" >&2
+          EXPECTED_COMMITS="$RUNNER_TEMP/qed2-revision-commits.txt"
+          REPEAT_ROOT="$(mktemp -d "$RUNNER_TEMP/qed2-revision-vault.XXXXXX")"
+          REPEAT_VAULT="$REPEAT_ROOT/vault"
+          cleanup_revision_vault() { rm -rf -- "$REPEAT_ROOT"; }
+          trap cleanup_revision_vault EXIT
+
+          if [[ "$(git -C "$QED2_BANK_SOURCE" rev-parse --is-shallow-repository)" != false ]]; then
+            echo "Revision-vault proof requires the complete question-bank history." >&2
             exit 1
           fi
-          codesign --force --deep --sign - "${APPS[0]}"
-          codesign --verify --deep --strict "${APPS[0]}"
+          git -C "$QED2_BANK_SOURCE" rev-list --reverse --topo-order "$BANK_SHA" > "$EXPECTED_COMMITS"
+          if [[ "$(wc -l < "$EXPECTED_COMMITS" | tr -d '[:space:]')" != "$QED2_EXPECTED_BANK_COMMIT_COUNT" ]]; then
+            echo "Question-bank ancestry no longer contains exactly $QED2_EXPECTED_BANK_COMMIT_COUNT commits." >&2
+            exit 1
+          fi
+
+          node "$QED2_CORE_SOURCE/dist/revisions/generate-revision-vault.js" \
+            --bank "$QED2_BANK_SOURCE" \
+            --output "$REPEAT_VAULT" \
+            --commit "$BANK_SHA" \
+            --repository "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
+            --ref "$QED2_EXPECTED_BANK_REF" \
+            --schema-min 2 \
+            --schema-max 3
+
+          node --input-type=module - \
+            "$PWD/packages/desktop/runtime" \
+            "$REPEAT_VAULT" \
+            "$EXPECTED_COMMITS" \
+            "$BANK_SHA" \
+            "$QED2_EXPECTED_BANK_COMMIT_COUNT" \
+            "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
+            "$QED2_EXPECTED_BANK_REF" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { lstat, readFile, readdir } from 'node:fs/promises';
+          import path from 'node:path';
+
+          const [runtimeRoot, repeatedVault, commitsFile, pinnedCommit, expectedCountText, repository, ref] =
+            process.argv.slice(2);
+          const expectedCount = Number(expectedCountText);
+          const primaryVault = path.join(runtimeRoot, 'bank', 'revisions');
+          const expectedCommits = (await readFile(commitsFile, 'utf8')).trim().split('\n').filter(Boolean);
+          const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+          const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+          const fullGitSha = /^[0-9a-f]{40}$/u;
+          const sha256Digest = /^[0-9a-f]{64}$/u;
+
+          assert.equal(expectedCommits.length, expectedCount, 'full bank ancestry count changed');
+          assert.equal(expectedCommits.at(-1), pinnedCommit, 'bank ancestry does not end at the pin');
+          assert.equal(new Set(expectedCommits).size, expectedCommits.length, 'bank ancestry contains duplicates');
+          assert.ok(expectedCommits.every((commit) => fullGitSha.test(commit)), 'bank ancestry contains an invalid commit');
+
+          async function inventory(root) {
+            const files = [];
+            async function visit(directory, prefix = '') {
+              const entries = await readdir(directory, { withFileTypes: true });
+              entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+              for (const entry of entries) {
+                const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+                const absolute = path.join(directory, entry.name);
+                const info = await lstat(absolute);
+                assert.equal(info.isSymbolicLink(), false, `vault contains symlink: ${relative}`);
+                if (info.isDirectory()) {
+                  await visit(absolute, relative);
+                } else {
+                  assert.equal(info.isFile(), true, `vault contains unsupported entry: ${relative}`);
+                  const bytes = await readFile(absolute);
+                  files.push({ path: relative, size: bytes.byteLength, sha256: sha256(bytes) });
+                }
+              }
+            }
+            await visit(root);
+            return files;
+          }
+
+          async function validateVault(vaultRoot) {
+            const catalogPath = path.join(vaultRoot, 'revision-catalog.v1.json');
+            const catalogBytes = await readFile(catalogPath);
+            const catalog = JSON.parse(catalogBytes.toString('utf8'));
+            assert.equal(catalog.formatVersion, 1, 'revision catalog format changed');
+            assert.equal(catalog.repository, repository, 'revision catalog repository changed');
+            assert.equal(catalog.ref, ref, 'revision catalog ref changed');
+            assert.equal(catalog.pinnedCommit, pinnedCommit, 'revision catalog pin changed');
+            assert.deepEqual(catalog.commitOrder, expectedCommits, 'catalog does not cover full git rev-list');
+            assert.equal(catalog.commitOrder.length, expectedCount, 'catalog commit count changed');
+            assert.ok(isRecord(catalog.commits), 'catalog commits must be an object');
+            assert.ok(isRecord(catalog.objects), 'catalog objects must be an object');
+            assert.deepEqual(
+              Object.keys(catalog.commits).sort(),
+              [...expectedCommits].sort(),
+              'catalog commit records are incomplete',
+            );
+
+            const referencedObjects = new Set();
+            let questionRevisionCount = 0;
+            for (const commit of expectedCommits) {
+              const record = catalog.commits[commit];
+              assert.ok(isRecord(record?.questions), `invalid question records for ${commit}`);
+              assert.ok(isRecord(record?.assets), `invalid asset records for ${commit}`);
+              for (const question of Object.values(record.questions)) {
+                assert.ok(isRecord(question), `invalid question metadata for ${commit}`);
+                assert.match(question.wireObjectSha256, sha256Digest, 'invalid question object digest');
+                const object = catalog.objects[question.wireObjectSha256];
+                assert.equal(object?.kind, 'question', 'question object kind mismatch');
+                assert.equal(object?.bytes, question.wireBytes, 'question object size mismatch');
+                referencedObjects.add(question.wireObjectSha256);
+                questionRevisionCount += 1;
+              }
+              for (const asset of Object.values(record.assets)) {
+                assert.ok(isRecord(asset), `invalid asset metadata for ${commit}`);
+                assert.match(asset.objectSha256, sha256Digest, 'invalid asset object digest');
+                const object = catalog.objects[asset.objectSha256];
+                assert.equal(object?.kind, 'asset', 'asset object kind mismatch');
+                assert.equal(object?.bytes, asset.bytes, 'asset object size mismatch');
+                assert.equal(object?.mimeType, asset.mimeType, 'asset MIME mismatch');
+                referencedObjects.add(asset.objectSha256);
+              }
+            }
+
+            const objectEntries = Object.entries(catalog.objects);
+            assert.deepEqual(
+              [...referencedObjects].sort(),
+              objectEntries.map(([digest]) => digest).sort(),
+              'catalog has missing or unreferenced objects',
+            );
+            let objectBytes = 0;
+            for (const [digest, metadata] of objectEntries) {
+              assert.match(digest, sha256Digest, 'invalid catalog object digest');
+              assert.ok(isRecord(metadata), `invalid object metadata: ${digest}`);
+              assert.ok(Number.isSafeInteger(metadata.bytes) && metadata.bytes >= 0, `invalid object size: ${digest}`);
+              const objectPath = path.join(vaultRoot, 'objects', digest.slice(0, 2), digest.slice(2));
+              const info = await lstat(objectPath);
+              assert.equal(info.isFile() && !info.isSymbolicLink(), true, `object is not a regular file: ${digest}`);
+              const bytes = await readFile(objectPath);
+              assert.equal(bytes.byteLength, metadata.bytes, `object length mismatch: ${digest}`);
+              assert.equal(sha256(bytes), digest, `object SHA-256 mismatch: ${digest}`);
+              objectBytes += bytes.byteLength;
+            }
+
+            const files = await inventory(vaultRoot);
+            const actualObjectPaths = files
+              .filter((file) => file.path !== 'revision-catalog.v1.json')
+              .map((file) => file.path)
+              .sort();
+            const expectedObjectPaths = objectEntries
+              .map(([digest]) => `objects/${digest.slice(0, 2)}/${digest.slice(2)}`)
+              .sort();
+            assert.deepEqual(actualObjectPaths, expectedObjectPaths, 'vault has missing or unexpected object files');
+            return { catalogBytes, files, objectBytes, objectCount: objectEntries.length, questionRevisionCount };
+          }
+
+          const primary = await validateVault(primaryVault);
+          const repeated = await validateVault(repeatedVault);
+          assert.deepEqual(primary.catalogBytes, repeated.catalogBytes, 'second catalog generation is not deterministic');
+          assert.deepEqual(primary.files, repeated.files, 'second vault generation is not byte-for-byte deterministic');
+
+          const manifest = JSON.parse(await readFile(path.join(runtimeRoot, 'runtime-manifest.json'), 'utf8'));
+          assert.equal(manifest.formatVersion, 3, 'Desktop runtime manifest must be v3');
+          assert.equal(manifest.bank?.commit, pinnedCommit, 'runtime bank pin differs from revision vault');
+          assert.equal(manifest.revisions?.catalog, 'bank/revisions/revision-catalog.v1.json');
+          assert.equal(manifest.revisions?.formatVersion, 1);
+          assert.equal(manifest.revisions?.pinnedCommit, pinnedCommit);
+          assert.equal(manifest.revisions?.commitCount, expectedCount);
+          assert.equal(manifest.revisions?.questionRevisionCount, primary.questionRevisionCount);
+          assert.equal(manifest.revisions?.objectCount, primary.objectCount);
+          assert.equal(manifest.revisions?.objectBytes, primary.objectBytes);
+          const manifestFiles = new Map(manifest.files.map((file) => [file.path, file]));
+          for (const file of primary.files) {
+            const record = manifestFiles.get(`bank/revisions/${file.path}`);
+            assert.equal(record?.type, 'file', `runtime manifest omits vault file ${file.path}`);
+            assert.equal(record?.size, file.size, `runtime manifest size differs for ${file.path}`);
+            assert.equal(record?.sha256, file.sha256, `runtime manifest digest differs for ${file.path}`);
+          }
+          NODE
+
+          trap - EXIT
+          cleanup_revision_vault
+
+      # Every candidate must boot as a real unpacked application on all three
+      # platforms. The unsigned config performs the complete macOS ad-hoc
+      # signature during packaging, so CI exercises the same structure as the
+      # public no-certificate release.
+      - name: Smoke-test unpacked package
+        run: >-
+          pnpm --filter @qed2/desktop exec electron-builder
+          --config electron-builder.unsigned.yml
+          ${{ matrix.builder }} ${{ matrix.arch }} --dir --publish never
 
       - name: Verify runtime copied into unpacked package
         run: pnpm --filter @qed2/desktop exec node scripts/smoke-runtime.mjs --packaged

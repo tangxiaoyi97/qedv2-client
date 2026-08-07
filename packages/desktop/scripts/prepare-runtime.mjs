@@ -29,6 +29,10 @@ const stage = resolve(desktopRoot, `.runtime-stage-${process.pid}`);
 const backup = resolve(desktopRoot, '.runtime-previous');
 const MAX_RUNTIME_ENTRIES = 100_000;
 const HASH_CONCURRENCY = 8;
+const REVISION_CATALOG_PATH = 'bank/revisions/revision-catalog.v1.json';
+const OFFICIAL_BANK_REPOSITORY = 'https://github.com/tangxiaoyi97/srdpmppr';
+const FULL_GIT_SHA_PATTERN = /^[0-9a-f]{40}$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
 function pnpmCliFile(candidate) {
   if (!candidate || !isAbsolute(candidate)) return false;
@@ -71,6 +75,7 @@ const INTEGRITY_ROOTS = [
   'bank/content',
   'bank/assets',
   'bank/schema',
+  'bank/revisions',
 ];
 const INTEGRITY_FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION'];
 
@@ -172,6 +177,78 @@ async function copyBank(destination, commit) {
   }
   // qed2-core reads VERSION when the packaged bank intentionally has no .git.
   await writeFile(resolve(destination, 'VERSION'), `${commit}\n`, 'utf8');
+}
+
+function plainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function revisionVaultMetadata(runtimeRoot, bankCommit) {
+  const catalogPath = resolve(runtimeRoot, ...REVISION_CATALOG_PATH.split('/'));
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
+  if (!plainObject(catalog) || catalog.formatVersion !== 1) {
+    throw new Error('Generated revision vault has an unsupported catalog format');
+  }
+  if (catalog.pinnedCommit !== bankCommit) {
+    throw new Error('Generated revision vault does not match the pinned question-bank commit');
+  }
+  if (
+    !Array.isArray(catalog.commitOrder) ||
+    catalog.commitOrder.length === 0 ||
+    catalog.commitOrder.at(-1) !== bankCommit ||
+    catalog.commitOrder.some((commit) => typeof commit !== 'string' || !FULL_GIT_SHA_PATTERN.test(commit)) ||
+    new Set(catalog.commitOrder).size !== catalog.commitOrder.length ||
+    !plainObject(catalog.commits) ||
+    !plainObject(catalog.objects)
+  ) {
+    throw new Error('Generated revision vault contains invalid commit or object metadata');
+  }
+  const commitKeys = Object.keys(catalog.commits).sort();
+  const orderedCommitKeys = [...catalog.commitOrder].sort();
+  if (
+    commitKeys.length !== orderedCommitKeys.length ||
+    commitKeys.some((commit, index) => commit !== orderedCommitKeys[index])
+  ) {
+    throw new Error('Generated revision vault commit inventory is incomplete');
+  }
+
+  let questionRevisionCount = 0;
+  for (const commit of catalog.commitOrder) {
+    const record = catalog.commits[commit];
+    if (!plainObject(record) || !plainObject(record.questions) || !plainObject(record.assets)) {
+      throw new Error(`Generated revision vault has invalid metadata for ${commit}`);
+    }
+    questionRevisionCount += Object.keys(record.questions).length;
+  }
+
+  let objectBytes = 0;
+  const objects = Object.entries(catalog.objects);
+  for (const [sha256, record] of objects) {
+    if (
+      !SHA256_PATTERN.test(sha256) ||
+      !plainObject(record) ||
+      !Number.isSafeInteger(record.bytes) ||
+      record.bytes < 0
+    ) {
+      throw new Error(`Generated revision vault has invalid object metadata: ${sha256}`);
+    }
+    const objectPath = resolve(runtimeRoot, 'bank/revisions/objects', sha256.slice(0, 2), sha256.slice(2));
+    const info = await stat(objectPath);
+    if (!info.isFile() || info.size !== record.bytes) {
+      throw new Error(`Generated revision vault object size does not match its catalog: ${sha256}`);
+    }
+    objectBytes += record.bytes;
+  }
+
+  return {
+    catalog: REVISION_CATALOG_PATH,
+    formatVersion: 1,
+    pinnedCommit: bankCommit,
+    commitCount: catalog.commitOrder.length,
+    questionRevisionCount,
+    objectCount: objects.length,
+    objectBytes,
+  };
 }
 
 function portablePath(path) {
@@ -368,6 +445,27 @@ async function main() {
     });
     await stat(resolve(stage, 'core/dist/main.js'));
     await copyBank(resolve(stage, 'bank'), bankCommit);
+    await runFile(
+      process.execPath,
+      [
+        resolve(coreSource, 'dist/revisions/generate-revision-vault.js'),
+        '--bank',
+        bankSource,
+        '--output',
+        resolve(stage, 'bank/revisions'),
+        '--commit',
+        bankCommit,
+        '--repository',
+        OFFICIAL_BANK_REPOSITORY,
+        '--ref',
+        'pastpapers',
+        '--schema-min',
+        '2',
+        '--schema-max',
+        '3',
+      ],
+      { env: process.env, maxBuffer: 16 * 1024 * 1024 },
+    );
 
     const schemaVersions = await bankSchemaVersions(resolve(stage, 'bank/content'));
     if (schemaVersions.some((version) => version < 2 || version > 3)) {
@@ -383,12 +481,14 @@ async function main() {
     if (stagedBankCommit !== bankCommit) {
       throw new Error('Staged question-bank provenance does not match its source commit');
     }
+    const revisions = await revisionVaultMetadata(stage, bankCommit);
     const files = await createIntegrityInventory(stage);
     const manifest = {
-      formatVersion: 2,
+      formatVersion: 3,
       createdAt: new Date().toISOString(),
       core: { version: corePackage.version, commit: coreCommit, entry: 'dist/main.js' },
       bank: { commit: bankCommit, schemaVersions },
+      revisions,
       files,
     };
     await writeFile(resolve(stage, 'runtime-manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -413,7 +513,8 @@ async function main() {
     await rm(backup, { recursive: true, force: true });
     console.log(
       `Prepared QED2 runtime: core ${corePackage.version} (${coreCommit.slice(0, 12)}), ` +
-        `bank ${bankCommit.slice(0, 12)}, schemas ${schemaVersions.join('/')}`,
+        `bank ${bankCommit.slice(0, 12)}, schemas ${schemaVersions.join('/')}, ` +
+        `${revisions.commitCount} immutable revisions (${revisions.objectBytes} bytes)`,
     );
   } catch (error) {
     await rm(stage, { recursive: true, force: true });

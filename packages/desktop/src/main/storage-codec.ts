@@ -13,6 +13,7 @@ const SENSITIVE_COLLECTIONS = new Set(['auth']);
  */
 export class ElectronStorageCodec implements StorageCodec {
   private warnedUnavailable = false;
+  private cachedAuth: { payload: Buffer; json: string } | undefined;
 
   constructor(private readonly logger: StorageCodecLogger) {}
 
@@ -20,10 +21,23 @@ export class ElectronStorageCodec implements StorageCodec {
     if (!SENSITIVE_COLLECTIONS.has(collection)) {
       return { payload: Buffer.from(json, 'utf8'), encoding: 'json' };
     }
+    // Multiple renderer windows can persist the same restored login during
+    // startup. Reuse the already protected bytes before touching safeStorage
+    // again, so one logical credential write causes at most one Keychain
+    // authorization for this process.
+    if (this.cachedAuth?.json === json) {
+      return { payload: Buffer.from(this.cachedAuth.payload), encoding: 'safe-storage-v1' };
+    }
     const insecureLinuxBackend =
       process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text';
     if (safeStorage.isEncryptionAvailable() && !insecureLinuxBackend) {
-      return { payload: safeStorage.encryptString(json), encoding: 'safe-storage-v1' };
+      // safeStorage is synchronous in Electron, so main-process storage calls
+      // are naturally serialized. Remember the one live auth value as well:
+      // four renderer windows restoring the same session must not ask the OS
+      // secret store to decrypt the same ciphertext four times.
+      const payload = safeStorage.encryptString(json);
+      this.cachedAuth = { payload: Buffer.from(payload), json };
+      return { payload, encoding: 'safe-storage-v1' };
     }
     // Electron's Linux `basic_text` backend uses a hardcoded password and is
     // explicitly not secure. Keep the signed-in session usable for this run,
@@ -45,7 +59,11 @@ export class ElectronStorageCodec implements StorageCodec {
       return Buffer.from(payload).toString('utf8');
     }
     if (encoding === 'safe-storage-v1' && SENSITIVE_COLLECTIONS.has(collection)) {
-      return safeStorage.decryptString(Buffer.from(payload));
+      const encrypted = Buffer.from(payload);
+      if (this.cachedAuth?.payload.equals(encrypted)) return this.cachedAuth.json;
+      const json = safeStorage.decryptString(encrypted);
+      this.cachedAuth = { payload: Buffer.from(encrypted), json };
+      return json;
     }
     throw new Error(`Unsupported storage encoding: ${encoding}`);
   }

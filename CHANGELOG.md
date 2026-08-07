@@ -14,16 +14,59 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.1.0 — 2026-08-08
+
+### local, cloud & recovery
+
+### desktop!
+
+this is the first public desktop build. local Core and the question bank come
+with the app; Aufgaben can switch between local and remote without touching
+your account or saved work.
+
+Update-Center and Knotendiagnose are actually different windows now. every
+window follows the same theme, type and controls, and the Dock icon has its
+corners back.
+
+downloads survive a dead connection and an app crash. only bytes already
+written to disk count as progress, and an unsigned package is never started
+for you.
+
+macOS is ad-hoc sealed, but not Developer ID signed or notarized. Windows and
+Linux packages are unsigned too, so the OS may warn you.
+
+login tokens still use the real macOS Keychain. a fresh logged-out start does
+not touch it; because an unsigned rebuild has no stable publisher identity, a
+new build may ask once again. “Always Allow” keeps the same build quiet across
+restarts and every window.
+
+### Verlauf & Aufgaben
+
+an answer remembers the exact question-bank revision it came from. old
+questions open as that version again, including their figures — never as a
+quietly newer copy.
+
+local Core, remote Core, offline cache and cloud sync agree on that identity
+before a question is trusted.
+
+### KI
+
+KI-Erklärungen settings are easier to read now and use the same controls as
+the rest of the app.
+
+tangxy, 2026.08.08
+
 ## 2.0.0 — 2026-08-07
 
 ### Desktop
 
 QED2 is now also a real desktop app for macOS, Windows, and Linux: the same UI,
 but with a bundled local Core and question bank, native multi-window controls,
-offline startup, crash recovery, signed macOS and Windows packages, and verified
-GitHub update metadata and checksums on every supported platform. The local node stays
-on loopback only; your data remains outside the app bundle and survives normal
-updates.
+offline startup, crash recovery, preview packages, and verified GitHub update
+metadata and checksums on every supported platform. Desktop was still preview-only
+in 2.0.0: macOS was ad-hoc sealed, not Developer ID signed or notarized, and the
+Windows and Linux packages were unsigned. The local node stays on loopback only;
+your data remains outside the app bundle and survives normal updates.
 
 There is no separate desktop copy of the website. Web changes flow into the
 next desktop build automatically, while native controls remain invisible in

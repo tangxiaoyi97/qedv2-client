@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, truncate, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, truncate, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -14,6 +14,7 @@ const CORE_SHA = '2'.repeat(40)
 const BANK_SHA = '3'.repeat(40)
 const temporaryDirectories = []
 const localRequire = createRequire(import.meta.url)
+const desktopPackage = localRequire('../package.json')
 const electronBuilderRequire = createRequire(localRequire.resolve('electron-builder/package.json'))
 const appBuilderRequire = createRequire(electronBuilderRequire.resolve('app-builder-lib/package.json'))
 const { buildBlockMap } = appBuilderRequire('./out/targets/blockmap/blockmap.js')
@@ -119,6 +120,16 @@ async function fixture(options = {}) {
 }
 
 describe('release asset verification', () => {
+  it('declares the HTTPS homepage required by Linux package metadata', () => {
+    expect(new URL(desktopPackage.homepage)).toMatchObject({ protocol: 'https:' })
+  })
+
+  it('uses one canonical architecture name for every public Linux package', async () => {
+    const builderConfig = await readFile(new URL('../electron-builder.yml', import.meta.url), 'utf8')
+    const linuxConfig = builderConfig.slice(builderConfig.indexOf('\nlinux:'))
+    expect(linuxConfig).toContain('artifactName: QED2-${version}-linux-x64.${ext}')
+  })
+
   it('parses the bounded electron-updater metadata shape', () => {
     expect(
       parseUpdateManifest(
@@ -131,7 +142,7 @@ describe('release asset verification', () => {
   })
 
   it('validates hashes and emits provenance plus checksums', async () => {
-    const { root } = await fixture()
+    const { root, binaries } = await fixture()
     const manifest = await verifyReleaseAssets({
       root,
       version: VERSION,
@@ -139,6 +150,38 @@ describe('release asset verification', () => {
       clientSha: CLIENT_SHA,
       coreSha: CORE_SHA,
       bankSha: BANK_SHA,
+    })
+    expect(manifest.formatVersion).toBe(2)
+    expect(manifest.assets.every((asset) => (
+      /^[0-9a-f]{64}$/u.test(asset.sha256) &&
+      /^[A-Za-z0-9+/]{86}==$/u.test(asset.sha512)
+    ))).toBe(true)
+    expect(manifest.assets.find((asset) => asset.name === `QED2-${VERSION}-win-x64.exe`)).toMatchObject({
+      sha512: sha512(binaries[`QED2-${VERSION}-win-x64.exe`]),
+    })
+    expect(Object.fromEntries(
+      manifest.assets
+        .filter((asset) => asset.target)
+        .map((asset) => [asset.name, asset.target]),
+    )).toEqual({
+      [`QED2-${VERSION}-mac-arm64.dmg`]: {
+        platform: 'darwin', arch: 'arm64', installMode: 'manual-package',
+      },
+      [`QED2-${VERSION}-mac-x64.dmg`]: {
+        platform: 'darwin', arch: 'x64', installMode: 'manual-package',
+      },
+      [`QED2-${VERSION}-win-x64.exe`]: {
+        platform: 'win32', arch: 'x64', installMode: 'manual-package',
+      },
+      [`QED2-${VERSION}-linux-x64.AppImage`]: {
+        platform: 'linux', arch: 'x64', installMode: 'manual-package',
+      },
+      [`QED2-${VERSION}-linux-x64.deb`]: {
+        platform: 'linux', arch: 'x64', installMode: 'manual-package',
+      },
+      [`QED2-${VERSION}-linux-x64.rpm`]: {
+        platform: 'linux', arch: 'x64', installMode: 'manual-package',
+      },
     })
     expect(manifest.updateMetadata['latest-mac.yml']).toHaveLength(2)
     expect(manifest.updateMetadata['latest-linux.yml']).toEqual([
@@ -148,6 +191,23 @@ describe('release asset verification', () => {
     ])
     expect(JSON.parse(await readFile(path.join(root, 'release-manifest.json'), 'utf8'))).toEqual(manifest)
     expect(await readFile(path.join(root, 'SHA256SUMS'), 'utf8')).toContain(`QED2-${VERSION}-win-x64.exe`)
+  })
+
+  it('rejects a manual package whose filename cannot map to one exact target', async () => {
+    const { root } = await fixture()
+    await rename(
+      path.join(root, `QED2-${VERSION}-mac-arm64.dmg`),
+      path.join(root, `QED2-${VERSION}-mac-universal.dmg`),
+    )
+
+    await expect(verifyReleaseAssets({
+      root,
+      version: VERSION,
+      tag: TAG,
+      clientSha: CLIENT_SHA,
+      coreSha: CORE_SHA,
+      bankSha: BANK_SHA,
+    })).rejects.toThrow(/Missing manual-install release asset/u)
   })
 
   it('verifies a non-first block spanning stream chunks in a real builder sidecar', async () => {

@@ -32,6 +32,8 @@ declare module '*/changelog.mjs' {
   export function parseChangelog(text: string): ChangelogSection[];
   export function normalizeDraft(draft: string, version: string): string;
   export function formatSection(version: string, date: string, body: string): string;
+  export const RELEASE_TIME_ZONE: 'Asia/Shanghai';
+  export function releaseDate(date?: Date): string;
   export function prependSection(
     changelog: string,
     version: string,

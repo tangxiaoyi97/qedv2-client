@@ -1,6 +1,6 @@
 <script lang="ts">
 import { ref } from 'vue';
-import type { QuestionSummary } from '@qed2/core-logic';
+import type { CoreSourcePreference, QuestionSummary } from '@qed2/core-logic';
 
 /**
  * Module-level cache: ALL question summaries, fetched once per app session.
@@ -9,12 +9,15 @@ import type { QuestionSummary } from '@qed2/core-logic';
  */
 const allQuestions = ref<QuestionSummary[]>([]);
 let fetchedOnce = false;
+let fetchedSource: CoreSourcePreference | undefined;
+let fetchedContentId: string | undefined;
 </script>
 
 <script setup lang="ts">
 /** Aufgaben browse — client-side multi-select filtering (supplement §4). */
 import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router';
+import { Cloud, HardDrive, LoaderCircle, ShieldCheck, WifiOff } from 'lucide-vue-next';
 import {
   CATEGORY_ORDER as VALID_CATEGORIES,
   EXAM_PARTS as VALID_TEILS,
@@ -44,6 +47,8 @@ import {
 import { useAppStore } from '../stores/app.js';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
+import { ports } from '../services.js';
+import { shortCommit } from '../version-info.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -63,29 +68,108 @@ const loading = ref(false);
 const error = ref<string | undefined>();
 const filter = ref<FilterState>(emptyFilterState());
 const dialogOpen = ref(false);
+const sourceSwitching = ref(false);
+const sourceError = ref<string | undefined>();
 let syncingFromRoute = false;
+let loadSequence = 0;
+
+const desktopSourceSelector = ports.shell.capabilities.desktop && !!ports.coreRuntime.selectSource;
+const sourcePreference = computed(() => app.coreSourcePreference);
+const selectedSourceReady = computed(
+  () => sourcePreference.value === app.coreEndpointSource && app.coreRuntimeStatus?.phase === 'ready',
+);
+const activeRevisionText = computed(() =>
+  app.coreInfo?.bank.commit
+    ? `Bank ${shortCommit(app.coreInfo.bank.commit)}`
+    : 'Revision wird geprüft',
+);
+const sourceStatusText = computed(() => {
+  if (sourcePreference.value === 'local') {
+    const state = selectedSourceReady.value
+      ? 'Lokale Aufgabenbank · offline verfügbar'
+      : 'Lokale Aufgabenbank gewählt · Remote-Ersatz aktiv';
+    return `${state} · ${activeRevisionText.value}`;
+  }
+  const state = app.online
+    ? 'Remote-Core · Netzwerkverbindung erforderlich'
+    : 'Remote-Core gewählt · derzeit offline';
+  return `${state} · ${activeRevisionText.value}`;
+});
+const userDataStatusText = computed(() => {
+  const state = progress.syncStatus.state;
+  if (!app.online || state === 'offline') return 'Fortschritt lokal gesichert · Cloud-Sync wartet';
+  if (state === 'syncing') return 'Fortschritt lokal gesichert · Cloud-Sync läuft';
+  if (state === 'error' || state === 'conflict') return 'Fortschritt lokal gesichert · Cloud-Abgleich benötigt Aufmerksamkeit';
+  return 'Aufgabenquelle getrennt von Konto und Cloud-Speicher';
+});
 
 async function load(force = false): Promise<void> {
-  if (fetchedOnce && !force && allQuestions.value.length > 0) return;
+  const sourceAtStart = app.coreEndpointSource;
+  const sequence = ++loadSequence;
   loading.value = true;
   error.value = undefined;
   try {
+    const client = app.coreClient;
+    let manifest: Awaited<ReturnType<typeof client.manifest>> | undefined;
+    try {
+      manifest = await client.manifest();
+    } catch {
+      // An already-cached list stays useful while offline. Fresh page loads
+      // below still surface their own network error when there is no cache.
+    }
+    const runtimeContentId = app.coreRuntimeStatus?.source === sourceAtStart
+      ? app.coreRuntimeStatus.contentId
+      : undefined;
+    const contentIdAtStart = manifest?.commit ?? runtimeContentId;
+    if (
+      fetchedOnce
+      && fetchedSource === sourceAtStart
+      && (contentIdAtStart === undefined || fetchedContentId === contentIdAtStart)
+      && !force
+      && allQuestions.value.length > 0
+    ) return;
+
     // Page 1 reports the total, so the remaining pages are known up front and
     // go out concurrently — a sequential walk cost one full round trip each,
     // which is what a mobile connection actually feels.
-    const first = await app.coreClient.listQuestions({ page: 1, pageSize: PAGE_SIZE });
+    const first = await client.listQuestions({ page: 1, pageSize: PAGE_SIZE });
     const pageCount = Math.min(Math.ceil(first.total / PAGE_SIZE) || 1, MAX_PAGES);
     const rest = await Promise.all(
       Array.from({ length: pageCount - 1 }, (_, i) =>
-        app.coreClient.listQuestions({ page: i + 2, pageSize: PAGE_SIZE }),
+        client.listQuestions({ page: i + 2, pageSize: PAGE_SIZE }),
       ),
     );
+    if (manifest) {
+      const confirmed = await client.manifest();
+      if (confirmed.commit !== manifest.commit) {
+        throw new Error('Die Aufgabenbank wurde während des Ladens aktualisiert. Bitte erneut laden.');
+      }
+    }
+    if (sequence !== loadSequence || sourceAtStart !== app.coreEndpointSource) return;
     allQuestions.value = [first, ...rest].flatMap((res) => res.items);
     fetchedOnce = true;
+    fetchedSource = sourceAtStart;
+    fetchedContentId = contentIdAtStart;
   } catch (e) {
+    if (sequence !== loadSequence) return;
     error.value = e instanceof Error ? e.message : String(e);
   } finally {
-    loading.value = false;
+    if (sequence === loadSequence) loading.value = false;
+  }
+}
+
+async function selectSource(source: CoreSourcePreference): Promise<void> {
+  if (!desktopSourceSelector || sourceSwitching.value || source === sourcePreference.value) return;
+  sourceSwitching.value = true;
+  sourceError.value = undefined;
+  ++loadSequence;
+  ++searchSeq;
+  try {
+    await app.selectCoreSource(source);
+  } catch (cause) {
+    sourceError.value = cause instanceof Error ? cause.message : String(cause);
+  } finally {
+    sourceSwitching.value = false;
   }
 }
 
@@ -179,10 +263,42 @@ const searchError = ref<string | undefined>();
 const searchResult = ref<SearchResponse | undefined>();
 let searchSeq = 0;
 
+function invalidateContentView(): void {
+  ++loadSequence;
+  ++searchSeq;
+  allQuestions.value = [];
+  fetchedOnce = false;
+  fetchedSource = undefined;
+  fetchedContentId = undefined;
+  selectedIds.value = new Set();
+  searchQuery.value = '';
+  searchResult.value = undefined;
+  searchError.value = undefined;
+}
+
+// Core status is broadcast to every Electron renderer. A source or bundled
+// revision change invalidates this module-level cache immediately; in-flight
+// list/search results from the previous bank are ignored by their sequences.
+watch(
+  () => ({
+    source: app.coreEndpointSource,
+    contentId: app.coreRuntimeStatus?.source === app.coreEndpointSource
+      ? app.coreRuntimeStatus.contentId
+      : undefined,
+  }),
+  (next, previous) => {
+    if (next.source === previous.source && next.contentId === previous.contentId) return;
+    invalidateContentView();
+    void load(true);
+  },
+);
+
 const searchMode = computed(() => searchQuery.value.trim() !== '');
 
 async function runSearch(q: string): Promise<void> {
   const seq = ++searchSeq;
+  const sourceAtStart = app.coreEndpointSource;
+  const client = app.coreClient;
   if (q === '') {
     searchResult.value = undefined;
     searchError.value = undefined;
@@ -192,11 +308,19 @@ async function runSearch(q: string): Promise<void> {
   searchBusy.value = true;
   searchError.value = undefined;
   try {
-    const res = await app.coreClient.search(q, { limit: 30 });
-    if (seq !== searchSeq) return; // a newer query superseded this one
+    const before = await client.manifest();
+    if (fetchedContentId && before.commit !== fetchedContentId) {
+      throw new Error('Die Aufgabenbank wurde seit dem Laden der Liste aktualisiert. Bitte erneut laden.');
+    }
+    const res = await client.search(q, { limit: 30 });
+    const after = await client.manifest();
+    if (after.commit !== before.commit) {
+      throw new Error('Die Aufgabenbank wurde während der Suche aktualisiert. Bitte erneut suchen.');
+    }
+    if (seq !== searchSeq || sourceAtStart !== app.coreEndpointSource) return;
     searchResult.value = res; // core ranks by relevance — never re-sort
   } catch (e) {
-    if (seq !== searchSeq) return;
+    if (seq !== searchSeq || sourceAtStart !== app.coreEndpointSource) return;
     searchError.value = e instanceof Error ? e.message : String(e);
     searchResult.value = undefined;
   } finally {
@@ -234,8 +358,19 @@ function hitExcluded(id: string): boolean {
   return q.parts.every((p) => (progress.partState.get(p.id)?.grading ?? 'unseen') === 'excluded');
 }
 
-function openHit(id: string): void {
-  void router.push({ path: '/practice', query: practiceQuery({ questions: id }) });
+function loadedContentIdentity(): { source: CoreSourcePreference; contentId: string } | undefined {
+  if (!fetchedSource || !fetchedContentId) {
+    sourceError.value = 'Die genaue Aufgabenbank-Version fehlt. Bitte lade die Aufgabenliste erneut.';
+    return undefined;
+  }
+  return { source: fetchedSource, contentId: fetchedContentId };
+}
+
+async function openHit(id: string): Promise<void> {
+  const identity = loadedContentIdentity();
+  if (!identity) return;
+  await practice.startPrepared([id], identity.source, identity.contentId);
+  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
 }
 
 function partGrading(partId: string): GradingOrUnseen {
@@ -421,20 +556,24 @@ const playableIds = computed(() => filtered.value.filter((q) => q.playable).map(
 
 const selectedIds = ref<Set<string>>(new Set());
 
-function practiceAll(): void {
+async function practiceAll(): Promise<void> {
   const targets = selectedIds.value.size > 0 ? Array.from(selectedIds.value) : playableIds.value;
   if (targets.length === 0) return;
+  const identity = loadedContentIdentity();
+  if (!identity) return;
   // Store handoff instead of ?questions=<hundreds of ids>: the session is
   // seeded here and `prepared` tells /practice to mount onto it. The marker
   // is what separates "the set I just picked" from "a set left over from
   // earlier" — without it the practice view had to guess from store phase.
-  void practice.startPrepared(targets);
-  void router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+  await practice.startPrepared(targets, identity.source, identity.contentId);
+  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
 }
 
-function practiceSingle(id: string): void {
-  void practice.startPrepared([id]);
-  void router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+async function practiceSingle(id: string): Promise<void> {
+  const identity = loadedContentIdentity();
+  if (!identity) return;
+  await practice.startPrepared([id], identity.source, identity.contentId);
+  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
 }
 
 function toggleSelection(q: QuestionSummary): void {
@@ -457,6 +596,48 @@ function firstCode(q: QuestionSummary): string | undefined {
         <h1 class="browse__title q-page-title">Aufgaben</h1>
         <QButton :disabled="playableIds.length === 0" @click="practiceAll">Auswahl üben →</QButton>
       </div>
+
+      <section v-if="desktopSourceSelector" class="browse__sources" aria-labelledby="browse-source-title">
+        <div class="browse__source-copy">
+          <div id="browse-source-title" class="browse__source-title">Aufgabenquelle</div>
+          <div class="browse__source-status" aria-live="polite">
+            <LoaderCircle v-if="sourceSwitching" :size="15" class="browse__source-spin" aria-hidden="true" />
+            <WifiOff v-else-if="sourcePreference === 'remote' && !app.online" :size="15" aria-hidden="true" />
+            <ShieldCheck v-else :size="15" aria-hidden="true" />
+            <span>{{ sourceStatusText }}</span>
+          </div>
+        </div>
+        <div class="browse__source-options" role="radiogroup" aria-label="Aufgabenquelle wählen">
+          <button
+            type="button"
+            role="radio"
+            class="browse__source-option browse__source-option--local"
+            :class="{ 'browse__source-option--selected': sourcePreference === 'local' }"
+            :aria-checked="sourcePreference === 'local'"
+            :disabled="sourceSwitching"
+            @click="selectSource('local')"
+          >
+            <HardDrive :size="18" aria-hidden="true" />
+            <span><strong>Lokal</strong><small>Auf diesem Gerät</small></span>
+          </button>
+          <button
+            type="button"
+            role="radio"
+            class="browse__source-option browse__source-option--remote"
+            :class="{ 'browse__source-option--selected': sourcePreference === 'remote' }"
+            :aria-checked="sourcePreference === 'remote'"
+            :disabled="sourceSwitching"
+            @click="selectSource('remote')"
+          >
+            <Cloud :size="18" aria-hidden="true" />
+            <span><strong>Remote-Core</strong><small>Über das Netzwerk</small></span>
+          </button>
+        </div>
+        <p class="browse__source-safety">{{ userDataStatusText }}. Ein Quellenwechsel löscht keine Antworten oder Speicherstände.</p>
+        <QNotice v-if="sourceError" tone="error" class="browse__source-error">
+          Quelle konnte nicht gewechselt werden: {{ sourceError }}
+        </QNotice>
+      </section>
 
       <div class="browse__searchrow">
         <SearchBox
@@ -687,6 +868,109 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 12px;
   margin-bottom: 16px;
   flex-wrap: wrap;
+}
+.browse__sources {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(300px, 1.25fr);
+  gap: 10px 16px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--q-border-soft);
+  border-radius: 14px;
+  background: var(--q-card);
+}
+.browse__source-copy {
+  align-self: center;
+  min-width: 0;
+}
+.browse__source-title {
+  color: var(--q-ink);
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+.browse__source-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: var(--q-mut-2);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+.browse__source-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.browse__source-option {
+  min-height: var(--q-control-height);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border: 1px solid var(--q-border-2);
+  border-radius: 11px;
+  background: var(--q-page);
+  color: var(--q-mut-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.browse__source-option span {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.browse__source-option strong {
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.browse__source-option small {
+  color: var(--q-faint);
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+.browse__source-option--selected {
+  border-color: var(--q-accent);
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
+  box-shadow: 0 0 0 1px var(--q-accent-ring);
+}
+.browse__source-option--local.browse__source-option--selected {
+  border-color: var(--q-ok-border);
+  background: var(--q-ok-bg);
+  color: var(--q-ok-ink);
+  box-shadow: none;
+}
+.browse__source-option:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+.browse__source-option:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.browse__source-safety {
+  grid-column: 1 / -1;
+  margin: -2px 0 0;
+  color: var(--q-faint);
+  font-size: 10.75px;
+  line-height: 1.4;
+}
+.browse__source-error {
+  grid-column: 1 / -1;
+}
+.browse__source-spin {
+  animation: browse-source-spin 0.85s linear infinite;
+}
+@keyframes browse-source-spin { to { transform: rotate(360deg); } }
+@media (max-width: 680px) {
+  .browse__sources { grid-template-columns: 1fr; }
+  .browse__source-safety,
+  .browse__source-error { grid-column: auto; }
 }
 .browse__searchrow {
   display: flex;

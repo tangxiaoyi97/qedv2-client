@@ -169,4 +169,73 @@ describe('SqliteStorage', () => {
     const reopened = openStorage();
     expect(reopened.get('auth', 'session')).toBeUndefined();
   });
+
+  it('retains monotonic revisions across overwrite and deletion', () => {
+    const storage = openStorage();
+    const address = { collection: 'app', key: 'revision-lifecycle' };
+    expect(storage.readBatch([address])).toEqual([{ ...address, revision: 0, exists: false }]);
+
+    storage.set(address.collection, address.key, { value: 1 });
+    storage.set(address.collection, address.key, { value: 2 });
+    storage.delete(address.collection, address.key);
+
+    expect(storage.readBatch([address])).toEqual([{ ...address, revision: 3, exists: false }]);
+  });
+
+  it('atomically commits across collections and rejects a stale second connection', () => {
+    const first = openStorage('shared.sqlite');
+    const second = openStorage('shared.sqlite');
+    const archive = { collection: 'archive', key: 'current' };
+    const history = { collection: 'history', key: 'log' };
+    const snapshots = first.readBatch([archive, history]);
+    const stale = second.readBatch([archive, history]);
+
+    expect(first.commitBatch({
+      ifRevisions: snapshots.map(({ collection, key, revision }) => ({ collection, key, revision })),
+      mutations: [
+        { ...archive, operation: 'set', value: { answer: 'first' } },
+        { ...history, operation: 'set', value: [{ id: 'first' }] },
+      ],
+    })).toEqual({ committed: true });
+    expect(second.commitBatch({
+      ifRevisions: stale.map(({ collection, key, revision }) => ({ collection, key, revision })),
+      mutations: [
+        { ...archive, operation: 'set', value: { answer: 'stale' } },
+        { ...history, operation: 'set', value: [{ id: 'stale' }] },
+      ],
+    })).toEqual({ committed: false });
+    expect(second.get('archive', 'current')).toEqual({ answer: 'first' });
+    expect(second.get('history', 'log')).toEqual([{ id: 'first' }]);
+  });
+
+  it('rolls back every value and revision when SQLite rejects one batch mutation', () => {
+    const file = join(temporaryDirectory, 'rollback.sqlite');
+    const storage = new SqliteStorage(file);
+    openStores.push(storage);
+    const raw = new DatabaseSync(file);
+    raw.exec(`
+      CREATE TRIGGER reject_simulated_disk_failure
+      BEFORE INSERT ON kv
+      WHEN NEW.collection = 'app' AND NEW.key = 'fail'
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated disk failure');
+      END;
+    `);
+    raw.close();
+    const archive = { collection: 'archive', key: 'rollback' };
+    const session = { collection: 'app', key: 'fail' };
+    const snapshots = storage.readBatch([archive, session]);
+
+    expect(() => storage.commitBatch({
+      ifRevisions: snapshots.map(({ collection, key, revision }) => ({ collection, key, revision })),
+      mutations: [
+        { ...archive, operation: 'set', value: { mustRollback: true } },
+        { ...session, operation: 'set', value: { mustFail: true } },
+      ],
+    })).toThrow('simulated disk failure');
+    expect(storage.readBatch([archive, session])).toEqual([
+      { ...archive, revision: 0, exists: false },
+      { ...session, revision: 0, exists: false },
+    ]);
+  });
 });

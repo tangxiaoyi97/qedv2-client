@@ -37,6 +37,17 @@ export class NetworkError extends Error {
   }
 }
 
+/** A 2xx Core response that violates a security-relevant wire contract. */
+export class CoreProtocolError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'CoreProtocolError';
+  }
+}
+
 /* ================================================================== *
  * qed2-core (content line) — all anonymous, all read-only
  * ================================================================== */
@@ -62,8 +73,22 @@ export interface QuestionsListResponse {
   total: number;
 }
 
+/**
+ * A full question together with the hash computed by Core from the raw bank
+ * JSON.  The hash cannot be reconstructed from the parsed Question object:
+ * schema defaults intentionally make the wire object differ from the raw
+ * file that the manifest authenticates.
+ */
+export interface ContentQuestion {
+  question: Question;
+  /** Raw bank JSON hash, equal to the corresponding manifest item. */
+  contentHash: string;
+  /** Canonical hash of the actual parsed/wire Question payload. */
+  wireHash: string;
+}
+
 export interface BatchResponse {
-  questions: Question[];
+  questions: ContentQuestion[];
   missing: string[];
 }
 
@@ -234,6 +259,10 @@ export type ResolveResponse = ResolveOk | SyncConflict;
 export interface AttemptRecord {
   /** Stable across retries; old clients may omit it during rollout. */
   clientAttemptId?: string;
+  /** Core selected when this answer was graded. Optional for old clients. */
+  contentSource?: 'local' | 'remote';
+  /** Immutable question-bank revision. Optional for old clients. */
+  contentId?: string;
   questionId: string;
   partId: string;
   correct: boolean;
@@ -260,6 +289,10 @@ export interface HistoryQuery {
 /** Identifiers only — question content always comes from core (contract §8.3). */
 export interface ServerHistoryItem {
   id: string;
+  /** Absent on history rows recorded before provenance support. */
+  contentSource?: 'local' | 'remote';
+  /** Absent on history rows recorded before provenance support. */
+  contentId?: string;
   questionId: string;
   partId: string;
   correct: boolean;

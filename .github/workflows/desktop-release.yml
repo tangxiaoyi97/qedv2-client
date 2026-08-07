@@ -5,21 +5,43 @@ on:
     tags: ['v*']
   workflow_dispatch:
     inputs:
-      tag:
-        description: Existing v-prefixed tag to release (for example v2.0.0)
+      mode:
+        description: Verify all packages without publishing, or publish an existing tag
         required: true
+        default: verify-only
+        type: choice
+        options:
+          - verify-only
+          - publish
+      ref:
+        description: Branch or commit to rehearse in verify-only mode
+        required: false
+        default: preview
+        type: string
+      tag:
+        description: Existing v-prefixed tag (required only in publish mode)
+        required: false
         type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  # A tag push and a manual retry for that same tag must serialize against one
+  # another: both mutate the same unpublished draft asset set.
+  group: desktop-release-${{ github.event_name == 'push' && format('publish-{0}', github.ref_name) || inputs.mode == 'publish' && format('publish-{0}', inputs.tag) || format('verify-{0}', inputs.ref || 'preview') }}
   cancel-in-progress: false
 
 env:
   QED2_CORE_SOURCE: ${{ github.workspace }}/qedv2-core
   QED2_BANK_SOURCE: ${{ github.workspace }}/srdpmppr
+  QED2_EXPECTED_CORE_REPOSITORY: tangxiaoyi97/qedv2-core
+  QED2_EXPECTED_CORE_REF: main
+  QED2_EXPECTED_CORE_VERSION: 1.10.0
+  QED2_EXPECTED_BANK_REPOSITORY: tangxiaoyi97/srdpmppr
+  QED2_EXPECTED_BANK_REF: pastpapers
+  QED2_EXPECTED_BANK_SHA: ff304623607463386026ebeebdbc17a576db1925
+  QED2_EXPECTED_BANK_COMMIT_COUNT: '5'
 
 jobs:
   release_context:
@@ -32,6 +54,8 @@ jobs:
       client_sha: ${{ steps.release.outputs.client_sha }}
       core_sha: ${{ steps.release.outputs.core_sha }}
       bank_sha: ${{ steps.release.outputs.bank_sha }}
+      tag_object_sha: ${{ steps.release.outputs.tag_object_sha }}
+      publish: ${{ steps.release.outputs.publish }}
     defaults:
       run:
         working-directory: qedv2-client
@@ -48,10 +72,10 @@ jobs:
             exit 1
           fi
 
-      - name: Check out release tag
+      - name: Check out release candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || (inputs.mode == 'publish' && inputs.tag || inputs.ref) }}
           fetch-depth: 0
           path: qedv2-client
           persist-credentials: false
@@ -64,17 +88,52 @@ jobs:
         id: release
         shell: bash
         env:
-          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_MODE: ${{ inputs.mode }}
+          REQUESTED_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must be a stable v-prefixed semantic version: $REQUESTED_TAG" >&2
+          PUBLISH_RELEASE=false
+          TAG_OBJECT_SHA=''
+          if [[ "$EVENT_NAME" == workflow_dispatch && "$DISPATCH_MODE" != verify-only && "$DISPATCH_MODE" != publish ]]; then
+            echo "Unsupported manual release mode: $DISPATCH_MODE" >&2
             exit 1
           fi
+          if [[ "$EVENT_NAME" == push || "$DISPATCH_MODE" == publish ]]; then
+            PUBLISH_RELEASE=true
+            if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Publish mode requires a stable v-prefixed semantic version: $REQUESTED_TAG" >&2
+              exit 1
+            fi
+          fi
           DESKTOP_VERSION="$(node -p "require('./packages/desktop/package.json').version")"
-          if [[ "$REQUESTED_TAG" != "v$DESKTOP_VERSION" ]]; then
-            echo "Tag/desktop versions disagree: tag=$REQUESTED_TAG desktop=$DESKTOP_VERSION" >&2
-            exit 1
+          RELEASE_TAG="v$DESKTOP_VERSION"
+          if [[ "$PUBLISH_RELEASE" == true ]]; then
+            if [[ "$REQUESTED_TAG" != "$RELEASE_TAG" ]]; then
+              echo "Tag/desktop versions disagree: tag=$REQUESTED_TAG desktop=$DESKTOP_VERSION" >&2
+              exit 1
+            fi
+          else
+            REQUESTED_TAG="$RELEASE_TAG"
+            TAG_ERROR="$RUNNER_TEMP/qed2-tag-lookup-error.txt"
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" >/dev/null 2>"$TAG_ERROR"; then
+              echo "verify-only must run before $RELEASE_TAG exists" >&2
+              exit 1
+            elif ! grep -Fq 'HTTP 404' "$TAG_ERROR"; then
+              cat "$TAG_ERROR" >&2
+              echo "Could not prove that $RELEASE_TAG is absent; refusing verify-only." >&2
+              exit 1
+            fi
+            RELEASE_ERROR="$RUNNER_TEMP/qed2-release-lookup-error.txt"
+            if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" >/dev/null 2>"$RELEASE_ERROR"; then
+              echo "verify-only must run before a GitHub Release for $RELEASE_TAG exists" >&2
+              exit 1
+            elif ! grep -Fq 'HTTP 404' "$RELEASE_ERROR"; then
+              cat "$RELEASE_ERROR" >&2
+              echo "Could not prove that the $RELEASE_TAG GitHub Release is absent; refusing verify-only." >&2
+              exit 1
+            fi
           fi
           for PACKAGE_PATH in package.json packages/core-logic/package.json packages/ui/package.json packages/web/package.json; do
             PACKAGE_VERSION="$(node -p "require('./$PACKAGE_PATH').version")"
@@ -88,22 +147,61 @@ jobs:
             exit 1
           fi
           CLIENT_SHA="$(git rev-parse HEAD)"
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
-          if [[ "$CLIENT_SHA" != "$MAIN_SHA" ]]; then
-            echo "Release tag must resolve to the current origin/main head: tag=$CLIENT_SHA main=$MAIN_SHA" >&2
-            exit 1
+          if [[ "$PUBLISH_RELEASE" == true ]]; then
+            git fetch --no-tags origin main:refs/remotes/origin/main
+            MAIN_SHA="$(git rev-parse refs/remotes/origin/main)"
+            if [[ "$CLIENT_SHA" != "$MAIN_SHA" ]]; then
+              echo "Release tag must resolve to the current origin/main head: tag=$CLIENT_SHA main=$MAIN_SHA" >&2
+              exit 1
+            fi
+            if ! TAG_OBJECT_SHA="$(git rev-parse --verify "refs/tags/$REQUESTED_TAG^{tag}" 2>/dev/null)"; then
+              echo "Release tag must be an annotated tag object: $REQUESTED_TAG" >&2
+              exit 1
+            fi
+            TAG_COMMIT_SHA="$(git rev-parse --verify "refs/tags/$REQUESTED_TAG^{commit}")"
+            if [[ ! "$TAG_OBJECT_SHA" =~ ^[0-9a-f]{40}$ || "$TAG_COMMIT_SHA" != "$CLIENT_SHA" ]]; then
+              echo "Annotated release tag does not point directly to the frozen client commit." >&2
+              exit 1
+            fi
+            REMOTE_TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REQUESTED_TAG")"
+            REMOTE_TAG_TYPE="$(jq -r '.object.type' <<< "$REMOTE_TAG_JSON")"
+            REMOTE_TAG_OBJECT_SHA="$(jq -r '.object.sha' <<< "$REMOTE_TAG_JSON")"
+            if [[ "$REMOTE_TAG_TYPE" != tag || "$REMOTE_TAG_OBJECT_SHA" != "$TAG_OBJECT_SHA" ]]; then
+              echo "Remote release ref is not the frozen annotated tag object." >&2
+              exit 1
+            fi
+            REMOTE_TAG_OBJECT_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$TAG_OBJECT_SHA")"
+            if [[ "$(jq -r '.object.type' <<< "$REMOTE_TAG_OBJECT_JSON")" != commit || \
+                  "$(jq -r '.object.sha' <<< "$REMOTE_TAG_OBJECT_JSON")" != "$CLIENT_SHA" ]]; then
+              echo "Annotated release tag must point directly to the frozen client commit." >&2
+              exit 1
+            fi
           fi
+          RUNTIME_FORMAT_VERSION="$(node -p "require('./packages/desktop/runtime-sources.json').formatVersion")"
           CORE_REPOSITORY="$(node -p "require('./packages/desktop/runtime-sources.json').core.repository")"
+          CORE_REF="$(node -p "require('./packages/desktop/runtime-sources.json').core.ref")"
           BANK_REPOSITORY="$(node -p "require('./packages/desktop/runtime-sources.json').bank.repository")"
+          BANK_REF="$(node -p "require('./packages/desktop/runtime-sources.json').bank.ref")"
           CORE_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').core.commit")"
           BANK_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').bank.commit")"
-          if [[ "$CORE_REPOSITORY" != "tangxiaoyi97/qedv2-core" || "$BANK_REPOSITORY" != "tangxiaoyi97/srdpmppr" ]]; then
-            echo "runtime-sources.json contains an unexpected repository" >&2
+          if [[ "$RUNTIME_FORMAT_VERSION" != 1 ]]; then
+            echo "runtime-sources.json has an unsupported format version." >&2
+            exit 1
+          fi
+          if [[ "$CORE_REPOSITORY" != "$QED2_EXPECTED_CORE_REPOSITORY" || "$CORE_REF" != "$QED2_EXPECTED_CORE_REF" ]]; then
+            echo "runtime-sources.json must use the reviewed Core main source." >&2
+            exit 1
+          fi
+          if [[ "$BANK_REPOSITORY" != "$QED2_EXPECTED_BANK_REPOSITORY" || "$BANK_REF" != "$QED2_EXPECTED_BANK_REF" ]]; then
+            echo "runtime-sources.json must use the reviewed question-bank pastpapers source." >&2
             exit 1
           fi
           if [[ ! "$CORE_SHA" =~ ^[0-9a-f]{40}$ || ! "$BANK_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "runtime-sources.json must pin full Git commit IDs" >&2
+            exit 1
+          fi
+          if [[ "$BANK_SHA" != "$QED2_EXPECTED_BANK_SHA" ]]; then
+            echo "Desktop 2.1.0 must pin the reviewed question-bank commit $QED2_EXPECTED_BANK_SHA." >&2
             exit 1
           fi
           echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
@@ -111,12 +209,15 @@ jobs:
           echo "client_sha=$CLIENT_SHA" >> "$GITHUB_OUTPUT"
           echo "core_sha=$CORE_SHA" >> "$GITHUB_OUTPUT"
           echo "bank_sha=$BANK_SHA" >> "$GITHUB_OUTPUT"
+          echo "tag_object_sha=$TAG_OBJECT_SHA" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Check out locked Core
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ steps.release.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -126,8 +227,34 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ steps.release.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
+
+      - name: Prove locked Core main and bank source identities
+        shell: bash
+        working-directory: .
+        env:
+          CORE_SHA: ${{ steps.release.outputs.core_sha }}
+          BANK_SHA: ${{ steps.release.outputs.bank_sha }}
+        run: |
+          set -euo pipefail
+          CORE_HEAD="$(git -C "$QED2_CORE_SOURCE" rev-parse HEAD)"
+          CORE_MAIN="$(git -C "$QED2_CORE_SOURCE" rev-parse refs/remotes/origin/main)"
+          BANK_HEAD="$(git -C "$QED2_BANK_SOURCE" rev-parse HEAD)"
+          if [[ "$CORE_HEAD" != "$CORE_SHA" || "$CORE_MAIN" != "$CORE_SHA" ]]; then
+            echo "Pinned Core must be exactly the current origin/main head: pin=$CORE_SHA head=$CORE_HEAD main=$CORE_MAIN" >&2
+            exit 1
+          fi
+          CORE_VERSION="$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version))" "$QED2_CORE_SOURCE/package.json")"
+          if [[ "$CORE_VERSION" != "$QED2_EXPECTED_CORE_VERSION" ]]; then
+            echo "Pinned Core version must be $QED2_EXPECTED_CORE_VERSION, found $CORE_VERSION." >&2
+            exit 1
+          fi
+          if [[ "$BANK_SHA" != "$QED2_EXPECTED_BANK_SHA" || "$BANK_HEAD" != "$QED2_EXPECTED_BANK_SHA" ]]; then
+            echo "Question-bank checkout does not match the reviewed fixed commit." >&2
+            exit 1
+          fi
 
   release_verify:
     name: Verify frozen release sources
@@ -150,6 +277,7 @@ jobs:
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -159,6 +287,7 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
 
@@ -192,13 +321,196 @@ jobs:
           pnpm --filter @qed2/desktop runtime:prepare
           pnpm --filter @qed2/desktop runtime:smoke
 
+      - name: Verify complete and deterministic revision vault
+        shell: bash
+        env:
+          BANK_SHA: ${{ needs.release_context.outputs.bank_sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_COMMITS="$RUNNER_TEMP/qed2-revision-commits.txt"
+          REPEAT_ROOT="$(mktemp -d "$RUNNER_TEMP/qed2-revision-vault.XXXXXX")"
+          REPEAT_VAULT="$REPEAT_ROOT/vault"
+          cleanup_revision_vault() { rm -rf -- "$REPEAT_ROOT"; }
+          trap cleanup_revision_vault EXIT
+
+          if [[ "$(git -C "$QED2_BANK_SOURCE" rev-parse --is-shallow-repository)" != false ]]; then
+            echo "Revision-vault proof requires the complete question-bank history." >&2
+            exit 1
+          fi
+          git -C "$QED2_BANK_SOURCE" rev-list --reverse --topo-order "$BANK_SHA" > "$EXPECTED_COMMITS"
+          if [[ "$(wc -l < "$EXPECTED_COMMITS" | tr -d '[:space:]')" != "$QED2_EXPECTED_BANK_COMMIT_COUNT" ]]; then
+            echo "Question-bank ancestry no longer contains exactly $QED2_EXPECTED_BANK_COMMIT_COUNT commits." >&2
+            exit 1
+          fi
+
+          node "$QED2_CORE_SOURCE/dist/revisions/generate-revision-vault.js" \
+            --bank "$QED2_BANK_SOURCE" \
+            --output "$REPEAT_VAULT" \
+            --commit "$BANK_SHA" \
+            --repository "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
+            --ref "$QED2_EXPECTED_BANK_REF" \
+            --schema-min 2 \
+            --schema-max 3
+
+          node --input-type=module - \
+            "$PWD/packages/desktop/runtime" \
+            "$REPEAT_VAULT" \
+            "$EXPECTED_COMMITS" \
+            "$BANK_SHA" \
+            "$QED2_EXPECTED_BANK_COMMIT_COUNT" \
+            "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
+            "$QED2_EXPECTED_BANK_REF" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { lstat, readFile, readdir } from 'node:fs/promises';
+          import path from 'node:path';
+
+          const [runtimeRoot, repeatedVault, commitsFile, pinnedCommit, expectedCountText, repository, ref] =
+            process.argv.slice(2);
+          const expectedCount = Number(expectedCountText);
+          const primaryVault = path.join(runtimeRoot, 'bank', 'revisions');
+          const expectedCommits = (await readFile(commitsFile, 'utf8')).trim().split('\n').filter(Boolean);
+          const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+          const isRecord = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+          const fullGitSha = /^[0-9a-f]{40}$/u;
+          const sha256Digest = /^[0-9a-f]{64}$/u;
+
+          assert.equal(expectedCommits.length, expectedCount, 'full bank ancestry count changed');
+          assert.equal(expectedCommits.at(-1), pinnedCommit, 'bank ancestry does not end at the pin');
+          assert.equal(new Set(expectedCommits).size, expectedCommits.length, 'bank ancestry contains duplicates');
+          assert.ok(expectedCommits.every((commit) => fullGitSha.test(commit)), 'bank ancestry contains an invalid commit');
+
+          async function inventory(root) {
+            const files = [];
+            async function visit(directory, prefix = '') {
+              const entries = await readdir(directory, { withFileTypes: true });
+              entries.sort((left, right) => left.name.localeCompare(right.name, 'en'));
+              for (const entry of entries) {
+                const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+                const absolute = path.join(directory, entry.name);
+                const info = await lstat(absolute);
+                assert.equal(info.isSymbolicLink(), false, `vault contains symlink: ${relative}`);
+                if (info.isDirectory()) {
+                  await visit(absolute, relative);
+                } else {
+                  assert.equal(info.isFile(), true, `vault contains unsupported entry: ${relative}`);
+                  const bytes = await readFile(absolute);
+                  files.push({ path: relative, size: bytes.byteLength, sha256: sha256(bytes) });
+                }
+              }
+            }
+            await visit(root);
+            return files;
+          }
+
+          async function validateVault(vaultRoot) {
+            const catalogPath = path.join(vaultRoot, 'revision-catalog.v1.json');
+            const catalogBytes = await readFile(catalogPath);
+            const catalog = JSON.parse(catalogBytes.toString('utf8'));
+            assert.equal(catalog.formatVersion, 1, 'revision catalog format changed');
+            assert.equal(catalog.repository, repository, 'revision catalog repository changed');
+            assert.equal(catalog.ref, ref, 'revision catalog ref changed');
+            assert.equal(catalog.pinnedCommit, pinnedCommit, 'revision catalog pin changed');
+            assert.deepEqual(catalog.commitOrder, expectedCommits, 'catalog does not cover full git rev-list');
+            assert.equal(catalog.commitOrder.length, expectedCount, 'catalog commit count changed');
+            assert.ok(isRecord(catalog.commits), 'catalog commits must be an object');
+            assert.ok(isRecord(catalog.objects), 'catalog objects must be an object');
+            assert.deepEqual(
+              Object.keys(catalog.commits).sort(),
+              [...expectedCommits].sort(),
+              'catalog commit records are incomplete',
+            );
+
+            const referencedObjects = new Set();
+            let questionRevisionCount = 0;
+            for (const commit of expectedCommits) {
+              const record = catalog.commits[commit];
+              assert.ok(isRecord(record?.questions), `invalid question records for ${commit}`);
+              assert.ok(isRecord(record?.assets), `invalid asset records for ${commit}`);
+              for (const question of Object.values(record.questions)) {
+                assert.ok(isRecord(question), `invalid question metadata for ${commit}`);
+                assert.match(question.wireObjectSha256, sha256Digest, 'invalid question object digest');
+                const object = catalog.objects[question.wireObjectSha256];
+                assert.equal(object?.kind, 'question', 'question object kind mismatch');
+                assert.equal(object?.bytes, question.wireBytes, 'question object size mismatch');
+                referencedObjects.add(question.wireObjectSha256);
+                questionRevisionCount += 1;
+              }
+              for (const asset of Object.values(record.assets)) {
+                assert.ok(isRecord(asset), `invalid asset metadata for ${commit}`);
+                assert.match(asset.objectSha256, sha256Digest, 'invalid asset object digest');
+                const object = catalog.objects[asset.objectSha256];
+                assert.equal(object?.kind, 'asset', 'asset object kind mismatch');
+                assert.equal(object?.bytes, asset.bytes, 'asset object size mismatch');
+                assert.equal(object?.mimeType, asset.mimeType, 'asset MIME mismatch');
+                referencedObjects.add(asset.objectSha256);
+              }
+            }
+
+            const objectEntries = Object.entries(catalog.objects);
+            assert.deepEqual(
+              [...referencedObjects].sort(),
+              objectEntries.map(([digest]) => digest).sort(),
+              'catalog has missing or unreferenced objects',
+            );
+            let objectBytes = 0;
+            for (const [digest, metadata] of objectEntries) {
+              assert.match(digest, sha256Digest, 'invalid catalog object digest');
+              assert.ok(isRecord(metadata), `invalid object metadata: ${digest}`);
+              assert.ok(Number.isSafeInteger(metadata.bytes) && metadata.bytes >= 0, `invalid object size: ${digest}`);
+              const objectPath = path.join(vaultRoot, 'objects', digest.slice(0, 2), digest.slice(2));
+              const info = await lstat(objectPath);
+              assert.equal(info.isFile() && !info.isSymbolicLink(), true, `object is not a regular file: ${digest}`);
+              const bytes = await readFile(objectPath);
+              assert.equal(bytes.byteLength, metadata.bytes, `object length mismatch: ${digest}`);
+              assert.equal(sha256(bytes), digest, `object SHA-256 mismatch: ${digest}`);
+              objectBytes += bytes.byteLength;
+            }
+
+            const files = await inventory(vaultRoot);
+            const actualObjectPaths = files
+              .filter((file) => file.path !== 'revision-catalog.v1.json')
+              .map((file) => file.path)
+              .sort();
+            const expectedObjectPaths = objectEntries
+              .map(([digest]) => `objects/${digest.slice(0, 2)}/${digest.slice(2)}`)
+              .sort();
+            assert.deepEqual(actualObjectPaths, expectedObjectPaths, 'vault has missing or unexpected object files');
+            return { catalogBytes, files, objectBytes, objectCount: objectEntries.length, questionRevisionCount };
+          }
+
+          const primary = await validateVault(primaryVault);
+          const repeated = await validateVault(repeatedVault);
+          assert.deepEqual(primary.catalogBytes, repeated.catalogBytes, 'second catalog generation is not deterministic');
+          assert.deepEqual(primary.files, repeated.files, 'second vault generation is not byte-for-byte deterministic');
+
+          const manifest = JSON.parse(await readFile(path.join(runtimeRoot, 'runtime-manifest.json'), 'utf8'));
+          assert.equal(manifest.formatVersion, 3, 'Desktop runtime manifest must be v3');
+          assert.equal(manifest.bank?.commit, pinnedCommit, 'runtime bank pin differs from revision vault');
+          assert.equal(manifest.revisions?.catalog, 'bank/revisions/revision-catalog.v1.json');
+          assert.equal(manifest.revisions?.formatVersion, 1);
+          assert.equal(manifest.revisions?.pinnedCommit, pinnedCommit);
+          assert.equal(manifest.revisions?.commitCount, expectedCount);
+          assert.equal(manifest.revisions?.questionRevisionCount, primary.questionRevisionCount);
+          assert.equal(manifest.revisions?.objectCount, primary.objectCount);
+          assert.equal(manifest.revisions?.objectBytes, primary.objectBytes);
+          const manifestFiles = new Map(manifest.files.map((file) => [file.path, file]));
+          for (const file of primary.files) {
+            const record = manifestFiles.get(`bank/revisions/${file.path}`);
+            assert.equal(record?.type, 'file', `runtime manifest omits vault file ${file.path}`);
+            assert.equal(record?.size, file.size, `runtime manifest size differs for ${file.path}`);
+            assert.equal(record?.sha256, file.sha256, `runtime manifest digest differs for ${file.path}`);
+          }
+          NODE
+
+          trap - EXIT
+          cleanup_revision_vault
+
   macos:
-    name: macOS ${{ matrix.arch }} signed and notarized
+    name: macOS ${{ matrix.arch }} ad-hoc signed
     needs: [release_context, release_verify]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    environment:
-      name: desktop-signing
     defaults:
       run:
         working-directory: qedv2-client
@@ -211,33 +523,6 @@ jobs:
           - arch: x64
             runner: macos-15-intel
     steps:
-      - name: Validate macOS signing and notarization configuration
-        shell: bash
-        working-directory: .
-        env:
-          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$MAC_CSC_LINK" || -z "$MAC_CSC_KEY_PASSWORD" ]]; then
-            echo "Missing MAC_CSC_LINK or MAC_CSC_KEY_PASSWORD in desktop-signing." >&2
-            exit 1
-          fi
-          API_READY=false
-          ID_READY=false
-          if [[ -n "$APPLE_API_KEY_BASE64" && -n "$APPLE_API_KEY_ID" && -n "$APPLE_API_ISSUER" ]]; then API_READY=true; fi
-          if [[ -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then ID_READY=true; fi
-          if [[ "$API_READY" != true && "$ID_READY" != true ]]; then
-            echo "Configure either App Store Connect API-key secrets or the complete Apple ID notarization secret set." >&2
-            exit 1
-          fi
-
       - name: Check out frozen client
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -250,6 +535,7 @@ jobs:
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -259,6 +545,7 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
 
@@ -295,37 +582,16 @@ jobs:
           pnpm --filter @qed2/desktop runtime:smoke
           pnpm --filter @qed2/desktop build
 
-      - name: Prepare App Store Connect API key
-        shell: bash
-        env:
-          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$APPLE_API_KEY_BASE64" ]]; then exit 0; fi
-          KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-          printf '%s' "$APPLE_API_KEY_BASE64" | base64 -D > "$KEY_PATH"
-          chmod 600 "$KEY_PATH"
-          echo "APPLE_API_KEY=$KEY_PATH" >> "$GITHUB_ENV"
-
-      - name: Build, sign and notarize
-        env:
-          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Build structurally signed, unnotarized packages
         run: >-
           pnpm --filter @qed2/desktop exec electron-builder
-          --config electron-builder.yml
-          --mac --${{ matrix.arch }} --publish never --config.forceCodeSigning=true
+          --config electron-builder.unsigned.yml
+          --mac --${{ matrix.arch }} --publish never
 
-      - name: Verify runtime copied into signed macOS package
+      - name: Verify runtime copied into macOS package
         run: pnpm --filter @qed2/desktop exec node scripts/smoke-runtime.mjs --packaged
 
-      - name: Verify signature and stapled notarization ticket
+      - name: Verify complete ad-hoc signature and unsigned release marker
         shell: bash
         run: |
           set -euo pipefail
@@ -341,8 +607,15 @@ jobs:
           verify_app() {
             local candidate="$1"
             codesign --verify --deep --strict --verbose=2 "$candidate"
-            xcrun stapler validate "$candidate"
-            spctl --assess --type execute --verbose=4 "$candidate"
+            local signature
+            signature="$(codesign -dvvv "$candidate" 2>&1)"
+            grep -Fq 'Signature=adhoc' <<< "$signature"
+            grep -Fq 'TeamIdentifier=not set' <<< "$signature"
+            grep -Eq 'Sealed Resources version=2 .* files=[1-9][0-9]*' <<< "$signature"
+            local marker="$candidate/Contents/Resources/qed2-unsigned-release.json"
+            test -f "$marker"
+            test ! -L "$marker"
+            node -e "const fs=require('node:fs');const v=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(v)!==JSON.stringify({formatVersion:1,selfUpdate:'manual-only'}))process.exit(1)" "$marker"
           }
 
           APPS=("$ARTIFACT_ROOT"/mac*/QED2.app)
@@ -381,7 +654,7 @@ jobs:
           trap - EXIT
           cleanup
 
-      - name: Boot-smoke signed and notarized macOS application
+      - name: Boot-smoke ad-hoc signed macOS application
         run: >-
           pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
           --diagnostics-dir "${{ runner.temp }}/qed2-packaged-smoke"
@@ -405,30 +678,17 @@ jobs:
           path: |
             qedv2-client/packages/desktop/dist-packages/*.dmg
             qedv2-client/packages/desktop/dist-packages/*.zip
-            qedv2-client/packages/desktop/dist-packages/*.blockmap
+            qedv2-client/packages/desktop/dist-packages/*.zip.blockmap
 
   windows:
-    name: Windows x64 signed
+    name: Windows x64 unsigned
     needs: [release_context, release_verify]
     runs-on: windows-2022
     timeout-minutes: 75
-    environment:
-      name: desktop-signing
     defaults:
       run:
         working-directory: qedv2-client
     steps:
-      - name: Validate Windows signing configuration
-        shell: pwsh
-        working-directory: .
-        env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK) -or [string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) {
-            throw 'Missing WIN_CSC_LINK or WIN_CSC_KEY_PASSWORD in desktop-signing.'
-          }
-
       - name: Check out frozen client
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -441,6 +701,7 @@ jobs:
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -450,6 +711,7 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
 
@@ -486,35 +748,34 @@ jobs:
           pnpm --filter @qed2/desktop runtime:smoke
           pnpm --filter @qed2/desktop build
 
-      - name: Build and sign NSIS installer
-        env:
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - name: Build unsigned NSIS installer
         run: >-
           pnpm --filter @qed2/desktop exec electron-builder
-          --config electron-builder.yml
-          --win --x64 --publish never --config.forceCodeSigning=true
+          --config electron-builder.unsigned.yml
+          --win --x64 --publish never
 
-      - name: Verify runtime copied into signed Windows package
+      - name: Verify runtime copied into Windows package
         run: pnpm --filter @qed2/desktop exec node scripts/smoke-runtime.mjs --packaged
 
-      - name: Verify Authenticode signature
+      - name: Verify unsigned installer and manual-update marker
         shell: pwsh
         run: |
           $installers = @(Get-ChildItem packages/desktop/dist-packages -File -Filter '*.exe')
           if ($installers.Count -ne 1) { throw "Expected one NSIS installer, found $($installers.Count)" }
           $signature = Get-AuthenticodeSignature $installers[0].FullName
-          if ($signature.Status -ne 'Valid') {
-            throw "Invalid Authenticode signature: $($signature.Status) $($signature.StatusMessage)"
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Unsigned release unexpectedly has Authenticode status $($signature.Status): $($signature.StatusMessage)"
           }
-          if ($null -eq $signature.SignerCertificate) {
-            throw 'The installer has no signer certificate.'
+          $marker = 'packages/desktop/dist-packages/win-unpacked/resources/qed2-unsigned-release.json'
+          if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+            throw 'Unsigned release marker is missing from win-unpacked.'
           }
-          if ($null -eq $signature.TimeStamperCertificate) {
-            throw 'The installer signature has no trusted timestamp.'
+          $value = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+          if ($value.formatVersion -ne 1 -or $value.selfUpdate -ne 'manual-only') {
+            throw 'Unsigned release marker is invalid.'
           }
 
-      - name: Boot-smoke signed Windows application
+      - name: Boot-smoke unsigned Windows application
         run: >-
           pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
           --diagnostics-dir "${{ runner.temp }}/qed2-packaged-smoke"
@@ -541,7 +802,7 @@ jobs:
             qedv2-client/packages/desktop/dist-packages/latest.yml
 
   linux:
-    name: Linux x64 packages
+    name: Linux x64 unsigned packages
     needs: [release_context, release_verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -561,6 +822,7 @@ jobs:
         with:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
+          fetch-depth: 0
           path: qedv2-core
           ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
@@ -570,6 +832,7 @@ jobs:
         with:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
+          fetch-depth: 0
           path: srdpmppr
           persist-credentials: false
 
@@ -598,7 +861,7 @@ jobs:
       - name: Install Linux packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes rpm xvfb
+          sudo apt-get install --yes cpio rpm xvfb
 
       - name: Install dependencies
         run: |
@@ -614,7 +877,7 @@ jobs:
       - name: Build AppImage, deb and rpm
         run: >-
           pnpm --filter @qed2/desktop exec electron-builder
-          --config electron-builder.yml
+          --config electron-builder.unsigned.yml
           --linux --x64 --publish never
 
       - name: Verify runtime copied into Linux package tree
@@ -625,11 +888,44 @@ jobs:
         run: |
           set -euo pipefail
           ARTIFACT_ROOT="packages/desktop/dist-packages"
-          find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.AppImage' | grep -q .
-          find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.deb' | grep -q .
-          find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.rpm' | grep -q .
-          dpkg-deb --info "$ARTIFACT_ROOT"/*.deb >/dev/null
-          rpm --query --package --info "$ARTIFACT_ROOT"/*.rpm >/dev/null
+          mapfile -t APPIMAGES < <(find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.AppImage')
+          mapfile -t DEBS < <(find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.deb')
+          mapfile -t RPMS < <(find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name '*.rpm')
+          test "${#APPIMAGES[@]}" -eq 1
+          test "${#DEBS[@]}" -eq 1
+          test "${#RPMS[@]}" -eq 1
+          RELEASE_VERSION="$(node -p "require('./packages/desktop/package.json').version")"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.AppImage"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.deb"
+          test -f "$ARTIFACT_ROOT/QED2-$RELEASE_VERSION-linux-x64.rpm"
+          dpkg-deb --info "${DEBS[0]}" >/dev/null
+          rpm --query --package --info "${RPMS[0]}" >/dev/null
+          MARKER="$ARTIFACT_ROOT/linux-unpacked/resources/qed2-unsigned-release.json"
+          test -f "$MARKER"
+          test ! -L "$MARKER"
+          node -e "const fs=require('node:fs');const v=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(v)!==JSON.stringify({formatVersion:1,selfUpdate:'manual-only'}))process.exit(1)" "$MARKER"
+
+          VERIFY_ROOT="$(mktemp -d)"
+          cleanup_packages() { rm -rf "$VERIFY_ROOT"; }
+          trap cleanup_packages EXIT
+          mkdir -p "$VERIFY_ROOT/appimage" "$VERIFY_ROOT/deb" "$VERIFY_ROOT/rpm"
+          APPIMAGE_PATH="$(realpath "${APPIMAGES[0]}")"
+          DEB_PATH="$(realpath "${DEBS[0]}")"
+          RPM_PATH="$(realpath "${RPMS[0]}")"
+          (cd "$VERIFY_ROOT/appimage" && "$APPIMAGE_PATH" --appimage-extract >/dev/null)
+          dpkg-deb --extract "$DEB_PATH" "$VERIFY_ROOT/deb"
+          (cd "$VERIFY_ROOT/rpm" && rpm2cpio "$RPM_PATH" | cpio --extract --make-directories --quiet)
+
+          for PACKAGE_ROOT in "$VERIFY_ROOT/appimage" "$VERIFY_ROOT/deb" "$VERIFY_ROOT/rpm"; do
+            mapfile -t MARKERS < <(find "$PACKAGE_ROOT" -type f -name 'qed2-unsigned-release.json')
+            if [[ "${#MARKERS[@]}" -ne 1 || -L "${MARKERS[0]:-}" ]]; then
+              echo "Expected exactly one regular unsigned release marker in $PACKAGE_ROOT." >&2
+              exit 1
+            fi
+            node -e "const fs=require('node:fs');const v=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(v)!==JSON.stringify({formatVersion:1,selfUpdate:'manual-only'}))process.exit(1)" "${MARKERS[0]}"
+          done
+          trap - EXIT
+          cleanup_packages
 
       - name: Configure Chromium sandbox for Linux boot smoke
         shell: bash
@@ -669,17 +965,11 @@ jobs:
             qedv2-client/packages/desktop/dist-packages/*.rpm
             qedv2-client/packages/desktop/dist-packages/latest-linux.yml
 
-  publish:
-    name: Publish GitHub Release
+  assemble:
+    name: Assemble and verify complete release set
     needs: [release_context, macos, windows, linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    environment:
-      name: desktop-release
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
     steps:
       - name: Check out release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -700,7 +990,7 @@ jobs:
       # The final verifier reuses the exact BLAKE2 implementation pinned by
       # electron-builder to recompute every differential-update block. Install
       # only the Desktop dependency graph and disable lifecycle scripts: this
-      # keeps the publish job reproducible without downloading Electron again.
+      # keeps the assembly job reproducible without downloading Electron again.
       - name: Install release verifier dependencies
         run: pnpm --filter @qed2/desktop install --frozen-lockfile --ignore-scripts
 
@@ -711,9 +1001,23 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      # Two native macOS jobs each produce a correct per-architecture update
-      # manifest. Publish one manifest containing both ZIPs so MacUpdater can
-      # select the matching architecture from the artifact name.
+      - name: Record unsigned distribution limitations
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.release_context.outputs.version }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "QED2 $RELEASE_VERSION ships without paid platform signing identities." \
+            'macOS applications are completely ad-hoc signed but not Apple-notarized.' \
+            'Windows installers have no Authenticode signature.' \
+            'Linux packages have no publisher signature.' \
+            'QED2 verifies and resumes the package download, then requires manual installation.' \
+            'Only download artifacts from this GitHub release and verify SHA256SUMS.' \
+            > release-assets/UNSIGNED-BUILD-NOTICE.txt
+
+      # The two native macOS jobs produce independent per-architecture assets.
+      # Assemble one compatibility manifest that inventories both verified ZIPs.
       - name: Assemble macOS multi-architecture update metadata
         shell: bash
         env:
@@ -744,20 +1048,30 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.release_context.outputs.tag }}
           CLIENT_SHA: ${{ needs.release_context.outputs.client_sha }}
+          TAG_OBJECT_SHA: ${{ needs.release_context.outputs.tag_object_sha }}
           CORE_SHA: ${{ needs.release_context.outputs.core_sha }}
           BANK_SHA: ${{ needs.release_context.outputs.bank_sha }}
+          PUBLISH_RELEASE: ${{ needs.release_context.outputs.publish }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
-          if [[ "$REMOTE_TAG_SHA" != "$CLIENT_SHA" ]]; then
-            echo "Release tag moved during the run: expected $CLIENT_SHA, found $REMOTE_TAG_SHA" >&2
-            exit 1
-          fi
-          REMOTE_MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          if [[ "$REMOTE_MAIN_SHA" != "$CLIENT_SHA" ]]; then
-            echo "origin/main moved during the release: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
-            exit 1
+          if [[ "$PUBLISH_RELEASE" == true ]]; then
+            REMOTE_TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+            if [[ "$(jq -r '.object.type' <<< "$REMOTE_TAG_JSON")" != tag || \
+                  "$(jq -r '.object.sha' <<< "$REMOTE_TAG_JSON")" != "$TAG_OBJECT_SHA" ]]; then
+              echo "Annotated release tag object moved during release assembly." >&2
+              exit 1
+            fi
+            REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+            if [[ "$REMOTE_TAG_SHA" != "$CLIENT_SHA" ]]; then
+              echo "Release tag moved during the run: expected $CLIENT_SHA, found $REMOTE_TAG_SHA" >&2
+              exit 1
+            fi
+            REMOTE_MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+            if [[ "$REMOTE_MAIN_SHA" != "$CLIENT_SHA" ]]; then
+              echo "origin/main moved during the release: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
+              exit 1
+            fi
           fi
           test "$(find release-assets -maxdepth 1 -type f -name '*.dmg' | wc -l)" -eq 2
           test "$(find release-assets -maxdepth 1 -type f -name '*.exe' | wc -l)" -eq 1
@@ -779,6 +1093,65 @@ jobs:
             --core-sha "$CORE_SHA" \
             --bank-sha "$BANK_SHA"
 
+      - name: Recheck assembled checksums
+        shell: bash
+        run: (cd release-assets && sha256sum --check SHA256SUMS)
+
+      - name: Upload assembled release set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qed2-release-assembled
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
+          path: release-assets/*
+
+  publish:
+    name: Publish verified GitHub Release
+    if: needs.release_context.outputs.publish == 'true'
+    needs: [release_context, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: desktop-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download assembled release set
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: qed2-release-assembled
+          path: release-assets
+
+      - name: Revalidate frozen tag, main and assembled bytes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release_context.outputs.tag }}
+          CLIENT_SHA: ${{ needs.release_context.outputs.client_sha }}
+          TAG_OBJECT_SHA: ${{ needs.release_context.outputs.tag_object_sha }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum --check SHA256SUMS)
+          REMOTE_TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          if [[ "$(jq -r '.object.type' <<< "$REMOTE_TAG_JSON")" != tag || \
+                "$(jq -r '.object.sha' <<< "$REMOTE_TAG_JSON")" != "$TAG_OBJECT_SHA" ]]; then
+            echo "Annotated release tag object moved before attestation." >&2
+            exit 1
+          fi
+          REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+          if [[ "$REMOTE_TAG_SHA" != "$CLIENT_SHA" ]]; then
+            echo "Release tag moved before attestation: expected $CLIENT_SHA, found $REMOTE_TAG_SHA" >&2
+            exit 1
+          fi
+          REMOTE_MAIN_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [[ "$REMOTE_MAIN_SHA" != "$CLIENT_SHA" ]]; then
+            echo "origin/main moved before attestation: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
+            exit 1
+          fi
+
       - name: Attest release build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -791,20 +1164,34 @@ jobs:
           RELEASE_TAG: ${{ needs.release_context.outputs.tag }}
           RELEASE_VERSION: ${{ needs.release_context.outputs.version }}
           CLIENT_SHA: ${{ needs.release_context.outputs.client_sha }}
+          TAG_OBJECT_SHA: ${{ needs.release_context.outputs.tag_object_sha }}
         run: |
           set -euo pipefail
           (cd release-assets && sha256sum --check SHA256SUMS)
           RELEASE_API="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
-          if RELEASE_JSON="$(gh api "$RELEASE_API" 2>/dev/null)"; then
+          RELEASE_LOOKUP_ERROR="$RUNNER_TEMP/qed2-publish-release-lookup-error.txt"
+          if RELEASE_JSON="$(gh api "$RELEASE_API" 2>"$RELEASE_LOOKUP_ERROR")"; then
             if [[ "$(jq -r '.draft' <<< "$RELEASE_JSON")" != true ]]; then
               echo "Release $RELEASE_TAG is already published and must not be replaced; publish a higher version." >&2
               exit 1
             fi
-          else
+          elif grep -Fq 'HTTP 404' "$RELEASE_LOOKUP_ERROR"; then
             # Never expose a release while assets are still being transferred.
             # A failed upload leaves only a resumable draft.
             gh release create "$RELEASE_TAG" --draft --verify-tag --generate-notes \
               --title "QED2 $RELEASE_VERSION"
+            RELEASE_JSON="$(gh api "$RELEASE_API")"
+          else
+            cat "$RELEASE_LOOKUP_ERROR" >&2
+            echo "Could not determine whether a release already exists; refusing to create or replace one." >&2
+            exit 1
+          fi
+
+          NOTICE="⚠️ QED2 $RELEASE_VERSION packages use no paid platform identity: macOS is ad-hoc signed and not notarized; Windows and Linux are unsigned. QED2 verifies downloads but requires manual installation, and the OS may warn you. Use only this GitHub release and verify SHA256SUMS."
+          CURRENT_BODY="$(jq -r '.body // ""' <<< "$RELEASE_JSON")"
+          if [[ "$CURRENT_BODY" != *"$NOTICE"* ]]; then
+            UPDATED_BODY="$(printf '%s\n\n%s' "$NOTICE" "$CURRENT_BODY")"
+            gh api --method PATCH "$RELEASE_API" --raw-field body="$UPDATED_BODY" >/dev/null
             RELEASE_JSON="$(gh api "$RELEASE_API")"
           fi
 
@@ -866,6 +1253,12 @@ jobs:
 
           # The tag is checked again immediately before the only operation that
           # makes the draft visible to the updater and end users.
+          REMOTE_TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          if [[ "$(jq -r '.object.type' <<< "$REMOTE_TAG_JSON")" != tag || \
+                "$(jq -r '.object.sha' <<< "$REMOTE_TAG_JSON")" != "$TAG_OBJECT_SHA" ]]; then
+            echo "Annotated release tag object moved before publication." >&2
+            exit 1
+          fi
           REMOTE_TAG_SHA="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
           if [[ "$REMOTE_TAG_SHA" != "$CLIENT_SHA" ]]; then
             echo "Release tag moved before publication: expected $CLIENT_SHA, found $REMOTE_TAG_SHA" >&2

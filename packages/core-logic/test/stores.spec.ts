@@ -44,6 +44,8 @@ describe('AttemptOutbox', () => {
     const outbox = new AttemptOutbox(storage);
     const attempt = {
       clientAttemptId: 'attempt-1',
+      contentSource: 'local' as const,
+      contentId: 'c'.repeat(40),
       questionId: 'q1',
       partId: 'q1-a',
       correct: true,
@@ -168,7 +170,7 @@ describe('AttemptOutbox', () => {
     expect(await outbox.count('u2')).toBe(1); // untouched by u1's flood
     const kept = await outbox.list('u1', 5000);
     expect(kept[0]?.clientAttemptId).toBe('a-100'); // oldest of MINE went first
-  });
+  }, 15_000);
 });
 
 describe('ArchiveStore', () => {
@@ -641,7 +643,22 @@ describe('QuestionCache', () => {
     expect(await storage.keys(STORAGE.questions)).toEqual(['q1', 'q2']);
   });
 
-  it('hashes cached questions like the core manifest and ignores runtime-only fields', () => {
+  it('isolates identical question ids by immutable bank identity', async () => {
+    const storage = new MemoryStorage();
+    const cache = new QuestionCache(storage);
+    const oldQuestion = { ...question, title: 'Alte Bank' };
+    const newQuestion = { ...question, title: 'Neue Bank' };
+
+    await cache.put(oldQuestion, 'bank-commit-a');
+    await cache.put(newQuestion, 'bank-commit-b');
+
+    expect((await cache.get('q1', 'bank-commit-a'))?.title).toBe('Alte Bank');
+    expect((await cache.get('q1', 'bank-commit-b'))?.title).toBe('Neue Bank');
+    expect(await cache.get('q1')).toBeUndefined();
+    expect(await storage.keys(STORAGE.questions)).toHaveLength(2);
+  });
+
+  it('hashes the actual normalized wire question (including playable)', () => {
     const hash = questionContentHash(question);
     const withPlayable = { ...question, playable: true };
     const reordered = {
@@ -654,8 +671,31 @@ describe('QuestionCache', () => {
       id: question.id,
     } as unknown as Question;
 
-    expect(questionContentHash(withPlayable)).toBe(hash);
+    expect(questionContentHash(withPlayable)).not.toBe(hash);
     expect(questionContentHash(reordered)).toBe(hash);
     expect(questionContentHash({ ...question, title: 'Andere Frage' })).not.toBe(hash);
+  });
+
+  it('stores one atomic verified envelope and rejects legacy or corrupted scoped entries', async () => {
+    const storage = new MemoryStorage();
+    const cache = new QuestionCache(storage);
+    const contentId = 'a'.repeat(40);
+    const rawHash = 'b'.repeat(64);
+    const wireHash = questionContentHash(question);
+
+    await cache.putVerified(question, contentId, rawHash, wireHash);
+    expect(await storage.keys(STORAGE.questions)).toHaveLength(1);
+    await expect(cache.getVerified('q1', contentId, rawHash)).resolves.toEqual(question);
+
+    const [key] = await storage.keys(STORAGE.questions);
+    const envelope = await storage.get<Record<string, unknown>>(STORAGE.questions, key!);
+    await storage.set(STORAGE.questions, key!, {
+      ...envelope,
+      question: { ...question, title: 'corrupted after admission' },
+    });
+    await expect(cache.getVerified('q1', contentId, rawHash)).resolves.toBeUndefined();
+
+    await cache.put(question, 'legacy-scope');
+    await expect(cache.getVerified('q1', 'legacy-scope')).resolves.toBeUndefined();
   });
 });

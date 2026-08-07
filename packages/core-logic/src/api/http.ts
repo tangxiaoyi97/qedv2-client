@@ -13,6 +13,13 @@ import { ApiError, NetworkError, type ApiErrorBody } from './types.js';
  */
 interface AbortSignal {
   readonly aborted: boolean;
+  addEventListener?(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener?(type: 'abort', listener: () => void): void;
+}
+
+interface AbortControllerLike {
+  readonly signal: AbortSignal;
+  abort(reason?: unknown): void;
 }
 
 export interface RequestOptions {
@@ -21,6 +28,8 @@ export interface RequestOptions {
   token?: string;
   query?: Record<string, string | number | undefined>;
   signal?: AbortSignal;
+  /** Bounded request deadline. Defaults to 20 seconds; 0 disables it. */
+  timeoutMs?: number;
 }
 
 /** The slice of the fetch API this module relies on. */
@@ -34,11 +43,42 @@ interface FetchResponse {
 interface FetchInit {
   method: string;
   headers: Record<string, string>;
+  credentials: 'omit';
   body?: string;
   signal?: AbortSignal;
 }
 
 type FetchLike = (url: string, init: FetchInit) => Promise<FetchResponse>;
+
+const DEFAULT_TIMEOUT_MS = 20_000;
+const MAX_TIMEOUT_MS = 150_000;
+
+function requestSignal(
+  external: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal?: AbortSignal; cleanup(): void } {
+  const Controller = (globalThis as {
+    AbortController?: new () => AbortControllerLike;
+  }).AbortController;
+  if (!Controller || timeoutMs === 0) {
+    return { ...(external ? { signal: external } : {}), cleanup() {} };
+  }
+  const controller = new Controller();
+  const abortFromCaller = () => controller.abort(new Error('Request aborted by caller'));
+  if (external?.aborted) abortFromCaller();
+  else external?.addEventListener?.('abort', abortFromCaller, { once: true });
+  const timer = globalThis.setTimeout(
+    () => controller.abort(new Error(`Request deadline exceeded after ${timeoutMs}ms`)),
+    timeoutMs,
+  );
+  return {
+    signal: controller.signal,
+    cleanup() {
+      globalThis.clearTimeout(timer);
+      external?.removeEventListener?.('abort', abortFromCaller);
+    },
+  };
+}
 
 /** Resolved per call so tests can stub `globalThis.fetch`. */
 function getFetch(): FetchLike {
@@ -104,9 +144,17 @@ export async function requestJson<T>(
   const init: FetchInit = {
     method: opts.method ?? (opts.body !== undefined ? 'POST' : 'GET'),
     headers,
+    // QED2 authenticates explicitly with bearer tokens. Never create a
+    // parallel ambient-cookie identity in Web/PWA or Electron.
+    credentials: 'omit',
   };
   if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-  if (opts.signal !== undefined) init.signal = opts.signal;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > MAX_TIMEOUT_MS) {
+    throw new TypeError(`timeoutMs must be between 0 and ${MAX_TIMEOUT_MS}`);
+  }
+  const deadline = requestSignal(opts.signal, timeoutMs);
+  if (deadline.signal) init.signal = deadline.signal;
 
   let response: FetchResponse;
   let text: string;
@@ -117,6 +165,8 @@ export async function requestJson<T>(
   } catch (err) {
     if (err instanceof NetworkError) throw err;
     throw new NetworkError(`request failed: ${init.method} ${url}`, err);
+  } finally {
+    deadline.cleanup();
   }
 
   if (!response.ok) {
