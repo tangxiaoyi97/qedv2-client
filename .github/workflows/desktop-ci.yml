@@ -181,6 +181,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes xvfb
 
+      # The unpacked tree is created as the runner user, whereas Chromium's
+      # production SUID sandbox deliberately requires root:root mode 4755.
+      # Configure that contract instead of weakening the smoke with
+      # --no-sandbox; AppImage/deb/rpm packaging applies its own file metadata.
+      - name: Configure Chromium sandbox for packaged Linux smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SANDBOX="packages/desktop/dist-packages/linux-unpacked/chrome-sandbox"
+          test -f "$SANDBOX"
+          test ! -L "$SANDBOX"
+          sudo chown root:root -- "$SANDBOX"
+          sudo chmod 4755 -- "$SANDBOX"
+          test "$(stat -c '%u:%g:%a' "$SANDBOX")" = '0:0:4755'
+
       - name: Boot-smoke unpacked Desktop application
         run: >-
           pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
