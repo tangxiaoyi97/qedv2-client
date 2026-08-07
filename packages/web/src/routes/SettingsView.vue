@@ -2,21 +2,18 @@
 /**
  * Einstellungen (prototype 4c): theme, language, advanced server addresses
  * (collapsed), version info for ALL services (web / core / server), manual
- * archive upload (supplement §9), logout, and the capability-gated desktop
- * runtime/update surface backed by typed platform ports.
+ * archive upload (supplement §9) and logout. Desktop controls use their own
+ * capability-gated routes and never turn Settings into a native tool window.
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
-import DesktopSettings from './settings/DesktopSettings.vue';
 import { APP_VERSION, ports } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
   BUILTIN_THEME_EXTENSIONS,
-  currentBuiltinThemeId,
-  setBuiltinThemeExtension,
   type BuiltinThemeId,
 } from '../platform/theme.js';
 
@@ -33,12 +30,6 @@ const leaderboard = useLeaderboardStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 const router = useRouter();
-const route = useRoute();
-const desktopToolWindow = computed(
-  () =>
-    ports.shell.capabilities.desktop &&
-    (route.query.desktopWindow === 'updates' || route.query.desktopWindow === 'node'),
-);
 
 /* ---- Versionen: rows are clickable, each opens a detail modal ---- */
 const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
@@ -117,10 +108,20 @@ const THEMES: { value: ThemePref; label: string }[] = [
 const LOCALES: Locale[] = ['de', 'en'];
 
 /* Built-in CSS extensions; external records join this list next major. */
-const themeExtensionId = ref<BuiltinThemeId>(currentBuiltinThemeId());
-function pickThemeExtension(id: BuiltinThemeId): void {
-  themeExtensionId.value = id;
-  setBuiltinThemeExtension(id);
+const themeExtensionId = computed(() => app.accentTheme);
+const accentSaving = ref(false);
+const accentError = ref<string | undefined>();
+async function pickThemeExtension(id: BuiltinThemeId): Promise<void> {
+  if (accentSaving.value || id === app.accentTheme) return;
+  accentSaving.value = true;
+  accentError.value = undefined;
+  try {
+    await app.setAccentTheme(id);
+  } catch {
+    accentError.value = 'Das Farbschema konnte nicht sicher gespeichert werden. Die bisherige Auswahl bleibt aktiv.';
+  } finally {
+    accentSaving.value = false;
+  }
 }
 
 function onLocaleChange(ev: Event): void {
@@ -130,16 +131,12 @@ function onLocaleChange(ev: Event): void {
 const form = reactive({
   coreBaseUrl: app.config.coreBaseUrl,
   serverBaseUrl: app.config.serverBaseUrl,
-  coreRepoUrl: app.config.coreRepoUrl,
-  bankRepoUrl: app.config.bankRepoUrl,
 });
 watch(
   () => app.config,
   (c) => {
     form.coreBaseUrl = c.coreBaseUrl;
     form.serverBaseUrl = c.serverBaseUrl;
-    form.coreRepoUrl = c.coreRepoUrl;
-    form.bankRepoUrl = c.bankRepoUrl;
   },
 );
 
@@ -162,8 +159,6 @@ function validateUrls(): string {
   const fields: [string, string][] = [
     ['Core-Adresse', form.coreBaseUrl.trim()],
     ['Server-Adresse', form.serverBaseUrl.trim()],
-    ['Core-Repository', form.coreRepoUrl.trim()],
-    ['Aufgabenbank-Repository', form.bankRepoUrl.trim()],
   ];
   for (const [label, value] of fields) {
     if (value === '') return `${label} darf nicht leer sein.`;
@@ -180,8 +175,6 @@ async function saveServers(): Promise<void> {
     await app.updateConfig({
       coreBaseUrl: form.coreBaseUrl.trim(),
       serverBaseUrl: form.serverBaseUrl.trim(),
-      coreRepoUrl: form.coreRepoUrl.trim(),
-      bankRepoUrl: form.bankRepoUrl.trim(),
     });
     saved.value = true;
     setTimeout(() => (saved.value = false), 2500);
@@ -193,8 +186,6 @@ async function saveServers(): Promise<void> {
 async function resetServers(): Promise<void> {
   form.coreBaseUrl = DEFAULT_CONFIG.coreBaseUrl;
   form.serverBaseUrl = DEFAULT_CONFIG.serverBaseUrl;
-  form.coreRepoUrl = DEFAULT_CONFIG.coreRepoUrl;
-  form.bankRepoUrl = DEFAULT_CONFIG.bankRepoUrl;
   await saveServers();
 }
 
@@ -257,12 +248,8 @@ async function openChangelog(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings q-page" :class="{ 'settings--desktop-tool': desktopToolWindow }">
-    <h1 v-if="!desktopToolWindow" class="settings__title q-page-title">Einstellungen</h1>
-
-    <DesktopSettings />
-
-    <template v-if="!desktopToolWindow">
+  <div class="settings q-page">
+    <h1 class="settings__title q-page-title">Einstellungen</h1>
     <section class="settings__section">
       <div class="settings__row">
         <div>
@@ -289,6 +276,7 @@ async function openChangelog(): Promise<void> {
         <div>
           <div class="settings__row-title">Farbschema</div>
           <div class="settings__row-sub">Ruhige Flächen, abgestimmte Akzent- und Statusfarben</div>
+          <div v-if="accentError" class="settings__url-error" role="alert">{{ accentError }}</div>
         </div>
         <div class="settings__themes" role="radiogroup" aria-label="Farbschema">
           <button
@@ -300,6 +288,8 @@ async function openChangelog(): Promise<void> {
             :data-accent="extension.id"
             role="radio"
             :aria-checked="themeExtensionId === extension.id"
+            :aria-busy="accentSaving || undefined"
+            :disabled="accentSaving"
             :title="extension.label"
             @click="pickThemeExtension(extension.id)"
           >
@@ -464,18 +454,10 @@ async function openChangelog(): Promise<void> {
           <input v-model="form.serverBaseUrl" class="settings__input" spellcheck="false" />
         </label>
         <div class="settings__group-note">
-          Bezugsquellen für Desktop/iOS: Von diesen Git-Repositories klonen und
-          aktualisieren die App-Versionen mit Offline-Betrieb ihren lokalen
-          Core und die Aufgabenbank. Die Web-Version nutzt sie nicht selbst.
+          Die installierte Desktop-Version bringt ihren geprüften Core und die
+          Aufgabenbank selbst mit. Repository-Adressen dienen nur der
+          Versionsherkunft und können hier keinen fremden Code aktivieren.
         </div>
-        <label class="settings__field">
-          <span class="settings__label">Core-Quellcode (Repository)</span>
-          <input v-model="form.coreRepoUrl" class="settings__input" spellcheck="false" />
-        </label>
-        <label class="settings__field">
-          <span class="settings__label">Aufgaben-Datenbank (Repository)</span>
-          <input v-model="form.bankRepoUrl" class="settings__input" spellcheck="false" />
-        </label>
         <div v-if="urlError" class="settings__url-error" role="alert">{{ urlError }}</div>
         <div class="settings__adv-actions">
           <QButton variant="ghost" :disabled="saving" @click="resetServers">Zurücksetzen auf Standard</QButton>
@@ -513,7 +495,6 @@ async function openChangelog(): Promise<void> {
         </div>
       </transition>
     </Teleport>
-    </template>
   </div>
 </template>
 
@@ -523,10 +504,6 @@ async function openChangelog(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-.settings--desktop-tool {
-  width: 100%;
-  max-width: 720px;
 }
 /* Only the bottom gap differs from .q-page-title. */
 .settings__title {

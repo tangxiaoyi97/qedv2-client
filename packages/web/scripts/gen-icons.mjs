@@ -1,20 +1,33 @@
 #!/usr/bin/env node
 /**
- * Generates the PWA icons — a light tile with a centered theme-color
- * (olive) rounded square. No native image deps: raw RGBA buffer with 3x3
- * supersampling → minimal PNG encoder.
+ * Deterministic QED2 icon renderer — a warm light tile with a centered
+ * accent-strong square. No native image dependencies: raw RGBA with 3x3
+ * supersampling is encoded by the same minimal PNG writer used for the
+ * original green PWA icons.
+ *
  * Run: node scripts/gen-icons.mjs
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'icons');
-mkdirSync(OUT, { recursive: true });
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const DEFAULT_PWA_OUT = join(dirname(SCRIPT_PATH), '..', 'public', 'icons');
 
-const LIGHT = [0xf4, 0xf3, 0xee]; // warm light background (app panel tone)
-const OLIVE = [0x5f, 0x6b, 0x2e]; // theme color (accent-strong)
+export const ICON_BACKGROUND = Object.freeze([0xf4, 0xf3, 0xee]);
+export const THEME_ACCENTS = Object.freeze({
+  weed: Object.freeze([0x5f, 0x6b, 0x2e]),
+  sky: Object.freeze([0x1d, 0x5f, 0x75]),
+  raspberry: Object.freeze([0x96, 0x30, 0x4f]),
+  violette: Object.freeze([0x5b, 0x3f, 0xa8]),
+});
+
+export const PWA_ICON_SPECS = Object.freeze([
+  Object.freeze({ filename: 'icon-192.png', size: 192 }),
+  Object.freeze({ filename: 'icon-512.png', size: 512 }),
+  Object.freeze({ filename: 'apple-touch-icon.png', size: 180 }),
+]);
 
 function crc32(buf) {
   let c;
@@ -38,7 +51,7 @@ function chunk(type, data) {
   return Buffer.concat([len, body, crc]);
 }
 
-function encodePng(size, pixels) {
+export function encodePng(size, pixels) {
   const raw = Buffer.alloc((size * 4 + 1) * size);
   for (let y = 0; y < size; y++) {
     raw[y * (size * 4 + 1)] = 0; // filter none
@@ -57,15 +70,20 @@ function encodePng(size, pixels) {
   ]);
 }
 
-function drawIcon(size) {
-  // Geometry in fractions of the size.
+export function renderIconPng(size, accent = THEME_ACCENTS.weed) {
+  if (!Number.isSafeInteger(size) || size <= 0) throw new TypeError('Icon size must be a positive integer');
+  if (!Array.isArray(accent) || accent.length !== 3 || accent.some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)) {
+    throw new TypeError('Icon accent must be an RGB byte triplet');
+  }
+
+  // Geometry in fractions of the size. These values intentionally remain
+  // identical to the original PWA renderer.
   const cx = size * 0.5;
   const cy = size * 0.5;
   const half = size * 0.2; // theme square half-edge (sharp corners)
 
   const inSquare = (x, y) => Math.abs(x - cx) <= half && Math.abs(y - cy) <= half;
-
-  const colorAt = (x, y) => (inSquare(x, y) ? OLIVE : LIGHT);
+  const colorAt = (x, y) => (inSquare(x, y) ? accent : ICON_BACKGROUND);
 
   const SS = 3; // supersampling per axis
   const px = Buffer.alloc(size * size * 4);
@@ -76,31 +94,33 @@ function drawIcon(size) {
       let b = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
-          const c = colorAt(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS);
-          r += c[0];
-          g += c[1];
-          b += c[2];
+          const color = colorAt(x + (sx + 0.5) / SS, y + (sy + 0.5) / SS);
+          r += color[0];
+          g += color[1];
+          b += color[2];
         }
       }
-      const n = SS * SS;
-      const i = (y * size + x) * 4;
-      px[i] = Math.round(r / n);
-      px[i + 1] = Math.round(g / n);
-      px[i + 2] = Math.round(b / n);
-      px[i + 3] = 255;
+      const sampleCount = SS * SS;
+      const index = (y * size + x) * 4;
+      px[index] = Math.round(r / sampleCount);
+      px[index + 1] = Math.round(g / sampleCount);
+      px[index + 2] = Math.round(b / sampleCount);
+      px[index + 3] = 255;
     }
   }
   return encodePng(size, px);
 }
 
-for (const size of [192, 512]) {
-  writeFileSync(join(OUT, `icon-${size}.png`), drawIcon(size));
-  console.log(`icon-${size}.png written`);
+export function generatePwaIcons({ outDir = DEFAULT_PWA_OUT, logger = console } = {}) {
+  mkdirSync(outDir, { recursive: true });
+  return PWA_ICON_SPECS.map(({ filename, size }) => {
+    const bytes = renderIconPng(size, THEME_ACCENTS.weed);
+    writeFileSync(join(outDir, filename), bytes);
+    logger?.log?.(`${filename} written`);
+    return { filename, size, bytes };
+  });
 }
 
-// iOS home-screen icon (Add to Home Screen). iOS ignores the web manifest for
-// this and instead reads a <link rel="apple-touch-icon"> pointing at a plain
-// 180x180 PNG; iOS applies its own rounded-mask + shadow, so this reuses the
-// exact same flat square design (opaque background, no transparency).
-writeFileSync(join(OUT, 'apple-touch-icon.png'), drawIcon(180));
-console.log('apple-touch-icon.png written');
+if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
+  generatePwaIcons();
+}

@@ -14,6 +14,8 @@ files:
   - dist/**
   - package.json
 extraResources:
+  - from: build/theme-icons
+    to: theme-icons
   - from: ../web/dist
     to: web
   - from: runtime/core
@@ -34,7 +36,10 @@ extraResources:
     to: runtime/runtime-manifest.json
 electronFuses:
   runAsNode: false
-  enableCookieEncryption: true
+  # QED2 never uses Cookie auth. Leaving Chromium's cookie-encryption fuse on
+  # initializes Safe Storage before login and causes redundant Keychain prompts
+  # in ad-hoc builds. Login tokens remain encrypted through safeStorage.
+  enableCookieEncryption: false
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true
@@ -48,7 +53,9 @@ publish:
   releaseType: release
 artifactName: QED2-${version}-${os}-${arch}.${ext}
 mac:
-  icon: ../web/public/icons/icon-512.png
+  # macOS does not mask Dock icons. Use the native transparent squircle rather
+  # than the intentionally opaque PWA/iOS source image.
+  icon: build/theme-icons/weed/icon-1024.png
   category: public.app-category.education
   minimumSystemVersion: "12.0"
   target:
@@ -77,7 +84,7 @@ linux:
   # Scoped package names sanitize to an unusable `@qed2desktop` binary by
   # default. Keep the native command, desktop entry and smoke contract stable.
   executableName: qed2
-  icon: ../web/public/icons/icon-512.png
+  icon: build/theme-icons/weed/icon-512.png
   category: Education
   target:
     - AppImage

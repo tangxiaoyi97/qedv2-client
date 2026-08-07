@@ -120,6 +120,10 @@ function targetFor(targets, predicate) {
   return targets.find((target) => predicate(new URL(target.url)));
 }
 
+function isDesktopToolRoute(url, target) {
+  return url.pathname === `/desktop/${target}`;
+}
+
 async function capture(client, name) {
   await client.call('Page.enable');
   const screenshot = await client.call('Page.captureScreenshot', {
@@ -137,7 +141,10 @@ const initialTargets = await waitFor('main desktop target', async () => {
   const targets = await pageTargets();
   const main = targetFor(
     targets,
-    (url) => !url.searchParams.has('desktopWindow') && url.pathname !== '/practice',
+    (url) =>
+      url.pathname !== '/practice' &&
+      !isDesktopToolRoute(url, 'updates') &&
+      !isDesktopToolRoute(url, 'node'),
   );
   return main ? { targets, main } : undefined;
 });
@@ -164,13 +171,13 @@ assert.equal(initial.serviceWorkers, 0);
 assert.equal(initial.floatingBeacon, false);
 
 await main.evaluate(`document.querySelector('[data-desktop-capability-entry]')?.click()`);
-await waitFor('embedded desktop settings', async () => {
+await waitFor('desktop control centre', async () => {
   const state = await main.evaluate(`({
     path: location.pathname,
-    section: new URLSearchParams(location.search).get('section'),
+    controlCenter: Boolean(document.querySelector('[data-desktop-control-center]')),
     buttons: document.querySelectorAll('[data-desktop-window-target]').length,
   })`);
-  return state.path === '/settings' && state.section === 'desktop' && state.buttons === 3;
+  return state.path === '/desktop' && state.controlCenter && state.buttons === 3;
 });
 
 const mainLayout = await main.evaluate(`({
@@ -192,7 +199,7 @@ for (const target of ['practice', 'updates', 'node']) {
     if (target === 'practice') {
       return targetFor(targets, (url) => url.pathname === '/practice');
     }
-    return targetFor(targets, (url) => url.searchParams.get('desktopWindow') === target);
+    return targetFor(targets, (url) => isDesktopToolRoute(url, target));
   });
   opened[target] = nativeTarget;
 
@@ -202,7 +209,7 @@ for (const target of ['practice', 'updates', 'node']) {
     const url = new URL(candidate.url);
     return target === 'practice'
       ? url.pathname === '/practice'
-      : url.searchParams.get('desktopWindow') === target;
+      : isDesktopToolRoute(url, target);
   });
   assert.equal(duplicates.length, 1, `${target} must remain a singleton`);
   assert.equal(duplicates[0].id, nativeTarget.id, `${target} singleton identity changed`);
@@ -258,11 +265,21 @@ if (practiceState.closeSize) {
 screenshots.push(await capture(practice, 'practice'));
 practice.close();
 
-const originalThemeLabel = await main.evaluate(`
+await main.evaluate(`
+  document.querySelector('a[href="/settings"]')?.click();
+  undefined
+`);
+await waitFor('the appearance settings', async () => {
+  return await main.evaluate(`
+    location.pathname === '/settings' &&
+      Boolean(document.querySelector('[aria-label="Erscheinungsbild"] [role="radio"]'))
+  `);
+});
+const activeThemeLabel = await main.evaluate(`
   document.querySelector('[aria-label="Erscheinungsbild"] [role="radio"][aria-checked="true"]')
     ?.textContent?.trim()
 `);
-assert(['Hell', 'Dunkel', 'System'].includes(originalThemeLabel), 'Could not identify the active theme');
+assert(['Hell', 'Dunkel', 'System'].includes(activeThemeLabel), 'Could not identify the active theme');
 await main.evaluate(`
   [...document.querySelectorAll('[aria-label="Erscheinungsbild"] [role="radio"]')]
     .find((button) => button.textContent?.trim() === 'Dunkel')?.click()
@@ -285,7 +302,7 @@ for (const [name, target] of Object.entries(themedTargets)) {
 
 await main.evaluate(`
   [...document.querySelectorAll('[aria-label="Erscheinungsbild"] [role="radio"]')]
-    .find((button) => button.textContent?.trim() === ${JSON.stringify(originalThemeLabel)})?.click()
+    .find((button) => button.textContent?.trim() === ${JSON.stringify(activeThemeLabel)})?.click()
 `);
 main.close();
 

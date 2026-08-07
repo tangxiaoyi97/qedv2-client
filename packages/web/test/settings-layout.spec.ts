@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import settingsSource from '../src/routes/SettingsView.vue?raw';
 import aiSettingsSource from '../src/routes/settings/AiSettings.vue?raw';
 import desktopSettingsSource from '../src/routes/settings/DesktopSettings.vue?raw';
+import desktopViewSource from '../src/routes/DesktopView.vue?raw';
 import appSource from '../src/App.vue?raw';
 
 describe('settings appearance layout', () => {
@@ -18,13 +19,16 @@ describe('settings appearance layout', () => {
     );
   });
 
-  it('gates the discoverable desktop entry and settings UI behind the shell capability', () => {
+  it('keeps Settings separate and gates the native control centre behind the shell capability', () => {
     expect(appSource).toContain('v-if="ports.shell.capabilities.desktop"');
     expect(appSource).toContain('data-desktop-capability-entry');
-    expect(appSource).toContain('to="/settings?section=desktop"');
+    expect(appSource).toContain('to="/desktop"');
     expect(desktopSettingsSource).toContain('v-if="isDesktopShell"');
     expect(desktopSettingsSource).toContain('ports.shell.capabilities.desktop');
-    expect(settingsSource).toContain('<DesktopSettings />');
+    expect(settingsSource).not.toContain('DesktopSettings');
+    expect(desktopViewSource).toContain('v-if="isDesktopShell"');
+    expect(desktopViewSource).toContain('data-desktop-control-center');
+    expect(desktopViewSource).toContain('<DesktopSettings :panel="panel" />');
   });
 });
 

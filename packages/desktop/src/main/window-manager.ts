@@ -1,8 +1,9 @@
 import type { DesktopWindowTarget, ShellCommand } from '@qed2/core-logic';
-import { BrowserWindow, nativeTheme, screen } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import { isAbsolute } from 'node:path';
 import type {
   BrowserWindowConstructorOptions,
+  NativeImage,
   Rectangle,
   Session,
 } from 'electron';
@@ -30,7 +31,15 @@ export interface WindowManagerOptions {
   /** Trusted renderer entry point, normally RendererServerAddress.bootUrl. */
   rendererUrl: string;
   appVersion: string;
+  /** Whether this installed build has a validated electron-updater channel. */
+  selfUpdateAvailable: boolean;
+  /** Whether verified app packages must be handed off for manual installation. */
+  manualAppInstall: boolean;
   appName?: string;
+  /** Current accent icon for newly created Windows/Linux native windows. */
+  windowIcon?: () => NativeImage | undefined;
+  /** Pre-paint color generated from the shared Web theme's --q-page token. */
+  backgroundColor?: () => string | undefined;
   routes?: Partial<Record<ManagedWindowKind, string>>;
   restoreWindowState?: (kind: ManagedWindowKind) => PersistedWindowState | undefined;
   persistWindowState?: (
@@ -54,8 +63,8 @@ interface WindowDefaults {
 
 const DEFAULT_ROUTES: Readonly<Record<Exclude<ManagedWindowKind, 'main'>, string>> = {
   practice: '/practice',
-  updates: '/settings?section=desktop&desktopWindow=updates',
-  node: '/settings?section=desktop&desktopWindow=node',
+  updates: '/desktop/updates',
+  node: '/desktop/node',
 };
 
 const DEFAULT_PERSISTENCE_DEBOUNCE_MS = 350;
@@ -159,6 +168,7 @@ export class WindowManager {
   /** Keeps the native clear color in step with Electron's current theme. */
   refreshThemeBackgrounds(): void {
     const background = this.windowBackgroundColor();
+    if (!background) return;
     for (const window of this.getAllWindows()) window.setBackgroundColor(background);
   }
 
@@ -211,6 +221,8 @@ export class WindowManager {
     const defaults = this.windowDefaults(kind);
     const restoredState = this.restoreState(kind, defaults);
     const bounds = restoredState?.bounds;
+    const windowIcon = this.options.windowIcon?.();
+    const backgroundColor = this.windowBackgroundColor();
     const window = this.createBrowserWindow({
       title: defaults.title,
       width: bounds?.width ?? defaults.width,
@@ -222,8 +234,9 @@ export class WindowManager {
       fullscreenable: defaults.fullscreenable,
       show: false,
       useContentSize: true,
-      backgroundColor: this.windowBackgroundColor(),
+      ...(backgroundColor ? { backgroundColor } : {}),
       autoHideMenuBar: kind !== 'main',
+      ...(windowIcon ? { icon: windowIcon } : {}),
       webPreferences: {
         session: this.options.session,
         preload: this.options.preloadPath,
@@ -237,7 +250,12 @@ export class WindowManager {
         webviewTag: false,
         navigateOnDragDrop: false,
         safeDialogs: true,
-        additionalArguments: [`--qed2-app-version=${this.options.appVersion}`],
+        additionalArguments: [
+          `--qed2-app-version=${this.options.appVersion}`,
+          `--qed2-self-update=${this.options.selfUpdateAvailable ? 'true' : 'false'}`,
+          `--qed2-manual-app-install=${this.options.manualAppInstall ? 'true' : 'false'}`,
+          `--qed2-window-kind=${kind}`,
+        ],
       },
     });
 
@@ -281,8 +299,11 @@ export class WindowManager {
     return destination;
   }
 
-  private windowBackgroundColor(): string {
-    return nativeTheme.shouldUseDarkColors ? '#161616' : '#f5f3ed';
+  private windowBackgroundColor(): string | undefined {
+    const color = this.options.backgroundColor?.();
+    return typeof color === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(color)
+      ? color
+      : undefined;
   }
 
   private windowDefaults(kind: ManagedWindowKind): WindowDefaults {

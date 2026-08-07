@@ -95,13 +95,19 @@ class FakeBrowserWindow extends EventEmitter {
   }
 }
 
-function createManager(): { manager: WindowManager; created: FakeBrowserWindow[] } {
+function createManager(options: { backgroundColor?: () => string | undefined } = {}): {
+  manager: WindowManager;
+  created: FakeBrowserWindow[];
+} {
   const created: FakeBrowserWindow[] = [];
   const manager = new WindowManager({
     session: {} as Session,
     preloadPath: '/trusted/preload.cjs',
     rendererUrl: 'http://127.0.0.1:1122/__qed2_boot/session',
     appVersion: '2.0.0',
+    selfUpdateAvailable: true,
+    manualAppInstall: true,
+    ...options,
     createBrowserWindow: (options) => {
       const window = new FakeBrowserWindow(options);
       created.push(window);
@@ -117,7 +123,7 @@ describe('WindowManager desktop-control windows', () => {
     electronMocks.shouldUseDarkColors = false;
   });
 
-  it('opens distinct singleton windows on exact shared Settings routes', () => {
+  it('opens distinct singleton windows on dedicated Desktop routes', () => {
     const { manager, created } = createManager();
     const updates = manager.openUpdateCenterWindow() as unknown as FakeBrowserWindow;
     const updatesAgain = manager.openUpdateCenterWindow();
@@ -127,10 +133,10 @@ describe('WindowManager desktop-control windows', () => {
     expect(node).not.toBe(updates);
     expect(created).toHaveLength(2);
     expect(updates.loadedUrls).toEqual([
-      'http://127.0.0.1:1122/settings?section=desktop&desktopWindow=updates',
+      'http://127.0.0.1:1122/desktop/updates',
     ]);
     expect(node.loadedUrls).toEqual([
-      'http://127.0.0.1:1122/settings?section=desktop&desktopWindow=node',
+      'http://127.0.0.1:1122/desktop/node',
     ]);
     expect(updates.options.webPreferences).toMatchObject({
       sandbox: true,
@@ -138,6 +144,12 @@ describe('WindowManager desktop-control windows', () => {
       nodeIntegration: false,
       webSecurity: true,
       webviewTag: false,
+      additionalArguments: [
+        '--qed2-app-version=2.0.0',
+        '--qed2-self-update=true',
+        '--qed2-manual-app-install=true',
+        '--qed2-window-kind=updates',
+      ],
     });
     expect(updates.webContents.windowOpenHandler?.()).toEqual({ action: 'deny' });
   });
@@ -149,7 +161,7 @@ describe('WindowManager desktop-control windows', () => {
 
     manager.openUpdateCenterWindow();
     expect(updates.loadedUrls.at(-1)).toBe(
-      'http://127.0.0.1:1122/settings?section=desktop&desktopWindow=updates',
+      'http://127.0.0.1:1122/desktop/updates',
     );
 
     updates.webContents.currentUrl = 'http://127.0.0.1:1122/history';
@@ -160,7 +172,7 @@ describe('WindowManager desktop-control windows', () => {
       true,
     );
     expect(updates.loadedUrls.at(-1)).toBe(
-      'http://127.0.0.1:1122/settings?section=desktop&desktopWindow=updates',
+      'http://127.0.0.1:1122/desktop/updates',
     );
   });
 
@@ -175,7 +187,8 @@ describe('WindowManager desktop-control windows', () => {
   });
 
   it('uses stable window sizes and refreshes every native background with the theme', () => {
-    const { manager } = createManager();
+    let background = '#f5f5f6';
+    const { manager } = createManager({ backgroundColor: () => background });
     const main = manager.openMainWindow() as unknown as FakeBrowserWindow;
     const practice = manager.openPracticeWindow() as unknown as FakeBrowserWindow;
     const updates = manager.openUpdateCenterWindow() as unknown as FakeBrowserWindow;
@@ -192,12 +205,13 @@ describe('WindowManager desktop-control windows', () => {
       { width: 760, height: 640, minWidth: 620, minHeight: 500 },
       { width: 840, height: 680, minWidth: 680, minHeight: 520 },
     ]);
-    expect(main.options.backgroundColor).toBe('#f5f3ed');
+    expect(main.options.backgroundColor).toBe('#f5f5f6');
 
     electronMocks.shouldUseDarkColors = true;
+    background = '#161613';
     manager.refreshThemeBackgrounds();
     for (const window of [main, practice, updates, node]) {
-      expect(window.backgroundColors).toEqual(['#161616']);
+      expect(window.backgroundColors).toEqual(['#161613']);
     }
   });
 

@@ -117,7 +117,7 @@ export const THEME_STORAGE_KEYS = {
 
 const STYLE_ID = 'qed2-external-theme';
 
-function isBuiltinThemeId(v: string | null): v is BuiltinThemeId {
+export function isBuiltinThemeId(v: string | null | undefined): v is BuiltinThemeId {
   return v != null && BUILTIN_THEME_EXTENSIONS.some((theme) => theme.id === v);
 }
 
@@ -200,7 +200,7 @@ export async function loadExternalTheme(
   source: string | ExternalCssThemeExtension,
 ): Promise<void> {
   const url = typeof source === 'string' ? source : source.cssUrl;
-  const res = await fetch(url, { cache: 'no-store' });
+  const res = await fetch(url, { cache: 'no-store', credentials: 'omit' });
   if (!res.ok) throw new Error(`theme fetch failed: ${res.status}`);
   const cssText = await res.text();
   applyExternalTheme(cssText);
