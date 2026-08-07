@@ -5,7 +5,7 @@
  * this store only binds it to the UI.
  */
 import { defineStore } from 'pinia';
-import { computed, ref, shallowRef } from 'vue';
+import { computed, onScopeDispose, ref, shallowRef } from 'vue';
 import {
   archiveChecksum,
   assessLoginArchives,
@@ -31,12 +31,20 @@ import {
   type GradingOrUnseen,
   type HistoryEntry,
   type LocalArchive,
+  type LocalGradeSessionMutation,
   type ServerArchiveState,
   type SyncConflict,
   type RecommendUserState,
+  type CoreSourcePreference,
   STORAGE,
 } from '@qed2/core-logic';
-import { archiveStore, attemptOutbox, historyLog, storage } from '../services.js';
+import {
+  archiveStore,
+  attemptOutbox,
+  historyLog,
+  localGradeCommitStore,
+  storage,
+} from '../services.js';
 import { useAppClock } from '../composables/app-clock.js';
 import { runStorageMutation } from '../platform/desktop-storage.js';
 import { useAppStore } from './app.js';
@@ -117,6 +125,104 @@ export const useProgressStore = defineStore('progress', () => {
   let storageSubscribed = false;
   let archiveChoiceBase: LocalArchive | undefined;
   let conflictArchiveBase: LocalArchive | undefined;
+  let cloudRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  let cloudRecoveryAttempt = 0;
+  let cloudRecoveryGeneration = 0;
+  const CLOUD_RECOVERY_DELAYS = [5_000, 15_000, 45_000, 120_000, 300_000] as const;
+
+  interface CloudRecoveryContext {
+    generation: number;
+    ownerId: string;
+    token: string;
+    serverBaseUrl: string;
+  }
+
+  function isTransientCloudError(error: unknown): boolean {
+    return error instanceof NetworkError
+      || (error instanceof ApiError && (error.status === 429 || error.status >= 500));
+  }
+
+  function resetCloudRecovery(): void {
+    cloudRecoveryAttempt = 0;
+    if (cloudRecoveryTimer !== undefined) globalThis.clearTimeout(cloudRecoveryTimer);
+    cloudRecoveryTimer = undefined;
+  }
+
+  /**
+   * Invalidate both a pending timer and a callback that has already started.
+   * Clearing a timeout alone is insufficient: its detached async body may be
+   * between awaits while another window logs in a different account.
+   */
+  function cancelCloudRecovery(): void {
+    cloudRecoveryGeneration += 1;
+    resetCloudRecovery();
+  }
+
+  function captureCloudRecoveryContext(): CloudRecoveryContext | undefined {
+    const current = useAuthStore().session;
+    if (!current) return undefined;
+    return {
+      generation: cloudRecoveryGeneration,
+      ownerId: current.user.id,
+      token: current.token,
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
+    };
+  }
+
+  function isCurrentCloudRecoveryContext(context: CloudRecoveryContext): boolean {
+    const current = useAuthStore().session;
+    return (
+      context.generation === cloudRecoveryGeneration &&
+      current?.user.id === context.ownerId &&
+      current.token === context.token &&
+      useAppStore().config.serverBaseUrl === context.serverBaseUrl
+    );
+  }
+
+  /**
+   * navigator/net.isOnline cannot detect a reachable Wi-Fi link whose server
+   * is down. A bounded, jittered retry therefore continues without requiring
+   * a false→true platform event. Server writes remain idempotent.
+   */
+  function scheduleCloudRecovery(immediate = false): void {
+    if (cloudRecoveryTimer !== undefined) return;
+    const context = captureCloudRecoveryContext();
+    if (!context) return;
+    const base = immediate
+      ? 0
+      : CLOUD_RECOVERY_DELAYS[Math.min(cloudRecoveryAttempt, CLOUD_RECOVERY_DELAYS.length - 1)]!;
+    const delay = base === 0 ? 0 : Math.round(base * (0.85 + Math.random() * 0.3));
+    cloudRecoveryAttempt += 1;
+    cloudRecoveryTimer = globalThis.setTimeout(() => {
+      cloudRecoveryTimer = undefined;
+      const recovery = (async () => {
+        const app = useAppStore();
+        if (!isCurrentCloudRecoveryContext(context)) return;
+        if (!app.online) {
+          scheduleCloudRecovery();
+          return;
+        }
+        await flushAttemptOutbox(context);
+        if (!isCurrentCloudRecoveryContext(context)) return;
+        await syncNowForRecovery(context);
+        if (!isCurrentCloudRecoveryContext(context)) return;
+        const retryAttempt = attemptUploadByOwner.value[context.ownerId]?.state === 'pending';
+        const retrySync = syncStatus.value.state === 'offline';
+        if (retryAttempt || retrySync) scheduleCloudRecovery();
+        else resetCloudRecovery();
+      })();
+      // Timer callbacks are detached by design. Storage/SQLite failures are
+      // therefore terminally caught here and retried with the same bounded
+      // backoff only while the exact account context is still current.
+      void recovery.catch(() => {
+        if (isCurrentCloudRecoveryContext(context)) scheduleCloudRecovery();
+      });
+    }, delay);
+    const nodeTimer = cloudRecoveryTimer as unknown as { unref?: () => void };
+    nodeTimer.unref?.();
+  }
+
+  onScopeDispose(cancelCloudRecovery);
 
   function enqueueArchiveMutation<T>(mutation: () => Promise<T>): Promise<T> {
     const run = archiveMutationTail.then(mutation, mutation);
@@ -149,14 +255,9 @@ export const useProgressStore = defineStore('progress', () => {
     next: LocalArchive,
   ): Promise<boolean> {
     return runStorageMutation(storage, async () => {
-      const current = await archiveStore.load();
-      if (!sameArchive(current, expected)) {
-        archive.value = current;
-        return false;
-      }
-      await archiveStore.save(next);
-      archive.value = next;
-      return true;
+      const committed = await archiveStore.saveIfUnchanged(expected, next);
+      archive.value = committed ? next : await archiveStore.load();
+      return committed;
     });
   }
 
@@ -175,7 +276,7 @@ export const useProgressStore = defineStore('progress', () => {
       if (change.collection === STORAGE.archive) {
         // Join the local queue as well as the origin-wide mutex: neither a
         // stale notification nor a local in-flight mutation may win later.
-        void enqueueArchiveMutation(loadLatestArchive);
+        void enqueueArchiveMutation(loadLatestArchive).catch(() => undefined);
       }
       if (
         change.collection === STORAGE.history &&
@@ -247,7 +348,8 @@ export const useProgressStore = defineStore('progress', () => {
    * batch to the new token nor acknowledge/delete it under the wrong session.
    * Separate snapshots have separate promises, so B never reuses A's flush.
    */
-  async function flushAttemptOutbox(): Promise<void> {
+  async function flushAttemptOutbox(expectedRecovery?: CloudRecoveryContext): Promise<void> {
+    if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return;
     const auth = useAuthStore();
     const current = auth.session;
     if (!current) return;
@@ -257,6 +359,27 @@ export const useProgressStore = defineStore('progress', () => {
       token: current.token,
       serverBaseUrl: app.config.serverBaseUrl,
     };
+    if (
+      expectedRecovery &&
+      (snapshot.ownerId !== expectedRecovery.ownerId ||
+        snapshot.token !== expectedRecovery.token ||
+        snapshot.serverBaseUrl !== expectedRecovery.serverBaseUrl)
+    ) {
+      return;
+    }
+    if (!app.online) {
+      const pendingCount = await attemptOutbox.count(snapshot.ownerId);
+      attemptUploadByOwner.value = {
+        ...attemptUploadByOwner.value,
+        [snapshot.ownerId]: {
+          state: 'pending',
+          pendingCount,
+          message: `${pendingCount} ${pendingCount === 1 ? 'Antwort wartet' : 'Antworten warten'} auf eine Verbindung.`,
+        },
+      };
+      scheduleCloudRecovery();
+      return;
+    }
     const existing = attemptFlushes.find(
       (entry) =>
         entry.ownerId === snapshot.ownerId &&
@@ -327,16 +450,17 @@ export const useProgressStore = defineStore('progress', () => {
           cloudHistoryVersion.value += 1;
         } catch (error) {
           const count = await attemptOutbox.count(snapshot.ownerId);
-          const offline = error instanceof NetworkError;
+          const retryable = isTransientCloudError(error);
           setAttemptUploadStatus(snapshot.ownerId, runId, {
-            state: offline ? 'pending' : 'error',
+            state: retryable ? 'pending' : 'error',
             pendingCount: count,
-            message: offline
+            message: retryable
               ? `${count} ${count === 1 ? 'Antwort wartet' : 'Antworten warten'} auf eine Verbindung.`
               : error instanceof ApiError && error.status === 401
                 ? 'Der Antwortverlauf wartet auf eine erneute Anmeldung.'
                 : 'Der Antwortverlauf konnte nicht hochgeladen werden. Bitte erneut versuchen.',
           });
+          if (retryable) scheduleCloudRecovery();
           return;
         }
       }
@@ -374,6 +498,36 @@ export const useProgressStore = defineStore('progress', () => {
   ): Promise<string> {
     const owner = capturedOwner ?? await captureAttemptOwner();
     return runStorageMutation(storage, () => attemptOutbox.enqueue(owner, attempt));
+  }
+
+  /**
+   * Durable answer boundary: outbox, archive, local history and the owning
+   * practice-session snapshot become visible together or not at all.
+   */
+  async function commitGradeEvent(input: {
+    owner: AttemptOwnerSnapshot;
+    attempt: QueuedAttempt;
+    grade: {
+      partId: string;
+      competencyCodes: string[];
+      verdict: GradeResult['verdict'];
+      awardedPoints: number;
+      maxPoints: number;
+      now: Date;
+    };
+    session: LocalGradeSessionMutation;
+  }): Promise<{ ownerId: string; previousFsrs: FsrsState | undefined; session: unknown }> {
+    return enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
+      const result = await localGradeCommitStore.commit(input);
+      // Reactive state follows durable state, never the other way around.
+      archive.value = result.archive;
+      historyVersion.value += 1;
+      return {
+        ownerId: result.ownerId,
+        previousFsrs: result.previousFsrs,
+        session: result.session,
+      };
+    }));
   }
 
   /** Upload only when the staged owner is still the active authenticated user. */
@@ -447,6 +601,8 @@ export const useProgressStore = defineStore('progress', () => {
     competencyCodes: string[];
     result: GradeResult;
     elapsedMs?: number;
+    contentSource?: CoreSourcePreference;
+    contentId?: string;
     /** One event timestamp shared by archive, local history and cloud outbox. */
     gradedAt?: string;
   }): Promise<{ grading: Grading; previousFsrs: FsrsState | undefined }> {
@@ -472,6 +628,8 @@ export const useProgressStore = defineStore('progress', () => {
         gradedAt: now.toISOString(),
       };
       if (input.elapsedMs !== undefined) entry.elapsedMs = input.elapsedMs;
+      if (input.contentSource !== undefined) entry.contentSource = input.contentSource;
+      if (input.contentId !== undefined) entry.contentId = input.contentId;
       await historyLog.append(entry);
       historyVersion.value += 1;
       return { grading: res.grading, previousFsrs: res.previousFsrs };
@@ -512,10 +670,22 @@ export const useProgressStore = defineStore('progress', () => {
    * On conflict the dialog state is populated; resolution happens via
    * resolveConflict().
    */
-  async function runSyncRound(opts: { quiet: boolean; compareChecksum?: boolean }): Promise<SyncRunResult> {
+  async function runSyncRound(
+    opts: { quiet: boolean; compareChecksum?: boolean },
+    expectedRecovery?: CloudRecoveryContext,
+  ): Promise<SyncRunResult> {
     const auth = useAuthStore();
     const app = useAppStore();
+    if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
     if (!auth.isLoggedIn) return 'guest';
+    if (!app.online) {
+      syncStatus.value = { state: 'offline', at: new Date() };
+      scheduleCloudRecovery();
+      return 'offline';
+    }
+    const client = expectedRecovery
+      ? new ServerClient(expectedRecovery.serverBaseUrl, () => expectedRecovery.token)
+      : app.serverClient;
     syncStatus.value = { state: 'syncing' };
     try {
       // Another renderer may grade while this renderer is awaiting the
@@ -523,10 +693,13 @@ export const useProgressStore = defineStore('progress', () => {
       // deliberately outside the lock. A changed snapshot retries against
       // the already-advanced server instead of overwriting newer local work.
       for (let contentionAttempt = 0; contentionAttempt < 4; contentionAttempt += 1) {
+        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
         const local = await loadLatestArchive();
-        const serverState = opts.compareChecksum ? await app.serverClient.getState() : undefined;
+        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
+        const serverState = opts.compareChecksum ? await client.getState() : undefined;
+        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
         const { outcome, archive: next } = await performSync(
-          app.serverClient,
+          client,
           local,
           serverState
             ? {
@@ -535,6 +708,7 @@ export const useProgressStore = defineStore('progress', () => {
               }
             : undefined,
         );
+        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
         if (outcome.type === 'conflict') {
           if (!(await archiveIsStillCurrent(local))) continue;
           conflict.value = outcome.conflict;
@@ -554,14 +728,20 @@ export const useProgressStore = defineStore('progress', () => {
       };
       return 'blocked';
     } catch (e) {
-      if (e instanceof NetworkError) {
+      if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
+      if (isTransientCloudError(e)) {
         syncStatus.value = { state: 'offline', at: new Date() };
+        scheduleCloudRecovery();
         return 'offline';
       } else if (e instanceof ApiError && e.status === 401) {
         syncStatus.value = { state: 'error', message: 'Anmeldung abgelaufen — bitte neu anmelden.', at: new Date() };
         return 'error';
       } else {
         syncStatus.value = { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
+        // A detached recovery owns its terminal catch. Re-throw local
+        // storage/runtime failures so that catch can apply bounded backoff;
+        // permanent 4xx/API failures remain visible without retry looping.
+        if (expectedRecovery && !(e instanceof ApiError)) throw e;
         if (!opts.quiet) throw e;
         return 'error';
       }
@@ -570,6 +750,10 @@ export const useProgressStore = defineStore('progress', () => {
 
   async function syncNow(opts: { quiet: boolean; compareChecksum?: boolean }): Promise<SyncRunResult> {
     return enqueueArchiveMutation(() => runSyncRound(opts));
+  }
+
+  function syncNowForRecovery(context: CloudRecoveryContext): Promise<SyncRunResult> {
+    return enqueueArchiveMutation(() => runSyncRound({ quiet: true }, context));
   }
 
   /**
@@ -786,6 +970,7 @@ export const useProgressStore = defineStore('progress', () => {
     init,
     refresh,
     captureAttemptOwner,
+    commitGradeEvent,
     stageAttempt,
     flushStagedAttempt,
     queueAttempt,
@@ -793,6 +978,8 @@ export const useProgressStore = defineStore('progress', () => {
     recoverGuestAttemptClaim,
     claimGuestAttempts,
     flushAttemptOutbox,
+    scheduleCloudRecovery,
+    cancelCloudRecovery,
     applyGrade,
     setGrading,
     setStarred,

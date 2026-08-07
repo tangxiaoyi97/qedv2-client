@@ -37,6 +37,10 @@ export const useAuthStore = defineStore('auth', () => {
     storageSubscribed = true;
     storage.onChange((change) => {
       if (change.collection !== STORAGE.auth) return;
+      // Invalidate immediately, before the asynchronous storage read. A
+      // timer whose callback has already begun is fenced by its generation;
+      // a timeout that has not begun is cleared outright.
+      useProgressStore().cancelCloudRecovery();
       // Read-only refresh: it cannot create an IPC broadcast loop. Serialize
       // notifications so an older read can never apply after a newer one.
       const reload = async () => {
@@ -53,6 +57,7 @@ export const useAuthStore = defineStore('auth', () => {
     subscribeStorageChanges();
     const stored = await authStorage.getSession();
     if (!stored) return;
+    useProgressStore().cancelCloudRecovery();
     session.value = stored;
     checking.value = true;
     const app = useAppStore();
@@ -60,6 +65,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (authStorage.isExpiringSoon(stored, new Date())) {
         const refreshed = await app.serverClient.refresh();
         const next = { ...stored, token: refreshed.token, expiresAt: refreshed.expiresAt };
+        useProgressStore().cancelCloudRecovery();
         await runStorageMutation(storage, () => authStorage.setSession(next));
         session.value = next;
       } else {
@@ -68,6 +74,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         // Token no longer valid — back to guest. Local archive is untouched.
+        useProgressStore().cancelCloudRecovery();
         await runStorageMutation(storage, () => authStorage.clearSession());
         session.value = undefined;
       }
@@ -88,6 +95,9 @@ export const useAuthStore = defineStore('auth', () => {
     options: { claimGuestAttempts?: boolean } = {},
   ): Promise<void> {
     const progress = useProgressStore();
+    // The login response identifies a new auth epoch. Fence old-account
+    // recovery before any guest claim, session write or login reconciliation.
+    progress.cancelCloudRecovery();
     if (options.claimGuestAttempts) {
       // Write the recovery intent BEFORE the session. If the following auth
       // write or claim is interrupted, init/a later login to this same account
@@ -121,6 +131,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function logout(): Promise<void> {
     const progress = useProgressStore();
+    progress.cancelCloudRecovery();
     // Best-effort final sync so nothing is stranded locally-only.
     try {
       await progress.flushAttemptOutbox();
@@ -128,6 +139,9 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       /* offline logout is fine */
     }
+    // The best-effort sync above may itself have observed an offline server
+    // and scheduled recovery. Remove that timer before clearing the session.
+    progress.cancelCloudRecovery();
     // Clears ONLY the auth collection — local progress stays (contract).
     await runStorageMutation(storage, () => authStorage.clearSession());
     session.value = undefined;

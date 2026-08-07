@@ -9,12 +9,14 @@
  * what guests get, and it is never backfilled into the cloud.
  */
 import { STORAGE } from '../ports/index.js';
-import type { StoragePort } from '../ports/index.js';
+import type { CoreSourcePreference, StoragePort } from '../ports/index.js';
 import type { Grading } from '../model/archive.js';
 import type { Verdict } from '../grading/types.js';
 import { localActivityRange, localDayKey } from '../model/format.js';
 
 export interface HistoryEntry {
+  /** Stable local event identity; absent only on pre-2.1 history rows. */
+  clientAttemptId?: string;
   partId: string;
   questionId: string;
   verdict: Verdict;
@@ -24,19 +26,52 @@ export interface HistoryEntry {
   /** ISO 8601 UTC. */
   gradedAt: string;
   elapsedMs?: number;
+  /** Local audit provenance; never required by the cloud history contract. */
+  contentSource?: CoreSourcePreference;
+  /** Verified bank commit when the renderer could determine it. */
+  contentId?: string;
 }
 
 /** Storage layout: one document holding the newest-first entry array. */
-const HISTORY_KEY = 'log';
+export const HISTORY_STORAGE_KEY = 'log';
 /** Retention cap — plenty for a personal tracker, bounded for IndexedDB. */
 const MAX_ENTRIES = 5000;
+
+type LegacyHistoryEntry = HistoryEntry & { submittedText?: unknown; criteriaMet?: unknown };
+
+/** Pure history migration/preparation used by atomic grade commits. */
+export function prepareHistoryLog(value: unknown): HistoryEntry[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error('Local history is malformed');
+  return value.map((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('Local history contains an invalid row');
+    }
+    const entry = { ...(raw as LegacyHistoryEntry) };
+    delete entry.submittedText;
+    delete entry.criteriaMet;
+    return entry;
+  });
+}
+
+export function prepareHistoryAppend(value: unknown, entry: HistoryEntry): HistoryEntry[] {
+  const entries = prepareHistoryLog(value);
+  if (
+    entry.clientAttemptId
+    && entries.some((candidate) => candidate.clientAttemptId === entry.clientAttemptId)
+  ) {
+    return entries;
+  }
+  entries.unshift(entry);
+  if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
+  return entries;
+}
 
 export class HistoryLog {
   constructor(private readonly storage: StoragePort) {}
 
   private async read(): Promise<HistoryEntry[]> {
-    type LegacyHistoryEntry = HistoryEntry & { submittedText?: unknown; criteriaMet?: unknown };
-    const stored = (await this.storage.get<LegacyHistoryEntry[]>(STORAGE.history, HISTORY_KEY)) ?? [];
+    const stored = (await this.storage.get<LegacyHistoryEntry[]>(STORAGE.history, HISTORY_STORAGE_KEY)) ?? [];
     if (!stored.some((entry) => 'submittedText' in entry || 'criteriaMet' in entry)) return stored;
 
     // RC builds briefly retained raw answers for an internal evaluation. That
@@ -48,15 +83,13 @@ export class HistoryLog {
       delete entry.criteriaMet;
       return entry;
     });
-    await this.storage.set(STORAGE.history, HISTORY_KEY, cleaned);
+    await this.storage.set(STORAGE.history, HISTORY_STORAGE_KEY, cleaned);
     return cleaned;
   }
 
   async append(entry: HistoryEntry): Promise<void> {
-    const entries = await this.read();
-    entries.unshift(entry);
-    if (entries.length > MAX_ENTRIES) entries.length = MAX_ENTRIES;
-    await this.storage.set(STORAGE.history, HISTORY_KEY, entries);
+    const entries = prepareHistoryAppend(await this.read(), entry);
+    await this.storage.set(STORAGE.history, HISTORY_STORAGE_KEY, entries);
   }
 
   /** Newest-first slice. */

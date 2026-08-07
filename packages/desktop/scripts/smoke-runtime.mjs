@@ -20,6 +20,7 @@ const INTEGRITY_ROOTS = [
   'bank/content',
   'bank/assets',
   'bank/schema',
+  'bank/revisions',
 ]
 const INTEGRITY_FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION']
 
@@ -136,11 +137,18 @@ function safeManifestPath(value) {
 }
 
 function validateManifest(value) {
-  if (!value || typeof value !== 'object' || value.formatVersion !== 2) {
+  if (!value || typeof value !== 'object' || value.formatVersion !== 3) {
     throw new Error('runtime-manifest.json is missing or uses an unsupported format.')
   }
-  if (!value.core || typeof value.core !== 'object' || !value.bank || typeof value.bank !== 'object') {
-    throw new Error('runtime-manifest.json has invalid Core or bank metadata.')
+  if (
+    !value.core ||
+    typeof value.core !== 'object' ||
+    !value.bank ||
+    typeof value.bank !== 'object' ||
+    !value.revisions ||
+    typeof value.revisions !== 'object'
+  ) {
+    throw new Error('runtime-manifest.json has invalid Core, bank or revision metadata.')
   }
   if (
     typeof value.core.version !== 'string' ||
@@ -148,6 +156,17 @@ function validateManifest(value) {
     typeof value.core.entry !== 'string' ||
     typeof value.bank.commit !== 'string' ||
     !Array.isArray(value.bank.schemaVersions) ||
+    value.revisions.catalog !== 'bank/revisions/revision-catalog.v1.json' ||
+    value.revisions.formatVersion !== 1 ||
+    value.revisions.pinnedCommit !== value.bank.commit ||
+    !Number.isSafeInteger(value.revisions.commitCount) ||
+    value.revisions.commitCount <= 0 ||
+    !Number.isSafeInteger(value.revisions.questionRevisionCount) ||
+    value.revisions.questionRevisionCount <= 0 ||
+    !Number.isSafeInteger(value.revisions.objectCount) ||
+    value.revisions.objectCount <= 0 ||
+    !Number.isSafeInteger(value.revisions.objectBytes) ||
+    value.revisions.objectBytes < 0 ||
     !Array.isArray(value.files) ||
     value.files.length === 0 ||
     value.files.length > MAX_RUNTIME_ENTRIES
@@ -172,6 +191,10 @@ function validateManifest(value) {
       throw new Error(`runtime-manifest.json has an invalid integrity record near ${String(file?.path)}.`)
     }
     priorPath = file.path
+  }
+  const catalog = value.files.find((file) => file.path === value.revisions.catalog)
+  if (!catalog || catalog.type !== 'file') {
+    throw new Error('runtime-manifest.json does not protect the immutable revision catalog.')
   }
   return value
 }
@@ -305,19 +328,97 @@ async function freeLoopbackPort() {
   return address.port
 }
 
-async function boundedJson(url) {
+async function boundedJson(url, maxBytes = 64 * 1024) {
   const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(2_000) })
   if (!response.ok) throw new Error(`${url} returned ${response.status}`)
   const contentLength = Number(response.headers.get('content-length'))
-  if (Number.isFinite(contentLength) && contentLength > 64 * 1024) {
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
     throw new Error(`${url} exceeded the response limit`)
   }
   const text = await response.text()
-  if (Buffer.byteLength(text) > 64 * 1024) throw new Error(`${url} exceeded the response limit`)
+  if (Buffer.byteLength(text) > maxBytes) throw new Error(`${url} exceeded the response limit`)
   return JSON.parse(text)
 }
 
-async function waitForIdentity(baseUrl, child, logs, manifest) {
+function plainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function validateRevisionCommitOrder(catalog, manifest) {
+  const commitOrder = catalog?.commitOrder
+  if (
+    !Array.isArray(commitOrder) ||
+    commitOrder.length !== manifest.revisions.commitCount ||
+    commitOrder.some((commit) => typeof commit !== 'string' || !/^[0-9a-f]{40}$/u.test(commit)) ||
+    new Set(commitOrder).size !== commitOrder.length ||
+    commitOrder.at(-1) !== manifest.revisions.pinnedCommit ||
+    !plainObject(catalog?.commits)
+  ) {
+    throw new Error('The bundled revision catalog has an invalid or incomplete commit order.')
+  }
+  const catalogCommits = Object.keys(catalog.commits).sort()
+  const orderedCommits = [...commitOrder].sort()
+  if (
+    catalogCommits.length !== orderedCommits.length ||
+    catalogCommits.some((commit, index) => commit !== orderedCommits[index])
+  ) {
+    throw new Error('The bundled revision catalog commit inventory is incomplete.')
+  }
+  return [...commitOrder]
+}
+
+export function selectRevisionQuestionSample(revisions, commits, expectedQuestionCount, catalog) {
+  if (!Array.isArray(revisions) || revisions.length !== commits.length) {
+    throw new Error('Bundled Core did not expose every immutable revision manifest')
+  }
+  let totalQuestions = 0
+  let sample
+  for (let index = 0; index < commits.length; index += 1) {
+    const commit = commits[index]
+    const revision = revisions[index]
+    const catalogQuestions = catalog?.commits?.[commit]?.questions
+    if (revision?.commit !== commit || !plainObject(revision.items) || !plainObject(catalogQuestions)) {
+      throw new Error(`Bundled Core did not expose immutable revision ${commit}`)
+    }
+    const entries = Object.entries(revision.items).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )
+    for (const [questionId, contentHash] of entries) {
+      if (!questionId || typeof contentHash !== 'string' || !/^[0-9a-f]{64}$/u.test(contentHash)) {
+        throw new Error(`Bundled Core returned invalid revision metadata for ${commit}`)
+      }
+    }
+    const catalogEntries = Object.entries(catalogQuestions).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    )
+    if (
+      entries.length !== catalogEntries.length ||
+      entries.some(([questionId, contentHash], entryIndex) => {
+        const [catalogQuestionId, record] = catalogEntries[entryIndex] ?? []
+        return (
+          questionId !== catalogQuestionId ||
+          !plainObject(record) ||
+          record.contentHash !== contentHash
+        )
+      })
+    ) {
+      throw new Error(`Bundled Core revision manifest does not match the catalog for ${commit}`)
+    }
+    totalQuestions += entries.length
+    if (!sample && entries.length > 0) {
+      sample = { commit, questionId: entries[0][0], contentHash: entries[0][1] }
+    }
+  }
+  if (totalQuestions !== expectedQuestionCount) {
+    throw new Error(
+      `Bundled Core revision count mismatch: expected ${expectedQuestionCount}, found ${totalQuestions}`,
+    )
+  }
+  if (!sample) throw new Error('Bundled Core revision catalog contains no historical questions')
+  return sample
+}
+
+async function waitForIdentity(baseUrl, child, logs, manifest, revisionCatalog, revisionCommits) {
   const deadline = Date.now() + 30_000
   let lastError = new Error('Core did not answer the smoke test')
   while (Date.now() < deadline) {
@@ -333,6 +434,10 @@ async function waitForIdentity(baseUrl, child, logs, manifest) {
         info.version !== manifest.core.version ||
         info.commit !== manifest.core.commit ||
         info.bank?.commit !== manifest.bank.commit ||
+        info.bank?.revisions?.available !== true ||
+        info.bank.revisions.pinnedCommit !== manifest.revisions.pinnedCommit ||
+        info.bank.revisions.commitCount !== manifest.revisions.commitCount ||
+        info.bank.revisions.questionRevisionCount !== manifest.revisions.questionRevisionCount ||
         !Number.isInteger(info.schemaVersionSupported?.min) ||
         !Number.isInteger(info.schemaVersionSupported?.max) ||
         manifest.bank.schemaVersions.some(
@@ -340,6 +445,37 @@ async function waitForIdentity(baseUrl, child, logs, manifest) {
         )
       ) {
         throw new Error('Bundled Core identity does not match runtime-manifest.json')
+      }
+      const revisions = []
+      for (const commit of revisionCommits) {
+        revisions.push(
+          await boundedJson(`${baseUrl}/content/revisions/${commit}/manifest`, 2 * 1024 * 1024),
+        )
+      }
+      const sample = selectRevisionQuestionSample(
+        revisions,
+        revisionCommits,
+        manifest.revisions.questionRevisionCount,
+        revisionCatalog,
+      )
+      const sampleRecord = revisionCatalog.commits?.[sample.commit]?.questions?.[sample.questionId]
+      if (
+        !plainObject(sampleRecord) ||
+        sampleRecord.contentHash !== sample.contentHash ||
+        typeof sampleRecord.wireHash !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(sampleRecord.wireHash)
+      ) {
+        throw new Error('Bundled revision catalog does not match the Core manifest probe')
+      }
+      const question = await boundedJson(
+        `${baseUrl}/content/revisions/${sample.commit}/questions/${encodeURIComponent(sample.questionId)}`,
+      )
+      if (
+        question?.id !== sample.questionId ||
+        question.contentHash !== sample.contentHash ||
+        question.wireHash !== sampleRecord.wireHash
+      ) {
+        throw new Error('Bundled Core returned an inconsistent immutable question revision')
       }
       return info
     } catch (error) {
@@ -369,6 +505,10 @@ export async function runSmoke(argv = process.argv.slice(2)) {
   const manifest = validateManifest(
     JSON.parse(await readFile(path.join(runtimeRoot, 'runtime-manifest.json'), 'utf8')),
   )
+  const revisionCatalog = JSON.parse(
+    await readFile(path.join(runtimeRoot, ...manifest.revisions.catalog.split('/')), 'utf8'),
+  )
+  const revisionCommits = validateRevisionCommitOrder(revisionCatalog, manifest)
   const integrity = await verifyRuntimeInventory(runtimeRoot, manifest)
   process.stdout.write(
     `Runtime integrity smoke passed: ${integrity.checkedFiles} files, ${integrity.checkedBytes} bytes (${runtimeRoot})\n`,
@@ -390,6 +530,8 @@ export async function runSmoke(argv = process.argv.slice(2)) {
     PORT: String(port),
     BANK_PATH: bankDirectory,
     BANK_STRICT: 'true',
+    REVISION_VAULT_PATH: path.join(bankDirectory, 'revisions'),
+    REVISION_VAULT_REQUIRED: 'true',
     REQUEST_LOG: 'false',
     CORS_ORIGINS: 'http://127.0.0.1:*',
     CORE_SOURCE_REPO: 'https://github.com/tangxiaoyi97/qedv2-core',
@@ -411,7 +553,14 @@ export async function runSmoke(argv = process.argv.slice(2)) {
   child.stderr?.on('data', appendLog)
 
   try {
-    const info = await waitForIdentity(`http://127.0.0.1:${port}`, child, () => logText, manifest)
+    const info = await waitForIdentity(
+      `http://127.0.0.1:${port}`,
+      child,
+      () => logText,
+      manifest,
+      revisionCatalog,
+      revisionCommits,
+    )
     process.stdout.write(
       `Bundled Core smoke passed: ${info.version} (${String(info.commit).slice(0, 12)}), ` +
         `bank ${String(info.bank.commit).slice(0, 12)}\n`,

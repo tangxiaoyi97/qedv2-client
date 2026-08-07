@@ -12,19 +12,23 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
+  CoreClient,
   NetworkError,
   VERDICT_LABELS,
   formatScore,
   localActivityRange,
   localDayRange,
   parseLocalDayKey,
+  questionContentHash,
+  type CoreSourcePreference,
   type Verdict,
 } from '@qed2/core-logic';
 import { ActivityHeatmap, QButton, QSkeleton, StateIcon } from '@qed2/ui';
-import { historyLog, questionCache } from '../services.js';
+import { historyLog, ports, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
+import { shortCommit } from '../version-info.js';
 
 const router = useRouter();
 const app = useAppStore();
@@ -43,6 +47,10 @@ interface Row {
   maxPoints: number | undefined;
   gradedAt: string;
   elapsedMs: number | undefined;
+  contentSource?: CoreSourcePreference;
+  contentId?: string;
+  /** Cloud rows created before provenance support cannot be replayed exactly. */
+  provenanceUnknown: boolean;
 }
 
 const rows = ref<Row[]>([]);
@@ -65,23 +73,77 @@ function verdictOf(correct: boolean, awarded: number): Verdict {
 }
 
 /** Join titles from the local question cache; fetch missing ones from core. */
-async function joinTitles(questionIds: string[]): Promise<void> {
-  const unique = [...new Set(questionIds)].filter((id) => !titles.value.has(id));
+function titleKey(row: Pick<Row, 'questionId' | 'contentSource' | 'contentId'>): string {
+  return `${row.contentSource ?? 'current'}:${row.contentId ?? 'current'}:${row.questionId}`;
+}
+
+function hasExactProvenance(
+  row: Pick<Row, 'contentSource' | 'contentId'>,
+): row is { contentSource: CoreSourcePreference; contentId: string } {
+  return (row.contentSource === 'local' || row.contentSource === 'remote')
+    && typeof row.contentId === 'string'
+    && /^[0-9a-f]{40}$/u.test(row.contentId);
+}
+
+async function joinTitles(sourceRows: Row[]): Promise<void> {
+  const unique = [...new Map(sourceRows.map((row) => [titleKey(row), row])).values()]
+    .filter((row) => !titles.value.has(titleKey(row)));
   if (unique.length === 0) return;
-  const missing: string[] = [];
+  const missingRevisions = new Map<string, {
+    source: CoreSourcePreference;
+    contentId: string;
+    rows: Row[];
+  }>();
   const next = new Map(titles.value);
-  for (const id of unique) {
-    const cached = await questionCache.get(id);
-    if (cached) next.set(id, cached.title);
-    else missing.push(id);
+  for (const row of unique) {
+    // A legacy row without provenance is not a claim about today's bank.
+    // Keep its stable question id visible, but do not borrow a cached/current
+    // title or contact Core until the user explicitly chooses to redo it.
+    if (!hasExactProvenance(row)) continue;
+    const cached = await questionCache.getVerified(row.questionId, row.contentId);
+    if (cached) next.set(titleKey(row), cached.title);
+    else {
+      const key = `${row.contentSource}:${row.contentId}`;
+      const group = missingRevisions.get(key) ?? {
+        source: row.contentSource,
+        contentId: row.contentId,
+        rows: [],
+      };
+      group.rows.push(row);
+      missingRevisions.set(key, group);
+    }
   }
-  if (missing.length > 0) {
+  for (const group of missingRevisions.values()) {
     try {
-      const res = await app.coreClient.getQuestionsBatch(missing);
-      for (const q of res.questions) next.set(q.id, q.title);
-      await questionCache.putMany(res.questions);
+      const endpoint = await ports.coreRuntime.getEndpoint(group.source);
+      const client = new CoreClient(endpoint.baseUrl);
+      const manifest = await client.revisionManifest(group.contentId);
+      if (manifest.commit !== group.contentId) throw new Error('revision manifest mismatch');
+      const ids = [...new Set(group.rows.map((row) => row.questionId))];
+      const response = await client.getRevisionQuestionsBatch(group.contentId, ids);
+      const requested = new Set(ids);
+      const verified: typeof response.questions = [];
+      for (const entry of response.questions) {
+        if (
+          !requested.has(entry.question.id)
+          || manifest.items[entry.question.id] !== entry.contentHash
+          || questionContentHash(entry.question) !== entry.wireHash
+        ) {
+          throw new Error('historical question integrity mismatch');
+        }
+        verified.push(entry);
+      }
+      await questionCache.putManyVerified(verified, group.contentId);
+      for (const entry of verified) {
+        for (const row of group.rows) {
+          if (row.questionId === entry.question.id) {
+            next.set(titleKey(row), entry.question.title);
+          }
+        }
+      }
     } catch {
-      // titles stay blank — rows still render with ids (core may be offline)
+      // Exact historical content remains unavailable; never borrow a title
+      // from the current bank merely because the question id still exists.
     }
   }
   titles.value = next;
@@ -120,6 +182,9 @@ async function loadPage(reset: boolean): Promise<void> {
         maxPoints: undefined, // audit rows carry no maxPoints — omit the denominator
         gradedAt: i.gradedAt,
         elapsedMs: i.elapsedMs ?? undefined,
+        contentSource: i.contentSource,
+        contentId: i.contentId,
+        provenanceUnknown: !hasExactProvenance(i),
       }));
     } else {
       const offset = (target - 1) * PAGE_SIZE;
@@ -142,12 +207,15 @@ async function loadPage(reset: boolean): Promise<void> {
         maxPoints: e.maxPoints,
         gradedAt: e.gradedAt,
         elapsedMs: e.elapsedMs,
+        contentSource: e.contentSource,
+        contentId: e.contentId,
+        provenanceUnknown: !hasExactProvenance(e),
       }));
     }
     if (!isCurrentRequest()) return;
     rows.value = reset ? batch : [...rows.value, ...batch];
     page.value = target;
-    void joinTitles(batch.map((r) => r.questionId));
+    void joinTitles(batch);
   } catch (e) {
     if (!isCurrentRequest()) return;
     error.value =
@@ -273,13 +341,17 @@ function fmtPoints(r: Row): string {
   return r.maxPoints !== undefined ? `${a}/${formatScore(r.maxPoints)} P` : `${a} P`;
 }
 
-function redo(questionId: string): void {
+function redo(row: Row): void {
+  const exactProvenance = hasExactProvenance(row)
+    ? { coreSource: row.contentSource, contentId: row.contentId }
+    : {};
   void router.push({
     path: '/practice',
     query: {
       source: 'history',
-      questions: questionId,
-      focus: questionId,
+      questions: row.questionId,
+      focus: row.questionId,
+      ...exactProvenance,
       returnTo: router.currentRoute.value.fullPath,
     },
   });
@@ -376,15 +448,29 @@ function redo(questionId: string): void {
             :key="r.key"
             type="button"
             class="hist__row"
-            :title="`${r.questionId} erneut üben`"
-            @click="redo(r.questionId)"
+            :title="r.provenanceUnknown
+              ? `${r.questionId} mit der aktuellen Aufgabenbank erneut üben; Quellversion unbekannt`
+              : `${r.questionId} erneut üben`"
+            @click="redo(r)"
           >
             <StateIcon
               :state="r.verdict === 'correct' ? 'correct' : r.verdict === 'partial' ? 'partial' : 'incorrect'"
               :size="18"
               :label="VERDICT_LABELS[r.verdict]"
             />
-            <span class="hist__row-title">{{ titles.get(r.questionId) ?? r.questionId }}</span>
+            <span class="hist__row-copy">
+              <span class="hist__row-title">{{ titles.get(titleKey(r)) ?? r.questionId }}</span>
+              <span v-if="r.provenanceUnknown" class="hist__row-provenance">
+                Quellversion unbekannt · Wiederholung mit aktueller Bank
+              </span>
+              <span
+                v-else-if="r.contentSource && r.contentId"
+                class="hist__row-source"
+                :title="`Bank ${r.contentId}`"
+              >
+                {{ r.contentSource === 'local' ? 'Lokal' : 'Remote' }} · {{ shortCommit(r.contentId) }}
+              </span>
+            </span>
             <span class="hist__row-part">{{ r.partId }}</span>
             <span class="hist__row-points">{{ fmtPoints(r) }}</span>
             <span class="hist__row-time">{{ timeFmt.format(new Date(r.gradedAt)) }}</span>
@@ -510,12 +596,38 @@ function redo(questionId: string): void {
   outline: 2px solid var(--q-accent);
   outline-offset: 1px;
 }
+.hist__row-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 .hist__row-title {
   font-size: 13px;
   font-weight: 600;
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist__row-provenance {
+  color: var(--q-mut-2);
+  font-size: 9.5px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.hist__row-source {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid var(--q-border-soft);
+  border-radius: 999px;
+  background: var(--q-panel-2);
+  color: var(--q-mut-2);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

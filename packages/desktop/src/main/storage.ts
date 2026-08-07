@@ -1,10 +1,17 @@
 import { chmodSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import type {
+  StorageAddress,
+  StorageBatchCommit,
+  StorageBatchCommitResult,
+  StorageVersionedEntry,
+} from '@qed2/core-logic';
 
 const COLLECTION_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
 const MAX_KEY_LENGTH = 512;
 const MAX_VALUE_BYTES = 16 * 1024 * 1024;
+const MAX_BATCH_ADDRESSES = 32;
 
 export interface StorageCodec {
   encode(collection: string, json: string): {
@@ -50,6 +57,46 @@ function validateAddress(collection: string, key?: string): void {
   }
 }
 
+function addressId(address: StorageAddress): string {
+  return `${address.collection}\0${address.key}`;
+}
+
+function validRevision(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function validateBatch(request: StorageBatchCommit): void {
+  if (
+    !Array.isArray(request.ifRevisions)
+    || request.ifRevisions.length === 0
+    || request.ifRevisions.length > MAX_BATCH_ADDRESSES
+    || !Array.isArray(request.mutations)
+    || request.mutations.length === 0
+    || request.mutations.length > MAX_BATCH_ADDRESSES
+  ) {
+    throw new TypeError('Invalid storage batch size');
+  }
+  const preconditions = new Set<string>();
+  for (const condition of request.ifRevisions) {
+    validateAddress(condition.collection, condition.key);
+    if (!validRevision(condition.revision)) throw new TypeError('Invalid storage revision');
+    const id = addressId(condition);
+    if (preconditions.has(id)) throw new TypeError('Duplicate storage precondition');
+    preconditions.add(id);
+  }
+  const mutations = new Set<string>();
+  for (const mutation of request.mutations) {
+    validateAddress(mutation.collection, mutation.key);
+    if (mutation.operation !== 'set' && mutation.operation !== 'delete') {
+      throw new TypeError('Invalid storage batch operation');
+    }
+    const id = addressId(mutation);
+    if (!preconditions.has(id)) throw new TypeError('Storage mutation is missing a revision precondition');
+    if (mutations.has(id)) throw new TypeError('Duplicate storage mutation');
+    mutations.add(id);
+  }
+}
+
 export class SqliteStorage {
   private readonly db: DatabaseSync;
   private readonly getStatement;
@@ -58,6 +105,8 @@ export class SqliteStorage {
   private readonly keysStatement;
   private readonly clearStatement;
   private readonly quarantineStatement;
+  private readonly getRevisionStatement;
+  private readonly setRevisionStatement;
   private readonly volatileRows = new Map<string, { payload: Uint8Array; encoding: string }>();
 
   constructor(
@@ -93,6 +142,14 @@ export class SqliteStorage {
           quarantined_at INTEGER NOT NULL,
           reason TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS kv_revisions (
+          collection TEXT NOT NULL,
+          key TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK (revision >= 0),
+          PRIMARY KEY (collection, key)
+        ) WITHOUT ROWID;
+        INSERT OR IGNORE INTO kv_revisions (collection, key, revision)
+          SELECT collection, key, 1 FROM kv;
       `);
       const check = this.db.prepare('PRAGMA quick_check').get() as { quick_check?: string } | undefined;
       if (check?.quick_check !== 'ok') {
@@ -114,6 +171,14 @@ export class SqliteStorage {
         INSERT INTO quarantined_kv
           (collection, key, payload, encoding, quarantined_at, reason)
         VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      this.getRevisionStatement = this.db.prepare(
+        'SELECT revision FROM kv_revisions WHERE collection = ? AND key = ?',
+      );
+      this.setRevisionStatement = this.db.prepare(`
+        INSERT INTO kv_revisions (collection, key, revision)
+        VALUES (?, ?, ?)
+        ON CONFLICT(collection, key) DO UPDATE SET revision = excluded.revision
       `);
     } catch (error) {
       if (this.db.isOpen) this.db.close();
@@ -157,24 +222,29 @@ export class SqliteStorage {
 
   set(collection: string, key: string, value: unknown): void {
     validateAddress(collection, key);
-    const json = JSON.stringify(value);
-    if (json === undefined) throw new Error('Storage value must be JSON serializable');
-    if (Buffer.byteLength(json) > MAX_VALUE_BYTES) throw new Error('Storage value exceeds the 16 MiB safety limit');
-    const encoded = this.codec.encode(collection, json);
+    const encoded = this.encodeValue(collection, value);
     const address = `${collection}\0${key}`;
+    const nextRevision = this.nextRevision(collection, key);
+    this.immediateTransaction(() => {
+      if (encoded.persistent === false) this.deleteStatement.run(collection, key);
+      else this.setStatement.run(collection, key, encoded.payload, encoded.encoding, Date.now());
+      this.setRevisionStatement.run(collection, key, nextRevision);
+    });
     if (encoded.persistent === false) {
-      this.deleteStatement.run(collection, key);
       this.volatileRows.set(address, { payload: encoded.payload, encoding: encoded.encoding });
-      return;
+    } else {
+      this.volatileRows.delete(address);
     }
-    this.volatileRows.delete(address);
-    this.setStatement.run(collection, key, encoded.payload, encoded.encoding, Date.now());
   }
 
   delete(collection: string, key: string): void {
     validateAddress(collection, key);
+    const nextRevision = this.nextRevision(collection, key);
+    this.immediateTransaction(() => {
+      this.deleteStatement.run(collection, key);
+      this.setRevisionStatement.run(collection, key, nextRevision);
+    });
     this.volatileRows.delete(`${collection}\0${key}`);
-    this.deleteStatement.run(collection, key);
   }
 
   keys(collection: string): string[] {
@@ -192,10 +262,84 @@ export class SqliteStorage {
   clear(collection: string): void {
     validateAddress(collection);
     const prefix = `${collection}\0`;
+    const keys = new Set(
+      (this.keysStatement.all(collection) as Array<{ key: string }>).map((row) => row.key),
+    );
+    for (const address of this.volatileRows.keys()) {
+      if (address.startsWith(prefix)) keys.add(address.slice(prefix.length));
+    }
+    const revisions = [...keys].map((key) => ({ key, revision: this.nextRevision(collection, key) }));
+    this.immediateTransaction(() => {
+      this.clearStatement.run(collection);
+      for (const entry of revisions) {
+        this.setRevisionStatement.run(collection, entry.key, entry.revision);
+      }
+    });
     for (const address of this.volatileRows.keys()) {
       if (address.startsWith(prefix)) this.volatileRows.delete(address);
     }
-    this.clearStatement.run(collection);
+  }
+
+  readBatch(addresses: readonly StorageAddress[]): StorageVersionedEntry[] {
+    if (!Array.isArray(addresses) || addresses.length > MAX_BATCH_ADDRESSES) {
+      throw new TypeError('Invalid storage batch size');
+    }
+    return addresses.map((address) => {
+      validateAddress(address.collection, address.key);
+      const value = this.get<unknown>(address.collection, address.key);
+      const revision = this.revision(address.collection, address.key);
+      return {
+        collection: address.collection,
+        key: address.key,
+        revision,
+        exists: value !== undefined,
+        ...(value !== undefined ? { value } : {}),
+      };
+    });
+  }
+
+  commitBatch(request: StorageBatchCommit): StorageBatchCommitResult {
+    validateBatch(request);
+    const prepared = request.mutations.map((mutation) => {
+      if (mutation.operation === 'delete') return mutation;
+      const encoded = this.encodeValue(mutation.collection, mutation.value);
+      if (encoded.persistent === false) {
+        throw new Error('Atomic storage batches require durable values');
+      }
+      return { ...mutation, encoded };
+    });
+    let committed = false;
+    this.immediateTransaction(() => {
+      for (const condition of request.ifRevisions) {
+        if (this.revision(condition.collection, condition.key) !== condition.revision) return;
+      }
+      const revisionByAddress = new Map(
+        request.ifRevisions.map((condition) => [addressId(condition), condition.revision]),
+      );
+      for (const mutation of prepared) {
+        const revision = revisionByAddress.get(addressId(mutation))!;
+        if (revision >= Number.MAX_SAFE_INTEGER) throw new Error('Storage revision exhausted');
+        if (mutation.operation === 'set') {
+          this.setStatement.run(
+            mutation.collection,
+            mutation.key,
+            mutation.encoded.payload,
+            mutation.encoded.encoding,
+            Date.now(),
+          );
+        } else {
+          this.deleteStatement.run(mutation.collection, mutation.key);
+        }
+        this.setRevisionStatement.run(mutation.collection, mutation.key, revision + 1);
+      }
+      committed = true;
+    });
+    if (committed) {
+      for (const mutation of request.mutations) {
+        this.volatileRows.delete(`${mutation.collection}\0${mutation.key}`);
+      }
+    }
+    return { committed };
   }
 
   checkpoint(): void {
@@ -209,6 +353,43 @@ export class SqliteStorage {
     this.db.close();
   }
 
+  private encodeValue(collection: string, value: unknown): ReturnType<StorageCodec['encode']> {
+    const json = JSON.stringify(value);
+    if (json === undefined) throw new Error('Storage value must be JSON serializable');
+    if (Buffer.byteLength(json) > MAX_VALUE_BYTES) {
+      throw new Error('Storage value exceeds the 16 MiB safety limit');
+    }
+    return this.codec.encode(collection, json);
+  }
+
+  private revision(collection: string, key: string): number {
+    const row = this.getRevisionStatement.get(collection, key) as { revision: number } | undefined;
+    if (!row) return 0;
+    if (!validRevision(row.revision)) throw new Error('SQLite storage revision is corrupt');
+    return row.revision;
+  }
+
+  private nextRevision(collection: string, key: string): number {
+    const revision = this.revision(collection, key);
+    if (revision >= Number.MAX_SAFE_INTEGER) throw new Error('Storage revision exhausted');
+    return revision + 1;
+  }
+
+  private immediateTransaction(operation: () => void): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      operation();
+      this.db.exec('COMMIT');
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // Preserve the first failure. Structural recovery runs on next open.
+      }
+      throw error;
+    }
+  }
+
   private quarantineRecord(
     collection: string,
     key: string,
@@ -216,8 +397,7 @@ export class SqliteStorage {
     error: unknown,
   ): void {
     const reason = (error instanceof Error ? error.message : String(error)).slice(0, 2_048);
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
+    this.immediateTransaction(() => {
       this.quarantineStatement.run(
         collection,
         key,
@@ -227,16 +407,8 @@ export class SqliteStorage {
         reason,
       );
       this.deleteStatement.run(collection, key);
-      this.db.exec('COMMIT');
-    } catch (quarantineError) {
-      try {
-        this.db.exec('ROLLBACK');
-      } catch {
-        // Preserve the first quarantine failure; the DB recovery factory will
-        // handle structural errors on the next start.
-      }
-      throw new AggregateError([error, quarantineError], 'Damaged record could not be quarantined');
-    }
+      this.setRevisionStatement.run(collection, key, this.nextRevision(collection, key));
+    });
   }
 }
 
