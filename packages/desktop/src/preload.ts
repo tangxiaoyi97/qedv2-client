@@ -3,10 +3,16 @@ import type {
   ClientConfig,
   CoreRecoveryAction,
   CoreRuntimeStatus,
+  CoreSourcePreference,
+  DesktopRendererKind,
   DesktopWindowTarget,
   PlatformPorts,
   ShellCommand,
+  StorageAddress,
+  StorageBatchCommit,
+  StorageBatchCommitResult,
   StorageChange,
+  StorageVersionedEntry,
   UpdateSnapshot,
 } from '@qed2/core-logic';
 import { IPC } from './shared/channels.js';
@@ -19,10 +25,17 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 
 function argument(name: string): string | undefined {
   const prefix = `--${name}=`;
-  return process.argv.find((value) => value.startsWith(prefix))?.slice(prefix.length);
+  return process.argv.findLast((value) => value.startsWith(prefix))?.slice(prefix.length);
 }
 
 const appVersion = argument('qed2-app-version') ?? 'unknown';
+const selfUpdateAvailable = argument('qed2-self-update') === 'true';
+const manualAppInstall = argument('qed2-manual-app-install') === 'true';
+const rawWindowKind = argument('qed2-window-kind');
+const desktopWindowKinds = new Set<DesktopRendererKind>(['main', 'practice', 'updates', 'node']);
+const windowKind = desktopWindowKinds.has(rawWindowKind as DesktopRendererKind)
+  ? rawWindowKind as DesktopRendererKind
+  : undefined;
 let online =
   typeof globalThis.navigator === 'undefined'
     ? true
@@ -46,28 +59,39 @@ const ports: Partial<PlatformPorts> = {
     clear: async (collection: string) => {
       await ipcRenderer.invoke(IPC.storageClear, collection);
     },
+    readBatch: async (addresses: readonly StorageAddress[]) =>
+      (await ipcRenderer.invoke(IPC.storageReadBatch, addresses)) as StorageVersionedEntry[],
+    commitBatch: async (request: StorageBatchCommit) =>
+      (await ipcRenderer.invoke(IPC.storageCommitBatch, request)) as StorageBatchCommitResult,
     onChange: (callback) => subscribe<StorageChange>(IPC.storageChange, callback),
   },
   coreRuntime: {
     capabilities: { localCore: true },
-    getEndpoint: async () => await ipcRenderer.invoke(IPC.coreGetEndpoint),
+    getEndpoint: async (source?: CoreSourcePreference) =>
+      await ipcRenderer.invoke(IPC.coreGetEndpoint, source),
     configure: async (config: ClientConfig) => await ipcRenderer.invoke(IPC.coreConfigure, config),
     getStatus: async () => (await ipcRenderer.invoke(IPC.coreGetStatus)) as CoreRuntimeStatus,
     onStatusChange: (callback) => subscribe<CoreRuntimeStatus>(IPC.coreStatus, callback),
     recover: async (action: CoreRecoveryAction) => await ipcRenderer.invoke(IPC.coreRecover, action),
+    selectSource: async (source: CoreSourcePreference) =>
+      await ipcRenderer.invoke(IPC.coreSelectSource, source),
   },
   update: {
-    capabilities: { selfUpdate: true },
+    capabilities: { selfUpdate: selfUpdateAvailable, manualAppInstall },
     getAppVersion: () => appVersion,
-    checkForUpdates: async () => await ipcRenderer.invoke(IPC.updateCheck),
     getState: async () => (await ipcRenderer.invoke(IPC.updateGetState)) as UpdateSnapshot,
     onChange: (callback) => subscribe<UpdateSnapshot>(IPC.updateState, callback),
-    applyUpdates: async (targets) => {
-      await ipcRenderer.invoke(IPC.updateApply, targets);
-    },
-    relaunchToApply: async () => {
-      await ipcRenderer.invoke(IPC.updateRelaunch);
-    },
+    ...(selfUpdateAvailable
+      ? {
+          checkForUpdates: async () => await ipcRenderer.invoke(IPC.updateCheck),
+          applyUpdates: async (targets: Array<'core' | 'bank' | 'app'>) => {
+            await ipcRenderer.invoke(IPC.updateApply, targets);
+          },
+          relaunchToApply: async () => {
+            await ipcRenderer.invoke(IPC.updateRelaunch);
+          },
+        }
+      : {}),
   },
   network: {
     isOnline: () => online,
@@ -78,6 +102,7 @@ const ports: Partial<PlatformPorts> = {
   },
   shell: {
     capabilities: { desktop: true, nativeMenu: true, nativeTitleBar: true },
+    ...(windowKind ? { windowKind } : {}),
     onCommand: (callback) => subscribe<ShellCommand>(IPC.shellCommand, callback),
     openDesktopWindow: async (target: DesktopWindowTarget) => {
       await ipcRenderer.invoke(IPC.shellOpenWindow, target);

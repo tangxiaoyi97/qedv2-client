@@ -77,10 +77,19 @@ const runtime: RuntimeDescriptor = {
   bankDirectory: '/runtime/bank',
   source: 'bundled',
   manifest: {
-    formatVersion: 2,
+    formatVersion: 3,
     createdAt: '2026-08-07T00:00:00.000Z',
     core: { version: '2.0.0', commit: 'core-commit', entry: 'dist/main.js' },
     bank: { commit: 'bank-commit', schemaVersions: [2, 3] },
+    revisions: {
+      catalog: 'bank/revisions/revision-catalog.v1.json',
+      formatVersion: 1,
+      pinnedCommit: 'bank-commit',
+      commitCount: 5,
+      questionRevisionCount: 4_156,
+      objectCount: 1_628,
+      objectBytes: 7_739_573,
+    },
     files: [],
   },
 };
@@ -188,7 +197,11 @@ describe('CoreSupervisor', () => {
       supervisor.getEndpoint(),
     ]);
 
-    expect(first).toEqual({ baseUrl: 'http://127.0.0.1:43123', source: 'local' });
+    expect(first).toEqual({
+      baseUrl: 'http://127.0.0.1:43123',
+      source: 'local',
+      contentId: 'bank-commit',
+    });
     expect(second).toEqual(first);
     expect(launcher.launches).toHaveLength(1);
     expect(portMocks.allocateLoopbackPort).toHaveBeenCalledTimes(1);
@@ -200,9 +213,11 @@ describe('CoreSupervisor', () => {
         PORT: '43123',
         BANK_PATH: runtime.bankDirectory,
         BANK_STRICT: 'true',
+        REVISION_VAULT_PATH: '/runtime/bank/revisions',
+        REVISION_VAULT_REQUIRED: 'true',
         REQUEST_LOG: 'false',
-        CORE_SOURCE_REPO: config.coreRepoUrl,
-        BANK_REPO: config.bankRepoUrl,
+        CORE_SOURCE_REPO: 'https://github.com/tangxiaoyi97/qedv2-core',
+        BANK_REPO: 'https://github.com/tangxiaoyi97/srdpmppr',
         BANK_BRANCH: 'pastpapers',
         QED_BUILD_COMMIT: 'core-commit',
       },
@@ -212,7 +227,41 @@ describe('CoreSupervisor', () => {
       source: 'local',
       endpoint: first.baseUrl,
     });
+    const fetchCalls = vi.mocked(globalThis.fetch).mock.calls;
+    expect(fetchCalls).toHaveLength(2);
+    for (const [, init] of fetchCalls) {
+      expect(init).toMatchObject({ cache: 'no-store', credentials: 'omit' });
+    }
     expect(supervisor.getProxyEndpoint()).toBe(first.baseUrl);
+  });
+
+  it('keeps an explicit remote preference across config refreshes without breaking a pinned local session', async () => {
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    const local = await supervisor.configure(config);
+
+    await expect(supervisor.selectSource('remote')).resolves.toEqual({
+      baseUrl: config.coreBaseUrl,
+      source: 'remote',
+    });
+    expect(launcher.launches[0]?.process.killCalls).toBe(0);
+    expect(supervisor.getStatus()).toMatchObject({
+      phase: 'ready',
+      source: 'remote',
+      preferredSource: 'remote',
+      endpoint: config.coreBaseUrl,
+    });
+    await expect(supervisor.configure({ ...config })).resolves.toMatchObject({ source: 'remote' });
+    await expect(supervisor.getEndpoint()).resolves.toMatchObject({ source: 'remote' });
+    await expect(supervisor.getEndpoint('local')).resolves.toEqual(local);
+    expect(supervisor.getProxyEndpoint('local')).toBe(local.baseUrl);
+    expect(supervisor.getProxyEndpoint('remote')).toBe(config.coreBaseUrl);
+
+    await expect(supervisor.selectSource('local')).resolves.toEqual(local);
+    expect(supervisor.getStatus()).toMatchObject({
+      source: 'local',
+      preferredSource: 'local',
+    });
   });
 
   it('keeps the renderer gateway on the remote fallback until local identity is verified', async () => {
@@ -255,6 +304,7 @@ describe('CoreSupervisor', () => {
     await expect(supervisor.getEndpoint()).resolves.toEqual({
       baseUrl: 'http://127.0.0.1:43123',
       source: 'local',
+      contentId: 'bank-commit',
     });
     expect(launcher.launches).toHaveLength(2);
     expect(supervisor.getStatus()).toMatchObject({ phase: 'ready', source: 'local' });
@@ -285,6 +335,7 @@ describe('CoreSupervisor', () => {
     await expect(configuring).resolves.toEqual({
       baseUrl: 'http://127.0.0.1:43124',
       source: 'local',
+      contentId: 'bank-commit',
     });
     expect(launcher.launches).toHaveLength(2);
     expect(portMocks.allocateLoopbackPort.mock.calls[1]?.[2]).toEqual(new Set([43_123]));
@@ -321,6 +372,7 @@ describe('CoreSupervisor', () => {
     await expect(configuring).resolves.toEqual({
       baseUrl: 'http://127.0.0.1:43124',
       source: 'local',
+      contentId: 'bank-commit',
     });
     expect(launcher.launches).toHaveLength(2);
   });

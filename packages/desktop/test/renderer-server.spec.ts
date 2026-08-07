@@ -119,11 +119,14 @@ function logger(): RendererServerLogger {
   return { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
-async function createRendererServer(): Promise<RendererServerAddress> {
+async function createRendererServer(
+  getCoreUpstream: (source?: 'local' | 'remote') => string | undefined =
+    () => 'http://127.0.0.1:47891/base',
+): Promise<RendererServerAddress> {
   rendererServer = new RendererServer({
     webRoot,
     preferredPort: 0,
-    getCoreUpstream: () => 'http://127.0.0.1:47891/base',
+    getCoreUpstream,
     logger: logger(),
   });
   return await rendererServer.start();
@@ -308,7 +311,7 @@ describe('RendererServer security boundary', () => {
 
     const [input, init] = upstreamFetch.mock.calls[0] ?? [];
     expect(String(input)).toBe('http://127.0.0.1:47891/base/content/questions?q=algebra');
-    expect(init).toMatchObject({ method: 'POST', redirect: 'error' });
+    expect(init).toMatchObject({ method: 'POST', redirect: 'error', credentials: 'omit' });
     const forwardedHeaders = init?.headers as Headers;
     expect(forwardedHeaders.get('accept')).toBe('application/json');
     expect(forwardedHeaders.get('content-type')).toBe('application/json');
@@ -331,6 +334,34 @@ describe('RendererServer security boundary', () => {
     });
     expect(nonCore.status).toBe(200);
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps source-pinned routes isolated and never falls local back to remote', async () => {
+    const upstreamFetch = vi.fn(async (_input: unknown) => Response.json({ status: 'ok' }));
+    vi.stubGlobal('fetch', upstreamFetch);
+    const getCoreUpstream = vi.fn((source?: 'local' | 'remote') =>
+      source === 'local' ? undefined : 'https://remote-core.example/root',
+    );
+    const address = await createRendererServer(getCoreUpstream);
+
+    const unavailable = await gatewayRequest(address, '/__qed2_core/local/content/info', {
+      token: address.token,
+    });
+    expect(unavailable.status).toBe(503);
+    expect(JSON.parse(unavailable.body.toString('utf8'))).toMatchObject({
+      error: { code: 'CORE_SOURCE_UNAVAILABLE' },
+    });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+
+    const remote = await gatewayRequest(address, '/__qed2_core/remote/content/info?fresh=1', {
+      token: address.token,
+    });
+    expect(remote.status).toBe(200);
+    expect(String(upstreamFetch.mock.calls[0]?.[0])).toBe(
+      'https://remote-core.example/root/content/info?fresh=1',
+    );
+    expect(getCoreUpstream).toHaveBeenNthCalledWith(1, 'local');
+    expect(getCoreUpstream).toHaveBeenNthCalledWith(2, 'remote');
   });
 
   it('rejects non-read methods for renderer static routes', async () => {

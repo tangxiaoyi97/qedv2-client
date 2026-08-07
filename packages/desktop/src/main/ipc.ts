@@ -5,7 +5,10 @@ import {
   type CoreEndpoint,
   type CoreRecoveryAction,
   type CoreRuntimeStatus,
+  type CoreSourcePreference,
   type DesktopWindowTarget,
+  type StorageAddress,
+  type StorageBatchCommit,
   type StorageChange,
 } from '@qed2/core-logic';
 import { IPC } from '../shared/channels.js';
@@ -23,17 +26,77 @@ export interface DesktopIpcOptions {
   network: NetworkMonitor;
   openDesktopWindow(target: DesktopWindowTarget): void;
   applyThemePreference(preference: unknown): void;
+  applyAccentPreference?(preference: unknown): void;
 }
 
 const RECOVERY_ACTIONS = new Set<CoreRecoveryAction>(['retry', 'use-remote', 'repair']);
+const CORE_SOURCES = new Set<CoreSourcePreference>(['local', 'remote']);
+const CORE_SOURCE_STORAGE_KEY = 'core-source';
 const UPDATE_TARGETS = new Set(['app', 'core', 'bank'] as const);
 const DESKTOP_WINDOWS = new Set<DesktopWindowTarget>(['practice', 'updates', 'node']);
+const MAX_STORAGE_BATCH_ADDRESSES = 32;
 
 function validateText(value: unknown, name: string, maxLength = 4_096): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > maxLength) {
     throw new TypeError(`Invalid ${name}`);
   }
   return value;
+}
+
+function validateStorageAddress(value: unknown): StorageAddress {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Invalid storage address');
+  }
+  const address = value as Record<string, unknown>;
+  const collection = validateText(address.collection, 'collection', 64);
+  const key = validateText(address.key, 'key', 512);
+  if (!/^[a-z][a-z0-9-]{0,63}$/u.test(collection) || key.includes('\0')) {
+    throw new TypeError('Invalid storage address');
+  }
+  return { collection, key };
+}
+
+function validateStorageAddresses(value: unknown): StorageAddress[] {
+  if (!Array.isArray(value) || value.length > MAX_STORAGE_BATCH_ADDRESSES) {
+    throw new TypeError('Invalid storage batch size');
+  }
+  return value.map(validateStorageAddress);
+}
+
+function validateStorageBatch(value: unknown): StorageBatchCommit {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('Invalid storage batch');
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    !Array.isArray(candidate.ifRevisions)
+    || candidate.ifRevisions.length === 0
+    || candidate.ifRevisions.length > MAX_STORAGE_BATCH_ADDRESSES
+    || !Array.isArray(candidate.mutations)
+    || candidate.mutations.length === 0
+    || candidate.mutations.length > MAX_STORAGE_BATCH_ADDRESSES
+  ) {
+    throw new TypeError('Invalid storage batch size');
+  }
+  const ifRevisions = candidate.ifRevisions.map((raw) => {
+    const address = validateStorageAddress(raw);
+    const revision = (raw as Record<string, unknown>).revision;
+    if (!Number.isSafeInteger(revision) || (revision as number) < 0) {
+      throw new TypeError('Invalid storage revision');
+    }
+    return { ...address, revision: revision as number };
+  });
+  const mutations = candidate.mutations.map((raw) => {
+    const address = validateStorageAddress(raw);
+    const record = raw as Record<string, unknown>;
+    if (record.operation === 'delete') return { ...address, operation: 'delete' as const };
+    if (record.operation !== 'set' || !Object.prototype.hasOwnProperty.call(record, 'value')) {
+      throw new TypeError('Invalid storage batch operation');
+    }
+    if (record.value === undefined) throw new TypeError('Storage value must be defined');
+    return { ...address, operation: 'set' as const, value: record.value };
+  });
+  return { ifRevisions, mutations };
 }
 
 function validateHttpUrl(value: unknown, name: string): string {
@@ -84,10 +147,13 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     IPC.storageDelete,
     IPC.storageKeys,
     IPC.storageClear,
+    IPC.storageReadBatch,
+    IPC.storageCommitBatch,
     IPC.coreGetEndpoint,
     IPC.coreConfigure,
     IPC.coreGetStatus,
     IPC.coreRecover,
+    IPC.coreSelectSource,
     IPC.updateCheck,
     IPC.updateGetState,
     IPC.updateApply,
@@ -119,19 +185,32 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     });
   };
 
-  const exposeEndpoint = (endpoint: CoreEndpoint): CoreEndpoint => ({
-    baseUrl: coreBaseUrl,
+  const exposeEndpoint = (endpoint: CoreEndpoint, pinned = false): CoreEndpoint => ({
+    baseUrl: pinned ? `${coreBaseUrl}/${endpoint.source}` : coreBaseUrl,
     source: endpoint.source,
+    ...(endpoint.contentId ? { contentId: endpoint.contentId } : {}),
   });
   const exposeCoreStatus = (status = options.core.getStatus()): CoreRuntimeStatus => ({
     ...status,
     endpoint: coreBaseUrl,
   });
+  const safeSend = (
+    window: Electron.BrowserWindow,
+    channel: string,
+    payload: unknown,
+  ): void => {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) return;
+    try {
+      window.webContents.send(channel, payload);
+    } catch {
+      // A renderer can disappear between the liveness check and send().
+      // Status fan-out is best-effort and must never destabilize the main
+      // process while a native tool window is closing.
+    }
+  };
   const broadcast = (channel: string, payload: unknown): void => {
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-        window.webContents.send(channel, payload);
-      }
+      safeSend(window, channel, payload);
     }
   };
   const broadcastStorageChange = (
@@ -144,7 +223,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
         !window.webContents.isDestroyed() &&
         window.webContents.id !== source.id
       ) {
-        window.webContents.send(IPC.storageChange, change);
+        safeSend(window, IPC.storageChange, change);
       }
     }
   };
@@ -157,6 +236,14 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     options.storage.set(validCollection, validKey, value);
     if (validCollection === STORAGE.config && validKey === 'theme') {
       options.applyThemePreference(value);
+    }
+    if (validCollection === STORAGE.config && validKey === 'accent') {
+      try {
+        options.applyAccentPreference?.(value);
+      } catch {
+        // Native icon updates are best-effort. The durable preference and
+        // cross-window UI broadcast must still commit atomically.
+      }
     }
     broadcastStorageChange(event.sender, {
       collection: validCollection,
@@ -171,6 +258,13 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     if (validCollection === STORAGE.config && validKey === 'theme') {
       options.applyThemePreference('system');
     }
+    if (validCollection === STORAGE.config && validKey === 'accent') {
+      try {
+        options.applyAccentPreference?.('weed');
+      } catch {
+        // See storageSet: native chrome must not block durable UI state.
+      }
+    }
     broadcastStorageChange(event.sender, {
       collection: validCollection,
       key: validKey,
@@ -183,20 +277,86 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
   handle(IPC.storageClear, (event, collection: unknown) => {
     const validCollection = validateText(collection, 'collection', 64);
     options.storage.clear(validCollection);
-    if (validCollection === STORAGE.config) options.applyThemePreference('system');
+    if (validCollection === STORAGE.config) {
+      options.applyThemePreference('system');
+      try {
+        options.applyAccentPreference?.('weed');
+      } catch {
+        // See storageSet: native chrome must not block durable UI state.
+      }
+    }
     broadcastStorageChange(event.sender, { collection: validCollection, operation: 'clear' });
   });
+  handle(IPC.storageReadBatch, (_event, rawAddresses: unknown) =>
+    options.storage.readBatch(validateStorageAddresses(rawAddresses)),
+  );
+  handle(IPC.storageCommitBatch, (event, rawRequest: unknown) => {
+    const request = validateStorageBatch(rawRequest);
+    const result = options.storage.commitBatch(request);
+    if (!result.committed) return result;
+    for (const mutation of request.mutations) {
+      if (mutation.collection === STORAGE.config && mutation.key === 'theme') {
+        options.applyThemePreference(mutation.operation === 'set' ? mutation.value : 'system');
+      }
+      if (mutation.collection === STORAGE.config && mutation.key === 'accent') {
+        try {
+          options.applyAccentPreference?.(mutation.operation === 'set' ? mutation.value : 'weed');
+        } catch {
+          // Native icon updates remain best-effort after the durable batch.
+        }
+      }
+      broadcastStorageChange(event.sender, {
+        collection: mutation.collection,
+        key: mutation.key,
+        operation: mutation.operation,
+      });
+    }
+    return result;
+  });
 
-  handle(IPC.coreGetEndpoint, async () => exposeEndpoint(await options.core.getEndpoint()));
+  handle(IPC.coreGetEndpoint, async (_event, rawSource?: unknown) => {
+    if (rawSource !== undefined && !CORE_SOURCES.has(rawSource as CoreSourcePreference)) {
+      throw new TypeError('Invalid Core source');
+    }
+    const source = rawSource as CoreSourcePreference | undefined;
+    return exposeEndpoint(await options.core.getEndpoint(source), source !== undefined);
+  });
   handle(IPC.coreConfigure, async (_event, rawConfig: unknown) => {
     const config = validateConfig(rawConfig);
-    options.updates.setRepositories(config.coreRepoUrl, config.bankRepoUrl);
     return exposeEndpoint(await options.core.configure(config));
   });
   handle(IPC.coreGetStatus, () => exposeCoreStatus());
-  handle(IPC.coreRecover, async (_event, rawAction: unknown) => {
+  handle(IPC.coreRecover, async (event, rawAction: unknown) => {
     if (!RECOVERY_ACTIONS.has(rawAction as CoreRecoveryAction)) throw new TypeError('Invalid recovery action');
-    return exposeEndpoint(await options.core.recover(rawAction as CoreRecoveryAction));
+    try {
+      return exposeEndpoint(await options.core.recover(rawAction as CoreRecoveryAction));
+    } finally {
+      const source = options.core.getStatus().preferredSource;
+      options.storage.set(STORAGE.config, CORE_SOURCE_STORAGE_KEY, source);
+      broadcastStorageChange(event.sender, {
+        collection: STORAGE.config,
+        key: CORE_SOURCE_STORAGE_KEY,
+        operation: 'set',
+      });
+    }
+  });
+  handle(IPC.coreSelectSource, async (event, rawSource: unknown) => {
+    if (!CORE_SOURCES.has(rawSource as CoreSourcePreference)) throw new TypeError('Invalid Core source');
+    const source = rawSource as CoreSourcePreference;
+    try {
+      return exposeEndpoint(await options.core.selectSource(source));
+    } finally {
+      // Persist the user's intention even when Local is temporarily unable to
+      // start; next launch retries it while the current run remains on the
+      // visible remote fallback.
+      const preferredSource = options.core.getStatus().preferredSource;
+      options.storage.set(STORAGE.config, CORE_SOURCE_STORAGE_KEY, preferredSource);
+      broadcastStorageChange(event.sender, {
+        collection: STORAGE.config,
+        key: CORE_SOURCE_STORAGE_KEY,
+        operation: 'set',
+      });
+    }
   });
 
   handle(IPC.updateCheck, () => options.updates.checkForUpdates());

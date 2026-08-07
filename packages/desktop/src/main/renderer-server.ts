@@ -46,7 +46,7 @@ export interface RendererServerLogger {
 export interface RendererServerOptions {
   webRoot: string;
   preferredPort: number;
-  getCoreUpstream(): string;
+  getCoreUpstream(source?: 'local' | 'remote'): string | undefined;
   logger: RendererServerLogger;
 }
 
@@ -93,12 +93,32 @@ async function readRequestBody(request: IncomingMessage): Promise<Buffer | undef
   return Buffer.concat(chunks);
 }
 
-function isCorePath(pathname: string): boolean {
-  return (
-    pathname === '/__qed2_core/info' ||
-    pathname === '/__qed2_core/health' ||
-    pathname.startsWith('/__qed2_core/content/')
-  );
+interface CoreRoute {
+  source?: 'local' | 'remote';
+  relativePath: string;
+}
+
+function coreRoute(pathname: string): CoreRoute | undefined {
+  const root = '/__qed2_core';
+  if (!pathname.startsWith(`${root}/`)) return undefined;
+  let relativePath = pathname.slice(root.length);
+  let source: CoreRoute['source'];
+  for (const candidate of ['local', 'remote'] as const) {
+    const prefix = `/${candidate}`;
+    if (relativePath === prefix || relativePath.startsWith(`${prefix}/`)) {
+      source = candidate;
+      relativePath = relativePath.slice(prefix.length) || '/';
+      break;
+    }
+  }
+  if (
+    relativePath !== '/info' &&
+    relativePath !== '/health' &&
+    !relativePath.startsWith('/content/')
+  ) {
+    return undefined;
+  }
+  return { ...(source ? { source } : {}), relativePath };
 }
 
 function matchCount(value: string, expression: RegExp): number {
@@ -271,13 +291,14 @@ export class RendererServer {
       return;
     }
     const url = new URL(request.url ?? '/', address.origin);
-    if (isCorePath(url.pathname)) {
+    const matchedCoreRoute = coreRoute(url.pathname);
+    if (matchedCoreRoute) {
       const method = request.method ?? 'GET';
       if (method !== 'GET' && method !== 'HEAD' && method !== 'POST') {
         response.writeHead(405, { Allow: 'GET, HEAD, POST' }).end();
         return;
       }
-      await this.proxyCore(request, response, url);
+      await this.proxyCore(request, response, url, matchedCoreRoute);
       return;
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -307,10 +328,28 @@ export class RendererServer {
     response.end(request.method === 'HEAD' ? undefined : this.indexHtml);
   }
 
-  private async proxyCore(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
-    const upstream = new URL(this.options.getCoreUpstream());
-    const relativePath = url.pathname.slice('/__qed2_core'.length);
-    upstream.pathname = `${upstream.pathname.replace(/\/$/, '')}${relativePath}`;
+  private async proxyCore(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    route: CoreRoute,
+  ): Promise<void> {
+    const selectedUpstream = this.options.getCoreUpstream(route.source);
+    if (!selectedUpstream) {
+      response.setHeader('Cache-Control', 'no-store');
+      response.setHeader('Content-Type', 'application/json; charset=utf-8');
+      response.setHeader('Retry-After', '2');
+      response.writeHead(503);
+      response.end(JSON.stringify({
+        error: {
+          code: 'CORE_SOURCE_UNAVAILABLE',
+          message: 'The selected content source is not ready.',
+        },
+      }));
+      return;
+    }
+    const upstream = new URL(selectedUpstream);
+    upstream.pathname = `${upstream.pathname.replace(/\/$/, '')}${route.relativePath}`;
     upstream.search = url.search;
     const body = await readRequestBody(request);
     const headers = new Headers();
@@ -329,6 +368,7 @@ export class RendererServer {
       const upstreamResponse = await fetch(upstream, {
         method: request.method ?? 'GET',
         headers,
+        credentials: 'omit',
         ...(body ? { body } : {}),
         redirect: 'error',
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),

@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PlatformPorts, ShellPort, UpdateSnapshot } from '@qed2/core-logic';
 import DesktopSettings from '../src/routes/settings/DesktopSettings.vue';
+import desktopSettingsSource from '../src/routes/settings/DesktopSettings.vue?raw';
 import { ports } from '../src/services.js';
 
 const originalUpdate = ports.update;
@@ -70,6 +71,18 @@ describe('capability-gated desktop settings', () => {
     mounted.unmount();
   });
 
+  it('lays out the four runtime facts as responsive 4, 2 and 1 column grids', () => {
+    expect(desktopSettingsSource).toMatch(
+      /\.desktop-settings__facts\s*{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/s,
+    );
+    expect(desktopSettingsSource).toMatch(
+      /@media \(max-width: 720px\)\s*{\s*\.desktop-settings__facts\s*{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s,
+    );
+    expect(desktopSettingsSource).toMatch(
+      /@media \(max-width: 560px\)\s*{\s*\.desktop-settings__facts\s*{\s*grid-template-columns:\s*1fr;/s,
+    );
+  });
+
   it('subscribes to state, downloads the explicit app target, shows progress/error and relaunches', async () => {
     const initial: UpdateSnapshot = {
       busy: false,
@@ -85,7 +98,7 @@ describe('capability-gated desktop settings', () => {
     const applyUpdates = vi.fn(async () => undefined);
     const relaunchToApply = vi.fn(async () => undefined);
     useDesktopPorts({
-      capabilities: { selfUpdate: true },
+      capabilities: { selfUpdate: true, manualAppInstall: true },
       getAppVersion: () => '2.0.0',
       checkForUpdates: vi.fn(async () => []),
       getState,
@@ -208,7 +221,7 @@ describe('capability-gated desktop settings', () => {
       { target: 'bank' as const, currentVersion: 'def456', latestVersion: 'def456', updateAvailable: false },
     ]);
     useDesktopPorts({
-      capabilities: { selfUpdate: true },
+      capabilities: { selfUpdate: true, manualAppInstall: true },
       getAppVersion: () => '2.0.0',
       checkForUpdates,
       getState: vi.fn(async () => incomplete),
@@ -227,9 +240,10 @@ describe('capability-gated desktop settings', () => {
     expect(checkForUpdates).toHaveBeenCalledTimes(1);
     expect(mounted.host.textContent).toContain('Nicht alle Komponenten konnten geprüft werden');
     expect(mounted.host.textContent).not.toContain('Alle Komponenten sind aktuell');
-    expect(mounted.host.textContent).toContain('macOS- und Windows-Pakete sind signiert');
+    expect(mounted.host.textContent).toContain('ohne Apple-/Windows-Entwicklerzertifikat');
+    expect(mounted.host.textContent).toContain('manuellen Installation');
     expect(mounted.host.textContent).toContain('Metadaten und Prüfsummen');
-    expect(mounted.host.textContent).not.toContain('App-Downloads sind signiert');
+    expect(mounted.host.textContent).not.toContain('Pakete sind signiert');
     mounted.unmount();
   });
 
@@ -304,6 +318,72 @@ describe('capability-gated desktop settings', () => {
 
     expect(mounted.host.textContent).toContain('Alle Komponenten sind aktuell');
     expect(mounted.host.textContent).not.toContain('Nicht alle Komponenten konnten geprüft werden');
+    mounted.unmount();
+  });
+
+  it('reports an unpublished GitHub channel neutrally instead of claiming a completed release check', async () => {
+    const detail = 'Noch keine öffentliche Desktop-Veröffentlichung vorhanden.';
+    const unpublished: UpdateSnapshot = {
+      busy: false,
+      targets: [
+        { target: 'app', phase: 'complete', currentVersion: '2.0.0', message: detail },
+        { target: 'core', phase: 'complete', currentVersion: 'abc123', message: detail },
+        { target: 'bank', phase: 'complete', currentVersion: 'def456', message: detail },
+      ],
+    };
+    useDesktopPorts({
+      capabilities: { selfUpdate: true },
+      getAppVersion: () => '2.0.0',
+      checkForUpdates: vi.fn(async () => [
+        { target: 'app' as const, currentVersion: '2.0.0', latestVersion: '2.0.0', updateAvailable: false, detail },
+        { target: 'core' as const, currentVersion: 'abc123', latestVersion: 'abc123', updateAvailable: false, detail },
+        { target: 'bank' as const, currentVersion: 'def456', latestVersion: 'def456', updateAvailable: false, detail },
+      ]),
+      getState: vi.fn(async () => unpublished),
+    });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?section=desktop');
+
+    const check = [...mounted.host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Nach Updates suchen'),
+    ) as HTMLButtonElement;
+    check.click();
+    await settle();
+
+    expect(mounted.host.textContent).toContain(detail);
+    expect(mounted.host.textContent).not.toContain('Alle Komponenten sind aktuell');
+    mounted.unmount();
+  });
+
+  it('keeps a check-network failure on the check action and never offers a fake download retry', async () => {
+    const failedCheck: UpdateSnapshot = {
+      busy: false,
+      targets: [{
+        target: 'app',
+        phase: 'error',
+        currentVersion: '2.0.0',
+        latestVersion: '2.1.0',
+        error: {
+          code: 'APP_UPDATE_CHECK_NETWORK_FAILED',
+          message: 'Der Release-Kanal ist vorübergehend nicht erreichbar.',
+          retryable: true,
+        },
+      }],
+    };
+    useDesktopPorts({
+      capabilities: { selfUpdate: true },
+      getAppVersion: () => '2.0.0',
+      checkForUpdates: vi.fn(async () => []),
+      getState: vi.fn(async () => failedCheck),
+      applyUpdates: vi.fn(async () => undefined),
+    });
+    const mounted = await mountDynamic(
+      DesktopSettings,
+      '/settings?section=desktop&desktopWindow=updates',
+    );
+
+    expect(mounted.host.textContent).toContain('Der Release-Kanal ist vorübergehend nicht erreichbar.');
+    expect(mounted.host.textContent).not.toContain('erneut herunterladen');
+    expect(mounted.host.textContent).toContain('Nach Updates suchen');
     mounted.unmount();
   });
 
