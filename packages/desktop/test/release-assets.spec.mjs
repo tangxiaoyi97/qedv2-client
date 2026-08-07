@@ -14,6 +14,7 @@ const CORE_SHA = '2'.repeat(40)
 const BANK_SHA = '3'.repeat(40)
 const temporaryDirectories = []
 const localRequire = createRequire(import.meta.url)
+const desktopPackage = localRequire('../package.json')
 const electronBuilderRequire = createRequire(localRequire.resolve('electron-builder/package.json'))
 const appBuilderRequire = createRequire(electronBuilderRequire.resolve('app-builder-lib/package.json'))
 const { buildBlockMap } = appBuilderRequire('./out/targets/blockmap/blockmap.js')
@@ -119,6 +120,10 @@ async function fixture(options = {}) {
 }
 
 describe('release asset verification', () => {
+  it('declares the HTTPS homepage required by Linux package metadata', () => {
+    expect(new URL(desktopPackage.homepage)).toMatchObject({ protocol: 'https:' })
+  })
+
   it('parses the bounded electron-updater metadata shape', () => {
     expect(
       parseUpdateManifest(
