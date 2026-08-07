@@ -26,7 +26,12 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseChangelog, normalizeDraft, isPrerelease } from '../../../scripts/changelog.mjs';
+import {
+  parseChangelog,
+  normalizeDraft,
+  isPrerelease,
+  releaseDate,
+} from '../../../scripts/changelog.mjs';
 import { resolveVersion } from './commit.mjs';
 
 const webDir = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,7 +61,7 @@ if (!entries.some((e) => e.version === version)) {
   if (draft.trim() !== '') {
     entries.unshift({
       version,
-      date: new Date().toISOString().slice(0, 10),
+      date: releaseDate(),
       body: normalizeDraft(draft, version),
       draft: true,
     });

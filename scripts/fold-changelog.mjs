@@ -23,7 +23,14 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
-import { isPrerelease, normalizeDraft, parseChangelog, prependSection, CHANGELOG_PREAMBLE } from './changelog.mjs';
+import {
+  isPrerelease,
+  normalizeDraft,
+  parseChangelog,
+  prependSection,
+  releaseDate,
+  CHANGELOG_PREAMBLE,
+} from './changelog.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const changelogPath = join(root, 'CHANGELOG.md');
@@ -52,7 +59,7 @@ if (draft.trim() === '') {
   process.exit(0);
 }
 
-const date = new Date().toISOString().slice(0, 10);
+const date = releaseDate();
 const next = prependSection(changelog, version, date, normalizeDraft(draft, version));
 if (next === null) process.exit(0); // raced with the check above; impossible in practice
 

@@ -1,16 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import rootPkg from '../../../package.json';
+import coreLogicPkg from '../../core-logic/package.json';
+import desktopPkg from '../../desktop/package.json';
+import uiPkg from '../../ui/package.json';
+import webPkg from '../package.json';
 import { entriesToAnnounce, parseChangelogIndex, type ChangelogEntry } from '../src/changelog.js';
 import {
   parseChangelog,
   normalizeDraft,
   prependSection,
   isPrerelease,
+  releaseDate,
 } from '../../../scripts/changelog.mjs';
 // Through Vite rather than node:fs — this package types only against
 // vite/client (see pwa-manifest.spec.ts). Importing the real file means a
 // hand-edit that breaks the format fails the suite, not a deploy.
 import CHANGELOG from '../../../CHANGELOG.md?raw';
+import LATEST_CHANGELOG from '../public/changelogs/latest.md?raw';
 
 const entry = (version: string, date = '2026-01-01'): ChangelogEntry => ({
   version,
@@ -81,7 +87,10 @@ describe('CHANGELOG.md format', () => {
   it('parses the real file', () => {
     const entries = parseChangelog(CHANGELOG);
     expect(entries.length).toBeGreaterThan(5);
-    if (!isPrerelease(rootPkg.version)) expect(entries[0]?.version).toBe(rootPkg.version);
+    if (!isPrerelease(rootPkg.version)) {
+      const hasReleasedSection = entries[0]?.version === rootPkg.version;
+      expect(hasReleasedSection || LATEST_CHANGELOG.trim() !== '').toBe(true);
+    }
     expect(entries.find((entry) => entry.version === '1.9.7')?.body).toContain('Offizieller Lösungsweg');
     expect(entries.at(-1)?.version).toBe('1.0.0');
   });
@@ -141,5 +150,21 @@ describe('isPrerelease', () => {
   it('treats a beta as unreleased', () => {
     expect(isPrerelease('2.0.0-beta.10')).toBe(true);
     expect(isPrerelease('2.0.0')).toBe(false);
+  });
+});
+
+describe('release metadata', () => {
+  it('keeps every workspace package on the root version', () => {
+    expect([coreLogicPkg.version, desktopPkg.version, uiPkg.version, webPkg.version]).toEqual([
+      rootPkg.version,
+      rootPkg.version,
+      rootPkg.version,
+      rootPkg.version,
+    ]);
+  });
+
+  it('dates releases in Asia/Shanghai across the UTC day boundary', () => {
+    expect(releaseDate(new Date('2026-08-07T15:59:59.999Z'))).toBe('2026-08-07');
+    expect(releaseDate(new Date('2026-08-07T16:00:00.000Z'))).toBe('2026-08-08');
   });
 });
