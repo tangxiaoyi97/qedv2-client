@@ -59,7 +59,9 @@ mac:
   notarize: true
   darkModeSupport: true
 win:
-  icon: ../web/public/icons/icon-512.png
+  # Prebuilt multi-resolution ICO avoids a native icon-tool conversion during
+  # Windows packaging while preserving the same 512px RGBA source artwork.
+  icon: build/icon.ico
   target:
     - nsis
   verifyUpdateCodeSignature: true
@@ -72,6 +74,9 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
 linux:
+  # Scoped package names sanitize to an unusable `@qed2desktop` binary by
+  # default. Keep the native command, desktop entry and smoke contract stable.
+  executableName: qed2
   icon: ../web/public/icons/icon-512.png
   category: Education
   target:

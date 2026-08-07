@@ -631,6 +631,17 @@ jobs:
           dpkg-deb --info "$ARTIFACT_ROOT"/*.deb >/dev/null
           rpm --query --package --info "$ARTIFACT_ROOT"/*.rpm >/dev/null
 
+      - name: Configure Chromium sandbox for Linux boot smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          SANDBOX="packages/desktop/dist-packages/linux-unpacked/chrome-sandbox"
+          test -f "$SANDBOX"
+          test ! -L "$SANDBOX"
+          sudo chown root:root -- "$SANDBOX"
+          sudo chmod 4755 -- "$SANDBOX"
+          test "$(stat -c '%u:%g:%a' "$SANDBOX")" = '0:0:4755'
+
       - name: Boot-smoke Linux application under virtual display
         run: >-
           pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
