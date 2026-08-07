@@ -36,15 +36,15 @@ jobs:
       run:
         working-directory: qedv2-client
     steps:
-      - name: Validate private runtime access
+      - name: Validate private Core deploy key
         shell: bash
         working-directory: .
         env:
-          DESKTOP_RUNTIME_TOKEN: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          DESKTOP_CORE_DEPLOY_KEY: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "$DESKTOP_RUNTIME_TOKEN" ]]; then
-            echo "Missing DESKTOP_RUNTIME_TOKEN required for the private Core source." >&2
+          if [[ -z "$DESKTOP_CORE_DEPLOY_KEY" ]]; then
+            echo "Missing repository secret DESKTOP_CORE_DEPLOY_KEY for the private Core read-only deploy key." >&2
             exit 1
           fi
 
@@ -118,7 +118,7 @@ jobs:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ steps.release.outputs.core_sha }}
           path: qedv2-core
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Check out locked question bank
@@ -127,7 +127,6 @@ jobs:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ steps.release.outputs.bank_sha }}
           path: srdpmppr
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
           persist-credentials: false
 
   release_verify:
@@ -152,7 +151,7 @@ jobs:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
           path: qedv2-core
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Check out frozen question bank
@@ -161,7 +160,6 @@ jobs:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
           path: srdpmppr
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -253,7 +251,7 @@ jobs:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
           path: qedv2-core
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Check out frozen question bank
@@ -262,7 +260,6 @@ jobs:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
           path: srdpmppr
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -445,7 +442,7 @@ jobs:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
           path: qedv2-core
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Check out frozen question bank
@@ -454,7 +451,6 @@ jobs:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
           path: srdpmppr
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -566,7 +562,7 @@ jobs:
           repository: tangxiaoyi97/qedv2-core
           ref: ${{ needs.release_context.outputs.core_sha }}
           path: qedv2-core
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
           persist-credentials: false
 
       - name: Check out frozen question bank
@@ -575,7 +571,6 @@ jobs:
           repository: tangxiaoyi97/srdpmppr
           ref: ${{ needs.release_context.outputs.bank_sha }}
           path: srdpmppr
-          token: ${{ secrets.DESKTOP_RUNTIME_TOKEN }}
           persist-credentials: false
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
@@ -667,7 +662,7 @@ jobs:
     name: Publish GitHub Release
     needs: [release_context, macos, windows, linux]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment:
       name: desktop-release
     permissions:
@@ -680,6 +675,23 @@ jobs:
         with:
           ref: ${{ needs.release_context.outputs.client_sha }}
           persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.0.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # The final verifier reuses the exact BLAKE2 implementation pinned by
+      # electron-builder to recompute every differential-update block. Install
+      # only the Desktop dependency graph and disable lifecycle scripts: this
+      # keeps the publish job reproducible without downloading Electron again.
+      - name: Install release verifier dependencies
+        run: pnpm --filter @qed2/desktop install --frozen-lockfile --ignore-scripts
 
       - name: Download verified assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

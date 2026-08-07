@@ -267,6 +267,8 @@ describe('capability-gated desktop settings', () => {
     await settle();
 
     expect(relaunchToApply).toHaveBeenCalledTimes(1);
+    expect(mounted.host.textContent).toContain('Bereit zur Installation');
+    expect(mounted.host.textContent).not.toContain('Bereit für Neustart');
     expect(mounted.host.textContent).toContain(message);
     expect(mounted.host.textContent).not.toContain('nicht neu gestartet');
     expect(mounted.host.textContent).not.toContain('main-process detail');

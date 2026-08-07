@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, truncate, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { deflateRawSync } from 'node:zlib'
+import { deflateRawSync, gzipSync, gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parseUpdateManifest, verifyReleaseAssets } from '../scripts/verify-release-assets.mjs'
 
@@ -12,6 +13,10 @@ const CLIENT_SHA = '1'.repeat(40)
 const CORE_SHA = '2'.repeat(40)
 const BANK_SHA = '3'.repeat(40)
 const temporaryDirectories = []
+const localRequire = createRequire(import.meta.url)
+const electronBuilderRequire = createRequire(localRequire.resolve('electron-builder/package.json'))
+const appBuilderRequire = createRequire(electronBuilderRequire.resolve('app-builder-lib/package.json'))
+const { buildBlockMap } = appBuilderRequire('./out/targets/blockmap/blockmap.js')
 
 afterEach(async () => {
   const { rm } = await import('node:fs/promises')
@@ -44,6 +49,20 @@ function embeddedAppImage(content, inventoriedSize) {
   }
 }
 
+async function readSidecar(root, assetName) {
+  return JSON.parse(
+    gunzipSync(await readFile(path.join(root, `${assetName}.blockmap`))).toString('utf8'),
+  )
+}
+
+async function writeSidecar(root, assetName, value) {
+  const source = typeof value === 'string' ? value : JSON.stringify(value)
+  await writeFile(
+    path.join(root, `${assetName}.blockmap`),
+    gzipSync(Buffer.from(source), { level: 9 }),
+  )
+}
+
 async function fixture(options = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'qed2-release-assets-'))
   temporaryDirectories.push(root)
@@ -53,7 +72,7 @@ async function fixture(options = {}) {
     [`QED2-${VERSION}-mac-arm64.zip`]: 'arm zip',
     [`QED2-${VERSION}-mac-x64.dmg`]: 'intel dmg',
     [`QED2-${VERSION}-mac-x64.zip`]: 'intel zip',
-    [`QED2-${VERSION}-win-x64.exe`]: 'windows',
+    [`QED2-${VERSION}-win-x64.exe`]: options.windowsPayload ?? 'windows',
     [`QED2-${VERSION}-linux-x64.AppImage`]: appImage.bytes,
     [`QED2-${VERSION}-linux-x64.deb`]: 'deb',
     [`QED2-${VERSION}-linux-x64.rpm`]: 'rpm',
@@ -65,7 +84,9 @@ async function fixture(options = {}) {
     `QED2-${VERSION}-mac-x64.zip`,
     `QED2-${VERSION}-win-x64.exe`,
   ]
-  for (const name of updateFiles) await writeFile(path.join(root, `${name}.blockmap`), `blockmap ${name}`)
+  for (const name of updateFiles) {
+    await buildBlockMap(path.join(root, name), 'gzip', path.join(root, `${name}.blockmap`))
+  }
 
   const metadata = (names, legacy = names[0]) => {
     const lines = [`version: ${VERSION}`, 'files:']
@@ -127,6 +148,148 @@ describe('release asset verification', () => {
     ])
     expect(JSON.parse(await readFile(path.join(root, 'release-manifest.json'), 'utf8'))).toEqual(manifest)
     expect(await readFile(path.join(root, 'SHA256SUMS'), 'utf8')).toContain(`QED2-${VERSION}-win-x64.exe`)
+  })
+
+  it('verifies a non-first block spanning stream chunks in a real builder sidecar', async () => {
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    const windowsPayload = Buffer.allocUnsafe(384 * 1024)
+    let randomState = 0x6d2b79f5
+    for (let index = 0; index < windowsPayload.length; index += 1) {
+      randomState ^= randomState << 13
+      randomState ^= randomState >>> 17
+      randomState ^= randomState << 5
+      windowsPayload[index] = randomState & 0xff
+    }
+    const { root } = await fixture({ windowsPayload })
+    const blockMap = await readSidecar(root, assetName)
+    let blockStart = 0
+    const crossingIndex = blockMap.files[0].sizes.findIndex((size) => {
+      const blockEnd = blockStart + size
+      const crossesStreamChunk = blockStart < 256 * 1024 && blockEnd > 256 * 1024
+      blockStart = blockEnd
+      return crossesStreamChunk
+    })
+    expect(crossingIndex).toBeGreaterThan(0)
+    blockMap.files[0].checksums[crossingIndex] = Buffer.alloc(18, 0x3c).toString('base64')
+    await writeSidecar(root, assetName, blockMap)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(new RegExp(`sidecar block checksum mismatch near index ${crossingIndex}`, 'u'))
+  })
+
+  it('rejects a corrupted sidecar before publishing it', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    await writeFile(path.join(root, `${assetName}.blockmap`), 'not a gzip stream')
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/invalid gzip-compressed blockmap/u)
+  })
+
+  it('rejects an oversized sidecar before reading it into memory', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    await truncate(path.join(root, `${assetName}.blockmap`), 16 * 1024 * 1024 + 1)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/exceeds the supported compressed size limit/u)
+  })
+
+  it('rejects a sidecar whose canonical checksum does not match the update payload', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    const blockMap = await readSidecar(root, assetName)
+    blockMap.files[0].checksums[0] = Buffer.alloc(18, 0xa5).toString('base64')
+    await writeSidecar(root, assetName, blockMap)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/sidecar block checksum mismatch near index 0/u)
+  })
+
+  it('rejects a malicious sidecar with impossible non-final Rabin blocks', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    const blockMap = await readSidecar(root, assetName)
+    blockMap.files[0].sizes = [1, 6]
+    blockMap.files[0].checksums = [
+      blockMap.files[0].checksums[0],
+      blockMap.files[0].checksums[0],
+    ]
+    await writeSidecar(root, assetName, blockMap)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/invalid sidecar block near index 0/u)
+  })
+
+  it('requires the sidecar inventory to cover the exact update payload', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    const blockMap = await readSidecar(root, assetName)
+    blockMap.files[0].sizes[0] -= 1
+    await writeSidecar(root, assetName, blockMap)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/sidecar block inventory does not cover the update payload/u)
+  })
+
+  it('rejects duplicate-key smuggling in otherwise valid sidecar JSON', async () => {
+    const { root } = await fixture()
+    const assetName = `QED2-${VERSION}-win-x64.exe`
+    const blockMap = await readSidecar(root, assetName)
+    const source = JSON.stringify(blockMap).replace('"version":"2"', '"version":"2","version":"2"')
+    await writeSidecar(root, assetName, source)
+    await expect(
+      verifyReleaseAssets({
+        root,
+        version: VERSION,
+        tag: TAG,
+        clientSha: CLIENT_SHA,
+        coreSha: CORE_SHA,
+        bankSha: BANK_SHA,
+      }),
+    ).rejects.toThrow(/non-canonical sidecar blockmap JSON/u)
   })
 
   it('requires the AppImage metadata to match its embedded blockmap trailer', async () => {

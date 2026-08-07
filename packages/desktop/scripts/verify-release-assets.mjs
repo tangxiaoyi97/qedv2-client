@@ -1,14 +1,30 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { lstat, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { inflateRawSync } from 'node:zlib'
+import { gunzipSync, inflateRawSync } from 'node:zlib'
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/
 const MAX_EMBEDDED_BLOCKMAP_BYTES = 16 * 1024 * 1024
+const MAX_SIDECAR_BLOCKMAP_BYTES = 16 * 1024 * 1024
 const MAX_INFLATED_BLOCKMAP_BYTES = 64 * 1024 * 1024
+const BUILDER_RABIN_MIN_BYTES = 8 * 1024
+const BUILDER_RABIN_MAX_BYTES = 32 * 1024
+
+// app-builder-lib 26.15.3 creates each v2 checksum with BLAKE2b's digest
+// length set to 18 bytes. Truncating a generic 64-byte BLAKE2b digest is not
+// equivalent, so resolve the exact implementation used by the pinned builder.
+const localRequire = createRequire(import.meta.url)
+const electronBuilderRequire = createRequire(localRequire.resolve('electron-builder/package.json'))
+const appBuilderRequire = createRequire(electronBuilderRequire.resolve('app-builder-lib/package.json'))
+const appBuilderVersion = appBuilderRequire('./package.json').version
+if (appBuilderVersion !== '26.15.3') {
+  throw new Error(`Unsupported app-builder-lib blockmap format version ${appBuilderVersion}`)
+}
+const { blake2b: builderBlake2b } = appBuilderRequire('@noble/hashes/blake2.js')
 
 function parseScalar(value) {
   const trimmed = value.trim()
@@ -78,6 +94,11 @@ function canonicalBlockChecksum(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9+/]{24}$/u.test(value)) return false
   const bytes = Buffer.from(value, 'base64')
   return bytes.length === 18 && bytes.toString('base64') === value
+}
+
+function hasExactOwnKeys(value, expected) {
+  const keys = Object.keys(value)
+  return keys.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
 }
 
 async function readExactly(handle, buffer, position, label) {
@@ -180,6 +201,144 @@ export async function verifyEmbeddedAppImageBlockMap(assetPath, entry, manifestN
   return { blockMapSize, payloadSize, blocks: file.sizes.length }
 }
 
+async function readBoundedFile(filePath, maximumBytes, label) {
+  const handle = await open(filePath, 'r')
+  try {
+    const fileStat = await handle.stat()
+    if (!fileStat.isFile() || fileStat.size <= 0 || fileStat.size > maximumBytes) {
+      throw new Error(`${label} exceeds the supported compressed size limit`)
+    }
+    const bytes = Buffer.allocUnsafe(fileStat.size)
+    await readExactly(handle, bytes, 0, label)
+    const trailingByte = Buffer.allocUnsafe(1)
+    if ((await handle.read(trailingByte, 0, 1, fileStat.size)).bytesRead !== 0) {
+      throw new Error(`${label} changed while it was being verified`)
+    }
+    return bytes
+  } finally {
+    await handle.close()
+  }
+}
+
+function parseSidecarBlockMap(compressed, label) {
+  let source
+  let blockMap
+  try {
+    const inflated = gunzipSync(compressed, { maxOutputLength: MAX_INFLATED_BLOCKMAP_BYTES })
+    source = new TextDecoder('utf-8', { fatal: true }).decode(inflated)
+    blockMap = JSON.parse(source)
+  } catch (error) {
+    throw new Error(`${label}: invalid gzip-compressed blockmap`, { cause: error })
+  }
+
+  // app-builder-lib writes JSON.stringify(blockMap) directly. This rejects
+  // duplicate-key smuggling, trailing data and non-canonical JSON accepted by
+  // JSON.parse but never emitted by the builder.
+  if (source !== JSON.stringify(blockMap)) {
+    throw new Error(`${label}: non-canonical sidecar blockmap JSON`)
+  }
+  return blockMap
+}
+
+function validateSidecarBlockInventory(blockMap, payloadSize, label) {
+  if (
+    !blockMap ||
+    typeof blockMap !== 'object' ||
+    Array.isArray(blockMap) ||
+    !hasExactOwnKeys(blockMap, ['version', 'files']) ||
+    blockMap.version !== '2' ||
+    !Array.isArray(blockMap.files) ||
+    blockMap.files.length !== 1
+  ) {
+    throw new Error(`${label}: unsupported sidecar blockmap structure`)
+  }
+
+  const [file] = blockMap.files
+  if (
+    !file ||
+    typeof file !== 'object' ||
+    Array.isArray(file) ||
+    !hasExactOwnKeys(file, ['name', 'offset', 'checksums', 'sizes']) ||
+    file.name !== 'file' ||
+    file.offset !== 0 ||
+    !Array.isArray(file.sizes) ||
+    !Array.isArray(file.checksums) ||
+    file.sizes.length === 0 ||
+    file.sizes.length !== file.checksums.length
+  ) {
+    throw new Error(`${label}: malformed sidecar block inventory`)
+  }
+
+  let inventoriedBytes = 0
+  const lastIndex = file.sizes.length - 1
+  for (let index = 0; index < file.sizes.length; index += 1) {
+    const size = file.sizes[index]
+    if (
+      !Number.isSafeInteger(size) ||
+      size <= 0 ||
+      size > BUILDER_RABIN_MAX_BYTES ||
+      (index !== lastIndex && size < BUILDER_RABIN_MIN_BYTES) ||
+      !canonicalBlockChecksum(file.checksums[index])
+    ) {
+      throw new Error(`${label}: invalid sidecar block near index ${index}`)
+    }
+    inventoriedBytes += size
+    if (!Number.isSafeInteger(inventoriedBytes)) {
+      throw new Error(`${label}: sidecar block inventory exceeds the safe size limit`)
+    }
+  }
+  if (inventoriedBytes !== payloadSize) {
+    throw new Error(`${label}: sidecar block inventory does not cover the update payload`)
+  }
+  return file
+}
+
+async function verifySidecarBlockChecksums(assetPath, file, label) {
+  let blockIndex = 0
+  let remaining = file.sizes[0]
+  let hash = builderBlake2b.create({ dkLen: 18 })
+
+  for await (const chunk of createReadStream(assetPath, { highWaterMark: 256 * 1024 })) {
+    let offset = 0
+    while (offset < chunk.length) {
+      if (blockIndex >= file.sizes.length) {
+        throw new Error(`${label}: update payload changed while its blockmap was being verified`)
+      }
+      const consumed = Math.min(remaining, chunk.length - offset)
+      hash.update(chunk.subarray(offset, offset + consumed))
+      offset += consumed
+      remaining -= consumed
+      if (remaining === 0) {
+        const actual = Buffer.from(hash.digest()).toString('base64')
+        if (actual !== file.checksums[blockIndex]) {
+          throw new Error(`${label}: sidecar block checksum mismatch near index ${blockIndex}`)
+        }
+        blockIndex += 1
+        if (blockIndex < file.sizes.length) {
+          remaining = file.sizes[blockIndex]
+          hash = builderBlake2b.create({ dkLen: 18 })
+        }
+      }
+    }
+  }
+  if (blockIndex !== file.sizes.length) {
+    throw new Error(`${label}: update payload ended before its block inventory`)
+  }
+}
+
+async function verifySidecarBlockMap(blockMapPath, assetPath, payloadSize, manifestName) {
+  const blockMapName = path.basename(blockMapPath)
+  const label = `${manifestName}: ${blockMapName}`
+  const compressed = await readBoundedFile(
+    blockMapPath,
+    MAX_SIDECAR_BLOCKMAP_BYTES,
+    `${label} sidecar blockmap`,
+  )
+  const blockMap = parseSidecarBlockMap(compressed, label)
+  const file = validateSidecarBlockInventory(blockMap, payloadSize, label)
+  await verifySidecarBlockChecksums(assetPath, file, label)
+}
+
 async function digest(filePath, algorithm, encoding) {
   const hash = createHash(algorithm)
   for await (const chunk of createReadStream(filePath)) hash.update(chunk)
@@ -253,6 +412,7 @@ async function verifyManifest(root, manifestName, version, names) {
       if (!names.includes(blockmap)) {
         throw new Error(`${manifestName}: missing differential-update blockmap ${blockmap}`)
       }
+      await verifySidecarBlockMap(path.join(root, blockmap), assetPath, fileStat.size, manifestName)
       sidecarBlockmaps.add(blockmap)
     } else if (assetName.endsWith('.AppImage')) {
       const blockmap = `${assetName}.blockmap`

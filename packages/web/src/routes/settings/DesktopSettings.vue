@@ -111,7 +111,10 @@ function updatePhaseLabel(target: UpdateTargetState): string {
     case 'downloading': return 'Wird heruntergeladen …';
     case 'verifying': return 'Paket und Prüfsumme werden geprüft …';
     case 'installing': return 'Wird installiert …';
-    case 'restart-required': return 'Bereit für Neustart';
+    case 'restart-required':
+      return target.installMode === 'manual-package'
+        ? 'Bereit zur Installation'
+        : 'Bereit für Neustart';
     case 'complete': return 'Aktuell';
     case 'error': return target.error?.retryable ? 'Fehlgeschlagen · Wiederholung möglich' : 'Fehlgeschlagen';
     default: return 'Bereit';

@@ -153,7 +153,7 @@ commit.
 | `APPLE_TEAM_ID` | Ten-character Apple Developer team ID for the fallback. |
 | `WIN_CSC_LINK` | Base64-encoded Authenticode `.pfx` for the Windows installer. |
 | `WIN_CSC_KEY_PASSWORD` | Password for the Windows signing certificate. |
-| `DESKTOP_RUNTIME_TOKEN` | Required fine-grained token with contents-read access to the private Core and question-bank repositories. |
+| `DESKTOP_CORE_DEPLOY_KEY` | Repository Actions secret containing the private half of a dedicated SSH deploy key registered read-only on the private `qedv2-core` repository (`Allow write access` disabled). The public question bank uses the normal public checkout and does not receive this key. |
 
 Store signing credentials in the protected `desktop-signing` environment and
 gate final publication through the `desktop-release` environment. `GITHUB_TOKEN`
@@ -187,7 +187,9 @@ the native package matching the distribution is preferred over AppImage.
 - Before publication, every filename, byte size, and SHA-512 value referenced
   by `latest.yml`, `latest-mac.yml`, and `latest-linux.yml` is re-derived from
   the downloaded native-job artifacts. NSIS `.exe` and macOS `.zip` payloads
-  must carry their electron-builder sidecar blockmaps. AppImage instead carries
+  must carry their electron-builder sidecar blockmaps; each sidecar is decoded
+  as a bounded canonical v2 inventory and every block checksum is re-derived
+  from the referenced payload. AppImage instead carries
   electron-builder's blockmap inside the same SHA-512-covered payload: release
   verification requires `blockMapSize`, validates the embedded trailer and its
   v2 block inventory, and rejects a misleading `.AppImage.blockmap` sidecar.
