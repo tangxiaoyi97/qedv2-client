@@ -7,6 +7,7 @@ export { default as FigureViewer } from './shared/FigureViewer.vue';
 export { default as StateIcon } from './shared/StateIcon.vue';
 export { default as ChevronDown } from './shared/ChevronDown.vue';
 export { default as QButton } from './shared/QButton.vue';
+export { default as QIconButton } from './shared/QIconButton.vue';
 export { default as QChip } from './shared/QChip.vue';
 export { default as CollapsePanel } from './shared/CollapsePanel.vue';
 export { default as QSkeleton } from './shared/QSkeleton.vue';

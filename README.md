@@ -12,20 +12,21 @@ packages/
 │                FSRS + mastery · archive store · sync protocol + checksum
 ├── ui           @qed2/ui — shared Vue 3 components (tokens, KaTeX RichText,
 │                answer controls, practice flow, progress views)
-├── web          @qed2/web — the web app / PWA (this release's deliverable)
-├── desktop      reserved: future Electron shell (see its README)
+├── web          @qed2/web — the web app / PWA and shared renderer UI
+├── desktop      @qed2/desktop — native Electron shell + bundled local Core
 └── mobile       reserved: future iOS shell (web ships as installable PWA)
 ```
 
 **Architecture rule #1:** anything platform-independent lives in
 `@qed2/core-logic`; platform capabilities are interfaces ("ports") in
-`core-logic/src/ports`, implemented per shell (`web/src/platform`). A future
-desktop app = new shell + a handful of adapters, zero business-logic rewrites.
+`core-logic/src/ports`, implemented per shell (`web/src/platform`). Desktop
+uses that same Web application through typed adapters; it does not fork the UI
+or business logic.
 See [docs/CONVENTIONS.md](docs/CONVENTIONS.md) for the full engineering notes.
 
 ## Getting started
 
-Requirements: Node ≥ 20, pnpm ≥ 9.
+Requirements: Node ≥ 24, pnpm 11.0.3.
 
 ```bash
 pnpm install
@@ -95,8 +96,32 @@ localhost) in CORS.
 PWA notes: the service worker precaches the app shell and runtime-caches
 `/content/*` (questions network-first, figures cache-first), so previously
 loaded material stays readable offline. Per contract §8.2, the web/PWA build
-never runs a local core — full offline self-hosting is the future desktop
-shell's capability.
+never runs a local Core. The Electron build strips the PWA service worker and
+packages a pinned, integrity-checked Core and question bank instead.
+
+## Desktop app
+
+QED2 Desktop is a native local node for macOS, Windows, and Linux. It builds
+the current `@qed2/web` package on every Desktop build, so normal Web/UI changes
+flow into the next Desktop artifact without a separate Desktop UI port. Native
+capabilities are strictly capability-gated and never render in the ordinary
+Web/PWA build.
+
+The Desktop UI gateway prefers `127.0.0.1:1122`; the bundled Core prefers
+`127.0.0.1:1022`. Because ports below 1024 are privileged on Unix, Core safely
+falls back to a loopback port at or above 1024 when necessary. Neither service
+is exposed to the LAN.
+
+```bash
+pnpm --filter @qed2/desktop verify
+pnpm --filter @qed2/desktop runtime:prepare
+pnpm --filter @qed2/desktop runtime:smoke
+pnpm desktop:package
+```
+
+See [packages/desktop/README.md](packages/desktop/README.md) for the window
+model, recovery guarantees, support matrix, signing requirements, and GitHub
+Release process.
 
 ### GitHub Pages, first-time setup
 
@@ -192,8 +217,9 @@ any other grade thaws it from the frozen state.
 - **Verlauf**: logged-in users read the cloud audit trail (`GET /me/history`,
   paginated, identifiers only — titles are joined client-side from the
   question cache / core batch endpoint). Guests keep the local `HistoryLog`
-  (IndexedDB, labeled "this device only"). Guest history is NOT backfilled
-  into the cloud on login (v1, by design).
+  (IndexedDB, labeled "this device only"). Creating a new account with an
+  invite claims and uploads the device's pending guest attempts; ordinary
+  login intentionally leaves guest attempts unclaimed on shared devices.
 - **Login reconciliation** (one-time, right after login): local empty → adopt
   cloud silently; cloud empty → upload local (fast-forward); checksums equal
   → nothing; both differ → the archive-choice dialog: **merge (recommended)**

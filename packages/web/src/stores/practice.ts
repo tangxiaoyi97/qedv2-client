@@ -9,8 +9,9 @@
  */
 import { defineStore } from 'pinia';
 import { computed, ref, shallowRef } from 'vue';
-import { questionContentHash, STORAGE } from '@qed2/core-logic';
+import { GUEST_ATTEMPT_OWNER, questionContentHash, STORAGE } from '@qed2/core-logic';
 import type {
+  AttemptOwnerSnapshot,
   FsrsState,
   GradeResult,
   Grading,
@@ -41,7 +42,7 @@ const MANUAL_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const SMART_SESSION_GRACE_MS = 6 * 60 * 60 * 1000;
 const SESSION_STORAGE_KEY = 'practice-session';
-const SESSION_STORAGE_VERSION = 2;
+const SESSION_STORAGE_VERSION = 3;
 
 /**
  * Where a session came from. „Programm üben" in the navigation means the
@@ -69,7 +70,9 @@ export interface GradedRecord {
 }
 
 interface PersistedPracticeSession {
-  version: typeof SESSION_STORAGE_VERSION;
+  version: 2 | typeof SESSION_STORAGE_VERSION;
+  /** Added in v3; v2 is migrated using the owner of the key being read. */
+  owner?: AttemptOwnerSnapshot;
   origin: SessionOrigin;
   items: SessionItem[];
   index: number;
@@ -80,7 +83,12 @@ interface PersistedPracticeSession {
 function isPersistedPracticeSession(value: unknown): value is PersistedPracticeSession {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PersistedPracticeSession>;
-  return candidate.version === SESSION_STORAGE_VERSION
+  return (candidate.version === 2 || candidate.version === SESSION_STORAGE_VERSION)
+    && (candidate.version === 2
+      || (candidate.owner !== undefined
+        && typeof candidate.owner.userId === 'string'
+        && (candidate.owner.guestGeneration === undefined
+          || typeof candidate.owner.guestGeneration === 'string')))
     && (candidate.origin === 'smart' || candidate.origin === 'manual')
     && Array.isArray(candidate.items)
     && candidate.items.every((item) =>
@@ -169,10 +177,26 @@ export const usePracticeStore = defineStore('practice', () => {
   const preAnswerFsrs = new Map<string, FsrsState | undefined>();
   /** Serialize session writes so a slower, older snapshot cannot win. */
   let sessionPersistenceTail: Promise<void> = Promise.resolve();
+  /** Fixed for the whole live session; auth changes cannot retarget it. */
+  let sessionOwner: AttemptOwnerSnapshot | undefined;
+  let sessionStorageKey: string | undefined;
+  let sessionResolvedOwnerId: string | undefined;
 
-  function storageKey(): string {
-    const owner = useAuthStore().session?.user.id ?? 'guest';
-    return `${SESSION_STORAGE_KEY}:${owner}`;
+  function storageKeyForOwner(owner: AttemptOwnerSnapshot): string {
+    const keyOwner = owner.userId === GUEST_ATTEMPT_OWNER ? 'guest' : owner.userId;
+    return `${SESSION_STORAGE_KEY}:${keyOwner}`;
+  }
+
+  function setSessionIdentity(owner: AttemptOwnerSnapshot): AttemptOwnerSnapshot {
+    sessionOwner = { ...owner };
+    sessionStorageKey = storageKeyForOwner(owner);
+    sessionResolvedOwnerId = owner.userId;
+    return sessionOwner;
+  }
+
+  async function ensureSessionIdentity(): Promise<AttemptOwnerSnapshot> {
+    if (sessionOwner) return sessionOwner;
+    return setSessionIdentity(await useProgressStore().captureAttemptOwner());
   }
 
   function enqueueSessionPersistence(task: () => Promise<void>): Promise<void> {
@@ -194,9 +218,11 @@ export const usePracticeStore = defineStore('practice', () => {
 
   async function persistSession(): Promise<void> {
     if (phase.value !== 'running' || items.value.length === 0) return;
-    const key = storageKey();
+    const owner = await ensureSessionIdentity();
+    const key = sessionStorageKey!;
     const snapshot: PersistedPracticeSession = {
       version: SESSION_STORAGE_VERSION,
+      owner: { ...owner },
       origin: origin.value,
       items: items.value.map((item) => ({ ...item })),
       index: index.value,
@@ -212,7 +238,8 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   async function clearPersistedSession(): Promise<void> {
-    const key = storageKey();
+    const key = sessionStorageKey;
+    if (!key) return;
     try {
       await enqueueSessionPersistence(() => storage.delete(STORAGE.app, key));
     } catch {
@@ -294,6 +321,7 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   async function beginSession(list: SessionItem[], from: SessionOrigin): Promise<void> {
+    await ensureSessionIdentity();
     items.value = list;
     origin.value = from;
     lastActivityAt.value = new Date().toISOString();
@@ -317,6 +345,9 @@ export const usePracticeStore = defineStore('practice', () => {
 
   /** Smart session: FSRS-due reviews + weak-competency new parts (core decides). */
   async function startSmart(opts?: { count?: number; filters?: QuestionsFilter }): Promise<void> {
+    // Session ownership begins with the user's start action, before any fetch
+    // or reconciliation await can let a different window change auth.
+    setSessionIdentity(await useProgressStore().captureAttemptOwner());
     lastRequest.value = opts ? { kind: 'smart', opts } : { kind: 'smart' };
     phase.value = 'loading';
     error.value = undefined;
@@ -327,7 +358,7 @@ export const usePracticeStore = defineStore('practice', () => {
       const progress = useProgressStore();
       // Logged in: reconcile with the cloud archive before asking for
       // recommendations (contract §8.2 step 2 — checksum compare inside).
-      if (auth.isLoggedIn) {
+      if (auth.session?.user.id === sessionResolvedOwnerId) {
         const syncResult = await progress.syncBeforeRecommendation();
         if (syncResult === 'conflict' || syncResult === 'blocked') {
           throw new Error('Bitte löse zuerst den offenen Speicherkonflikt. Danach kann das Programm starten.');
@@ -368,6 +399,9 @@ export const usePracticeStore = defineStore('practice', () => {
    * For bulk selections (more than one question) excluded parts are skipped.
    */
   async function startQuestions(questionIds: string[]): Promise<void> {
+    // Fix the same identity for question loading, answer commits and every
+    // later snapshot; beginSession must not re-read live auth.
+    setSessionIdentity(await useProgressStore().captureAttemptOwner());
     lastRequest.value = { kind: 'questions', ids: [...questionIds] };
     phase.value = 'loading';
     error.value = undefined;
@@ -402,6 +436,10 @@ export const usePracticeStore = defineStore('practice', () => {
     if (!cur || cur.part.id !== payload.part.id) return;
     const progress = useProgressStore();
     const auth = useAuthStore();
+    // The whole programme owns the event. Capturing from live auth here would
+    // let a cross-window account switch put an old guest snapshot into a new
+    // user's key even if the audit outbox itself retained the old owner.
+    const attemptOwner = await ensureSessionIdentity();
     const gradedAt = new Date().toISOString();
     const elapsedMs = Math.max(0, Date.now() - partShownAt.value);
     const record: GradedRecord = {
@@ -413,6 +451,12 @@ export const usePracticeStore = defineStore('practice', () => {
       gradedAt,
       elapsedMs,
     };
+    // The outbox is the write-ahead record for this answer. It must commit
+    // before archive, local history or session state can make the answer look
+    // durable. Every later step is therefore crash-recoverable through the
+    // same stable clientAttemptId, and enqueue itself is idempotent.
+    const stagedOwnerId = await progress.stageAttempt(toAttemptRecord(record), attemptOwner);
+    sessionResolvedOwnerId = stagedOwnerId;
     graded.value = [...graded.value, record];
     const { previousFsrs } = await progress.applyGrade({
       partId: payload.part.id,
@@ -426,8 +470,10 @@ export const usePracticeStore = defineStore('practice', () => {
     // The grade and its session marker must both be durable before any
     // best-effort network work, otherwise an interruption can replay the part.
     await persistSession();
-    if (auth.isLoggedIn) await progress.queueAttempt(toAttemptRecord(record));
-    if (auth.isLoggedIn && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
+    // Guests retain the staged event under their local-only owner. Authenticated
+    // attempts flush only if the same captured account is still active.
+    await progress.flushStagedAttempt(stagedOwnerId);
+    if (auth.session?.user.id === stagedOwnerId && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
       void progress.syncNow({ quiet: true });
     }
   }
@@ -487,7 +533,7 @@ export const usePracticeStore = defineStore('practice', () => {
   async function syncSessionProgress(): Promise<void> {
     const auth = useAuthStore();
     const progress = useProgressStore();
-    if (!auth.isLoggedIn) return;
+    if (!sessionResolvedOwnerId || auth.session?.user.id !== sessionResolvedOwnerId) return;
     await progress.syncNow({ quiet: true });
     await progress.flushAttemptOutbox();
   }
@@ -541,13 +587,30 @@ export const usePracticeStore = defineStore('practice', () => {
       }
       return true;
     }
-    const key = storageKey();
+    const requestedOwner = await useProgressStore().captureAttemptOwner();
+    const key = storageKeyForOwner(requestedOwner);
+    // Fix the candidate key before any await below. Invalid/stale cleanup must
+    // delete exactly what was read, even if auth changes in another window.
+    setSessionIdentity(requestedOwner);
     await sessionPersistenceTail;
     const snapshot = await storage.get<unknown>(STORAGE.app, key);
     if (!isPersistedPracticeSession(snapshot) || snapshot.items.length === 0) {
       if (snapshot !== undefined) await clearPersistedSession();
       return false;
     }
+    const persistedOwner = snapshot.version === SESSION_STORAGE_VERSION
+      ? snapshot.owner!
+      : requestedOwner;
+    const ownerMatchesKey = persistedOwner.userId === requestedOwner.userId;
+    const guestGenerationMatches = persistedOwner.userId !== GUEST_ATTEMPT_OWNER
+      || persistedOwner.guestGeneration === requestedOwner.guestGeneration;
+    if (!ownerMatchesKey || !guestGenerationMatches) {
+      // A rotated guest generation belongs to the account that claimed it,
+      // not to whoever later uses this device as a guest.
+      await clearPersistedSession();
+      return false;
+    }
+    setSessionIdentity(persistedOwner);
     if (want && snapshot.origin !== want) return false;
     if (!isResumable(snapshot.origin, snapshot.savedAt, new Date())) {
       await clearPersistedSession();
@@ -648,6 +711,9 @@ export const usePracticeStore = defineStore('practice', () => {
     preAnswerFsrs.clear();
     index.value = 0;
     void clearPersistedSession();
+    sessionOwner = undefined;
+    sessionStorageKey = undefined;
+    sessionResolvedOwnerId = undefined;
   }
 
   return {

@@ -12,20 +12,24 @@ import {
   SELECTABLE_GRADINGS,
   competencyCategory,
   groupMasteryByCategory,
+  localDayRange,
   parseLocalDayKey,
   type Grading,
   type GradingOrUnseen,
-  type HistoryEntry,
   type QuestionSummary,
 } from '@qed2/core-logic';
-import { ActivityHeatmap, CompetencyGroups, GradingDistribution, GradingDot, MasteryBar, RadarChart, type RadarAxis, useModalA11y } from '@qed2/ui';
+import { ActivityHeatmap, CompetencyGroups, GradingDistribution, GradingDot, MasteryBar, QIconButton, RadarChart, type RadarAxis, useModalA11y } from '@qed2/ui';
 import { historyLog } from '../services.js';
 
 import { useAppStore } from '../stores/app.js';
+import { useActivityStore } from '../stores/activity.js';
+import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
 
 const router = useRouter();
 const app = useAppStore();
+const auth = useAuthStore();
+const activityStore = useActivityStore();
 const progress = useProgressStore();
 
 const GRADING_ORDER: readonly Grading[] = SELECTABLE_GRADINGS;
@@ -43,10 +47,21 @@ const avgMastery = computed(() => {
   return Math.round((list.reduce((s, e) => s + e.mastery, 0) / list.length) * 100);
 });
 
-/** Heatmap feed (26 weeks = 182 days) — re-queried when the log changes. */
-const activity = ref<Record<string, number>>({});
+interface ActivityDayEntry {
+  partId: string;
+  questionId: string;
+  grading: Grading;
+  awardedPoints: number;
+  maxPoints?: number;
+  gradedAt: string;
+}
+
+/** Signed-in heatmaps and their details use the same cloud authority. */
+const activity = computed(() => activityStore.activity);
 const selectedActivityDate = ref<string | null>(null);
-const selectedDayEntries = ref<HistoryEntry[]>([]);
+const selectedDayEntries = ref<ActivityDayEntry[]>([]);
+const selectedDayError = ref('');
+let selectedDayGeneration = 0;
 
 function formatDayKey(key: string | null): string {
   if (!key) return 'Kein Tag ausgewählt';
@@ -58,14 +73,56 @@ function formatDayKey(key: string | null): string {
 const timeFmt = new Intl.DateTimeFormat('de-AT', { hour: '2-digit', minute: '2-digit' });
 
 async function selectActivityDay(day: string): Promise<void> {
+  const request = ++selectedDayGeneration;
+  const sourceUserId = auth.session?.user.id;
+  const isCurrentRequest = () =>
+    request === selectedDayGeneration &&
+    selectedActivityDate.value === day &&
+    auth.session?.user.id === sourceUserId;
   selectedActivityDate.value = day;
-  selectedDayEntries.value = await historyLog.listByLocalDay(day);
+  selectedDayError.value = '';
+  try {
+    if (!auth.isLoggedIn) {
+      const entries = await historyLog.listByLocalDay(day);
+      if (isCurrentRequest()) {
+        selectedDayEntries.value = entries;
+      }
+      return;
+    }
+
+    const range = localDayRange(day);
+    const pageSize = 200;
+    let page = 1;
+    const entries: ActivityDayEntry[] = [];
+    for (;;) {
+      const response = await app.serverClient.getHistory({ ...range, page, pageSize });
+      entries.push(
+        ...response.items.map((item) => ({
+          partId: item.partId,
+          questionId: item.questionId,
+          grading: item.correct ? 'good' as const : item.awardedPoints > 0 ? 'meh' as const : 'baffled' as const,
+          awardedPoints: item.awardedPoints,
+          gradedAt: item.gradedAt,
+        })),
+      );
+      if (entries.length >= response.total || response.items.length === 0) break;
+      page += 1;
+    }
+    if (isCurrentRequest()) {
+      selectedDayEntries.value = entries;
+    }
+  } catch {
+    if (isCurrentRequest()) {
+      selectedDayEntries.value = [];
+      selectedDayError.value = 'Die Aktivität dieses Tages konnte nicht geladen werden.';
+    }
+  }
 }
 
-async function refreshActivity(): Promise<void> {
-  const next = await historyLog.dailyActivity(182, new Date());
-  activity.value = next;
-  const activeDays = Object.entries(next)
+async function refreshActivity(force = false): Promise<void> {
+  if (force) await activityStore.refresh(182, { force: true });
+  else await activityStore.ensure(182);
+  const activeDays = Object.entries(activityStore.activity)
     .filter(([, count]) => count > 0)
     .map(([day]) => day)
     .sort();
@@ -76,9 +133,26 @@ async function refreshActivity(): Promise<void> {
   }
 }
 
+async function retryPendingActivity(): Promise<void> {
+  await progress.flushAttemptOutbox();
+  await refreshActivity(true);
+}
+
 watch(
-  () => progress.historyVersion,
-  () => void refreshActivity(),
+  () => [progress.historyVersion, progress.cloudHistoryVersion, auth.session?.user.id] as const,
+  (current, previous) => {
+    if (previous && current[2] !== previous[2]) {
+      selectedDayGeneration += 1;
+      selectedActivityDate.value = null;
+      selectedDayEntries.value = [];
+      selectedDayError.value = '';
+    } else if (selectedActivityDate.value) {
+      // Keep the selected-day audit trail aligned with the same history
+      // invalidation that refreshes the heatmap (notably after an upload ack).
+      void selectActivityDay(selectedActivityDate.value);
+    }
+    void refreshActivity(previous !== undefined);
+  },
   { immediate: true },
 );
 
@@ -102,10 +176,16 @@ const activityTotal = computed(() =>
 const activeDayCount = computed(() =>
   Object.values(activity.value).filter((count) => count > 0).length,
 );
-const selectedDayPoints = computed(() => ({
-  awarded: selectedDayEntries.value.reduce((sum, entry) => sum + entry.awardedPoints, 0),
-  max: selectedDayEntries.value.reduce((sum, entry) => sum + entry.maxPoints, 0),
-}));
+const selectedDayPoints = computed(() => {
+  const awarded = selectedDayEntries.value.reduce((sum, entry) => sum + entry.awardedPoints, 0);
+  const hasAllMaxPoints = selectedDayEntries.value.every((entry) => entry.maxPoints !== undefined);
+  return {
+    awarded,
+    max: hasAllMaxPoints
+      ? selectedDayEntries.value.reduce((sum, entry) => sum + (entry.maxPoints ?? 0), 0)
+      : undefined,
+  };
+});
 
 /** Per-category rollup: competency count + average mastery per AG/FA/AN/WS. */
 const CATEGORY_ORDER = ['AG', 'FA', 'AN', 'WS'] as const;
@@ -330,7 +410,31 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
         <h2 class="prog__section-title">Aktivität</h2>
         <button type="button" class="prog__detail-btn" @click="openDetail('activity')">Details</button>
       </div>
-      <div class="prog__activity">
+      <div
+        v-if="activityStore.cloudIncompleteMessage"
+        class="prog__empty"
+        :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
+      >
+        {{ activityStore.cloudIncompleteMessage }}
+        <button
+          v-if="progress.attemptUploadStatus.state !== 'uploading'"
+          type="button"
+          class="prog__detail-btn"
+          @click="retryPendingActivity"
+        >
+          Erneut versuchen
+        </button>
+      </div>
+      <div v-else-if="activityStore.loading" class="prog__empty" role="status">
+        Aktivität wird geladen …
+      </div>
+      <div v-else-if="activityStore.error" class="prog__empty" role="alert">
+        {{ activityStore.error }}
+        <button type="button" class="prog__detail-btn" @click="refreshActivity(true)">
+          Erneut versuchen
+        </button>
+      </div>
+      <div v-else class="prog__activity">
         <div class="prog__activity-chart">
           <ActivityHeatmap
             :data="activity"
@@ -340,6 +444,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
           />
         </div>
         <div class="prog__activity-panel" aria-live="polite">
+          <div v-if="selectedDayError" class="prog__empty" role="alert">{{ selectedDayError }}</div>
           <div class="prog__activity-metrics">
             <div class="prog__activity-metric">
               <span>Zeitraum</span>
@@ -354,7 +459,9 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
             <div class="prog__activity-metric">
               <span>{{ formatDayKey(selectedActivityDate) }}</span>
               <b>{{ selectedDayEntries.length }}</b>
-              <small>{{ selectedDayPoints.awarded }}/{{ selectedDayPoints.max }} P</small>
+              <small>
+                {{ selectedDayPoints.awarded }}<template v-if="selectedDayPoints.max !== undefined">/{{ selectedDayPoints.max }}</template> P
+              </small>
             </div>
           </div>
 
@@ -430,7 +537,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
         >
           <div class="prog-modal__head">
             <h3 class="prog-modal__title">{{ detailTitle }}</h3>
-            <button type="button" class="q-dialog-close" aria-label="Schließen" data-autofocus @click="closeDetail">✕</button>
+            <QIconButton aria-label="Schließen" data-autofocus @click="closeDetail" />
           </div>
 
           <div v-if="detailKind === 'status'" class="prog-modal__body">
@@ -516,7 +623,8 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
           </div>
 
           <div v-else-if="detailKind === 'activity'" class="prog-modal__body">
-            <div v-if="selectedDayEntries.length === 0" class="prog-modal__empty">Keine Antworten an diesem Tag.</div>
+            <div v-if="selectedDayError" class="prog-modal__empty" role="alert">{{ selectedDayError }}</div>
+            <div v-else-if="selectedDayEntries.length === 0" class="prog-modal__empty">Keine Antworten an diesem Tag.</div>
             <template v-else>
               <div class="prog-modal__summary-grid">
                 <div class="prog-modal__summary-card">
@@ -525,7 +633,9 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
                 </div>
                 <div class="prog-modal__summary-card">
                   <span>Punkte</span>
-                  <b>{{ selectedDayPoints.awarded }}/{{ selectedDayPoints.max }}</b>
+                  <b>
+                    {{ selectedDayPoints.awarded }}<template v-if="selectedDayPoints.max !== undefined">/{{ selectedDayPoints.max }}</template>
+                  </b>
                 </div>
                 <div class="prog-modal__summary-card">
                   <span>Status</span>
@@ -548,7 +658,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
                   <div class="prog-modal__row-main">
                     <div class="prog-modal__row-title">{{ entry.questionId }}</div>
                     <div class="prog-modal__row-sub">
-                      {{ entry.partId }} · {{ entry.awardedPoints }}/{{ entry.maxPoints }} P · {{ GRADING_LABELS[entry.grading] }}
+                      {{ entry.partId }} · {{ entry.awardedPoints }}<template v-if="entry.maxPoints !== undefined">/{{ entry.maxPoints }}</template> P · {{ GRADING_LABELS[entry.grading] }}
                     </div>
                   </div>
                 </div>

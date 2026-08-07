@@ -1,9 +1,21 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { STORAGE, type LocalArchive, type Question } from '@qed2/core-logic';
-import { archiveStore, questionCache, storage } from '../src/services.js';
+import {
+  GUEST_ATTEMPT_OWNER,
+  STORAGE,
+  type LocalArchive,
+  type Question,
+} from '@qed2/core-logic';
+import {
+  archiveStore,
+  attemptOutbox,
+  historyLog,
+  questionCache,
+  storage,
+} from '../src/services.js';
 import { usePracticeStore } from '../src/stores/practice.js';
+import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
 
 const EMPTY_ARCHIVE: LocalArchive = {
@@ -56,6 +68,28 @@ async function freshStores(): Promise<{
   const progress = useProgressStore();
   await progress.init();
   return { practice: usePracticeStore(), progress };
+}
+
+async function gradeCurrent(practice: ReturnType<typeof usePracticeStore>): Promise<void> {
+  const current = practice.current;
+  if (!current) throw new Error('Expected an active practice part');
+  await practice.recordGraded({
+    part: current.part,
+    submission: { kind: 'choice', selected: [0] },
+    result: {
+      verdict: 'correct',
+      correct: true,
+      awardedPoints: 1,
+      maxPoints: 1,
+    },
+  });
+}
+
+async function guestSession(): Promise<{
+  owner?: { userId: string; guestGeneration?: string };
+  graded: Array<{ clientAttemptId: string }>;
+} | undefined> {
+  return storage.get(STORAGE.app, 'practice-session:guest');
 }
 
 describe('practice session persistence', () => {
@@ -134,6 +168,136 @@ describe('practice session persistence', () => {
 
     await expect(restored.practice.restoreSession()).resolves.toBe(false);
     expect(restored.practice.phase).toBe('idle');
+  });
+
+  it('does not expose archive, history or session state when the write-ahead outbox cannot commit', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    vi.spyOn(attemptOutbox, 'enqueue').mockRejectedValueOnce(new Error('outbox unavailable'));
+
+    await expect(gradeCurrent(practice)).rejects.toThrow('outbox unavailable');
+
+    expect((await archiveStore.load()).content.perPart).toHaveLength(0);
+    expect(await historyLog.count()).toBe(0);
+    expect((await guestSession())?.graded).toEqual([]);
+    expect(practice.graded).toEqual([]);
+  });
+
+  it('retains the staged guest attempt when the renderer stops before the archive write', async () => {
+    const { practice, progress } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    vi.spyOn(archiveStore, 'applyGrade').mockRejectedValueOnce(new Error('crash before archive'));
+
+    await expect(gradeCurrent(practice)).rejects.toThrow('crash before archive');
+
+    const [attempt] = await attemptOutbox.list(GUEST_ATTEMPT_OWNER);
+    expect(attempt).toMatchObject({ questionId: 'q1', partId: 'q1-a', correct: true });
+    expect((await archiveStore.load()).content.perPart).toHaveLength(0);
+    expect(await historyLog.count()).toBe(0);
+    expect((await guestSession())?.graded).toEqual([]);
+    await expect(progress.claimGuestAttempts('recovered-user')).resolves.toBe(1);
+    expect(await attemptOutbox.list('recovered-user')).toEqual([attempt]);
+  });
+
+  it('retains the staged guest attempt after the archive commits but before history', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    const applyGrade = archiveStore.applyGrade.bind(archiveStore);
+    vi.spyOn(archiveStore, 'applyGrade').mockImplementationOnce(async (input) => {
+      await applyGrade(input);
+      throw new Error('crash after archive');
+    });
+
+    await expect(gradeCurrent(practice)).rejects.toThrow('crash after archive');
+
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+    expect((await archiveStore.load()).content.perPart).toHaveLength(1);
+    expect(await historyLog.count()).toBe(0);
+    expect((await guestSession())?.graded).toEqual([]);
+  });
+
+  it('retains the staged guest attempt after history commits but before the session snapshot', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    const append = historyLog.append.bind(historyLog);
+    vi.spyOn(historyLog, 'append').mockImplementationOnce(async (entry) => {
+      await append(entry);
+      throw new Error('crash after history');
+    });
+
+    await expect(gradeCurrent(practice)).rejects.toThrow('crash after history');
+
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+    expect((await archiveStore.load()).content.perPart).toHaveLength(1);
+    expect(await historyLog.count()).toBe(1);
+    expect((await guestSession())?.graded).toEqual([]);
+  });
+
+  it('keeps one idempotent, claimable attempt after the session commits but before flushing', async () => {
+    const { practice, progress } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    vi.spyOn(progress, 'flushStagedAttempt').mockRejectedValueOnce(new Error('crash after session'));
+
+    await expect(gradeCurrent(practice)).rejects.toThrow('crash after session');
+
+    const [attempt] = await attemptOutbox.list(GUEST_ATTEMPT_OWNER);
+    expect(attempt).toBeDefined();
+    expect((await archiveStore.load()).content.perPart).toHaveLength(1);
+    expect(await historyLog.count()).toBe(1);
+    expect((await guestSession())?.graded).toEqual([
+      expect.objectContaining({ clientAttemptId: attempt!.clientAttemptId }),
+    ]);
+
+    await progress.stageAttempt(attempt!, GUEST_ATTEMPT_OWNER);
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+    await expect(progress.claimGuestAttempts('recovered-user')).resolves.toBe(1);
+    expect(await attemptOutbox.list('recovered-user')).toEqual([attempt]);
+  });
+
+  it('routes a guest answer enqueued after claim completion and keeps its session key fixed', async () => {
+    const { practice, progress } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+
+    let enteredStage!: () => void;
+    const stageEntered = new Promise<void>((resolve) => {
+      enteredStage = resolve;
+    });
+    let releaseStage!: () => void;
+    const stageGate = new Promise<void>((resolve) => {
+      releaseStage = resolve;
+    });
+    const originalStage = progress.stageAttempt.bind(progress);
+    vi.spyOn(progress, 'stageAttempt').mockImplementationOnce(async (attempt, owner) => {
+      enteredStage();
+      await stageGate;
+      return originalStage(attempt, owner);
+    });
+
+    // The practice renderer has fixed the old guest generation, but has not
+    // yet committed its write-ahead entry.
+    const grading = gradeCurrent(practice);
+    await stageEntered;
+
+    // A second window completes redemption, moves the currently empty guest
+    // bucket and clears its pending marker before the old enqueue resumes.
+    await expect(progress.claimGuestAttempts('claimed-user')).resolves.toBe(0);
+    expect(await attemptOutbox.pendingGuestClaim()).toBeUndefined();
+    useAuthStore().session = {
+      token: 'claimed-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'claimed-user', username: 'claimed' },
+    };
+
+    releaseStage();
+    await grading;
+
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect(await attemptOutbox.count('claimed-user')).toBe(1);
+    expect((await guestSession())?.owner).toMatchObject({ userId: GUEST_ATTEMPT_OWNER });
+    expect((await guestSession())?.graded).toHaveLength(1);
+    await expect(
+      storage.get(STORAGE.app, 'practice-session:claimed-user'),
+    ).resolves.toBeUndefined();
   });
 });
 

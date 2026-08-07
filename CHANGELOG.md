@@ -14,7 +14,20 @@
   which is why some of their versions never appeared in package.json.
 -->
 
-## 2.0.0 — 2026-08-06
+## 2.0.0 — 2026-08-07
+
+### Desktop
+
+QED2 is now also a real desktop app for macOS, Windows, and Linux: the same UI,
+but with a bundled local Core and question bank, native multi-window controls,
+offline startup, crash recovery, signed macOS and Windows packages, and verified
+GitHub update metadata and checksums on every supported platform. The local node stays
+on loopback only; your data remains outside the app bundle and survives normal
+updates.
+
+There is no separate desktop copy of the website. Web changes flow into the
+next desktop build automatically, while native controls remain invisible in
+the Web/PWA version.
 
 ### KI
 

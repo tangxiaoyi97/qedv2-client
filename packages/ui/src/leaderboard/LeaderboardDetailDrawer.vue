@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { CalendarCheck2, CalendarRange, CheckCircle2, Target, Trophy, X } from 'lucide-vue-next';
+import { CalendarCheck2, CalendarRange, CheckCircle2, Target, Trophy } from 'lucide-vue-next';
 import type { LeaderboardDetail } from '@qed2/core-logic';
 import QButton from '../shared/QButton.vue';
+import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
 
 
@@ -42,9 +43,7 @@ const accuracy = computed(() => {
               <h2>{{ detail?.nickname ?? 'Details' }}</h2>
               <span>Statistik</span>
             </div>
-            <button type="button" class="leader-detail__close" aria-label="Schließen" @click="$emit('close')">
-              <X aria-hidden="true" />
-            </button>
+            <QIconButton aria-label="Schließen" @click="$emit('close')" />
           </header>
 
           <template v-if="detail">
@@ -162,34 +161,6 @@ const accuracy = computed(() => {
   font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
-}
-
-.leader-detail__close {
-  width: 36px;
-  height: 36px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--q-mut);
-  cursor: pointer;
-}
-
-.leader-detail__close svg {
-  width: 19px;
-  height: 19px;
-}
-
-.leader-detail__close:hover {
-  background: var(--q-panel-2);
-  color: var(--q-ink);
-}
-
-.leader-detail__close:focus-visible {
-  outline: 2px solid var(--q-accent);
-  outline-offset: 2px;
 }
 
 .leader-detail__content {

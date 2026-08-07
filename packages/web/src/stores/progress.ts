@@ -11,6 +11,7 @@ import {
   assessLoginArchives,
   buildResolvedArchive,
   canonicalizeArchive,
+  GUEST_ATTEMPT_OWNER,
   overwriteServerArchive,
   performSync,
   submitResolution,
@@ -19,6 +20,8 @@ import {
   isPracticed,
   ApiError,
   NetworkError,
+  ServerClient,
+  type AttemptOwnerSnapshot,
   type ArchiveContent,
   type ArchiveSideSummary,
   type QueuedAttempt,
@@ -31,8 +34,11 @@ import {
   type ServerArchiveState,
   type SyncConflict,
   type RecommendUserState,
+  STORAGE,
 } from '@qed2/core-logic';
-import { archiveStore, attemptOutbox, historyLog } from '../services.js';
+import { archiveStore, attemptOutbox, historyLog, storage } from '../services.js';
+import { useAppClock } from '../composables/app-clock.js';
+import { runStorageMutation } from '../platform/desktop-storage.js';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 
@@ -40,6 +46,12 @@ export interface SyncStatus {
   state: 'idle' | 'syncing' | 'synced' | 'offline' | 'error' | 'conflict';
   message?: string;
   at?: Date;
+}
+
+export interface AttemptUploadStatus {
+  state: 'idle' | 'uploading' | 'pending' | 'error';
+  pendingCount: number;
+  message?: string;
 }
 
 export type SyncRunResult =
@@ -67,6 +79,7 @@ export interface ArchiveChoice {
 }
 
 export const useProgressStore = defineStore('progress', () => {
+  const clock = useAppClock();
   const archive = shallowRef<LocalArchive>({ content: { perPart: [], perCompetency: [] }, baseVersion: 0 });
   const syncStatus = ref<SyncStatus>({ state: 'idle' });
   const conflict = shallowRef<SyncConflict | undefined>();
@@ -75,6 +88,16 @@ export const useProgressStore = defineStore('progress', () => {
   const loaded = ref(false);
   /** Bumped when the history log changes so views can re-query it. */
   const historyVersion = ref(0);
+  /** Bumped only after cloud attempt history may have changed. */
+  const cloudHistoryVersion = ref(0);
+  /** Per-account audit-upload state; the computed view follows the current account. */
+  const attemptUploadByOwner = ref<Record<string, AttemptUploadStatus>>({});
+  const attemptUploadStatus = computed<AttemptUploadStatus>(() => {
+    const ownerId = useAuthStore().session?.user.id;
+    return ownerId
+      ? attemptUploadByOwner.value[ownerId] ?? { state: 'idle', pendingCount: 0 }
+      : { state: 'idle', pendingCount: 0 };
+  });
 
   /**
    * Every archive mutation is serialized through one queue. IndexedDB writes,
@@ -84,7 +107,16 @@ export const useProgressStore = defineStore('progress', () => {
    * transient network/storage error cannot permanently block later progress.
    */
   let archiveMutationTail: Promise<void> = Promise.resolve();
-  let attemptFlush: Promise<void> | undefined;
+  const attemptFlushes: Array<{
+    ownerId: string;
+    token: string;
+    serverBaseUrl: string;
+    promise: Promise<void>;
+  }> = [];
+  const latestAttemptFlushByOwner = new Map<string, symbol>();
+  let storageSubscribed = false;
+  let archiveChoiceBase: LocalArchive | undefined;
+  let conflictArchiveBase: LocalArchive | undefined;
 
   function enqueueArchiveMutation<T>(mutation: () => Promise<T>): Promise<T> {
     const run = archiveMutationTail.then(mutation, mutation);
@@ -95,6 +127,71 @@ export const useProgressStore = defineStore('progress', () => {
     return run;
   }
 
+  function sameArchive(left: LocalArchive, right: LocalArchive): boolean {
+    return (
+      left.baseVersion === right.baseVersion &&
+      archiveChecksum(left.content) === archiveChecksum(right.content)
+    );
+  }
+
+  /** A short lock: storage I/O only, never a core/server request. */
+  async function loadLatestArchive(): Promise<LocalArchive> {
+    return runStorageMutation(storage, async () => {
+      const latest = await archiveStore.load();
+      archive.value = latest;
+      return latest;
+    });
+  }
+
+  /** Optimistic commit after a network request; never overwrites newer work. */
+  async function commitArchiveIfUnchanged(
+    expected: LocalArchive,
+    next: LocalArchive,
+  ): Promise<boolean> {
+    return runStorageMutation(storage, async () => {
+      const current = await archiveStore.load();
+      if (!sameArchive(current, expected)) {
+        archive.value = current;
+        return false;
+      }
+      await archiveStore.save(next);
+      archive.value = next;
+      return true;
+    });
+  }
+
+  async function archiveIsStillCurrent(expected: LocalArchive): Promise<boolean> {
+    return runStorageMutation(storage, async () => {
+      const current = await archiveStore.load();
+      archive.value = current;
+      return sameArchive(current, expected);
+    });
+  }
+
+  function subscribeStorageChanges(): void {
+    if (storageSubscribed || !storage.onChange) return;
+    storageSubscribed = true;
+    storage.onChange((change) => {
+      if (change.collection === STORAGE.archive) {
+        // Join the local queue as well as the origin-wide mutex: neither a
+        // stale notification nor a local in-flight mutation may win later.
+        void enqueueArchiveMutation(loadLatestArchive);
+      }
+      if (
+        change.collection === STORAGE.history &&
+        (change.operation === 'clear' || change.key === 'log')
+      ) {
+        historyVersion.value += 1;
+      }
+      if (change.collection === STORAGE.history && change.key === 'attempt-outbox') {
+        // Other desktop renderers are notified for both enqueue and ack. An
+        // early cloud read is harmless; the ack notification causes the
+        // authoritative second read that removes any empty pre-upload view.
+        cloudHistoryVersion.value += 1;
+      }
+    });
+  }
+
   const practicedParts = computed(
     () => archive.value.content.perPart.filter((p) => isPracticed(p)).length,
   );
@@ -102,7 +199,7 @@ export const useProgressStore = defineStore('progress', () => {
     archive.value.content.perCompetency.map((c) => ({ code: c.code, mastery: c.mastery })),
   );
   const dueCount = computed(() => {
-    const now = new Date();
+    const now = clock.now.value;
     return archive.value.content.perPart.filter((p) => isPartDue(p, now)).length;
   });
 
@@ -121,61 +218,212 @@ export const useProgressStore = defineStore('progress', () => {
   );
 
   async function init(): Promise<void> {
-    archive.value = await archiveStore.load();
+    subscribeStorageChanges();
+    archive.value = await loadLatestArchive();
     loaded.value = true;
   }
 
   async function refresh(): Promise<void> {
-    archive.value = await archiveStore.load();
+    await enqueueArchiveMutation(loadLatestArchive);
+  }
+
+  function setAttemptUploadStatus(
+    ownerId: string,
+    runId: symbol,
+    status: AttemptUploadStatus,
+  ): void {
+    if (latestAttemptFlushByOwner.get(ownerId) !== runId) return;
+    attemptUploadByOwner.value = { ...attemptUploadByOwner.value, [ownerId]: status };
+  }
+
+  function sameAttemptSession(snapshot: { ownerId: string; token: string }): boolean {
+    const current = useAuthStore().session;
+    return current?.user.id === snapshot.ownerId && current.token === snapshot.token;
   }
 
   /**
-   * Flush only the signed-in account's durable audit entries. Errors are
-   * deliberately retained in the outbox for the next boot/login/session-end
-   * retry; stable ids make an ambiguous response safe to resend.
+   * Flush only the account captured at invocation. Both owner and token are
+   * snapshotted: a cross-window account switch can neither redirect an old
+   * batch to the new token nor acknowledge/delete it under the wrong session.
+   * Separate snapshots have separate promises, so B never reuses A's flush.
    */
   async function flushAttemptOutbox(): Promise<void> {
-    if (attemptFlush) return attemptFlush;
     const auth = useAuthStore();
-    const userId = auth.session?.user.id;
-    if (!userId) return;
+    const current = auth.session;
+    if (!current) return;
     const app = useAppStore();
+    const snapshot = {
+      ownerId: current.user.id,
+      token: current.token,
+      serverBaseUrl: app.config.serverBaseUrl,
+    };
+    const existing = attemptFlushes.find(
+      (entry) =>
+        entry.ownerId === snapshot.ownerId &&
+        entry.token === snapshot.token &&
+        entry.serverBaseUrl === snapshot.serverBaseUrl,
+    );
+    if (existing) return existing.promise;
 
-    const run = (async () => {
+    const runId = Symbol(snapshot.ownerId);
+    latestAttemptFlushByOwner.set(snapshot.ownerId, runId);
+    const client = new ServerClient(snapshot.serverBaseUrl, () => snapshot.token);
+
+    const promise = (async () => {
       for (;;) {
-        const pending = await attemptOutbox.list(userId, 500);
-        if (pending.length === 0) return;
+        const pendingCount = await attemptOutbox.count(snapshot.ownerId);
+        if (pendingCount === 0) {
+          setAttemptUploadStatus(snapshot.ownerId, runId, { state: 'idle', pendingCount: 0 });
+          return;
+        }
+        if (!sameAttemptSession(snapshot)) {
+          setAttemptUploadStatus(snapshot.ownerId, runId, {
+            state: 'pending',
+            pendingCount,
+            message: 'Der Antwortverlauf wartet auf die nächste Anmeldung dieses Kontos.',
+          });
+          return;
+        }
+
+        const pending = await attemptOutbox.list(snapshot.ownerId, 500);
+        if (pending.length === 0) continue;
+        setAttemptUploadStatus(snapshot.ownerId, runId, {
+          state: 'uploading',
+          pendingCount,
+          message: 'Antwortverlauf wird hochgeladen …',
+        });
+
         try {
-          await app.serverClient.recordAttempts(pending);
-          await attemptOutbox.remove(
-            userId,
-            pending.map((attempt) => attempt.clientAttemptId),
-          );
-        } catch {
+          await client.recordAttempts(pending);
+          // The response may have committed just before an account/token
+          // switch. Keep the local ids in that case; an idempotent retry under
+          // the matching session is safer than deleting unacknowledged work.
+          if (!sameAttemptSession(snapshot)) {
+            setAttemptUploadStatus(snapshot.ownerId, runId, {
+              state: 'pending',
+              pendingCount: await attemptOutbox.count(snapshot.ownerId),
+              message: 'Der Antwortverlauf wartet auf die nächste Anmeldung dieses Kontos.',
+            });
+            return;
+          }
+
+          let removed = false;
+          await runStorageMutation(storage, async () => {
+            if (!sameAttemptSession(snapshot)) return;
+            await attemptOutbox.remove(
+              snapshot.ownerId,
+              pending.map((attempt) => attempt.clientAttemptId),
+            );
+            removed = true;
+          });
+          if (!removed) {
+            setAttemptUploadStatus(snapshot.ownerId, runId, {
+              state: 'pending',
+              pendingCount: await attemptOutbox.count(snapshot.ownerId),
+              message: 'Der Antwortverlauf wartet auf die nächste Anmeldung dieses Kontos.',
+            });
+            return;
+          }
+          cloudHistoryVersion.value += 1;
+        } catch (error) {
+          const count = await attemptOutbox.count(snapshot.ownerId);
+          const offline = error instanceof NetworkError;
+          setAttemptUploadStatus(snapshot.ownerId, runId, {
+            state: offline ? 'pending' : 'error',
+            pendingCount: count,
+            message: offline
+              ? `${count} ${count === 1 ? 'Antwort wartet' : 'Antworten warten'} auf eine Verbindung.`
+              : error instanceof ApiError && error.status === 401
+                ? 'Der Antwortverlauf wartet auf eine erneute Anmeldung.'
+                : 'Der Antwortverlauf konnte nicht hochgeladen werden. Bitte erneut versuchen.',
+          });
           return;
         }
       }
     })();
-    attemptFlush = run;
+
+    const entry = { ...snapshot, promise };
+    attemptFlushes.push(entry);
     try {
-      await run;
+      await promise;
     } finally {
-      if (attemptFlush === run) attemptFlush = undefined;
+      const index = attemptFlushes.indexOf(entry);
+      if (index >= 0) attemptFlushes.splice(index, 1);
     }
   }
 
-  async function queueAttempt(attempt: QueuedAttempt): Promise<void> {
+  /**
+   * Capture answer/session ownership once. A guest capture also fixes the
+   * current guest generation, allowing a concurrent invite claim to route
+   * this already-open session while leaving later guest sessions untouched.
+   */
+  async function captureAttemptOwner(): Promise<AttemptOwnerSnapshot> {
+    const userId = useAuthStore().session?.user.id;
+    if (userId) return { userId };
+    return runStorageMutation(storage, () => attemptOutbox.captureGuestOwner());
+  }
+
+  /**
+   * Durable write-ahead step for one graded event. Practice calls this before
+   * mutating archive/history/session state, so a renderer crash after any later
+   * await still leaves an idempotent audit record that registration can claim.
+   */
+  async function stageAttempt(
+    attempt: QueuedAttempt,
+    capturedOwner?: string | AttemptOwnerSnapshot,
+  ): Promise<string> {
+    const owner = capturedOwner ?? await captureAttemptOwner();
+    return runStorageMutation(storage, () => attemptOutbox.enqueue(owner, attempt));
+  }
+
+  /** Upload only when the staged owner is still the active authenticated user. */
+  async function flushStagedAttempt(userId: string): Promise<void> {
     const auth = useAuthStore();
-    const userId = auth.session?.user.id;
-    if (!userId) return;
-    await attemptOutbox.enqueue(userId, attempt);
-    await flushAttemptOutbox();
+    // The resolved owner may have been fixed or guest-routed before later
+    // archive/history/session writes. Never flush it through a different
+    // account that appeared while those awaits were in flight.
+    if (userId !== GUEST_ATTEMPT_OWNER && auth.session?.user.id === userId) {
+      await flushAttemptOutbox();
+    }
+  }
+
+  /** Convenience path for callers that do not need a multi-step local commit. */
+  async function queueAttempt(
+    attempt: QueuedAttempt,
+    capturedOwner?: string | AttemptOwnerSnapshot,
+  ): Promise<void> {
+    const userId = await stageAttempt(attempt, capturedOwner);
+    await flushStagedAttempt(userId);
+  }
+
+  /** Persisted before an invite-created session is committed. */
+  async function beginGuestAttemptClaim(userId: string): Promise<void> {
+    await runStorageMutation(storage, () => attemptOutbox.beginGuestClaim(userId));
+  }
+
+  /**
+   * Recover only a marker naming this exact account. Ordinary login/init can
+   * safely call this: guest data without a matching invite marker is ignored.
+   */
+  async function recoverGuestAttemptClaim(userId: string): Promise<number> {
+    return runStorageMutation(storage, async () => {
+      if ((await attemptOutbox.pendingGuestClaim()) !== userId) return 0;
+      const claimed = await attemptOutbox.claim(GUEST_ATTEMPT_OWNER, userId);
+      await attemptOutbox.finishGuestClaim(userId);
+      return claimed;
+    });
+  }
+
+  /** Registration helper retained for direct callers/tests. */
+  async function claimGuestAttempts(userId: string): Promise<number> {
+    await beginGuestAttemptClaim(userId);
+    return recoverGuestAttemptClaim(userId);
   }
 
   /** Per-part progress lookup for browse/list views. */
   const partState = computed(() => {
     const map = new Map<string, PartStateView>();
-    const now = new Date();
+    const now = clock.now.value;
     for (const p of archive.value.content.perPart) {
       map.set(p.partId, {
         grading: gradingOf(p),
@@ -202,7 +450,7 @@ export const useProgressStore = defineStore('progress', () => {
     /** One event timestamp shared by archive, local history and cloud outbox. */
     gradedAt?: string;
   }): Promise<{ grading: Grading; previousFsrs: FsrsState | undefined }> {
-    return enqueueArchiveMutation(async () => {
+    return enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
       const parsed = input.gradedAt ? new Date(input.gradedAt) : new Date();
       const now = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
       const res = await archiveStore.applyGrade({
@@ -227,7 +475,7 @@ export const useProgressStore = defineStore('progress', () => {
       await historyLog.append(entry);
       historyVersion.value += 1;
       return { grading: res.grading, previousFsrs: res.previousFsrs };
-    });
+    }));
   }
 
   /** Manual grading (menu) — always overrides; see ArchiveStore.setGrading. */
@@ -236,24 +484,27 @@ export const useProgressStore = defineStore('progress', () => {
     grading: Grading;
     baseFsrs?: FsrsState | undefined;
   }): Promise<void> {
-    await enqueueArchiveMutation(async () => {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
       archive.value = await archiveStore.setGrading({
         partId: input.partId,
         grading: input.grading,
         now: new Date(),
         baseFsrs: input.baseFsrs,
       });
-    });
+    }));
   }
 
   async function setStarred(partId: string, starred: boolean): Promise<void> {
-    await enqueueArchiveMutation(async () => {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
       archive.value = await archiveStore.setStarred(partId, starred, new Date());
-    });
+    }));
   }
 
   async function toUserState(): Promise<RecommendUserState> {
-    return archiveStore.toUserState();
+    return runStorageMutation(storage, async () => {
+      archive.value = await archiveStore.load();
+      return archiveStore.toUserState();
+    });
   }
 
   /**
@@ -267,26 +518,41 @@ export const useProgressStore = defineStore('progress', () => {
     if (!auth.isLoggedIn) return 'guest';
     syncStatus.value = { state: 'syncing' };
     try {
-      const serverState = opts.compareChecksum ? await app.serverClient.getState() : undefined;
-      const { outcome, archive: next } = await performSync(
-        app.serverClient,
-        archive.value,
-        serverState
-          ? {
-              serverChecksumHint: serverState.checksum,
-              serverVersionHint: serverState.archiveVersion,
-            }
-          : undefined,
-      );
-      if (outcome.type === 'conflict') {
-        conflict.value = outcome.conflict;
-        syncStatus.value = { state: 'conflict', at: new Date() };
-        return 'conflict';
+      // Another renderer may grade while this renderer is awaiting the
+      // server. Snapshot and commit are tiny lock sections; the network is
+      // deliberately outside the lock. A changed snapshot retries against
+      // the already-advanced server instead of overwriting newer local work.
+      for (let contentionAttempt = 0; contentionAttempt < 4; contentionAttempt += 1) {
+        const local = await loadLatestArchive();
+        const serverState = opts.compareChecksum ? await app.serverClient.getState() : undefined;
+        const { outcome, archive: next } = await performSync(
+          app.serverClient,
+          local,
+          serverState
+            ? {
+                serverChecksumHint: serverState.checksum,
+                serverVersionHint: serverState.archiveVersion,
+              }
+            : undefined,
+        );
+        if (outcome.type === 'conflict') {
+          if (!(await archiveIsStillCurrent(local))) continue;
+          conflict.value = outcome.conflict;
+          conflictArchiveBase = local;
+          syncStatus.value = { state: 'conflict', at: new Date() };
+          return 'conflict';
+        }
+        if (!(await commitArchiveIfUnchanged(local, next))) continue;
+        conflictArchiveBase = undefined;
+        syncStatus.value = { state: 'synced', at: new Date() };
+        return outcome.type === 'in-sync' ? 'in-sync' : 'synced';
       }
-      archive.value = next;
-      await archiveStore.save(next);
-      syncStatus.value = { state: 'synced', at: new Date() };
-      return outcome.type === 'in-sync' ? 'in-sync' : 'synced';
+      syncStatus.value = {
+        state: 'idle',
+        message: 'Lokaler Fortschritt wurde parallel aktualisiert; Synchronisierung wird später wiederholt.',
+        at: new Date(),
+      };
+      return 'blocked';
     } catch (e) {
       if (e instanceof NetworkError) {
         syncStatus.value = { state: 'offline', at: new Date() };
@@ -330,41 +596,51 @@ export const useProgressStore = defineStore('progress', () => {
     const app = useAppStore();
     syncStatus.value = { state: 'syncing' };
     try {
-      const serverState = await app.serverClient.getState();
-      const assessment = assessLoginArchives(archive.value, serverState);
-      switch (assessment.kind) {
-        case 'adopt-server':
-        case 'in-sync':
-          archive.value = assessment.archive;
-          await archiveStore.save(assessment.archive);
-          syncStatus.value = { state: 'synced', at: new Date() };
-          return;
-        case 'upload-local': {
-          // Empty cloud archive — a plain sync from the server's version
-          // fast-forwards the local content up (no data on either side lost).
-          const { outcome, archive: next } = await performSync(app.serverClient, {
-            content: archive.value.content,
-            baseVersion: assessment.baseVersion,
-          });
-          if (outcome.type === 'conflict') {
-            conflict.value = outcome.conflict;
-            syncStatus.value = { state: 'conflict', at: new Date() };
+      for (let contentionAttempt = 0; contentionAttempt < 4; contentionAttempt += 1) {
+        const local = await loadLatestArchive();
+        const serverState = await app.serverClient.getState();
+        const assessment = assessLoginArchives(local, serverState);
+        switch (assessment.kind) {
+          case 'adopt-server':
+          case 'in-sync':
+            if (!(await commitArchiveIfUnchanged(local, assessment.archive))) continue;
+            syncStatus.value = { state: 'synced', at: new Date() };
+            return;
+          case 'upload-local': {
+            // Empty cloud archive — a plain sync from the server's version
+            // fast-forwards the local content up (no data on either side lost).
+            const { outcome, archive: next } = await performSync(app.serverClient, {
+              content: local.content,
+              baseVersion: assessment.baseVersion,
+            });
+            if (outcome.type === 'conflict') {
+              if (!(await archiveIsStillCurrent(local))) continue;
+              conflict.value = outcome.conflict;
+              conflictArchiveBase = local;
+              syncStatus.value = { state: 'conflict', at: new Date() };
+              return;
+            }
+            if (!(await commitArchiveIfUnchanged(local, next))) continue;
+            syncStatus.value = { state: 'synced', at: new Date() };
             return;
           }
-          archive.value = next;
-          await archiveStore.save(next);
-          syncStatus.value = { state: 'synced', at: new Date() };
-          return;
+          case 'choice-needed':
+            if (!(await archiveIsStillCurrent(local))) continue;
+            archiveChoice.value = {
+              serverState: assessment.serverState,
+              server: assessment.server,
+              local: assessment.local,
+            };
+            archiveChoiceBase = local;
+            syncStatus.value = { state: 'idle' };
+            return;
         }
-        case 'choice-needed':
-          archiveChoice.value = {
-            serverState: assessment.serverState,
-            server: assessment.server,
-            local: assessment.local,
-          };
-          syncStatus.value = { state: 'idle' };
-          return;
       }
+      syncStatus.value = {
+        state: 'idle',
+        message: 'Lokaler Fortschritt wurde parallel aktualisiert; der Kontoabgleich wird später wiederholt.',
+        at: new Date(),
+      };
     } catch (e) {
       syncStatus.value =
         e instanceof NetworkError
@@ -381,7 +657,8 @@ export const useProgressStore = defineStore('progress', () => {
   async function resolveArchiveChoice(pick: 'merge' | 'server' | 'local'): Promise<void> {
     const app = useAppStore();
     const choice = archiveChoice.value;
-    if (!choice) return;
+    const expected = archiveChoiceBase;
+    if (!choice || !expected) return;
     try {
       if (pick === 'server') {
         const adopted: LocalArchive = {
@@ -391,24 +668,31 @@ export const useProgressStore = defineStore('progress', () => {
           }),
           baseVersion: choice.serverState.archiveVersion,
         };
-        archive.value = adopted;
-        await archiveStore.save(adopted);
+        if (!(await commitArchiveIfUnchanged(expected, adopted))) {
+          archiveChoice.value = undefined;
+          archiveChoiceBase = undefined;
+          await reconcileOnLogin();
+          return;
+        }
         syncStatus.value = { state: 'synced', at: new Date() };
       } else if (pick === 'local') {
         const { outcome, archive: next } = await overwriteServerArchive(
           app.serverClient,
           choice.serverState.archiveVersion,
-          archive.value.content,
+          expected.content,
         );
         if (outcome.type === 'conflict') {
           // Another device wrote while choosing — re-run the assessment.
           archiveChoice.value = undefined;
+          archiveChoiceBase = undefined;
           await reconcileOnLogin();
           return;
         }
-        if (next) {
-          archive.value = next;
-          await archiveStore.save(next);
+        if (next && !(await commitArchiveIfUnchanged(expected, next))) {
+          archiveChoice.value = undefined;
+          archiveChoiceBase = undefined;
+          await reconcileOnLogin();
+          return;
         }
         syncStatus.value = { state: 'synced', at: new Date() };
       } else {
@@ -418,18 +702,21 @@ export const useProgressStore = defineStore('progress', () => {
         await syncNow({ quiet: false });
       }
       archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
     } catch (e) {
       syncStatus.value =
         e instanceof NetworkError
           ? { state: 'offline', at: new Date() }
           : { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
       archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
     }
   }
 
   /** Postponing is allowed — the next login re-offers the choice (§2.4). */
   function dismissArchiveChoice(): void {
     archiveChoice.value = undefined;
+    archiveChoiceBase = undefined;
     syncStatus.value = { state: 'idle' };
   }
 
@@ -438,18 +725,29 @@ export const useProgressStore = defineStore('progress', () => {
     await enqueueArchiveMutation(async () => {
       const app = useAppStore();
       const current = conflict.value;
-      if (!current) return;
+      const expected = conflictArchiveBase;
+      if (!current || !expected) return;
       const resolved: ArchiveContent = buildResolvedArchive(current, choices);
       const { outcome, archive: next } = await submitResolution(app.serverClient, current, resolved);
       if (outcome.type === 'conflict') {
         // Another device wrote while the user was choosing — new round.
+        if (!(await archiveIsStillCurrent(expected))) {
+          conflict.value = undefined;
+          conflictArchiveBase = undefined;
+          await runSyncRound({ quiet: true });
+          return;
+        }
         conflict.value = outcome.conflict;
+        conflictArchiveBase = expected;
         return;
       }
       conflict.value = undefined;
+      conflictArchiveBase = undefined;
       if (next) {
-        archive.value = next;
-        await archiveStore.save(next);
+        if (!(await commitArchiveIfUnchanged(expected, next))) {
+          await runSyncRound({ quiet: true });
+          return;
+        }
       }
       syncStatus.value = { state: 'synced', at: new Date() };
     });
@@ -459,6 +757,7 @@ export const useProgressStore = defineStore('progress', () => {
     // Allowed: the user can postpone; local progress keeps accumulating and
     // the next sync will re-surface the conflict.
     conflict.value = undefined;
+    conflictArchiveBase = undefined;
     syncStatus.value = { state: 'idle' };
   }
 
@@ -473,6 +772,8 @@ export const useProgressStore = defineStore('progress', () => {
     archiveChoice,
     loaded,
     historyVersion,
+    cloudHistoryVersion,
+    attemptUploadStatus,
     reconcileOnLogin,
     resolveArchiveChoice,
     dismissArchiveChoice,
@@ -484,7 +785,13 @@ export const useProgressStore = defineStore('progress', () => {
     partState,
     init,
     refresh,
+    captureAttemptOwner,
+    stageAttempt,
+    flushStagedAttempt,
     queueAttempt,
+    beginGuestAttemptClaim,
+    recoverGuestAttemptClaim,
+    claimGuestAttempts,
     flushAttemptOutbox,
     applyGrade,
     setGrading,

@@ -17,6 +17,7 @@
 import { computed } from 'vue';
 import AiBadge from '../shared/AiBadge.vue';
 import MarkdownView from '../shared/MarkdownView.vue';
+import QIconButton from '../shared/QIconButton.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
 
 const props = defineProps<{
@@ -58,15 +59,12 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
     <div class="q-aix__head">
       <h4 id="q-aix-title" class="q-aix__title">{{ titleLabel ?? 'Erklärung' }}</h4>
       <AiBadge class="q-aix__badge" />
-      <button
+      <QIconButton
         v-if="hasAnswer || error"
-        type="button"
         class="q-aix__dismiss"
         aria-label="Erklärung ausblenden"
         @click="emit('dismiss')"
-      >
-        ✕
-      </button>
+      />
     </div>
 
     <div v-if="loading" class="q-aix__loading">
@@ -175,19 +173,6 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
  * This class only positions it. */
 .q-aix__dismiss {
   margin-left: auto;
-  border: none;
-  background: none;
-  color: var(--q-faint);
-  font-size: 13px;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-@media (hover: hover) and (pointer: fine) {
-  .q-aix__dismiss:hover {
-    color: var(--q-ink);
-    background: var(--q-panel);
-  }
 }
 
 .q-aix__ask {

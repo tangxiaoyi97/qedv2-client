@@ -7,6 +7,6 @@ export type { AuthSession } from './auth-store.js';
 export { QuestionCache, questionContentHash } from './question-cache.js';
 export { HistoryLog } from './history-log.js';
 export type { HistoryEntry } from './history-log.js';
-export { AttemptOutbox } from './attempt-outbox.js';
-export type { QueuedAttempt } from './attempt-outbox.js';
+export { AttemptOutbox, GUEST_ATTEMPT_OWNER } from './attempt-outbox.js';
+export type { AttemptOwnerSnapshot, QueuedAttempt } from './attempt-outbox.js';
 export * from './ai-cache.js';

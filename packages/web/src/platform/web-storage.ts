@@ -29,8 +29,17 @@ function tx<T>(db: IDBDatabase, store: string, mode: IDBTransactionMode, run: (s
   return new Promise((resolve, reject) => {
     const t = db.transaction(store, mode);
     const req = run(t.objectStore(store));
-    req.onsuccess = () => resolve(req.result);
+    let result!: T;
+    req.onsuccess = () => {
+      result = req.result;
+    };
     req.onerror = () => reject(req.error ?? new Error('IndexedDB request failed'));
+    // A successful request can still belong to a transaction that later
+    // aborts. Resolve only after commit so callers can safely build durable
+    // write-ahead protocols (for example the guest-attempt claim marker).
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error ?? req.error ?? new Error('IndexedDB transaction failed'));
+    t.onabort = () => reject(t.error ?? req.error ?? new Error('IndexedDB transaction aborted'));
   });
 }
 

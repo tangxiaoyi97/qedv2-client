@@ -1,0 +1,200 @@
+name: Desktop CI
+
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QED2_CORE_SOURCE: ${{ github.workspace }}/qedv2-core
+  QED2_BANK_SOURCE: ${{ github.workspace }}/srdpmppr
+
+jobs:
+  native-verify:
+    name: ${{ matrix.name }} verify
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: qedv2-client
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x64
+            runner: ubuntu-24.04
+            builder: --linux
+            arch: --x64
+            electron-cache: |
+              ~/.cache/electron
+              ~/.cache/electron-builder
+          - name: Windows x64
+            runner: windows-2022
+            builder: --win
+            arch: --x64
+            electron-cache: |
+              ~/AppData/Local/electron/Cache
+              ~/AppData/Local/electron-builder/Cache
+          - name: macOS arm64
+            runner: macos-15
+            builder: --mac
+            arch: --arm64
+            electron-cache: |
+              ~/Library/Caches/electron
+              ~/Library/Caches/electron-builder
+
+    steps:
+      # Keeping all three repositories beside one another mirrors the local
+      # release layout consumed by packages/desktop/scripts/prepare-runtime.mjs.
+      - name: Check out client
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: qedv2-client
+          persist-credentials: false
+
+      - name: Validate private Core deploy key
+        shell: bash
+        env:
+          DESKTOP_CORE_DEPLOY_KEY: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DESKTOP_CORE_DEPLOY_KEY" ]]; then
+            echo "Missing repository secret DESKTOP_CORE_DEPLOY_KEY for the private Core read-only deploy key." >&2
+            exit 1
+          fi
+
+      - name: Resolve locked runtime sources
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          CORE_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').core.commit")"
+          BANK_SHA="$(node -p "require('./packages/desktop/runtime-sources.json').bank.commit")"
+          if [[ ! "$CORE_SHA" =~ ^[0-9a-f]{40}$ || ! "$BANK_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "runtime-sources.json must pin full Git commit IDs" >&2
+            exit 1
+          fi
+          echo "core_sha=$CORE_SHA" >> "$GITHUB_OUTPUT"
+          echo "bank_sha=$BANK_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out locked Core
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: tangxiaoyi97/qedv2-core
+          ref: ${{ steps.runtime.outputs.core_sha }}
+          path: qedv2-core
+          ssh-key: ${{ secrets.DESKTOP_CORE_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Check out locked question bank
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: tangxiaoyi97/srdpmppr
+          ref: ${{ steps.runtime.outputs.bank_sha }}
+          path: srdpmppr
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.0.3
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            qedv2-client/pnpm-lock.yaml
+            qedv2-core/pnpm-lock.yaml
+
+      - name: Cache Electron toolchains
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ matrix.electron-cache }}
+          key: desktop-electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('qedv2-client/pnpm-lock.yaml') }}
+          restore-keys: |
+            desktop-electron-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install client dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Core dependencies
+        run: pnpm --dir ../qedv2-core install --frozen-lockfile
+
+      - name: Verify complete client workspace
+        run: |
+          pnpm typecheck
+          pnpm test
+          pnpm --filter @qed2/desktop build
+
+      - name: Verify bundled Core
+        run: |
+          pnpm --dir ../qedv2-core exec jest --runInBand
+          pnpm --dir ../qedv2-core test:e2e
+
+      - name: Prepare bundled runtime
+        run: pnpm --filter @qed2/desktop runtime:prepare
+
+      - name: Start and identify bundled Core
+        run: pnpm --filter @qed2/desktop runtime:smoke
+
+      # PRs stop after source, Web-build, Core-build and runtime-layout checks.
+      # Unpacked Electron packaging is intentionally reserved for main/manual
+      # runs; full installers belong exclusively to desktop-release.yml.
+      - name: Smoke-test unpacked package
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: >-
+          pnpm --filter @qed2/desktop exec electron-builder
+          --config electron-builder.yml
+          ${{ matrix.builder }} ${{ matrix.arch }} --dir --publish never
+
+      # CI deliberately has no distribution certificate. A local ad-hoc
+      # signature is sufficient to let macOS execute the unpacked application;
+      # release builds below are still required to carry the real Developer ID.
+      - name: Ad-hoc sign unpacked macOS application for boot smoke
+        if: runner.os == 'macOS' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          APPS=(packages/desktop/dist-packages/mac*/QED2.app)
+          if [[ "${#APPS[@]}" -ne 1 ]]; then
+            echo "Expected one unpacked QED2.app, found ${#APPS[@]}" >&2
+            exit 1
+          fi
+          codesign --force --deep --sign - "${APPS[0]}"
+          codesign --verify --deep --strict "${APPS[0]}"
+
+      - name: Verify runtime copied into unpacked package
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: pnpm --filter @qed2/desktop exec node scripts/smoke-runtime.mjs --packaged
+
+      - name: Install virtual display for packaged Linux smoke
+        if: runner.os == 'Linux' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes xvfb
+
+      - name: Boot-smoke unpacked Desktop application
+        if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: >-
+          pnpm --filter @qed2/desktop exec node scripts/smoke-packaged-app.mjs
+          --diagnostics-dir "${{ runner.temp }}/qed2-packaged-smoke"
+
+      - name: Upload packaged Desktop smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-boot-smoke-${{ matrix.name }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: ${{ runner.temp }}/qed2-packaged-smoke

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StoragePort } from '../src/ports/index.js';
 import { STORAGE } from '../src/ports/index.js';
-import { ArchiveStore, AttemptOutbox, AuthStore, ConfigStore, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
+import { ArchiveStore, AttemptOutbox, AuthStore, ConfigStore, GUEST_ATTEMPT_OWNER, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
 import { DEFAULT_CONFIG } from '../src/config/index.js';
 import { archiveChecksum } from '../src/sync/index.js';
 import { EXCLUDED_DUE_SENTINEL } from '../src/fsrs/index.js';
@@ -62,6 +62,87 @@ describe('AttemptOutbox', () => {
     await outbox.remove('u1', ['attempt-1']);
     expect(await outbox.count('u1')).toBe(0);
     expect(await outbox.count('u2')).toBe(1);
+  });
+
+  it('claims guest attempts once, de-duplicates them and leaves other accounts alone', async () => {
+    const storage = new MemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    const attempt = {
+      clientAttemptId: 'guest-attempt-1',
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-08-07T08:00:00.000Z',
+    };
+
+    await outbox.enqueue(GUEST_ATTEMPT_OWNER, attempt);
+    await outbox.enqueue('new-user', attempt);
+    await outbox.enqueue('other-user', { ...attempt, clientAttemptId: 'other-attempt' });
+    const secondGuestAttempt = { ...attempt, clientAttemptId: 'guest-attempt-2' };
+    await outbox.enqueue(GUEST_ATTEMPT_OWNER, secondGuestAttempt);
+
+    await expect(outbox.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(1);
+    expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect(await outbox.list('new-user')).toEqual([attempt, secondGuestAttempt]);
+    expect(await outbox.count('other-user')).toBe(1);
+    await expect(outbox.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(0);
+  });
+
+  it('persists a guest-claim marker and lets only its named account finish it', async () => {
+    const storage = new MemoryStorage();
+    const first = new AttemptOutbox(storage);
+
+    await first.beginGuestClaim('new-user');
+    expect(await new AttemptOutbox(storage).pendingGuestClaim()).toBe('new-user');
+    await expect(first.beginGuestClaim('other-user')).rejects.toThrow('anderes Konto');
+
+    await first.finishGuestClaim('other-user');
+    expect(await first.pendingGuestClaim()).toBe('new-user');
+    await first.finishGuestClaim('new-user');
+    expect(await first.pendingGuestClaim()).toBeUndefined();
+  });
+
+  it('routes a late old-generation enqueue after claim completion without claiming new guests', async () => {
+    const storage = new MemoryStorage();
+    const first = new AttemptOutbox(storage);
+    const oldGuest = await first.captureGuestOwner();
+    const base = {
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-08-07T08:00:00.000Z',
+    };
+
+    await first.enqueue(oldGuest, { ...base, clientAttemptId: 'before-claim' });
+    await first.beginGuestClaim('new-user');
+    await expect(first.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(1);
+    await first.finishGuestClaim('new-user');
+    expect(await first.pendingGuestClaim()).toBeUndefined();
+
+    // A different instance models the old practice renderer reaching its
+    // write-ahead enqueue only after the claiming renderer deleted its marker.
+    const restarted = new AttemptOutbox(storage);
+    const lateAttempt = {
+      ...base,
+      clientAttemptId: 'late-old-session',
+    };
+    await expect(restarted.enqueue(oldGuest, lateAttempt)).resolves.toBe('new-user');
+    await expect(restarted.enqueue(oldGuest, lateAttempt)).resolves.toBe('new-user');
+    expect(await restarted.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect((await restarted.list('new-user')).map((attempt) => attempt.clientAttemptId)).toEqual([
+      'before-claim',
+      'late-old-session',
+    ]);
+
+    const freshGuest = await restarted.captureGuestOwner();
+    expect(freshGuest.guestGeneration).not.toBe(oldGuest.guestGeneration);
+    await expect(restarted.enqueue(freshGuest, {
+      ...base,
+      clientAttemptId: 'new-guest-session',
+    })).resolves.toBe(GUEST_ATTEMPT_OWNER);
+    expect(await restarted.count(GUEST_ATTEMPT_OWNER)).toBe(1);
   });
 
   it('trims a runaway backlog per account, never across accounts', async () => {

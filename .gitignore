@@ -8,6 +8,9 @@ coverage/
 *.tsbuildinfo
 .vite/
 dev-dist/
+packages/desktop/runtime/
+packages/desktop/.runtime-*/
+packages/desktop/dist-packages/
 
 # local env variants — `.env` and `*.local` above already cover
 # .env.local / .env.*.local; this catches .env.production, .env.test, …

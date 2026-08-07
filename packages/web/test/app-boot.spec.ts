@@ -10,6 +10,7 @@ import { createPinia } from 'pinia';
 import { createRouter, createMemoryHistory } from 'vue-router';
 import App from '../src/App.vue';
 import HomeView from '../src/routes/HomeView.vue';
+import { ports } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
@@ -65,10 +66,56 @@ describe('web shell boot (guest, offline)', () => {
     expect(host.textContent).toContain('Empfohlen für heute');
     expect(host.textContent).toContain('Programm starten');
     expect(host.textContent).toContain('Als Gast unterwegs');
+    expect(host.querySelector('[data-desktop-capability-entry]')).toBeNull();
     expect(auth.isLoggedIn).toBe(false);
     expect(progress.loaded).toBe(true);
 
     app.unmount();
     vi.unstubAllGlobals();
+  });
+
+  it('renders the desktop settings entry only when the shell advertises the capability', async () => {
+    stubBrowserApis();
+
+    const originalShell = ports.shell;
+    ports.shell = {
+      capabilities: {
+        desktop: true,
+        nativeMenu: true,
+        nativeTitleBar: true,
+      },
+      onCommand: () => () => undefined,
+    };
+
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', component: { template: '<div>Home</div>' } },
+        { path: '/settings', component: { template: '<div>Settings</div>' } },
+        { path: '/:pathMatch(.*)*', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/');
+
+    const app = createApp(App);
+    app.use(createPinia());
+    app.use(router);
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+
+    try {
+      app.mount(host);
+      await router.isReady();
+      await nextTick();
+
+      const entry = host.querySelector<HTMLAnchorElement>('[data-desktop-capability-entry]');
+      expect(entry?.getAttribute('href')).toBe('/settings?section=desktop');
+    } finally {
+      app.unmount();
+      host.remove();
+      ports.shell = originalShell;
+      vi.unstubAllGlobals();
+    }
   });
 });

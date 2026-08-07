@@ -15,6 +15,7 @@
  * under the cursor or the pinch midpoint.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import QIconButton from './QIconButton.vue';
 import { lockBodyScroll, unlockBodyScroll } from './scroll-lock.js';
 
 const props = defineProps<{
@@ -34,7 +35,7 @@ const DOUBLE_TAP_SLOP_PX = 24;
 
 const stage = ref<HTMLElement | null>(null);
 const image = ref<HTMLImageElement | null>(null);
-const closeButton = ref<HTMLButtonElement | null>(null);
+const closeButton = ref<{ focus: (options?: FocusOptions) => void } | null>(null);
 
 const scale = ref(1);
 const tx = ref(0);
@@ -287,15 +288,12 @@ onBeforeUnmount(() => {
         >
           Zurücksetzen
         </button>
-        <button
+        <QIconButton
           ref="closeButton"
-          type="button"
-          class="q-dialog-close q-figview__close"
+          class="q-figview__close"
           aria-label="Schließen"
           @click="emit('close')"
-        >
-          ✕
-        </button>
+        />
       </div>
 
       <div

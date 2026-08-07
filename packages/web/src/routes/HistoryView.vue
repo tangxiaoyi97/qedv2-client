@@ -6,8 +6,8 @@
  *    question titles are joined client-side from the question cache / core
  *    batch endpoint (the server returns identifiers only, contract §8.3);
  *  - guest → local HistoryLog (this device only, labeled as such);
- *  - v1 does NOT backfill guest history into the cloud on login — the two
- *    accumulate independently (upgrade doc §1.1).
+ *  - invite redemption claims the durable guest-attempt outbox for the new
+ *    account; ordinary login does not, which protects shared devices.
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -89,6 +89,9 @@ async function joinTitles(questionIds: string[]): Promise<void> {
 
 async function loadPage(reset: boolean): Promise<void> {
   const request = ++loadRequest;
+  const sourceUserId = auth.session?.user.id;
+  const isCurrentRequest = () =>
+    request === loadRequest && auth.session?.user.id === sourceUserId;
   if (reset) {
     rows.value = [];
     total.value = 0;
@@ -106,7 +109,7 @@ async function loadPage(reset: boolean): Promise<void> {
         pageSize: PAGE_SIZE,
         ...range,
       });
-      if (request !== loadRequest) return;
+      if (!isCurrentRequest()) return;
       total.value = res.total;
       batch = res.items.map((i) => ({
         key: i.id,
@@ -126,7 +129,7 @@ async function loadPage(reset: boolean): Promise<void> {
       const list = allForDay
         ? allForDay.slice(offset, offset + PAGE_SIZE)
         : await historyLog.list(PAGE_SIZE, offset);
-      if (request !== loadRequest) return;
+      if (!isCurrentRequest()) return;
       total.value = allForDay?.length ?? await historyLog.count();
       batch = list.map((e) => ({
         // gradedAt+partId alone can collide (same part graded twice within
@@ -141,12 +144,12 @@ async function loadPage(reset: boolean): Promise<void> {
         elapsedMs: e.elapsedMs,
       }));
     }
-    if (request !== loadRequest) return;
+    if (!isCurrentRequest()) return;
     rows.value = reset ? batch : [...rows.value, ...batch];
     page.value = target;
     void joinTitles(batch.map((r) => r.questionId));
   } catch (e) {
-    if (request !== loadRequest) return;
+    if (!isCurrentRequest()) return;
     error.value =
       e instanceof NetworkError
         ? 'Server nicht erreichbar — Verlauf ist gerade nicht verfügbar.'
@@ -154,21 +157,24 @@ async function loadPage(reset: boolean): Promise<void> {
           ? e.message
           : String(e);
   } finally {
-    if (request === loadRequest) loading.value = false;
+    if (isCurrentRequest()) loading.value = false;
   }
 }
 
 onMounted(() => void loadPage(true));
-// login/logout switches the source — reload from page 1, never mixing the two
-watch(cloudMode, () => {
+// Login/logout and direct account replacement switch the source. Reload from
+// page 1 and invalidate in-flight reads so rows from two accounts never mix.
+watch(() => auth.session?.user.id, () => {
+  selectedDate.value = null;
+  activity.value = {};
   void loadPage(true);
   void loadActivity();
 });
 // new answers land in the local log (and in /me/attempts at session end)
 watch(
-  () => progress.historyVersion,
+  () => [progress.historyVersion, progress.cloudHistoryVersion] as const,
   () => {
-    if (!cloudMode.value) void loadPage(true);
+    void loadPage(true);
     void loadActivity();
   },
 );
@@ -179,29 +185,42 @@ watch(
 const activity = ref<Record<string, number>>({});
 const activityLoading = ref(false);
 const activityError = ref<string | undefined>();
+const attemptHistoryMessage = computed(() =>
+  cloudMode.value && progress.attemptUploadStatus.state !== 'idle'
+    ? progress.attemptUploadStatus.message ?? 'Der Cloud-Verlauf ist noch nicht vollständig.'
+    : undefined,
+);
+
+async function retryPendingHistory(): Promise<void> {
+  await progress.flushAttemptOutbox();
+  await Promise.all([loadPage(true), loadActivity()]);
+}
 
 async function loadActivity(): Promise<void> {
   const request = ++activityRequest;
+  const sourceUserId = auth.session?.user.id;
+  const isCurrentRequest = () =>
+    request === activityRequest && auth.session?.user.id === sourceUserId;
   activityLoading.value = true;
   activityError.value = undefined;
   try {
     if (!cloudMode.value) {
       const local = await historyLog.dailyActivity(ACTIVITY_DAYS, new Date());
-      if (request === activityRequest) activity.value = local;
+      if (isCurrentRequest()) activity.value = local;
       return;
     }
 
     const range = localActivityRange(ACTIVITY_DAYS, new Date());
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
     const res = await app.serverClient.getHistoryActivity({ ...range, timeZone });
-    if (request !== activityRequest) return;
+    if (!isCurrentRequest()) return;
     activity.value = res.activity;
   } catch {
-    if (request !== activityRequest) return;
+    if (!isCurrentRequest()) return;
     activity.value = {};
     activityError.value = 'Aktivität konnte nicht geladen werden.';
   } finally {
-    if (request === activityRequest) activityLoading.value = false;
+    if (isCurrentRequest()) activityLoading.value = false;
   }
 }
 
@@ -293,6 +312,7 @@ function redo(questionId: string): void {
         </button>
       </div>
       <ActivityHeatmap
+        v-if="!activityLoading && !activityError && !attemptHistoryMessage"
         :data="activity"
         :weeks="ACTIVITY_WEEKS"
         :selected-date="selectedDate"
@@ -302,6 +322,20 @@ function redo(questionId: string): void {
       <p v-else-if="activityError" class="hist__heatmap-note hist__heatmap-note--error" role="alert">
         {{ activityError }}
       </p>
+      <div
+        v-else-if="attemptHistoryMessage"
+        class="hist__heatmap-note hist__heatmap-note--error"
+        :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
+      >
+        {{ attemptHistoryMessage }}
+        <QButton
+          v-if="progress.attemptUploadStatus.state !== 'uploading'"
+          variant="secondary"
+          @click="retryPendingHistory"
+        >
+          Erneut versuchen
+        </QButton>
+      </div>
       <p v-if="selectedDate" class="hist__filter-status" role="status">
         Verlauf gefiltert: {{ selectedDateLabel }}
       </p>
