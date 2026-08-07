@@ -969,7 +969,7 @@ jobs:
     name: Assemble and verify complete release set
     needs: [release_context, macos, windows, linux]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Check out release tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -1111,7 +1111,7 @@ jobs:
     if: needs.release_context.outputs.publish == 'true'
     needs: [release_context, assemble]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment:
       name: desktop-release
     permissions:
@@ -1135,6 +1135,20 @@ jobs:
         run: |
           set -euo pipefail
           (cd release-assets && sha256sum --check SHA256SUMS)
+          ASSET_NAMES="$RUNNER_TEMP/qed2-release-asset-names.txt"
+          CHECKSUM_ASSET_NAMES="$RUNNER_TEMP/qed2-checksum-release-asset-names.txt"
+          find release-assets -maxdepth 1 -type f -printf '%f\n' \
+            | LC_ALL=C sort > "$ASSET_NAMES"
+          {
+            sed -E 's/^[0-9a-f]{64}  //' release-assets/SHA256SUMS
+            printf 'SHA256SUMS\n'
+          } | LC_ALL=C sort > "$CHECKSUM_ASSET_NAMES"
+          if [[ "$(wc -l < "$ASSET_NAMES" | tr -d '[:space:]')" != 18 ]] || \
+             ! cmp -s "$CHECKSUM_ASSET_NAMES" "$ASSET_NAMES"; then
+            echo "The publish job did not receive the canonical 18-file release set." >&2
+            diff -u "$CHECKSUM_ASSET_NAMES" "$ASSET_NAMES" || true
+            exit 1
+          fi
           REMOTE_TAG_JSON="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
           if [[ "$(jq -r '.object.type' <<< "$REMOTE_TAG_JSON")" != tag || \
                 "$(jq -r '.object.sha' <<< "$REMOTE_TAG_JSON")" != "$TAG_OBJECT_SHA" ]]; then
@@ -1168,31 +1182,57 @@ jobs:
         run: |
           set -euo pipefail
           (cd release-assets && sha256sum --check SHA256SUMS)
-          RELEASE_API="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
-          RELEASE_LOOKUP_ERROR="$RUNNER_TEMP/qed2-publish-release-lookup-error.txt"
-          if RELEASE_JSON="$(gh api "$RELEASE_API" 2>"$RELEASE_LOOKUP_ERROR")"; then
-            if [[ "$(jq -r '.draft' <<< "$RELEASE_JSON")" != true ]]; then
-              echo "Release $RELEASE_TAG is already published and must not be replaced; publish a higher version." >&2
-              exit 1
-            fi
-          elif grep -Fq 'HTTP 404' "$RELEASE_LOOKUP_ERROR"; then
-            # Never expose a release while assets are still being transferred.
-            # A failed upload leaves only a resumable draft.
-            gh release create "$RELEASE_TAG" --draft --verify-tag --generate-notes \
-              --title "QED2 $RELEASE_VERSION"
-            RELEASE_JSON="$(gh api "$RELEASE_API")"
-          else
-            cat "$RELEASE_LOOKUP_ERROR" >&2
-            echo "Could not determine whether a release already exists; refusing to create or replace one." >&2
+          ASSET_NAMES="$RUNNER_TEMP/qed2-release-asset-names.txt"
+          CHECKSUM_ASSET_NAMES="$RUNNER_TEMP/qed2-checksum-release-asset-names.txt"
+          find release-assets -maxdepth 1 -type f -printf '%f\n' \
+            | LC_ALL=C sort > "$ASSET_NAMES"
+          {
+            sed -E 's/^[0-9a-f]{64}  //' release-assets/SHA256SUMS
+            printf 'SHA256SUMS\n'
+          } | LC_ALL=C sort > "$CHECKSUM_ASSET_NAMES"
+          if [[ "$(wc -l < "$ASSET_NAMES" | tr -d '[:space:]')" != 18 ]] || \
+             ! cmp -s "$CHECKSUM_ASSET_NAMES" "$ASSET_NAMES"; then
+            echo "The publish job did not receive the canonical 18-file release set." >&2
+            diff -u "$CHECKSUM_ASSET_NAMES" "$ASSET_NAMES" || true
             exit 1
           fi
+          # GitHub's release-by-tag REST endpoint excludes drafts. Enumerate all
+          # pages so a retry reuses the one private draft instead of attempting
+          # to create a duplicate or mistaking it for a published release.
+          RELEASE_PAGES="$(
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"
+          )"
+          RELEASE_MATCHES="$(
+            jq -c --arg tag "$RELEASE_TAG" \
+              '[.[][] | select(.tag_name == $tag)]' <<< "$RELEASE_PAGES"
+          )"
+          RELEASE_MATCH_COUNT="$(jq 'length' <<< "$RELEASE_MATCHES")"
+          if [[ "$RELEASE_MATCH_COUNT" -gt 1 ]]; then
+            echo "GitHub returned multiple releases for the immutable tag $RELEASE_TAG." >&2
+            exit 1
+          elif [[ "$RELEASE_MATCH_COUNT" -eq 1 ]]; then
+            RELEASE_JSON="$(jq -c '.[0]' <<< "$RELEASE_MATCHES")"
+          else
+            # Never expose a release while assets are still being transferred.
+            # A failed upload leaves only a resumable draft.
+            RELEASE_JSON="$(
+              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+                --raw-field tag_name="$RELEASE_TAG" \
+                --raw-field target_commitish="$CLIENT_SHA" \
+                --raw-field name="QED2 $RELEASE_VERSION" \
+                --field draft=true \
+                --field prerelease=false \
+                --field generate_release_notes=true
+            )"
+          fi
 
-          NOTICE="⚠️ QED2 $RELEASE_VERSION packages use no paid platform identity: macOS is ad-hoc signed and not notarized; Windows and Linux are unsigned. QED2 verifies downloads but requires manual installation, and the OS may warn you. Use only this GitHub release and verify SHA256SUMS."
-          CURRENT_BODY="$(jq -r '.body // ""' <<< "$RELEASE_JSON")"
-          if [[ "$CURRENT_BODY" != *"$NOTICE"* ]]; then
-            UPDATED_BODY="$(printf '%s\n\n%s' "$NOTICE" "$CURRENT_BODY")"
-            gh api --method PATCH "$RELEASE_API" --raw-field body="$UPDATED_BODY" >/dev/null
-            RELEASE_JSON="$(gh api "$RELEASE_API")"
+          if [[ "$(jq -r '.draft' <<< "$RELEASE_JSON")" != true ]]; then
+            echo "Release $RELEASE_TAG is already published and must not be replaced; publish a higher version." >&2
+            exit 1
+          fi
+          if [[ "$(jq -r '.author.login' <<< "$RELEASE_JSON")" != 'github-actions[bot]' ]]; then
+            echo "Refusing to reuse a draft that was not created by GitHub Actions." >&2
+            exit 1
           fi
 
           RELEASE_ID="$(jq -r '.id' <<< "$RELEASE_JSON")"
@@ -1200,31 +1240,75 @@ jobs:
             echo "GitHub returned an invalid draft release ID." >&2
             exit 1
           fi
+          RELEASE_API="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
+
+          NOTICE="⚠️ QED2 $RELEASE_VERSION packages use no paid platform identity: macOS is ad-hoc signed and not notarized; Windows and Linux are unsigned. QED2 verifies downloads but requires manual installation, and the OS may warn you. Use only this GitHub release and verify SHA256SUMS."
+          CURRENT_BODY="$(jq -r '.body // ""' <<< "$RELEASE_JSON")"
+          if [[ "$CURRENT_BODY" != *"$NOTICE"* ]]; then
+            UPDATED_BODY="$(printf '%s\n\n%s' "$NOTICE" "$CURRENT_BODY")"
+            gh api --method PATCH "$RELEASE_API" \
+              --raw-field tag_name="$RELEASE_TAG" \
+              --raw-field target_commitish="$CLIENT_SHA" \
+              --raw-field body="$UPDATED_BODY" >/dev/null
+            RELEASE_JSON="$(gh api "$RELEASE_API")"
+          fi
+          if ! jq -e --arg tag "$RELEASE_TAG" --arg target "$CLIENT_SHA" \
+            '.tag_name == $tag and .target_commitish == $target and .draft == true' \
+            <<< "$RELEASE_JSON" >/dev/null; then
+            echo "GitHub detached the private draft from the immutable release tag." >&2
+            exit 1
+          fi
 
           # A retry starts from an exact empty asset set. This prevents a stale
           # payload from a prior failed workflow (or manual draft edit) from
           # being made public alongside the locally verified release.
-          mapfile -t EXISTING_ASSET_IDS < <(
-            gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" --jq '.[].id'
-          )
-          for ASSET_ID in "${EXISTING_ASSET_IDS[@]}"; do
+          EXISTING_ASSET_PAGES="$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"
+          )"
+          EXISTING_ASSET_IDS="$RUNNER_TEMP/qed2-existing-release-asset-ids.txt"
+          jq -r '.[][] | .id' <<< "$EXISTING_ASSET_PAGES" > "$EXISTING_ASSET_IDS"
+          while IFS= read -r ASSET_ID; do
             [[ "$ASSET_ID" =~ ^[0-9]+$ ]] || {
               echo "GitHub returned an invalid draft asset ID." >&2
               exit 1
             }
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
-          done
+          done < "$EXISTING_ASSET_IDS"
 
-          gh release upload "$RELEASE_TAG" release-assets/*
+          while IFS= read -r ASSET_NAME; do
+            ASSET_PATH="release-assets/$ASSET_NAME"
+            ENCODED_ASSET_NAME="$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')"
+            UPLOADED_ASSET="$(
+              gh api --method POST \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$ENCODED_ASSET_NAME" \
+                --header 'Content-Type: application/octet-stream' \
+                --input "$ASSET_PATH"
+            )"
+            ASSET_SIZE="$(stat -c '%s' "$ASSET_PATH")"
+            if ! jq -e --arg name "$ASSET_NAME" --argjson size "$ASSET_SIZE" \
+              '.name == $name and .size == $size and .state == "uploaded" and (.id | type) == "number"' \
+              <<< "$UPLOADED_ASSET" >/dev/null; then
+              echo "GitHub did not confirm the uploaded draft asset: $ASSET_NAME" >&2
+              exit 1
+            fi
+          done < "$ASSET_NAMES"
 
           EXPECTED_API_ASSETS="$RUNNER_TEMP/qed2-expected-release-assets.tsv"
           REMOTE_API_ASSETS="$RUNNER_TEMP/qed2-remote-release-assets.tsv"
           while IFS= read -r ASSET_NAME; do
             printf '%s\t%s\n' "$ASSET_NAME" "$(stat -c '%s' "release-assets/$ASSET_NAME")"
-          done < <(find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
-            > "$EXPECTED_API_ASSETS"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-            --jq '.[] | [.name, (.size | tostring)] | @tsv' | LC_ALL=C sort > "$REMOTE_API_ASSETS"
+          done < "$ASSET_NAMES" > "$EXPECTED_API_ASSETS"
+          REMOTE_ASSET_PAGES="$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"
+          )"
+          REMOTE_ASSETS_JSON="$(jq -c '[.[][]]' <<< "$REMOTE_ASSET_PAGES")"
+          VERIFIED_REMOTE_INVENTORY="$RUNNER_TEMP/qed2-verified-remote-asset-inventory.json"
+          jq -S -c 'sort_by(.name) | map({id, name, size, digest})' \
+            <<< "$REMOTE_ASSETS_JSON" > "$VERIFIED_REMOTE_INVENTORY"
+          jq -r '.[] | [.name, (.size | tostring)] | @tsv' <<< "$REMOTE_ASSETS_JSON" \
+            | LC_ALL=C sort > "$REMOTE_API_ASSETS"
           if ! cmp -s "$EXPECTED_API_ASSETS" "$REMOTE_API_ASSETS"; then
             echo "Draft release asset names or sizes differ from the verified local set." >&2
             diff -u "$EXPECTED_API_ASSETS" "$REMOTE_API_ASSETS" || true
@@ -1237,7 +1321,17 @@ jobs:
           REMOTE_ASSET_ROOT="$(mktemp -d)"
           cleanup_remote_assets() { rm -rf "$REMOTE_ASSET_ROOT"; }
           trap cleanup_remote_assets EXIT
-          gh release download "$RELEASE_TAG" --dir "$REMOTE_ASSET_ROOT"
+          REMOTE_ASSET_MAP="$RUNNER_TEMP/qed2-remote-release-assets-with-ids.tsv"
+          jq -r '.[] | [.id, .name] | @tsv' <<< "$REMOTE_ASSETS_JSON" > "$REMOTE_ASSET_MAP"
+          while IFS=$'\t' read -r ASSET_ID ASSET_NAME; do
+            if [[ ! "$ASSET_ID" =~ ^[0-9]+$ ]]; then
+              echo "GitHub returned an invalid uploaded asset ID." >&2
+              exit 1
+            fi
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" \
+              > "$REMOTE_ASSET_ROOT/$ASSET_NAME"
+          done < "$REMOTE_ASSET_MAP"
           find "$REMOTE_ASSET_ROOT" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort \
             > "$RUNNER_TEMP/qed2-downloaded-release-assets.txt"
           cut -f1 "$EXPECTED_API_ASSETS" > "$RUNNER_TEMP/qed2-expected-release-assets.txt"
@@ -1269,5 +1363,48 @@ jobs:
             echo "origin/main moved before publication: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
             exit 1
           fi
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest \
-            --title "QED2 $RELEASE_VERSION"
+          FINAL_ASSET_PAGES="$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"
+          )"
+          FINAL_REMOTE_INVENTORY="$RUNNER_TEMP/qed2-final-remote-asset-inventory.json"
+          jq -S -c '[.[][]] | sort_by(.name) | map({id, name, size, digest})' \
+            <<< "$FINAL_ASSET_PAGES" > "$FINAL_REMOTE_INVENTORY"
+          if ! cmp -s "$VERIFIED_REMOTE_INVENTORY" "$FINAL_REMOTE_INVENTORY"; then
+            echo "The verified draft asset identities changed before publication." >&2
+            diff -u "$VERIFIED_REMOTE_INVENTORY" "$FINAL_REMOTE_INVENTORY" || true
+            exit 1
+          fi
+          PUBLISHED_RELEASE="$(
+            gh api --method PATCH "$RELEASE_API" \
+              --raw-field tag_name="$RELEASE_TAG" \
+              --raw-field target_commitish="$CLIENT_SHA" \
+              --field draft=false \
+              --field prerelease=false \
+              --raw-field make_latest=true \
+              --raw-field name="QED2 $RELEASE_VERSION"
+          )"
+          if ! jq -e --arg tag "$RELEASE_TAG" --arg target "$CLIENT_SHA" \
+            --arg name "QED2 $RELEASE_VERSION" \
+            '.tag_name == $tag and .target_commitish == $target and
+             .name == $name and .draft == false and
+             .prerelease == false and .published_at != null' \
+            <<< "$PUBLISHED_RELEASE" >/dev/null; then
+            echo "GitHub did not confirm the final public release state." >&2
+            exit 1
+          fi
+          LATEST_CONFIRMED=false
+          for LATEST_DELAY in 0 2 5 10 20; do
+            if [[ "$LATEST_DELAY" -gt 0 ]]; then sleep "$LATEST_DELAY"; fi
+            if LATEST_RELEASE="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")" && \
+               jq -e --argjson id "$RELEASE_ID" --arg tag "$RELEASE_TAG" \
+                 '.id == $id and .tag_name == $tag and .draft == false and .prerelease == false' \
+                 <<< "$LATEST_RELEASE" >/dev/null; then
+              LATEST_CONFIRMED=true
+              break
+            fi
+          done
+          if [[ "$LATEST_CONFIRMED" != true ]]; then
+            echo "The published release did not become the repository latest release." >&2
+            exit 1
+          fi
