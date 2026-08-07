@@ -93,6 +93,17 @@ describe('loopback port allocation', () => {
     ]);
   });
 
+  it('does not return a candidate already lost by the same startup sequence', async () => {
+    netMocks.plans.push({});
+
+    await expect(
+      allocateLoopbackPort(40_000, 3, new Set([40_000, 40_001])),
+    ).resolves.toBe(40_002);
+    expect(netMocks.listens).toEqual([
+      { host: LOOPBACK_HOST, port: 40_002, exclusive: true },
+    ]);
+  });
+
   it('falls back to a released OS-assigned loopback port after exhausting attempts', async () => {
     netMocks.plans.push({ assignedPort: 55_123 });
 
@@ -101,5 +112,21 @@ describe('loopback port allocation', () => {
       { host: LOOPBACK_HOST, port: 0, exclusive: true },
     ]);
     expect(netMocks.closes).toBe(1);
+  });
+
+  it('reselects when the OS repeats an excluded ephemeral candidate', async () => {
+    netMocks.plans.push(
+      { assignedPort: 55_123 },
+      { assignedPort: 55_124 },
+    );
+
+    await expect(
+      allocateLoopbackPort(40_000, 0, new Set([55_123])),
+    ).resolves.toBe(55_124);
+    expect(netMocks.listens).toEqual([
+      { host: LOOPBACK_HOST, port: 0, exclusive: true },
+      { host: LOOPBACK_HOST, port: 0, exclusive: true },
+    ]);
+    expect(netMocks.closes).toBe(2);
   });
 });

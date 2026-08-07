@@ -233,6 +233,46 @@ describe('capability-gated desktop settings', () => {
     mounted.unmount();
   });
 
+  it('labels a verified Linux manager package truthfully and keeps QED2 open', async () => {
+    const message = 'Das verifizierte Linux-Paket wurde im Dateimanager markiert.';
+    const manual: UpdateSnapshot = {
+      busy: false,
+      targets: [{
+        target: 'app',
+        phase: 'restart-required',
+        currentVersion: '2.0.0',
+        latestVersion: '2.1.0',
+        installMode: 'manual-package',
+        message,
+      }],
+    };
+    const relaunchToApply = vi.fn(async () => {
+      throw new Error('main-process detail must not reach the UI');
+    });
+    useDesktopPorts({
+      capabilities: { selfUpdate: true },
+      getAppVersion: () => '2.0.0',
+      getState: vi.fn(async () => manual),
+      relaunchToApply,
+    });
+    const mounted = await mountDynamic(
+      DesktopSettings,
+      '/settings?section=desktop&desktopWindow=updates',
+    );
+
+    const reveal = [...mounted.host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Paket anzeigen'),
+    ) as HTMLButtonElement;
+    reveal.click();
+    await settle();
+
+    expect(relaunchToApply).toHaveBeenCalledTimes(1);
+    expect(mounted.host.textContent).toContain(message);
+    expect(mounted.host.textContent).not.toContain('nicht neu gestartet');
+    expect(mounted.host.textContent).not.toContain('main-process detail');
+    mounted.unmount();
+  });
+
   it('reports all components current only after three complete typed results and snapshots', async () => {
     const complete: UpdateSnapshot = {
       busy: false,

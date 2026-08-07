@@ -44,7 +44,7 @@ export const useAppStore = defineStore('app', () => {
    */
   const coreEndpointUrl = ref('');
   const coreEndpointSource = ref<CoreEndpoint['source']>('remote');
-  /** Desktop lifecycle/provisioning state; undefined on the web adapter. */
+  /** Desktop lifecycle state; undefined on the web adapter. */
   const coreRuntimeStatus = shallowRef<CoreRuntimeStatus | undefined>();
 
   /** Token is injected by the auth store so ServerClient stays fresh. */

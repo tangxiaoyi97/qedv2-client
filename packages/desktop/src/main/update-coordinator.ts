@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events';
+import { extname, isAbsolute } from 'node:path';
 import type {
   UpdateCheckResult as QedUpdateCheckResult,
   UpdateSnapshot,
   UpdateTargetState,
 } from '@qed2/core-logic';
+import { shell } from 'electron';
 import electronUpdater, { type AppUpdater, type ProgressInfo, type UpdateInfo } from 'electron-updater';
 
 export interface UpdateCoordinatorLogger {
@@ -41,6 +43,8 @@ export interface UpdateCoordinatorOptions {
   now?: () => number;
   installLifecycle?: UpdateInstallLifecycle;
   installHandoffTimeoutMs?: number;
+  /** Test seam; production reveals verified manager packages in the OS file manager. */
+  revealInstallPackage?: (packagePath: string) => void;
 }
 
 interface PendingAppDownload {
@@ -81,6 +85,8 @@ const RECOVERY_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS = 24;
 const MAX_PERSISTED_DOWNLOAD_ATTEMPTS = 10_000;
 const DEFAULT_INSTALL_HANDOFF_TIMEOUT_MS = 30_000;
+const MANUAL_LINUX_PACKAGE_EXTENSIONS = new Set(['.deb', '.rpm']);
+const MANUAL_LINUX_UPDATER_NAMES = new Set(['DebUpdater', 'RpmUpdater', 'PacmanUpdater']);
 
 const TRANSIENT_NETWORK_CODES = new Set([
   'EAI_AGAIN',
@@ -174,6 +180,19 @@ function isCancellation(error: unknown): boolean {
   );
 }
 
+function usesSynchronousLinuxPackageManager(updater: AppUpdater): boolean {
+  return MANUAL_LINUX_UPDATER_NAMES.has(updater.constructor?.name ?? '');
+}
+
+function verifiedLinuxManagerPackage(paths: readonly string[]): string | undefined {
+  return paths.find((candidate) =>
+    isAbsolute(candidate) && MANUAL_LINUX_PACKAGE_EXTENSIONS.has(extname(candidate).toLowerCase()));
+}
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
+}
+
 /**
  * Converts implementation details into stable, path-free user-facing state.
  * Raw updater errors are logged separately and never copied into UpdatePort.
@@ -195,6 +214,14 @@ function classifyUpdateError(error: unknown, context: UpdateErrorContext): Class
       code: 'APP_UPDATE_VERIFICATION_INCOMPLETE',
       message: 'Der Updater hat die sichere Prüfung nicht vollständig bestätigt. Das Update wurde nicht angewendet.',
       retryable: false,
+      automaticRetry: false,
+    };
+  }
+  if (code === 'ERR_UPDATER_MANUAL_PACKAGE_PATH_MISSING') {
+    return {
+      code: 'APP_UPDATE_MANUAL_PACKAGE_UNAVAILABLE',
+      message: 'Das verifizierte Linux-Paket konnte nicht sicher an die Systeminstallation übergeben werden.',
+      retryable: true,
       automaticRetry: false,
     };
   }
@@ -342,6 +369,7 @@ export class UpdateCoordinator extends EventEmitter {
   private readonly wait: (delayMs: number) => Promise<void>;
   private readonly now: () => number;
   private readonly installHandoffTimeoutMs: number;
+  private readonly revealInstallPackage: (packagePath: string) => void;
   private state: UpdateSnapshot;
   private checking: Promise<QedUpdateCheckResult[]> | undefined;
   private runtimeVersions: RuntimeVersions;
@@ -350,9 +378,13 @@ export class UpdateCoordinator extends EventEmitter {
   private downloadedEventVersion: string | undefined;
   private downloadProgressCompleted = 0;
   private downloadProgressTotal: number | undefined;
+  private downloadTransactionHighWaterPercent = 0;
+  private downloadAttemptNumber = 0;
   private acceptingDownloadEvents = false;
   private installFailure: ClassifiedUpdateError | undefined;
   private resumingPendingDownload = false;
+  private manualPackageInstall: boolean;
+  private verifiedInstallPackagePath: string | undefined;
   private installHandoffConfirmed = false;
   private installWatchdog: NodeJS.Timeout | undefined;
 
@@ -375,9 +407,14 @@ export class UpdateCoordinator extends EventEmitter {
     this.wait = options.wait ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
     this.now = options.now ?? Date.now;
     this.installHandoffTimeoutMs = options.installHandoffTimeoutMs ?? DEFAULT_INSTALL_HANDOFF_TIMEOUT_MS;
+    this.revealInstallPackage = options.revealInstallPackage ?? ((packagePath) => shell.showItemInFolder(packagePath));
+    this.manualPackageInstall = usesSynchronousLinuxPackageManager(this.updater);
     options.installLifecycle?.onBeforeQuitForUpdate(() => this.confirmInstallHandoff());
     this.updater.autoDownload = false;
-    this.updater.autoInstallOnAppQuit = true;
+    // electron-updater's deb/rpm/pacman installers synchronously invoke sudo
+    // and the system package manager, including from its automatic quit hook.
+    // Never let that path block Electron's main thread.
+    this.updater.autoInstallOnAppQuit = !this.manualPackageInstall;
     this.updater.autoRunAppAfterInstall = true;
     this.updater.allowPrerelease = false;
     this.updater.allowDowngrade = false;
@@ -535,6 +572,11 @@ export class UpdateCoordinator extends EventEmitter {
       attempts: preserveRecoveryBudget ? existingPending.attempts : 0,
       status: 'downloading',
     });
+    this.verifiedInstallPackagePath = undefined;
+    this.downloadProgressCompleted = 0;
+    this.downloadProgressTotal = undefined;
+    this.downloadTransactionHighWaterPercent = 0;
+    this.downloadAttemptNumber = 0;
     this.patchTarget('app', {
       phase: 'downloading',
       message: 'Desktop-Update wird heruntergeladen …',
@@ -543,21 +585,28 @@ export class UpdateCoordinator extends EventEmitter {
     this.setBusy(true);
     try {
       for (let attempt = 0; attempt < this.retryDelaysMs.length; attempt += 1) {
+        this.downloadAttemptNumber = attempt + 1;
         const delay = this.retryDelaysMs[attempt] ?? 0;
-        if (delay > 0) {
+        if (attempt > 0) {
+          const highWaterPercent = Math.round(this.downloadTransactionHighWaterPercent);
           this.patchTarget('app', {
             phase: 'downloading',
-            message: `Download wird nach einem Verbindungsfehler erneut gestartet (Versuch ${attempt + 1}/${this.retryDelaysMs.length}) …`,
-          }, { clearProgress: true });
-          await this.wait(delay);
+            progress: {
+              completed: this.downloadTransactionHighWaterPercent,
+              total: 100,
+              unit: 'percent',
+            },
+            message: `Downloadversuch ${attempt + 1}/${this.retryDelaysMs.length} startet bei 0 %. Frühere Teildaten werden nicht angerechnet; der Transaktions-Höchststand bleibt bei ${highWaterPercent} %.`,
+          });
         }
+        if (delay > 0) await this.wait(delay);
         this.receivedDownloadedEvent = false;
         this.downloadedEventVersion = undefined;
         this.downloadProgressCompleted = 0;
         this.downloadProgressTotal = undefined;
         this.acceptingDownloadEvents = true;
         try {
-          await this.updater.downloadUpdate();
+          const downloadedPaths = await this.updater.downloadUpdate();
           this.acceptingDownloadEvents = false;
           if (this.target('app').error?.code === 'APP_UPDATE_VERSION_MISMATCH') {
             throw Object.assign(new Error('electron-updater reported a mismatched version'), {
@@ -569,10 +618,26 @@ export class UpdateCoordinator extends EventEmitter {
               code: 'ERR_UPDATER_VERIFICATION_EVENT_MISSING',
             });
           }
+          const managerPackagePath = verifiedLinuxManagerPackage(downloadedPaths);
+          if (this.manualPackageInstall && managerPackagePath === undefined) {
+            throw Object.assign(new Error('electron-updater did not return a verified manager package path'), {
+              code: 'ERR_UPDATER_MANUAL_PACKAGE_PATH_MISSING',
+            });
+          }
+          if (managerPackagePath !== undefined) {
+            this.manualPackageInstall = true;
+            this.verifiedInstallPackagePath = managerPackagePath;
+            // BaseUpdater installs again from its normal quit handler unless
+            // this flag is disabled after a manager package is identified.
+            this.updater.autoInstallOnAppQuit = false;
+          }
           this.patchTarget('app', {
             phase: 'restart-required',
             ...(this.downloadedEventVersion ? { latestVersion: this.downloadedEventVersion } : {}),
-            message: 'Update ist verifiziert und wird beim Neustart installiert.',
+            installMode: this.manualPackageInstall ? 'manual-package' : 'self',
+            message: this.manualPackageInstall
+              ? 'Das Linux-Paket ist verifiziert und bereit zur Installation mit der System-Paketverwaltung.'
+              : 'Update ist verifiziert und wird beim Neustart installiert.',
           });
           return;
         } catch (error) {
@@ -637,12 +702,68 @@ export class UpdateCoordinator extends EventEmitter {
         code: 'APP_UPDATE_NOT_READY',
       });
     }
+    if (this.manualPackageInstall) {
+      const packagePath = this.verifiedInstallPackagePath;
+      if (packagePath === undefined) {
+        this.clearPendingDownload();
+        const unavailable: ClassifiedUpdateError = {
+          code: 'APP_UPDATE_MANUAL_PACKAGE_UNAVAILABLE',
+          message: 'Der sichere Pfad zum verifizierten Linux-Paket ist nicht mehr verfügbar. Bitte lade das Update erneut.',
+          retryable: true,
+          automaticRetry: false,
+        };
+        this.patchTarget('app', {
+          phase: 'error',
+          message: unavailable.message,
+          error: {
+            code: unavailable.code,
+            message: unavailable.message,
+            retryable: unavailable.retryable,
+          },
+        });
+        throw publicUpdateError(unavailable);
+      }
+      try {
+        this.revealInstallPackage(packagePath);
+      } catch (error) {
+        this.logger.error('Could not reveal the verified Linux update package', error);
+        const message = 'Das verifizierte Linux-Paket konnte nicht im Dateimanager angezeigt werden. Bitte versuche es erneut.';
+        this.patchTarget('app', { phase: 'restart-required', installMode: 'manual-package', message });
+        throw publicUpdateError({
+          code: 'APP_UPDATE_MANUAL_PACKAGE_REVEAL_FAILED',
+          message,
+          retryable: true,
+          automaticRetry: false,
+        });
+      }
+      const message = 'Das verifizierte Linux-Paket wurde im Dateimanager markiert. Installiere es mit der System-Paketverwaltung; QED2 bleibt geöffnet.';
+      this.patchTarget('app', { phase: 'restart-required', installMode: 'manual-package', message });
+      // The existing UpdatePort is command-shaped and the renderer assumes a
+      // fulfilled relaunch request will terminate the app. Reject explicitly
+      // so the UI unlocks while preserving verified-ready state for another
+      // reveal. This is guidance, never a claim that installation succeeded.
+      throw publicUpdateError({
+        code: 'APP_UPDATE_MANUAL_INSTALL_REQUIRED',
+        message,
+        retryable: true,
+        automaticRetry: false,
+      });
+    }
     this.activeOperation = 'installing';
     this.installFailure = undefined;
     this.installHandoffConfirmed = false;
     this.clearInstallWatchdog();
     this.patchTarget('app', { phase: 'installing', message: 'Update wird installiert …' });
     this.setBusy(true);
+    // Arm before calling into the updater. Supported self-installers hand off
+    // asynchronously; package-manager formats never reach this branch.
+    if (
+      Number.isFinite(this.installHandoffTimeoutMs) &&
+      this.installHandoffTimeoutMs > 0
+    ) {
+      this.installWatchdog = setTimeout(() => this.handleInstallHandoffTimeout(), this.installHandoffTimeoutMs);
+      this.installWatchdog.unref();
+    }
     let launchError: unknown;
     try {
       this.updater.quitAndInstall(false, true);
@@ -653,6 +774,7 @@ export class UpdateCoordinator extends EventEmitter {
       launchError === undefined ? undefined : classifyUpdateError(launchError, 'installing')
     );
     if (classified) {
+      this.clearInstallWatchdog();
       if (launchError !== undefined) {
         this.logger.error('Starting the verified update installer failed', launchError);
       }
@@ -669,14 +791,6 @@ export class UpdateCoordinator extends EventEmitter {
       });
       this.setBusy(false);
       throw publicUpdateError(classified);
-    }
-    if (
-      !this.installHandoffConfirmed &&
-      Number.isFinite(this.installHandoffTimeoutMs) &&
-      this.installHandoffTimeoutMs > 0
-    ) {
-      this.installWatchdog = setTimeout(() => this.handleInstallHandoffTimeout(), this.installHandoffTimeoutMs);
-      this.installWatchdog.unref();
     }
   }
 
@@ -876,19 +990,27 @@ export class UpdateCoordinator extends EventEmitter {
         : Math.max(completed, ...totalCandidates);
       this.downloadProgressCompleted = completed;
       this.downloadProgressTotal = total;
-      const percent = total !== undefined
-        ? Math.min(100, Math.max(0, (completed / total) * 100))
+      const currentAttemptPercent = total !== undefined
+        ? clampPercent((completed / total) * 100)
         : Number.isFinite(progress.percent)
-          ? Math.min(100, Math.max(0, progress.percent))
+          ? clampPercent(progress.percent)
           : 0;
+      this.downloadTransactionHighWaterPercent = Math.max(
+        this.downloadTransactionHighWaterPercent,
+        currentAttemptPercent,
+      );
+      const transactionPercent = Math.round(this.downloadTransactionHighWaterPercent);
+      const message = this.downloadAttemptNumber > 1
+        ? `Downloadversuch ${this.downloadAttemptNumber}/${this.retryDelaysMs.length}: aktuell ${Math.round(currentAttemptPercent)} %. Transaktions-Höchststand ${transactionPercent} %; frühere Teildaten werden nicht angerechnet.`
+        : `Desktop-Update wird heruntergeladen (${transactionPercent} %) …`;
       this.patchTarget('app', {
         phase: 'downloading',
         progress: {
-          completed,
-          ...(total !== undefined ? { total } : {}),
-          unit: 'bytes',
+          completed: this.downloadTransactionHighWaterPercent,
+          total: 100,
+          unit: 'percent',
         },
-        message: `Desktop-Update wird heruntergeladen (${Math.round(percent)} %) …`,
+        message,
       });
     });
     this.updater.on('update-downloaded', (info: UpdateInfo) => {
@@ -1014,6 +1136,7 @@ export class UpdateCoordinator extends EventEmitter {
         const next = { ...item, ...patch, target } as UpdateTargetState;
         if (patch.phase && patch.phase !== 'error') delete next.error;
         if (patch.phase && patch.phase !== 'downloading') delete next.progress;
+        if (patch.phase && patch.phase !== 'restart-required') delete next.installMode;
         if (options.clearProgress) delete next.progress;
         return next;
       }),

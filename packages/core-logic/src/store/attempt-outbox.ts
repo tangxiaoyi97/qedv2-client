@@ -219,7 +219,7 @@ export class AttemptOutbox {
         routes: [],
       };
       if (state.pending && state.pending.destinationUserId !== destinationUserId) {
-        throw new Error('Guest attempts are already pending for another account.');
+        throw new Error('Gastversuche sind bereits für ein anderes Konto vorgemerkt.');
       }
 
       // Re-entering the same interrupted claim is idempotent; rotating twice

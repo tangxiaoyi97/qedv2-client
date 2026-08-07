@@ -12,12 +12,18 @@ import type { RuntimeDescriptor } from '../src/main/runtime-layout.js';
 import { RuntimeIntegrityError } from '../src/main/runtime-integrity.js';
 
 const portMocks = vi.hoisted(() => ({
-  allocateLoopbackPort: vi.fn<() => Promise<number>>(),
+  allocateLoopbackPort: vi.fn<(
+    preferred: number,
+    attempts?: number,
+    excluded?: ReadonlySet<number>
+  ) => Promise<number>>(),
+  isPortAvailable: vi.fn<(port: number) => Promise<boolean>>(),
 }));
 
 vi.mock('../src/main/port-allocator.js', () => ({
   LOOPBACK_HOST: '127.0.0.1',
   allocateLoopbackPort: portMocks.allocateLoopbackPort,
+  isPortAvailable: portMocks.isPortAvailable,
 }));
 
 class FakeCoreProcess extends EventEmitter implements ManagedCoreProcess {
@@ -111,10 +117,21 @@ function createSupervisor(
     runtime,
     launcher,
     logger(),
-    1022,
-    'https://qedcore.barcarolle.studio',
-    integrityVerifier,
+    {
+      preferredPort: 1022,
+      initialConfig: config,
+      integrityVerifier,
+    },
   );
+}
+
+async function waitForLaunch(launcher: FakeLauncher, count: number): Promise<void> {
+  for (let attempt = 0; attempt < 20 && launcher.launches.length < count; attempt += 1) {
+    await Promise.resolve();
+  }
+  if (launcher.launches.length < count) {
+    throw new Error(`Expected ${count} Core launch(es), received ${launcher.launches.length}`);
+  }
 }
 
 function healthyFetch(input: string | URL | Request): Promise<Response> {
@@ -140,6 +157,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   portMocks.allocateLoopbackPort.mockReset();
   portMocks.allocateLoopbackPort.mockResolvedValue(43_123);
+  portMocks.isPortAvailable.mockReset();
+  portMocks.isPortAvailable.mockResolvedValue(true);
   vi.stubGlobal('fetch', vi.fn(healthyFetch));
 });
 
@@ -149,6 +168,17 @@ afterEach(() => {
 });
 
 describe('CoreSupervisor', () => {
+  it('uses the injected ClientConfig as its complete pre-renderer fallback', () => {
+    const supervisor = createSupervisor(new FakeLauncher());
+
+    expect(supervisor.getStatus()).toMatchObject({
+      phase: 'idle',
+      source: 'remote',
+      endpoint: config.coreBaseUrl,
+    });
+    expect(supervisor.getProxyEndpoint()).toBe(config.coreBaseUrl);
+  });
+
   it('deduplicates concurrent starts and launches a loopback-only local core', async () => {
     const launcher = new FakeLauncher();
     const supervisor = createSupervisor(launcher);
@@ -230,6 +260,97 @@ describe('CoreSupervisor', () => {
     expect(supervisor.getStatus()).toMatchObject({ phase: 'ready', source: 'local' });
   });
 
+  it('reselects a port after an actual startup bind race without spending crash budget', async () => {
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    portMocks.allocateLoopbackPort
+      .mockReset()
+      .mockResolvedValueOnce(43_123)
+      .mockResolvedValueOnce(43_124)
+      .mockResolvedValue(43_125);
+    portMocks.isPortAvailable.mockResolvedValueOnce(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) =>
+        String(input).includes(':43123')
+          ? Promise.reject(new Error('connect ECONNREFUSED'))
+          : healthyFetch(input),
+      ),
+    );
+
+    const configuring = supervisor.configure(config);
+    await waitForLaunch(launcher, 1);
+    launcher.launches[0]?.process.crash(98);
+
+    await expect(configuring).resolves.toEqual({
+      baseUrl: 'http://127.0.0.1:43124',
+      source: 'local',
+    });
+    expect(launcher.launches).toHaveLength(2);
+    expect(portMocks.allocateLoopbackPort.mock.calls[1]?.[2]).toEqual(new Set([43_123]));
+
+    launcher.launches[1]?.process.crash(70);
+    expect(supervisor.getStatus()).toMatchObject({
+      phase: 'recovering',
+      restartAttempt: 1,
+    });
+  });
+
+  it('classifies EADDRINUSE output even when the raced port is free again after exit', async () => {
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    portMocks.allocateLoopbackPort
+      .mockReset()
+      .mockResolvedValueOnce(43_123)
+      .mockResolvedValueOnce(43_124);
+    portMocks.isPortAvailable.mockResolvedValue(true);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) =>
+        String(input).includes(':43123')
+          ? Promise.reject(new Error('connect ECONNREFUSED'))
+          : healthyFetch(input),
+      ),
+    );
+
+    const configuring = supervisor.configure(config);
+    await waitForLaunch(launcher, 1);
+    launcher.launches[0]?.process.emit('stderr', 'Error: listen EADDRINUSE: address already in use');
+    launcher.launches[0]?.process.crash(1);
+
+    await expect(configuring).resolves.toEqual({
+      baseUrl: 'http://127.0.0.1:43124',
+      source: 'local',
+    });
+    expect(launcher.launches).toHaveLength(2);
+  });
+
+  it('does not mistake an unrelated startup exit for a runtime crash or expose its raw error', async () => {
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('connect ECONNREFUSED'))));
+
+    const configuring = supervisor.configure(config);
+    await waitForLaunch(launcher, 1);
+    launcher.launches[0]?.process.crash(17);
+
+    await expect(configuring).resolves.toEqual({
+      baseUrl: config.coreBaseUrl,
+      source: 'remote',
+    });
+    expect(supervisor.getStatus()).toMatchObject({
+      phase: 'degraded',
+      error: {
+        code: 'CORE_START_FAILED',
+        message: 'Der lokale Core konnte die sichere Startprüfung nicht abschließen.',
+      },
+    });
+    expect(supervisor.getStatus()).not.toHaveProperty('restartAttempt');
+    expect(supervisor.getStatus().error?.message).not.toMatch(/exited|17|ECONNREFUSED/i);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(launcher.launches).toHaveLength(1);
+  });
+
   it('cancels a scheduled crash restart when explicitly stopped', async () => {
     const launcher = new FakeLauncher();
     const supervisor = createSupervisor(launcher);
@@ -283,7 +404,11 @@ describe('CoreSupervisor', () => {
       phase: 'degraded',
       source: 'remote',
       restartAttempt: 3,
-      error: { code: 'CORE_CRASH_LOOP', recoverable: true },
+      error: {
+        code: 'CORE_CRASH_LOOP',
+        message: 'Der lokale Core wurde nach wiederholten Abstürzen angehalten.',
+        recoverable: true,
+      },
     });
     await vi.advanceTimersByTimeAsync(30_000);
     expect(launcher.launches).toHaveLength(4);
@@ -305,8 +430,12 @@ describe('CoreSupervisor', () => {
     expect(launcher.launches[0]?.process.killCalls).toBe(1);
     expect(supervisor.getStatus()).toMatchObject({
       phase: 'degraded',
-      error: { code: 'CORE_START_FAILED' },
+      error: {
+        code: 'CORE_START_FAILED',
+        message: 'Der lokale Core konnte die sichere Startprüfung nicht abschließen.',
+      },
     });
+    expect(supervisor.getStatus().error?.message).not.toMatch(/health|status|ready core/i);
   });
 
   it('rejects a healthy-looking Core whose signed version or bank identity does not match', async () => {
@@ -386,13 +515,17 @@ describe('CoreSupervisor', () => {
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(3_100);
 
-    await expect(restarting).rejects.toThrow('could not be terminated safely');
+    await expect(restarting).rejects.toThrow('konnte nicht sicher beendet werden');
     expect(launcher.launches).toHaveLength(1);
     expect(launcher.launches[0]?.killCalls).toBe(2);
     expect(supervisor.getStatus()).toMatchObject({
       phase: 'failed',
       source: 'remote',
-      error: { code: 'CORE_STOP_FAILED', recoverable: true },
+      error: {
+        code: 'CORE_STOP_FAILED',
+        message: 'Der vorherige lokale Core konnte nicht sicher beendet werden.',
+        recoverable: true,
+      },
     });
   });
 
@@ -415,8 +548,13 @@ describe('CoreSupervisor', () => {
       phase: 'failed',
       source: 'remote',
       message: expect.stringContaining('verifizierten offiziellen GitHub-Release'),
-      error: { code: 'RUNTIME_INTEGRITY_FAILED', recoverable: false },
+      error: {
+        code: 'RUNTIME_INTEGRITY_FAILED',
+        message: expect.stringContaining('verifizierten offiziellen GitHub-Release'),
+        recoverable: false,
+      },
     });
+    expect(supervisor.getStatus().error?.message).not.toContain('dist/main.js');
   });
 
   it('fails repair explicitly when no clean verified runtime copy is available', async () => {

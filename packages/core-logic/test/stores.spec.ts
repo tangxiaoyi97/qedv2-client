@@ -95,7 +95,7 @@ describe('AttemptOutbox', () => {
 
     await first.beginGuestClaim('new-user');
     expect(await new AttemptOutbox(storage).pendingGuestClaim()).toBe('new-user');
-    await expect(first.beginGuestClaim('other-user')).rejects.toThrow('another account');
+    await expect(first.beginGuestClaim('other-user')).rejects.toThrow('anderes Konto');
 
     await first.finishGuestClaim('other-user');
     expect(await first.pendingGuestClaim()).toBe('new-user');

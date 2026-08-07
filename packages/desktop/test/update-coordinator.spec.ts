@@ -14,6 +14,10 @@ vi.mock('electron-updater', () => ({
   default: { autoUpdater: {} },
 }));
 
+vi.mock('electron', () => ({
+  shell: { showItemInFolder: vi.fn() },
+}));
+
 const runtimeVersions: RuntimeVersions = {
   coreVersion: '2.0.0-core',
   coreCommit: 'core-commit',
@@ -58,6 +62,10 @@ class FakeUpdater extends EventEmitter {
     this.emit('error', error);
   }
 }
+
+class DebUpdater extends FakeUpdater {}
+
+class RpmUpdater extends FakeUpdater {}
 
 class MemoryRecoveryStore implements UpdateRecoveryStore {
   private readonly values = new Map<string, unknown>();
@@ -122,6 +130,7 @@ function createCoordinator(options: {
   retryDelaysMs?: readonly number[];
   installLifecycle?: UpdateInstallLifecycle;
   installHandoffTimeoutMs?: number;
+  revealInstallPackage?: (packagePath: string) => void;
 } = {}): {
   coordinator: UpdateCoordinator;
   updater: FakeUpdater;
@@ -151,6 +160,9 @@ function createCoordinator(options: {
       ...(options.installLifecycle ? { installLifecycle: options.installLifecycle } : {}),
       ...(options.installHandoffTimeoutMs !== undefined
         ? { installHandoffTimeoutMs: options.installHandoffTimeoutMs }
+        : {}),
+      ...(options.revealInstallPackage
+        ? { revealInstallPackage: options.revealInstallPackage }
         : {}),
     },
   );
@@ -243,14 +255,14 @@ describe('UpdateCoordinator', () => {
     updater.reportProgress({ percent: 50, transferred: 5, total: 10 });
     updater.reportProgress({ percent: 30, transferred: 3, total: 8 });
     expect(appState(coordinator.getState()).progress).toEqual({
-      completed: 5,
-      total: 10,
-      unit: 'bytes',
+      completed: 50,
+      total: 100,
+      unit: 'percent',
     });
 
     updater.reportProgress({ percent: 150, transferred: 15, total: 10 });
     expect(appState(coordinator.getState())).toMatchObject({
-      progress: { completed: 15, total: 15, unit: 'bytes' },
+      progress: { completed: 100, total: 100, unit: 'percent' },
       message: expect.stringContaining('(100 %)'),
     });
     updater.reportDownloaded();
@@ -265,6 +277,44 @@ describe('UpdateCoordinator', () => {
     updater.reportProgress({ percent: 1, transferred: 1, total: 100 });
     expect(appState(coordinator.getState())).toMatchObject({ phase: 'restart-required' });
     expect(appState(coordinator.getState()).progress).toBeUndefined();
+  });
+
+  it('keeps transaction progress monotonic while reporting restarted attempt bytes truthfully', async () => {
+    const { coordinator, updater } = createCoordinator();
+    await prepareAvailable(coordinator);
+    let finishRetry!: () => void;
+    updater.downloadUpdate
+      .mockImplementationOnce(async () => {
+        updater.reportProgress({ percent: 80, transferred: 80, total: 100 });
+        throw codedError('ECONNRESET');
+      })
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        finishRetry = () => resolve(['/tmp/qed2-update']);
+      }));
+
+    const applying = coordinator.applyUpdates(['app']);
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledTimes(2));
+    expect(appState(coordinator.getState())).toMatchObject({
+      phase: 'downloading',
+      progress: { completed: 80, total: 100, unit: 'percent' },
+      message: expect.stringMatching(/startet bei 0 .*nicht angerechnet.*80 %/),
+    });
+
+    updater.reportProgress({ percent: 10, transferred: 10, total: 100 });
+    expect(appState(coordinator.getState())).toMatchObject({
+      progress: { completed: 80, total: 100, unit: 'percent' },
+      message: expect.stringMatching(/aktuell 10 %.*Höchststand 80 %.*nicht angerechnet/),
+    });
+    updater.reportProgress({ percent: 90, transferred: 90, total: 100 });
+    expect(appState(coordinator.getState())).toMatchObject({
+      progress: { completed: 90, total: 100, unit: 'percent' },
+      message: expect.stringMatching(/aktuell 90 %.*Höchststand 90 %/),
+    });
+
+    updater.reportDownloaded();
+    finishRetry();
+    await applying;
+    expect(appState(coordinator.getState()).phase).toBe('restart-required');
   });
 
   it('requires an update-downloaded verification event before enabling relaunch', async () => {
@@ -605,6 +655,42 @@ describe('UpdateCoordinator', () => {
     expect(updater.downloadUpdate).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['deb', () => new DebUpdater()],
+    ['rpm', () => new RpmUpdater()],
+  ])('reveals a verified .%s package without invoking the synchronous system installer', async (extension, createUpdater) => {
+    vi.useFakeTimers();
+    const updater = createUpdater();
+    const packagePath = `/tmp/QED2-2.1.0.${extension}`;
+    updater.downloadUpdate.mockImplementationOnce(async () => {
+      updater.reportDownloaded();
+      return [packagePath];
+    });
+    const revealInstallPackage = vi.fn();
+    const { coordinator, recoveryStore } = createCoordinator({
+      updater,
+      revealInstallPackage,
+      installHandoffTimeoutMs: 1_000,
+    });
+    expect(updater.autoInstallOnAppQuit).toBe(false);
+    await prepareAvailable(coordinator);
+    await coordinator.applyUpdates(['app']);
+
+    expect(() => coordinator.relaunchToApply()).toThrow(expect.objectContaining({
+      code: 'APP_UPDATE_MANUAL_INSTALL_REQUIRED',
+    }));
+    expect(revealInstallPackage).toHaveBeenCalledWith(packagePath);
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(coordinator.getState().busy).toBe(false);
+    expect(appState(coordinator.getState())).toMatchObject({
+      phase: 'restart-required',
+      installMode: 'manual-package',
+      message: expect.stringMatching(/System-Paketverwaltung.*bleibt geöffnet/),
+    });
+    expect(recoveryStore.pending()).toMatchObject({ status: 'verified-ready' });
+  });
+
   it('relaunches exactly once only after verification and rolls back synchronous launch errors', async () => {
     const { coordinator, updater, recoveryStore } = createCoordinator();
     expect(() => coordinator.relaunchToApply()).toThrow();
@@ -630,6 +716,10 @@ describe('UpdateCoordinator', () => {
   it('enters installing/busy and rejects a second relaunch after a successful handoff', async () => {
     const { coordinator, updater } = createCoordinator();
     await prepareAvailable(coordinator);
+    updater.downloadUpdate.mockImplementationOnce(async () => {
+      updater.reportDownloaded();
+      return ['/tmp/QED2-2.1.0.AppImage'];
+    });
     await coordinator.applyUpdates(['app']);
 
     coordinator.relaunchToApply();
@@ -662,12 +752,15 @@ describe('UpdateCoordinator', () => {
   it('requires native lifecycle confirmation and unlocks after a missing handoff', async () => {
     vi.useFakeTimers();
     const lifecycle = new FakeInstallLifecycle();
-    const { coordinator, recoveryStore } = createCoordinator({
+    const { coordinator, updater, recoveryStore } = createCoordinator({
       installLifecycle: lifecycle,
       installHandoffTimeoutMs: 1_000,
     });
     await prepareAvailable(coordinator);
     await coordinator.applyUpdates(['app']);
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      expect(vi.getTimerCount()).toBe(1);
+    });
 
     coordinator.relaunchToApply();
     expect(coordinator.getState().busy).toBe(true);

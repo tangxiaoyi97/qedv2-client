@@ -3,6 +3,8 @@ packages:
 allowBuilds:
   # Squirrel.Windows is a transitive optional target; QED2 ships NSIS.
   # Its install-time script is unnecessary, so keep the pnpm trust surface closed.
+  # Desktop development and packaged-smoke runs need Electron's pinned binary.
+  electron: true
   electron-winstaller: false
   esbuild: true
 overrides:

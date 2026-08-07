@@ -7,9 +7,9 @@
  * from invite codes (contract).
  */
 import { computed, nextTick, ref, watch } from 'vue';
-import { ApiError, NetworkError } from '@qed2/core-logic';
 import { QButton, QIconButton, useModalA11y } from '@qed2/ui';
 
+import { authErrorMessage } from '../platform/auth-errors.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useUiStore } from '../stores/ui.js';
 
@@ -27,15 +27,6 @@ const invitePass = ref('');
 const invitePending = ref(false);
 const inviteError = ref('');
 
-function messageFor(e: unknown, kind: 'login' | 'invite'): string {
-  if (e instanceof NetworkError) return 'Server nicht erreichbar — bitte später versuchen.';
-  if (e instanceof ApiError) {
-    if (kind === 'login' && e.status === 401) return 'Benutzername oder Passwort falsch.';
-    return e.message;
-  }
-  return e instanceof Error ? e.message : String(e);
-}
-
 async function doLogin(): Promise<void> {
   if (loginPending.value || !loginUser.value || !loginPass.value) return;
   loginPending.value = true;
@@ -44,7 +35,7 @@ async function doLogin(): Promise<void> {
     await auth.login(loginUser.value.trim(), loginPass.value);
     ui.closeAuthModal();
   } catch (e) {
-    loginError.value = messageFor(e, 'login');
+    loginError.value = authErrorMessage(e, 'login');
   } finally {
     loginPending.value = false;
   }
@@ -62,7 +53,7 @@ async function doRedeem(): Promise<void> {
     await auth.redeem(inviteCode.value.trim(), inviteUser.value.trim(), invitePass.value);
     ui.closeAuthModal();
   } catch (e) {
-    inviteError.value = messageFor(e, 'invite');
+    inviteError.value = authErrorMessage(e, 'invite');
   } finally {
     invitePending.value = false;
   }

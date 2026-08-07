@@ -36,7 +36,9 @@ defineExpose({ focus });
     :type="props.type"
     @click="$emit('click', $event)"
   >
-    <X :size="20" :stroke-width="2" aria-hidden="true" />
+    <span class="q-icon-btn__glyph" aria-hidden="true">
+      <slot><X :size="20" :stroke-width="2" /></slot>
+    </span>
   </button>
 </template>
 
@@ -62,7 +64,14 @@ defineExpose({ focus });
     opacity var(--q-transition-fast);
 }
 
-.q-icon-btn :deep(svg) {
+.q-icon-btn__glyph {
+  display: inline-grid;
+  place-items: center;
+  width: var(--q-icon-glyph-size);
+  height: var(--q-icon-glyph-size);
+}
+
+.q-icon-btn__glyph :deep(svg) {
   display: block;
   width: var(--q-icon-glyph-size);
   height: var(--q-icon-glyph-size);

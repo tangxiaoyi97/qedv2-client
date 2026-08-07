@@ -67,7 +67,7 @@ export const STORAGE = {
 /* ------------------------------------------------------------------ *
  * CoreRuntimePort — where does the core service live?
  * Web: always the configured remote URL (web/PWA never spawns a local core —
- * contract §8.2). Desktop (future): may spawn a local core process and
+ * contract §8.2). Desktop may spawn a local core process and
  * return a localhost endpoint, switching between remote and local.
  * ------------------------------------------------------------------ */
 export interface CoreEndpoint {
@@ -77,7 +77,6 @@ export interface CoreEndpoint {
 
 export type CoreRuntimePhase =
   | 'idle'
-  | 'provisioning'
   | 'starting'
   | 'ready'
   | 'recovering'
@@ -90,7 +89,7 @@ export interface OperationProgress {
   completed: number;
   /** Omitted when the source cannot provide a reliable total. */
   total?: number;
-  unit: 'bytes' | 'objects' | 'steps' | 'percent';
+  unit: 'bytes' | 'steps' | 'percent';
 }
 
 /** Serializable state emitted by a desktop-managed local core. */
@@ -103,8 +102,6 @@ export interface CoreRuntimeStatus {
     | 'start-core'
     | 'health-check'
     | 'restart-core'
-    | 'update-core'
-    | 'update-bank'
     | 'repair-runtime';
   progress?: OperationProgress;
   message?: string;
@@ -127,7 +124,7 @@ export interface CoreRuntimePort {
   };
   /** Desktop: pass the complete, current configuration to the main process. */
   configure?(config: ClientConfig): Promise<CoreEndpoint>;
-  /** Desktop: current lifecycle/provisioning state. */
+  /** Desktop: current lifecycle state. */
   getStatus?(): Promise<CoreRuntimeStatus>;
   /** Desktop: lifecycle updates; returns an unsubscribe function. */
   onStatusChange?(cb: (status: CoreRuntimeStatus) => void): () => void;
@@ -136,7 +133,7 @@ export interface CoreRuntimePort {
 }
 
 /* ------------------------------------------------------------------ *
- * UpdatePort — version display + (desktop, future) update checks for the
+ * UpdatePort — version display + desktop update checks for the
  * core source and the question bank (contract §6, brief §6).
  * ------------------------------------------------------------------ */
 export interface UpdateCheckResult {
@@ -163,6 +160,8 @@ export interface UpdateTargetState {
   phase: UpdatePhase;
   currentVersion: string;
   latestVersion?: string;
+  /** How a verified app package is handed off on this platform. */
+  installMode?: 'self' | 'manual-package';
   progress?: OperationProgress;
   message?: string;
   error?: {
@@ -193,7 +192,7 @@ export interface UpdatePort {
   onChange?(cb: (snapshot: UpdateSnapshot) => void): () => void;
   /** Desktop: stage and verify the selected targets. */
   applyUpdates?(targets: Array<'core' | 'bank' | 'app'>): Promise<void>;
-  /** Desktop: relaunch only after a verified app update is ready. */
+  /** Desktop: hand off a verified app update; self-installers relaunch QED2. */
   relaunchToApply?(): Promise<void>;
 }
 

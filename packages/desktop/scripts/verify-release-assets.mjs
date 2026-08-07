@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { lstat, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { lstat, open, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { inflateRawSync } from 'node:zlib'
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/
+const MAX_EMBEDDED_BLOCKMAP_BYTES = 16 * 1024 * 1024
+const MAX_INFLATED_BLOCKMAP_BYTES = 64 * 1024 * 1024
 
 function parseScalar(value) {
   const trimmed = value.trim()
@@ -42,15 +45,23 @@ export function parseUpdateManifest(source, filename = 'update manifest') {
 
     const url = /^\s+-\s+url:\s*(.+)$/u.exec(line)
     if (url) {
-      currentFile = { url: parseScalar(url[1]), sha512: undefined, size: undefined }
+      currentFile = {
+        url: parseScalar(url[1]),
+        sha512: undefined,
+        size: undefined,
+        blockMapSize: undefined,
+      }
       manifest.files.push(currentFile)
       continue
     }
 
-    const property = /^\s+(sha512|size):\s*(.+)$/u.exec(line)
+    const property = /^\s+(sha512|size|blockMapSize):\s*(.+)$/u.exec(line)
     if (property && currentFile) {
       const [, key, rawValue] = property
-      currentFile[key] = key === 'size' ? Number(parseScalar(rawValue)) : parseScalar(rawValue)
+      currentFile[key] =
+        key === 'size' || key === 'blockMapSize'
+          ? Number(parseScalar(rawValue))
+          : parseScalar(rawValue)
       continue
     }
 
@@ -61,6 +72,112 @@ export function parseUpdateManifest(source, filename = 'update manifest') {
     throw new Error(`${filename}: missing version, files, path, or sha512`)
   }
   return manifest
+}
+
+function canonicalBlockChecksum(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9+/]{24}$/u.test(value)) return false
+  const bytes = Buffer.from(value, 'base64')
+  return bytes.length === 18 && bytes.toString('base64') === value
+}
+
+async function readExactly(handle, buffer, position, label) {
+  let offset = 0
+  while (offset < buffer.length) {
+    const result = await handle.read(
+      buffer,
+      offset,
+      buffer.length - offset,
+      position + offset,
+    )
+    if (result.bytesRead === 0) throw new Error(`Truncated ${label}`)
+    offset += result.bytesRead
+  }
+}
+
+/**
+ * electron-builder 26 appends a raw-deflate v2 blockmap and a four-byte
+ * big-endian blockmap length to AppImage itself. electron-updater reads this
+ * trailer using `blockMapSize` from latest-linux.yml.
+ */
+export async function verifyEmbeddedAppImageBlockMap(assetPath, entry, manifestName) {
+  const fileStat = await stat(assetPath)
+  const blockMapSize = entry.blockMapSize
+  if (
+    !Number.isSafeInteger(blockMapSize) ||
+    blockMapSize <= 0 ||
+    blockMapSize > MAX_EMBEDDED_BLOCKMAP_BYTES ||
+    blockMapSize + 4 >= fileStat.size
+  ) {
+    throw new Error(`${manifestName}: invalid embedded blockMapSize for ${path.basename(assetPath)}`)
+  }
+
+  const handle = await open(assetPath, 'r')
+  let compressed
+  try {
+    const sizeHeader = Buffer.allocUnsafe(4)
+    await readExactly(handle, sizeHeader, fileStat.size - 4, 'AppImage blockmap size trailer')
+    if (sizeHeader.readUInt32BE(0) !== blockMapSize) {
+      throw new Error(`${manifestName}: AppImage blockmap trailer length does not match metadata`)
+    }
+    compressed = Buffer.allocUnsafe(blockMapSize)
+    await readExactly(
+      handle,
+      compressed,
+      fileStat.size - blockMapSize - 4,
+      'embedded AppImage blockmap',
+    )
+  } finally {
+    await handle.close()
+  }
+
+  let blockMap
+  try {
+    blockMap = JSON.parse(
+      inflateRawSync(compressed, { maxOutputLength: MAX_INFLATED_BLOCKMAP_BYTES }).toString('utf8'),
+    )
+  } catch (error) {
+    throw new Error(`${manifestName}: invalid embedded AppImage blockmap`, { cause: error })
+  }
+  if (
+    !blockMap ||
+    typeof blockMap !== 'object' ||
+    Array.isArray(blockMap) ||
+    blockMap.version !== '2' ||
+    !Array.isArray(blockMap.files) ||
+    blockMap.files.length !== 1
+  ) {
+    throw new Error(`${manifestName}: unsupported embedded AppImage blockmap structure`)
+  }
+  const [file] = blockMap.files
+  if (
+    !file ||
+    typeof file !== 'object' ||
+    Array.isArray(file) ||
+    file.name !== 'file' ||
+    file.offset !== 0 ||
+    !Array.isArray(file.sizes) ||
+    !Array.isArray(file.checksums) ||
+    file.sizes.length === 0 ||
+    file.sizes.length !== file.checksums.length
+  ) {
+    throw new Error(`${manifestName}: malformed embedded AppImage block inventory`)
+  }
+  let inventoriedBytes = 0
+  for (let index = 0; index < file.sizes.length; index += 1) {
+    const size = file.sizes[index]
+    if (!Number.isSafeInteger(size) || size <= 0 || !canonicalBlockChecksum(file.checksums[index])) {
+      throw new Error(`${manifestName}: invalid embedded AppImage block near index ${index}`)
+    }
+    inventoriedBytes += size
+    if (!Number.isSafeInteger(inventoriedBytes)) {
+      throw new Error(`${manifestName}: embedded AppImage block inventory exceeds the safe size limit`)
+    }
+  }
+  const payloadSize = fileStat.size - blockMapSize - 4
+  if (inventoriedBytes !== payloadSize) {
+    throw new Error(`${manifestName}: embedded AppImage block inventory does not cover the payload`)
+  }
+  return { blockMapSize, payloadSize, blocks: file.sizes.length }
 }
 
 async function digest(filePath, algorithm, encoding) {
@@ -108,6 +225,7 @@ async function verifyManifest(root, manifestName, version, names) {
   }
 
   const seen = new Set()
+  const sidecarBlockmaps = new Set()
   for (const entry of manifest.files) {
     const assetName = safeAssetName(entry.url, manifestName)
     if (seen.has(assetName)) throw new Error(`${manifestName}: duplicate asset ${assetName}`)
@@ -125,15 +243,25 @@ async function verifyManifest(root, manifestName, version, names) {
     if (actualSha512 !== entry.sha512) {
       throw new Error(`${manifestName}: SHA-512 mismatch for ${assetName}`)
     }
-    // electron-builder emits differential blockmaps for NSIS, macOS ZIP and
-    // AppImage payloads. Native Linux packages are full-package updates: their
-    // size and SHA-512 remain mandatory, but electron-builder does not create
-    // (and electron-updater does not consume) .deb/.rpm blockmaps.
-    if (/\.(?:exe|zip|AppImage)$/u.test(assetName)) {
+    // NSIS and macOS ZIP updates use sidecar blockmaps. AppImage carries a
+    // raw-deflate blockmap in its own trailer, described by blockMapSize.
+    if (/\.(?:exe|zip)$/u.test(assetName)) {
+      if (entry.blockMapSize !== undefined) {
+        throw new Error(`${manifestName}: sidecar update ${assetName} must not declare blockMapSize`)
+      }
       const blockmap = `${assetName}.blockmap`
       if (!names.includes(blockmap)) {
         throw new Error(`${manifestName}: missing differential-update blockmap ${blockmap}`)
       }
+      sidecarBlockmaps.add(blockmap)
+    } else if (assetName.endsWith('.AppImage')) {
+      const blockmap = `${assetName}.blockmap`
+      if (names.includes(blockmap)) {
+        throw new Error(`${manifestName}: AppImage must use its embedded blockmap, not ${blockmap}`)
+      }
+      await verifyEmbeddedAppImageBlockMap(assetPath, entry, manifestName)
+    } else if (entry.blockMapSize !== undefined) {
+      throw new Error(`${manifestName}: full-package update ${assetName} must not declare blockMapSize`)
     }
   }
 
@@ -143,7 +271,11 @@ async function verifyManifest(root, manifestName, version, names) {
     throw new Error(`${manifestName}: top-level path/SHA-512 does not match a files entry`)
   }
 
-  return { ...manifest, referencedAssets: [...seen].sort() }
+  return {
+    ...manifest,
+    referencedAssets: [...seen].sort(),
+    sidecarBlockmaps: [...sidecarBlockmaps].sort(),
+  }
 }
 
 function validateManifestTargets(manifestName, manifest, version) {
@@ -224,10 +356,22 @@ export async function verifyReleaseAssets({ root, version, tag, clientSha, coreS
   requireCount(binaries, (name) => name.endsWith('.rpm'), 1, 'Linux rpm')
 
   const manifests = {}
+  const expectedSidecarBlockmaps = new Set()
   for (const manifestName of ['latest.yml', 'latest-mac.yml', 'latest-linux.yml']) {
     const manifest = await verifyManifest(root, manifestName, version, names)
     validateManifestTargets(manifestName, manifest, version)
     manifests[manifestName] = manifest.referencedAssets
+    for (const blockmap of manifest.sidecarBlockmaps) expectedSidecarBlockmaps.add(blockmap)
+  }
+  const actualSidecarBlockmaps = names.filter((name) => name.endsWith('.blockmap'))
+  if (
+    actualSidecarBlockmaps.length !== expectedSidecarBlockmaps.size ||
+    actualSidecarBlockmaps.some((name) => !expectedSidecarBlockmaps.has(name))
+  ) {
+    throw new Error(
+      `Release blockmap set mismatch: expected ${[...expectedSidecarBlockmaps].sort().join(', ')}, ` +
+        `found ${actualSidecarBlockmaps.join(', ')}`,
+    )
   }
 
   const sourceText = await readFile(path.join(root, 'runtime-sources.txt'), 'utf8')

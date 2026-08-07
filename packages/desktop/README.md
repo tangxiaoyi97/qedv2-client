@@ -106,15 +106,15 @@ workflow actions are pinned to reviewed commits.
 
 ### Electron compatibility pin
 
-Electron is intentionally pinned to exactly `42.3.2`. In a clean, packaged
-macOS profile, the browser-pushed sandbox startup-data path introduced after
-that build caused the sandboxed preload to start with missing `startupData`.
-QED2 keeps renderer sandboxing enabled and pins the last verified runtime
-instead of weakening the security model. An Electron upgrade is allowed only
-after the packaged-app smoke has passed on macOS, Windows, and Linux with the
-real preload capability, Local Core startup, singleton tool windows, and clean
-process shutdown. The pin must be revisited before the Electron 42 support
-window closes.
+Electron is intentionally pinned to exactly `42.7.1`, the newest verified
+patch in the supported 42 line. A clean packaged macOS profile reproduced a
+missing sandbox `startupData` failure on Electron 43.3.0, while 42.7.1 passed
+with the same application, preload, fuses, and empty profile. QED2 keeps
+renderer sandboxing enabled instead of weakening the security model. An
+Electron upgrade is allowed only after the packaged-app smoke has passed on
+macOS, Windows, and Linux with the real preload capability, Local Core startup,
+singleton tool windows, and clean process shutdown. The pin must be revisited
+before the Electron 42 support window closes.
 
 ## Release pipeline
 
@@ -186,9 +186,13 @@ the native package matching the distribution is preferred over AppImage.
   publishing.
 - Before publication, every filename, byte size, and SHA-512 value referenced
   by `latest.yml`, `latest-mac.yml`, and `latest-linux.yml` is re-derived from
-  the downloaded native-job artifacts. Auto-updater payloads (NSIS `.exe`,
-  macOS `.zip`, and AppImage) must also carry differential blockmaps; deb/rpm
-  packages are verified by their manifest hashes and the release SHA-256 set.
+  the downloaded native-job artifacts. NSIS `.exe` and macOS `.zip` payloads
+  must carry their electron-builder sidecar blockmaps. AppImage instead carries
+  electron-builder's blockmap inside the same SHA-512-covered payload: release
+  verification requires `blockMapSize`, validates the embedded trailer and its
+  v2 block inventory, and rejects a misleading `.AppImage.blockmap` sidecar.
+  deb/rpm packages are verified by their manifest hashes and the release
+  SHA-256 set.
   The release also publishes a signed GitHub build-provenance attestation for
   independent verification.
 - Application downgrade is disabled. A bad release is recovered by publishing

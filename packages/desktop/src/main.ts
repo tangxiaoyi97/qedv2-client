@@ -13,7 +13,7 @@ import {
   type Event,
   type WebContents,
 } from 'electron';
-import type { DesktopWindowTarget } from '@qed2/core-logic';
+import { DEFAULT_CONFIG, type DesktopWindowTarget } from '@qed2/core-logic';
 import { CoreSupervisor } from './main/core-supervisor.js';
 import { ElectronCoreProcessLauncher } from './main/electron-process-launcher.js';
 import { installDesktopIpc } from './main/ipc.js';
@@ -401,7 +401,10 @@ async function bootstrap(): Promise<void> {
     runtime,
     new ElectronCoreProcessLauncher(resolve(app.getAppPath(), 'dist/core-host.cjs')),
     logger,
-    DEFAULT_CORE_PORT,
+    {
+      preferredPort: DEFAULT_CORE_PORT,
+      initialConfig: DEFAULT_CONFIG,
+    },
   );
   const network = new NetworkMonitor();
   network.start();
@@ -412,8 +415,8 @@ async function bootstrap(): Promise<void> {
       coreVersion: runtime.manifest?.core.version ?? 'development',
       ...(runtime.manifest?.core.commit ? { coreCommit: runtime.manifest.core.commit } : {}),
       ...(runtime.manifest?.bank.commit ? { bankCommit: runtime.manifest.bank.commit } : {}),
-      coreRepoUrl: 'https://github.com/tangxiaoyi97/qedv2-core',
-      bankRepoUrl: 'https://github.com/tangxiaoyi97/srdpmppr',
+      coreRepoUrl: DEFAULT_CONFIG.coreRepoUrl,
+      bankRepoUrl: DEFAULT_CONFIG.bankRepoUrl,
     },
     logger,
     {

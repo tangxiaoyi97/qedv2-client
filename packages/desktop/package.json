@@ -30,7 +30,7 @@
   "devDependencies": {
     "@qed2/core-logic": "workspace:*",
     "@types/node": "^24.10.0",
-    "electron": "42.3.2",
+    "electron": "42.7.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.1",
     "typescript": "^5.8.3",

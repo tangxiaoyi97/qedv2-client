@@ -45,6 +45,17 @@ describe('QIconButton', () => {
     expect(iconButtonSource).toContain('outline: 2px solid var(--q-accent);');
   });
 
+  it('accepts another decorative icon while keeping X as the close default', () => {
+    const wrapper = mount(QIconButton, {
+      attrs: { 'aria-label': 'Weitere Aktion' },
+      slots: { default: '<svg data-test-icon="custom" />' },
+    });
+
+    expect(wrapper.find('[data-test-icon="custom"]').exists()).toBe(true);
+    expect(wrapper.find('.lucide-x').exists()).toBe(false);
+    expect(wrapper.get('.q-icon-btn__glyph').attributes('aria-hidden')).toBe('true');
+  });
+
   it('exposes focus for dialogs that manage initial focus themselves', () => {
     const wrapper = mount(QIconButton, {
       attrs: { 'aria-label': 'Schließen' },

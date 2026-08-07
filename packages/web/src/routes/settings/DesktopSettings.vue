@@ -70,7 +70,6 @@ const subtitle = computed(() => {
 
 const runtimePhaseLabel = computed(() => {
   switch (app.coreRuntimeStatus?.phase) {
-    case 'provisioning': return 'Lokale Laufzeit wird vorbereitet';
     case 'starting': return 'Lokaler Core startet';
     case 'ready': return 'Lokaler Core ist bereit';
     case 'recovering': return 'Lokaler Core wird wiederhergestellt';
@@ -136,7 +135,7 @@ function progressView(progress: OperationProgress | undefined): ProgressView | n
     const value = Math.min(progress.total, completed);
     const label = progress.unit === 'bytes'
       ? `${formatBytes(value)} / ${formatBytes(progress.total)}`
-      : `${Math.round(value)} / ${Math.round(progress.total)} ${progress.unit === 'objects' ? 'Objekte' : 'Schritte'}`;
+      : `${Math.round(value)} / ${Math.round(progress.total)} Schritte`;
     return { determinate: true, value, max: progress.total, label };
   }
   const label = progress.unit === 'bytes'
@@ -156,11 +155,6 @@ const targetViews = computed<TargetView[]>(() =>
   })),
 );
 
-function readableError(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return `${fallback} ${error.message}`;
-  return fallback;
-}
-
 function applySnapshot(snapshot: UpdateSnapshot): void {
   updateSnapshot.value = snapshot;
   snapshotProblem.value = '';
@@ -175,11 +169,8 @@ async function readUpdateSnapshot(): Promise<UpdateSnapshot | undefined> {
     const snapshot = await ports.update.getState();
     applySnapshot(snapshot);
     return snapshot;
-  } catch (error) {
-    snapshotProblem.value = readableError(
-      error,
-      'Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.',
-    );
+  } catch {
+    snapshotProblem.value = 'Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.';
     return undefined;
   }
 }
@@ -224,11 +215,8 @@ async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
     await ports.coreRuntime.recover(action);
     await app.resolveCoreEndpoint();
     app.refreshServiceInfo();
-  } catch (error) {
-    problem.value = readableError(
-      error,
-      'Die lokale Laufzeit konnte nicht geändert werden. Bitte erneut versuchen.',
-    );
+  } catch {
+    problem.value = 'Die lokale Laufzeit konnte nicht geändert werden. Bitte erneut versuchen.';
   } finally {
     busyAction.value = null;
   }
@@ -247,11 +235,8 @@ async function checkForUpdates(): Promise<void> {
     const result = await ports.update.checkForUpdates();
     const snapshot = await readUpdateSnapshot();
     notice.value = updateCheckNotice(result, snapshot);
-  } catch (error) {
-    problem.value = readableError(
-      error,
-      'Aktualisierungen konnten nicht geprüft werden. Bitte erneut versuchen.',
-    );
+  } catch {
+    problem.value = 'Aktualisierungen konnten nicht geprüft werden. Bitte erneut versuchen.';
   } finally {
     busyAction.value = null;
   }
@@ -265,11 +250,8 @@ async function applyAppUpdate(): Promise<void> {
   try {
     await ports.update.applyUpdates(['app']);
     await readUpdateSnapshot();
-  } catch (error) {
-    problem.value = readableError(
-      error,
-      'QED2 Desktop konnte nicht heruntergeladen werden. Du kannst den Download erneut starten.',
-    );
+  } catch {
+    problem.value = 'QED2 Desktop konnte nicht heruntergeladen werden. Du kannst den Download erneut starten.';
   } finally {
     busyAction.value = null;
   }
@@ -281,8 +263,14 @@ async function relaunchToApply(): Promise<void> {
   problem.value = '';
   try {
     await ports.update.relaunchToApply();
-  } catch (error) {
-    problem.value = readableError(error, 'QED2 konnte für die Installation nicht neu gestartet werden.');
+  } catch {
+    const snapshot = await readUpdateSnapshot();
+    const state = snapshot?.targets.find((target) => target.target === 'app');
+    if (state?.phase === 'restart-required' && state.installMode === 'manual-package') {
+      notice.value = state.message ?? 'Das verifizierte Paket ist zur manuellen Installation bereit.';
+    } else {
+      problem.value = 'QED2 konnte für die Installation nicht neu gestartet werden.';
+    }
     busyAction.value = null;
   }
 }
@@ -510,7 +498,12 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="busyAction === 'relaunch'"
           @click="relaunchToApply"
         >
-          {{ busyAction === 'relaunch' ? 'QED2 startet neu …' : 'Neu starten & installieren' }}
+          <template v-if="busyAction === 'relaunch'">
+            {{ appTarget?.installMode === 'manual-package' ? 'Paket wird angezeigt …' : 'QED2 startet neu …' }}
+          </template>
+          <template v-else>
+            {{ appTarget?.installMode === 'manual-package' ? 'Paket anzeigen' : 'Neu starten & installieren' }}
+          </template>
         </QButton>
       </div>
     </div>

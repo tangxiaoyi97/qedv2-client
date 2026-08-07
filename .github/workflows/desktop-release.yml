@@ -661,7 +661,6 @@ jobs:
             qedv2-client/packages/desktop/dist-packages/*.AppImage
             qedv2-client/packages/desktop/dist-packages/*.deb
             qedv2-client/packages/desktop/dist-packages/*.rpm
-            qedv2-client/packages/desktop/dist-packages/*.blockmap
             qedv2-client/packages/desktop/dist-packages/latest-linux.yml
 
   publish:

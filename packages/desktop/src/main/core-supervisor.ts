@@ -1,6 +1,16 @@
 import { EventEmitter } from 'node:events';
-import type { ClientConfig, CoreEndpoint, CoreRecoveryAction, CoreRuntimeStatus } from '@qed2/core-logic';
-import { allocateLoopbackPort, LOOPBACK_HOST } from './port-allocator.js';
+import {
+  DEFAULT_CONFIG,
+  type ClientConfig,
+  type CoreEndpoint,
+  type CoreRecoveryAction,
+  type CoreRuntimeStatus,
+} from '@qed2/core-logic';
+import {
+  allocateLoopbackPort,
+  isPortAvailable,
+  LOOPBACK_HOST,
+} from './port-allocator.js';
 import type { RuntimeDescriptor } from './runtime-layout.js';
 import {
   isRuntimeIntegrityError,
@@ -33,8 +43,16 @@ export interface SupervisorLogger {
 
 const RESTART_DELAYS_MS = [1_000, 2_000, 4_000] as const;
 const STABLE_RUNTIME_MS = 60_000;
+const PORT_CANDIDATE_ATTEMPTS = 100;
+const MAX_BIND_COLLISION_RETRIES = 8;
 const VERIFIED_REINSTALL_MESSAGE =
   'Die gebündelte lokale Laufzeit ist beschädigt oder unvollständig. Installieren Sie QED2 erneut aus einem verifizierten offiziellen GitHub-Release.';
+const CORE_START_ERROR_MESSAGE =
+  'Der lokale Core konnte die sichere Startprüfung nicht abschließen.';
+const CORE_CRASH_LOOP_ERROR_MESSAGE =
+  'Der lokale Core wurde nach wiederholten Abstürzen angehalten.';
+const CORE_STOP_ERROR_MESSAGE =
+  'Der vorherige lokale Core konnte nicht sicher beendet werden.';
 const MAX_HEALTH_RESPONSE_BYTES = 64 * 1024;
 
 export type RuntimeIntegrityVerifier = (
@@ -42,16 +60,38 @@ export type RuntimeIntegrityVerifier = (
   mode?: 'light' | 'full',
 ) => Promise<RuntimeIntegrityResult>;
 
+export interface CoreSupervisorOptions {
+  preferredPort?: number;
+  initialConfig?: ClientConfig;
+  integrityVerifier?: RuntimeIntegrityVerifier;
+}
+
+class CorePortBindCollisionError extends Error {
+  constructor(readonly port: number, options?: ErrorOptions) {
+    super(`Local Core could not bind loopback port ${port}`, options);
+    this.name = 'CorePortBindCollisionError';
+  }
+}
+
 function errorPayload(
   code: string,
-  error: unknown,
+  message: string,
   recoverable = true,
 ): NonNullable<CoreRuntimeStatus['error']> {
   return {
     code,
-    message: error instanceof Error ? error.message : String(error),
+    message,
     recoverable,
   };
+}
+
+function isPortBindCollisionEvidence(value: unknown): boolean {
+  if (value && typeof value === 'object' && 'code' in value) {
+    const code = (value as { code?: unknown }).code;
+    if (typeof code === 'string' && code.toUpperCase() === 'EADDRINUSE') return true;
+  }
+  const message = value instanceof Error ? value.message : String(value);
+  return /\bEADDRINUSE\b|address (?:is )?already in use|only one usage of each socket address/i.test(message);
 }
 
 async function sleep(ms: number, unref = false): Promise<void> {
@@ -98,6 +138,8 @@ export class CoreSupervisor extends EventEmitter {
   private restartAttempt = 0;
   private generation = 0;
   private stableTimer: NodeJS.Timeout | undefined;
+  private readonly preferredPort: number;
+  private readonly integrityVerifier: RuntimeIntegrityVerifier;
   private config: ClientConfig;
   private status: CoreRuntimeStatus;
 
@@ -105,21 +147,16 @@ export class CoreSupervisor extends EventEmitter {
     private readonly runtime: RuntimeDescriptor,
     private readonly launcher: CoreProcessLauncher,
     private readonly logger: SupervisorLogger,
-    private readonly preferredPort = 1022,
-    initialRemoteUrl = 'https://qedcore.barcarolle.studio',
-    private readonly integrityVerifier: RuntimeIntegrityVerifier = verifyRuntimeIntegrity,
+    options: CoreSupervisorOptions = {},
   ) {
     super();
-    this.config = {
-      coreBaseUrl: initialRemoteUrl,
-      serverBaseUrl: 'https://qedsync.barcarolle.studio',
-      coreRepoUrl: 'https://github.com/tangxiaoyi97/qedv2-core',
-      bankRepoUrl: 'https://github.com/tangxiaoyi97/srdpmppr',
-    };
+    this.preferredPort = options.preferredPort ?? 1022;
+    this.integrityVerifier = options.integrityVerifier ?? verifyRuntimeIntegrity;
+    this.config = structuredClone(options.initialConfig ?? DEFAULT_CONFIG);
     this.status = {
       phase: 'idle',
       source: 'remote',
-      endpoint: initialRemoteUrl,
+      endpoint: this.config.coreBaseUrl,
       message: 'Lokaler Core ist noch nicht gestartet.',
     };
   }
@@ -255,7 +292,7 @@ export class CoreSupervisor extends EventEmitter {
         source: 'remote',
         endpoint: this.config.coreBaseUrl,
         message: 'Der lokale Core ist nicht verfügbar. Der entfernte Core wird verwendet.',
-        error: errorPayload('CORE_START_FAILED', error),
+        error: errorPayload('CORE_START_FAILED', CORE_START_ERROR_MESSAGE),
       });
       return { baseUrl: this.config.coreBaseUrl, source: 'remote' };
     });
@@ -281,7 +318,36 @@ export class CoreSupervisor extends EventEmitter {
       await this.verifyBundledRuntime();
       if (generation !== this.generation) throw new Error('Core startup was superseded');
     }
-    const port = await allocateLoopbackPort(this.preferredPort);
+    const attemptedPorts = new Set<number>();
+    for (let attempt = 1; attempt <= MAX_BIND_COLLISION_RETRIES; attempt += 1) {
+      const port = await allocateLoopbackPort(
+        this.preferredPort,
+        PORT_CANDIDATE_ATTEMPTS,
+        new Set(attemptedPorts),
+      );
+      attemptedPorts.add(port);
+      try {
+        return await this.startOnPort(port, generation, totalSteps, stepOffset);
+      } catch (error) {
+        if (!(error instanceof CorePortBindCollisionError)) throw error;
+        this.logger.warn('Local Core lost a loopback bind race; selecting another port', {
+          port,
+          attempt,
+          maximumAttempts: MAX_BIND_COLLISION_RETRIES,
+          error,
+        });
+        if (generation !== this.generation) throw new Error('Core startup was superseded');
+      }
+    }
+    throw new Error('Local Core exhausted its bounded loopback bind-collision retries');
+  }
+
+  private async startOnPort(
+    port: number,
+    generation: number,
+    totalSteps: number,
+    stepOffset: number,
+  ): Promise<CoreEndpoint> {
     const endpoint = `http://${LOOPBACK_HOST}:${port}`;
     if (port !== this.preferredPort) {
       this.logger.warn('Preferred local core port is unavailable; using controlled fallback', {
@@ -314,15 +380,41 @@ export class CoreSupervisor extends EventEmitter {
         ? { QED_BUILD_COMMIT: this.runtime.manifest.core.commit }
         : {}),
     };
-    const child = this.launcher.launch({
-      entry: this.runtime.coreEntry,
-      cwd: this.runtime.coreDirectory,
-      env,
-    });
+    let child: ManagedCoreProcess;
+    try {
+      child = this.launcher.launch({
+        entry: this.runtime.coreEntry,
+        cwd: this.runtime.coreDirectory,
+        env,
+      });
+    } catch (error) {
+      if (isPortBindCollisionEvidence(error)) {
+        throw new CorePortBindCollisionError(port, { cause: error });
+      }
+      throw error;
+    }
     this.process = child;
+    let startupPhase: 'pending' | 'ready' | 'disposed' = 'pending';
+    let sawBindCollision = false;
+    let resolveStartupExit: ((code: number) => void) | undefined;
+    const startupExit = new Promise<number>((resolve) => {
+      resolveStartupExit = resolve;
+    });
     child.onStdout((line) => this.logger.debug('core stdout', line.trim()));
-    child.onStderr((line) => this.logger.warn('core stderr', line.trim()));
-    child.onExit((code) => this.handleExit(generation, code));
+    child.onStderr((line) => {
+      if (startupPhase === 'pending' && isPortBindCollisionEvidence(line)) {
+        sawBindCollision = true;
+      }
+      this.logger.warn('core stderr', line.trim());
+    });
+    child.onExit((code) => {
+      if (startupPhase === 'pending') {
+        if (this.process === child) this.process = undefined;
+        resolveStartupExit?.(code);
+        return;
+      }
+      if (startupPhase === 'ready') this.handleExit(generation, code);
+    });
 
     this.setStatus({
       phase: 'starting',
@@ -333,7 +425,31 @@ export class CoreSupervisor extends EventEmitter {
       message: 'Lokaler Core wird überprüft …',
       ...(this.restartAttempt > 0 ? { restartAttempt: this.restartAttempt } : {}),
     });
-    await this.waitUntilHealthy(endpoint, generation);
+    const healthAbort = new AbortController();
+    const healthCheck = this.waitUntilHealthy(endpoint, generation, healthAbort.signal);
+    let outcome: { kind: 'healthy' } | { kind: 'exit'; code: number };
+    try {
+      outcome = await Promise.race([
+        healthCheck.then(() => ({ kind: 'healthy' as const })),
+        startupExit.then((code) => ({ kind: 'exit' as const, code })),
+      ]);
+    } catch (error) {
+      startupPhase = 'disposed';
+      healthAbort.abort();
+      throw error;
+    }
+    if (outcome.kind === 'exit') {
+      startupPhase = 'disposed';
+      healthAbort.abort();
+      const occupiedAfterExit = !(await isPortAvailable(port));
+      if (sawBindCollision || occupiedAfterExit) {
+        throw new CorePortBindCollisionError(port, {
+          cause: new Error(`Local Core exited with code ${outcome.code}`),
+        });
+      }
+      throw new Error(`Local Core exited during startup with code ${outcome.code}`);
+    }
+    startupPhase = 'ready';
     if (generation !== this.generation) throw new Error('Core startup was superseded');
     this.setStatus({
       phase: 'ready',
@@ -350,13 +466,21 @@ export class CoreSupervisor extends EventEmitter {
     return { baseUrl: endpoint, source: 'local' };
   }
 
-  private async waitUntilHealthy(endpoint: string, generation: number): Promise<void> {
+  private async waitUntilHealthy(
+    endpoint: string,
+    generation: number,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
     const deadline = Date.now() + 20_000;
     let lastError: unknown = new Error('Health check did not run');
-    while (Date.now() < deadline && generation === this.generation) {
+    while (
+      Date.now() < deadline &&
+      generation === this.generation &&
+      !abortSignal.aborted
+    ) {
       try {
         const health = await fetch(`${endpoint}/health`, {
-          signal: AbortSignal.timeout(1_500),
+          signal: AbortSignal.any([abortSignal, AbortSignal.timeout(1_500)]),
           cache: 'no-store',
         });
         if (!health.ok) throw new Error(`Health endpoint returned ${health.status}`);
@@ -370,7 +494,7 @@ export class CoreSupervisor extends EventEmitter {
           throw new Error('Health endpoint did not identify a ready core');
         }
         const info = await fetch(`${endpoint}/info`, {
-          signal: AbortSignal.timeout(1_500),
+          signal: AbortSignal.any([abortSignal, AbortSignal.timeout(1_500)]),
           cache: 'no-store',
         });
         const infoBody = await readBoundedJson(info);
@@ -378,6 +502,7 @@ export class CoreSupervisor extends EventEmitter {
         return;
       } catch (error) {
         lastError = error;
+        if (abortSignal.aborted) break;
         await sleep(200);
       }
     }
@@ -400,7 +525,7 @@ export class CoreSupervisor extends EventEmitter {
         endpoint: this.config.coreBaseUrl,
         message: 'Der lokale Core ist wiederholt abgestürzt. Automatische Neustarts wurden angehalten.',
         restartAttempt: this.restartAttempt,
-        error: errorPayload('CORE_CRASH_LOOP', `Core exited with code ${code}`),
+        error: errorPayload('CORE_CRASH_LOOP', CORE_CRASH_LOOP_ERROR_MESSAGE),
       });
       return;
     }
@@ -469,7 +594,7 @@ export class CoreSupervisor extends EventEmitter {
   }
 
   private throwStopFailure(): never {
-    const error = new Error('The previous local Core process could not be terminated safely.');
+    const error = new Error(CORE_STOP_ERROR_MESSAGE);
     this.setStatus({
       phase: 'failed',
       source: 'remote',
@@ -477,7 +602,7 @@ export class CoreSupervisor extends EventEmitter {
       message:
         'Der vorherige lokale Core konnte nicht sicher beendet werden. ' +
         'QED2 startet keinen zweiten lokalen Prozess.',
-      error: errorPayload('CORE_STOP_FAILED', error),
+      error: errorPayload('CORE_STOP_FAILED', CORE_STOP_ERROR_MESSAGE),
     });
     throw error;
   }
@@ -551,7 +676,7 @@ export class CoreSupervisor extends EventEmitter {
       source: 'remote',
       endpoint: this.config.coreBaseUrl,
       message: VERIFIED_REINSTALL_MESSAGE,
-      error: errorPayload('RUNTIME_INTEGRITY_FAILED', error, false),
+      error: errorPayload('RUNTIME_INTEGRITY_FAILED', VERIFIED_REINSTALL_MESSAGE, false),
     });
   }
 
