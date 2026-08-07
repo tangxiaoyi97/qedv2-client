@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { statSync } from 'node:fs';
 import {
   cp,
   lstat,
@@ -13,7 +14,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
@@ -26,9 +27,43 @@ const bankSource = resolve(process.env.QED2_BANK_SOURCE ?? resolve(workspaceRoot
 const target = resolve(desktopRoot, 'runtime');
 const stage = resolve(desktopRoot, `.runtime-stage-${process.pid}`);
 const backup = resolve(desktopRoot, '.runtime-previous');
-const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 const MAX_RUNTIME_ENTRIES = 100_000;
 const HASH_CONCURRENCY = 8;
+
+function pnpmCliFile(candidate) {
+  if (!candidate || !isAbsolute(candidate)) return false;
+  if (!/^pnpm(?:\.[cm]?js)?$/iu.test(basename(candidate))) return false;
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function resolvePnpmInvocation() {
+  if (process.platform !== 'win32') return { executable: 'pnpm', prefix: [] };
+
+  // Windows cannot launch a .cmd shim through execFile without a shell. Run
+  // pnpm's JavaScript entry point with the already active Node executable so
+  // paths stay argument-safe and no command shell is introduced. Lifecycle
+  // scripts expose npm_execpath; pnpm/action-setup also exposes enough layout
+  // information for a direct `node prepare-runtime.mjs` invocation.
+  const pnpmHome = process.env.PNPM_HOME?.trim();
+  const candidates = [
+    process.env.npm_execpath?.trim(),
+    pnpmHome ? resolve(pnpmHome, '..', 'pnpm', 'bin', 'pnpm.cjs') : undefined,
+    pnpmHome ? resolve(pnpmHome, '..', 'pnpm', 'bin', 'pnpm.mjs') : undefined,
+    pnpmHome ? resolve(pnpmHome, 'pnpm.cjs') : undefined,
+    pnpmHome ? resolve(pnpmHome, 'pnpm.mjs') : undefined,
+  ];
+  const cli = candidates.find(pnpmCliFile);
+  if (!cli) {
+    throw new Error('Cannot locate the pnpm CLI on Windows; run runtime:prepare through pnpm or set PNPM_HOME');
+  }
+  return { executable: process.execPath, prefix: [cli] };
+}
+
+const pnpm = resolvePnpmInvocation();
 
 const INTEGRITY_ROOTS = [
   'core/dist',
@@ -296,7 +331,7 @@ async function main() {
   await mkdir(stage, { recursive: true });
   try {
     if (process.env.QED2_SKIP_CORE_BUILD !== '1') {
-      await runFile(pnpm, ['--dir', coreSource, 'build'], {
+      await runFile(pnpm.executable, [...pnpm.prefix, '--dir', coreSource, 'build'], {
         env: { ...process.env, QED_BUILD_COMMIT: coreCommit },
         maxBuffer: 16 * 1024 * 1024,
       });
@@ -308,8 +343,9 @@ async function main() {
       cp(resolve(coreSource, 'pnpm-lock.yaml'), resolve(stagedCore, 'pnpm-lock.yaml')),
     ]);
     await runFile(
-      pnpm,
+      pnpm.executable,
       [
+        ...pnpm.prefix,
         '--dir',
         stagedCore,
         'install',
