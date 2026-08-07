@@ -1190,6 +1190,7 @@ jobs:
             RELEASE_JSON="$(
               gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
                 --raw-field tag_name="$RELEASE_TAG" \
+                --raw-field target_commitish="$CLIENT_SHA" \
                 --raw-field name="QED2 $RELEASE_VERSION" \
                 --field draft=true \
                 --field prerelease=false \
@@ -1213,8 +1214,17 @@ jobs:
           CURRENT_BODY="$(jq -r '.body // ""' <<< "$RELEASE_JSON")"
           if [[ "$CURRENT_BODY" != *"$NOTICE"* ]]; then
             UPDATED_BODY="$(printf '%s\n\n%s' "$NOTICE" "$CURRENT_BODY")"
-            gh api --method PATCH "$RELEASE_API" --raw-field body="$UPDATED_BODY" >/dev/null
+            gh api --method PATCH "$RELEASE_API" \
+              --raw-field tag_name="$RELEASE_TAG" \
+              --raw-field target_commitish="$CLIENT_SHA" \
+              --raw-field body="$UPDATED_BODY" >/dev/null
             RELEASE_JSON="$(gh api "$RELEASE_API")"
+          fi
+          if ! jq -e --arg tag "$RELEASE_TAG" --arg target "$CLIENT_SHA" \
+            '.tag_name == $tag and .target_commitish == $target and .draft == true' \
+            <<< "$RELEASE_JSON" >/dev/null; then
+            echo "GitHub detached the private draft from the immutable release tag." >&2
+            exit 1
           fi
 
           # A retry starts from an exact empty asset set. This prevents a stale
@@ -1231,7 +1241,23 @@ jobs:
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
           done
 
-          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" release-assets/*
+          while IFS= read -r ASSET_NAME; do
+            ASSET_PATH="release-assets/$ASSET_NAME"
+            ENCODED_ASSET_NAME="$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')"
+            UPLOADED_ASSET="$(
+              gh api --method POST \
+                "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$ENCODED_ASSET_NAME" \
+                --header 'Content-Type: application/octet-stream' \
+                --input "$ASSET_PATH"
+            )"
+            ASSET_SIZE="$(stat -c '%s' "$ASSET_PATH")"
+            if ! jq -e --arg name "$ASSET_NAME" --argjson size "$ASSET_SIZE" \
+              '.name == $name and .size == $size and .state == "uploaded" and (.id | type) == "number"' \
+              <<< "$UPLOADED_ASSET" >/dev/null; then
+              echo "GitHub did not confirm the uploaded draft asset: $ASSET_NAME" >&2
+              exit 1
+            fi
+          done < <(find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
 
           EXPECTED_API_ASSETS="$RUNNER_TEMP/qed2-expected-release-assets.tsv"
           REMOTE_API_ASSETS="$RUNNER_TEMP/qed2-remote-release-assets.tsv"
@@ -1239,8 +1265,13 @@ jobs:
             printf '%s\t%s\n' "$ASSET_NAME" "$(stat -c '%s' "release-assets/$ASSET_NAME")"
           done < <(find release-assets -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort) \
             > "$EXPECTED_API_ASSETS"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" \
-            --jq '.[] | [.name, (.size | tostring)] | @tsv' | LC_ALL=C sort > "$REMOTE_API_ASSETS"
+          REMOTE_ASSET_PAGES="$(
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"
+          )"
+          REMOTE_ASSETS_JSON="$(jq -c '[.[][]]' <<< "$REMOTE_ASSET_PAGES")"
+          jq -r '.[] | [.name, (.size | tostring)] | @tsv' <<< "$REMOTE_ASSETS_JSON" \
+            | LC_ALL=C sort > "$REMOTE_API_ASSETS"
           if ! cmp -s "$EXPECTED_API_ASSETS" "$REMOTE_API_ASSETS"; then
             echo "Draft release asset names or sizes differ from the verified local set." >&2
             diff -u "$EXPECTED_API_ASSETS" "$REMOTE_API_ASSETS" || true
@@ -1253,7 +1284,17 @@ jobs:
           REMOTE_ASSET_ROOT="$(mktemp -d)"
           cleanup_remote_assets() { rm -rf "$REMOTE_ASSET_ROOT"; }
           trap cleanup_remote_assets EXIT
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$REMOTE_ASSET_ROOT"
+          REMOTE_ASSET_MAP="$RUNNER_TEMP/qed2-remote-release-assets-with-ids.tsv"
+          jq -r '.[] | [.id, .name] | @tsv' <<< "$REMOTE_ASSETS_JSON" > "$REMOTE_ASSET_MAP"
+          while IFS=$'\t' read -r ASSET_ID ASSET_NAME; do
+            if [[ ! "$ASSET_ID" =~ ^[0-9]+$ ]]; then
+              echo "GitHub returned an invalid uploaded asset ID." >&2
+              exit 1
+            fi
+            gh api --header 'Accept: application/octet-stream' \
+              "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" \
+              > "$REMOTE_ASSET_ROOT/$ASSET_NAME"
+          done < "$REMOTE_ASSET_MAP"
           find "$REMOTE_ASSET_ROOT" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort \
             > "$RUNNER_TEMP/qed2-downloaded-release-assets.txt"
           cut -f1 "$EXPECTED_API_ASSETS" > "$RUNNER_TEMP/qed2-expected-release-assets.txt"
@@ -1285,6 +1326,21 @@ jobs:
             echo "origin/main moved before publication: expected $CLIENT_SHA, found $REMOTE_MAIN_SHA" >&2
             exit 1
           fi
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --draft=false --prerelease=false --latest \
-            --title "QED2 $RELEASE_VERSION"
+          PUBLISHED_RELEASE="$(
+            gh api --method PATCH "$RELEASE_API" \
+              --raw-field tag_name="$RELEASE_TAG" \
+              --raw-field target_commitish="$CLIENT_SHA" \
+              --field draft=false \
+              --field prerelease=false \
+              --raw-field make_latest=true \
+              --raw-field name="QED2 $RELEASE_VERSION"
+          )"
+          if ! jq -e --arg tag "$RELEASE_TAG" --arg target "$CLIENT_SHA" \
+            --arg name "QED2 $RELEASE_VERSION" \
+            '.tag_name == $tag and .target_commitish == $target and
+             .name == $name and .draft == false and
+             .prerelease == false and .published_at != null' \
+            <<< "$PUBLISHED_RELEASE" >/dev/null; then
+            echo "GitHub did not confirm the final public release state." >&2
+            exit 1
+          fi
