@@ -1168,25 +1168,46 @@ jobs:
         run: |
           set -euo pipefail
           (cd release-assets && sha256sum --check SHA256SUMS)
-          RELEASE_API="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
-          RELEASE_LOOKUP_ERROR="$RUNNER_TEMP/qed2-publish-release-lookup-error.txt"
-          if RELEASE_JSON="$(gh api "$RELEASE_API" 2>"$RELEASE_LOOKUP_ERROR")"; then
-            if [[ "$(jq -r '.draft' <<< "$RELEASE_JSON")" != true ]]; then
-              echo "Release $RELEASE_TAG is already published and must not be replaced; publish a higher version." >&2
-              exit 1
-            fi
-          elif grep -Fq 'HTTP 404' "$RELEASE_LOOKUP_ERROR"; then
+          # GitHub's release-by-tag REST endpoint excludes drafts. Enumerate all
+          # pages so a retry reuses the one private draft instead of attempting
+          # to create a duplicate or mistaking it for a published release.
+          RELEASE_PAGES="$(
+            gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100"
+          )"
+          RELEASE_MATCHES="$(
+            jq -c --arg tag "$RELEASE_TAG" \
+              '[.[][] | select(.tag_name == $tag)]' <<< "$RELEASE_PAGES"
+          )"
+          RELEASE_MATCH_COUNT="$(jq 'length' <<< "$RELEASE_MATCHES")"
+          if [[ "$RELEASE_MATCH_COUNT" -gt 1 ]]; then
+            echo "GitHub returned multiple releases for the immutable tag $RELEASE_TAG." >&2
+            exit 1
+          elif [[ "$RELEASE_MATCH_COUNT" -eq 1 ]]; then
+            RELEASE_JSON="$(jq -c '.[0]' <<< "$RELEASE_MATCHES")"
+          else
             # Never expose a release while assets are still being transferred.
             # A failed upload leaves only a resumable draft.
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --draft --verify-tag --generate-notes \
-              --title "QED2 $RELEASE_VERSION"
-            RELEASE_JSON="$(gh api "$RELEASE_API")"
-          else
-            cat "$RELEASE_LOOKUP_ERROR" >&2
-            echo "Could not determine whether a release already exists; refusing to create or replace one." >&2
+            RELEASE_JSON="$(
+              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+                --raw-field tag_name="$RELEASE_TAG" \
+                --raw-field name="QED2 $RELEASE_VERSION" \
+                --field draft=true \
+                --field prerelease=false \
+                --field generate_release_notes=true
+            )"
+          fi
+
+          if [[ "$(jq -r '.draft' <<< "$RELEASE_JSON")" != true ]]; then
+            echo "Release $RELEASE_TAG is already published and must not be replaced; publish a higher version." >&2
             exit 1
           fi
+
+          RELEASE_ID="$(jq -r '.id' <<< "$RELEASE_JSON")"
+          if [[ ! "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
+            echo "GitHub returned an invalid draft release ID." >&2
+            exit 1
+          fi
+          RELEASE_API="repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID"
 
           NOTICE="⚠️ QED2 $RELEASE_VERSION packages use no paid platform identity: macOS is ad-hoc signed and not notarized; Windows and Linux are unsigned. QED2 verifies downloads but requires manual installation, and the OS may warn you. Use only this GitHub release and verify SHA256SUMS."
           CURRENT_BODY="$(jq -r '.body // ""' <<< "$RELEASE_JSON")"
@@ -1194,12 +1215,6 @@ jobs:
             UPDATED_BODY="$(printf '%s\n\n%s' "$NOTICE" "$CURRENT_BODY")"
             gh api --method PATCH "$RELEASE_API" --raw-field body="$UPDATED_BODY" >/dev/null
             RELEASE_JSON="$(gh api "$RELEASE_API")"
-          fi
-
-          RELEASE_ID="$(jq -r '.id' <<< "$RELEASE_JSON")"
-          if [[ ! "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
-            echo "GitHub returned an invalid draft release ID." >&2
-            exit 1
           fi
 
           # A retry starts from an exact empty asset set. This prevents a stale
