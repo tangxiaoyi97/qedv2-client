@@ -1,6 +1,6 @@
 {
   "name": "@qed2/desktop",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "QED2 local-first Electron node for macOS, Windows and Linux",
   "homepage": "https://qed.barcarolle.studio",
   "author": "Tang Xiaoyi",

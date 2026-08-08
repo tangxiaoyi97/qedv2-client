@@ -7,9 +7,10 @@ name: Deploy preview
 # sync corruption into real accounts carrying a valid checksum, and a stale
 # root SW would serve the wrong app entirely. Both have already happened once.
 
+# The dedicated preview host is archived. Keep the deployment recipe for a
+# deliberate future restore, but do not make the integration branch red while
+# no preview origin exists.
 on:
-  push:
-    branches: [preview]
   workflow_dispatch: {}
 
 permissions:

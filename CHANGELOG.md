@@ -14,6 +14,15 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.1.1 — 2026-08-08
+
+### aufgeräumt
+
+- **Aufgaben:** Quellenhinweis unten in der Liste
+- **Optionen:** kürzere Texte, einheitliche Karten und Schaltflächen
+- **KI:** kompakte Einstellungen · eigener OpenAI-/Gemini-Key
+- **Dokumentation:** kurze Web- und Desktop-Anleitungen
+
 ## 2.1.0 — 2026-08-08
 
 ### local, cloud & recovery
