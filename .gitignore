@@ -35,3 +35,6 @@ desktop.ini
 # scratch / throwaway probe files
 scratchpad/
 tmp/
+
+# internal engineering notes are kept locally, not published with the project
+/docs/CONVENTIONS.md
