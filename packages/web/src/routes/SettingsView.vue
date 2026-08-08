@@ -10,6 +10,8 @@ import { useRouter } from 'vue-router';
 import { DEFAULT_CONFIG } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
+import SettingsCard from './settings/SettingsCard.vue';
+import SettingsRow from './settings/SettingsRow.vue';
 import { APP_VERSION, ports } from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
@@ -250,92 +252,95 @@ async function openChangelog(): Promise<void> {
 <template>
   <div class="settings q-page">
     <h1 class="settings__title q-page-title">Einstellungen</h1>
-    <section class="settings__section">
-      <div class="settings__row">
-        <div>
-          <div class="settings__row-title">Erscheinungsbild</div>
-          <div class="settings__row-sub">Auch nachts angenehm</div>
-        </div>
-        <div class="settings__segments" role="radiogroup" aria-label="Erscheinungsbild">
-          <button
-            v-for="t in THEMES"
-            :key="t.value"
-            type="button"
-            class="settings__segment"
-            :class="{ 'settings__segment--on': app.theme === t.value }"
-            role="radio"
-            :aria-checked="app.theme === t.value"
-            @click="app.setTheme(t.value)"
-          >
-            {{ t.label }}
-          </button>
-        </div>
-      </div>
+    <SettingsCard>
+      <SettingsRow label="Aussehen">
+        <template #default="{ labelId }">
+          <div class="settings__segments" role="radiogroup" :aria-labelledby="labelId">
+            <label
+              v-for="t in THEMES"
+              :key="t.value"
+              class="settings__segment"
+              :class="{ 'settings__segment--on': app.theme === t.value }"
+            >
+              <input
+                class="settings__choice-input"
+                type="radio"
+                name="settings-appearance"
+                :value="t.value"
+                :checked="app.theme === t.value"
+                @change="app.setTheme(t.value)"
+              />
+              <span>{{ t.label }}</span>
+            </label>
+          </div>
+        </template>
+      </SettingsRow>
 
-      <div class="settings__row settings__row--top">
-        <div>
-          <div class="settings__row-title">Farbschema</div>
-          <div class="settings__row-sub">Ruhige Flächen, abgestimmte Akzent- und Statusfarben</div>
+      <SettingsRow label="Farbschema" layout="stacked">
+        <template #status>
           <div v-if="accentError" class="settings__url-error" role="alert">{{ accentError }}</div>
-        </div>
-        <div class="settings__themes" role="radiogroup" aria-label="Farbschema">
-          <button
-            v-for="extension in BUILTIN_THEME_EXTENSIONS"
-            :key="extension.id"
-            type="button"
-            class="settings__theme"
-            :class="{ 'settings__theme--on': themeExtensionId === extension.id }"
-            :data-accent="extension.id"
-            role="radio"
-            :aria-checked="themeExtensionId === extension.id"
-            :aria-busy="accentSaving || undefined"
-            :disabled="accentSaving"
-            :title="extension.label"
-            @click="pickThemeExtension(extension.id)"
-          >
-            <span class="settings__theme-preview" aria-hidden="true">
-              <span class="settings__theme-card">
-                <span class="settings__theme-line" />
-                <span class="settings__theme-line settings__theme-line--mut" />
-                <span class="settings__theme-action" />
+        </template>
+        <template #default="{ labelId }">
+          <div class="settings__themes" role="radiogroup" :aria-labelledby="labelId">
+            <label
+              v-for="extension in BUILTIN_THEME_EXTENSIONS"
+              :key="extension.id"
+              class="settings__theme"
+              :class="{
+                'settings__theme--on': themeExtensionId === extension.id,
+                'settings__theme--disabled': accentSaving,
+              }"
+              :data-accent="extension.id"
+              :aria-busy="accentSaving || undefined"
+              :title="extension.label"
+            >
+              <input
+                class="settings__choice-input"
+                type="radio"
+                name="settings-colour-scheme"
+                :value="extension.id"
+                :checked="themeExtensionId === extension.id"
+                :disabled="accentSaving"
+                @change="pickThemeExtension(extension.id)"
+              />
+              <span class="settings__theme-preview" aria-hidden="true">
+                <span class="settings__theme-card">
+                  <span class="settings__theme-line" />
+                  <span class="settings__theme-line settings__theme-line--mut" />
+                  <span class="settings__theme-action" />
+                </span>
               </span>
-            </span>
-            <span class="settings__theme-name">{{ extension.label }}</span>
-          </button>
-        </div>
-      </div>
+              <span class="settings__theme-name">{{ extension.label }}</span>
+            </label>
+          </div>
+        </template>
+      </SettingsRow>
 
-      <div class="settings__row">
-        <div>
-          <div class="settings__row-title">{{ ui.t('settingsLanguage') }}</div>
-          <div class="settings__row-sub">{{ ui.t('settingsLanguageHint') }}</div>
-        </div>
-        <span class="settings__select-wrap">
-          <select
-            class="settings__select"
-            aria-label="Sprache"
-            :value="ui.locale"
-            @change="onLocaleChange"
-          >
-            <option v-for="locale in LOCALES" :key="locale" :value="locale" :disabled="!LOCALE_ENABLED[locale]">
-              {{ LOCALE_LABELS[locale] }}
-            </option>
-          </select>
-          <ChevronDown class="settings__select-chevron" />
-        </span>
-      </div>
-    </section>
+      <SettingsRow :label="ui.t('settingsLanguage')">
+        <template #default="{ labelId }">
+          <span class="settings__select-wrap">
+            <select
+              class="settings__select"
+              :aria-labelledby="labelId"
+              :value="ui.locale"
+              @change="onLocaleChange"
+            >
+              <option v-for="locale in LOCALES" :key="locale" :value="locale" :disabled="!LOCALE_ENABLED[locale]">
+                {{ LOCALE_LABELS[locale] }}
+              </option>
+            </select>
+            <ChevronDown class="settings__select-chevron" />
+          </span>
+        </template>
+      </SettingsRow>
+    </SettingsCard>
 
-    <section class="settings__section">
-      <div class="settings__versions-head">
-        <div>
-          <div class="settings__row-title">Versionen</div>
-          <div class="settings__row-sub">Systeminformationen</div>
-        </div>
+    <SettingsCard title="Versionen">
+      <template #action>
         <QButton variant="ghost" @click="app.refreshServiceInfo()" title="Dienst-Infos neu laden">
           ⟳ Aktualisieren
         </QButton>
-      </div>
+      </template>
       <div class="settings__vlist">
         <button type="button" class="settings__vrow" @click="versionDetail = 'web'">
           <div class="settings__vmain">
@@ -383,64 +388,56 @@ async function openChangelog(): Promise<void> {
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
       </div>
-      <div class="settings__versions-actions">
+      <template #footer>
         <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
           {{ changelogState === 'none' ? 'Keine Versionshinweise gefunden' : 'Änderungen' }}
         </QButton>
-      </div>
-    </section>
+      </template>
+    </SettingsCard>
 
     <AiSettings />
 
-    <section class="settings__section">
+    <SettingsCard>
       <template v-if="auth.isLoggedIn">
-        <div class="settings__row">
-          <div>
-            <div class="settings__row-title">Leaderboard</div>
-            <div class="settings__row-sub">
+        <SettingsRow label="Leaderboard">
+          <template #description>
               <template v-if="leaderboard.loadingProfile">Status wird geladen …</template>
               <template v-else-if="leaderboard.profile?.participating">
                 Öffentlich als {{ leaderboard.profile.nickname }}
               </template>
               <template v-else>Nicht öffentlich</template>
-            </div>
-          </div>
+          </template>
           <QButton variant="secondary" @click="router.push('/leaderboard')">
             {{ leaderboard.profile?.participating ? 'Verwalten' : 'Beitreten' }}
           </QButton>
-        </div>
-        <div class="settings__account-sep" />
-        <div class="settings__row">
-          <div>
-            <div class="settings__row-title">Archiv jetzt hochladen</div>
-            <div class="settings__row-sub">Manuelle Synchronisierung außerhalb des Auto-Syncs</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow label="Archiv synchronisieren">
+          <template #status>
+            <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
+          </template>
           <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
-            {{ uploading ? 'Lädt hoch …' : 'Archiv jetzt hochladen' }}
+            {{ uploading ? 'Lädt hoch …' : 'Jetzt hochladen' }}
           </QButton>
-        </div>
-        <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
-        <div class="settings__account-sep" />
-        <div class="settings__row">
-          <div>
-            <div class="settings__row-title">Abmelden</div>
-            <div class="settings__row-sub">Lokaler Fortschritt bleibt erhalten</div>
-          </div>
+        </SettingsRow>
+        <SettingsRow
+          label="Abmelden"
+          description="Lokaler Fortschritt bleibt erhalten"
+          tone="danger"
+        >
           <QButton variant="danger" @click="doLogout">Abmelden</QButton>
-        </div>
+        </SettingsRow>
       </template>
       <template v-else>
-        <div class="settings__row">
-          <div>
-            <div class="settings__row-title">Konto</div>
-            <div class="settings__row-sub">Als Gast unterwegs — Anmelden aktiviert die Synchronisierung</div>
-          </div>
+        <SettingsRow
+          label="Konto"
+          description="Als Gast unterwegs — Anmelden aktiviert die Synchronisierung"
+        >
           <QButton @click="ui.openAuthModal()">Anmelden</QButton>
-        </div>
+        </SettingsRow>
       </template>
-    </section>
+    </SettingsCard>
 
-    <CollapsePanel title="Erweitert · Serveradressen" subtitle="nur für Fortgeschrittene">
+    <CollapsePanel title="Erweitert · Serveradressen">
       <div class="settings__adv">
         <div class="settings__warn">
           Standardwerte sind bereits gesetzt. Nur ändern, wenn du einen eigenen Server nutzt.
@@ -509,32 +506,6 @@ async function openChangelog(): Promise<void> {
 .settings__title {
   margin-bottom: 4px;
 }
-.settings__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.settings__row--top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: stretch;
-  width: 100%;
-}
-.settings__row--top > div:first-child {
-  max-width: none;
-}
-.settings__row-title {
-  font-size: 13.5px;
-  font-weight: 600;
-}
-.settings__row-sub {
-  font-size: 11.5px;
-  color: var(--q-faint);
-  margin-top: 2px;
-  max-width: 340px;
-}
 .settings__url-error {
   font-size: 12.5px;
   color: var(--q-err-ink);
@@ -550,7 +521,12 @@ async function openChangelog(): Promise<void> {
   overflow: hidden;
 }
 .settings__segment {
-  padding: 7px 13px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--q-control-height);
+  padding: 9px 13px;
   font-size: 12px;
   font-weight: 600;
   color: var(--q-mut-2);
@@ -567,6 +543,21 @@ async function openChangelog(): Promise<void> {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
   font-weight: 700;
+}
+.settings__segment:focus-within {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid var(--q-accent);
+  outline-offset: -2px;
+}
+.settings__choice-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 .settings__themes {
   flex: none;
@@ -586,8 +577,10 @@ async function openChangelog(): Promise<void> {
   }
 }
 .settings__theme {
+  position: relative;
   display: flex;
   flex-direction: column;
+  min-height: var(--q-control-height);
   min-width: 0;
   gap: 6px;
   padding: 6px;
@@ -608,9 +601,13 @@ async function openChangelog(): Promise<void> {
   border-color: var(--q-accent-strong);
   box-shadow: 0 0 0 2px var(--q-accent-ring);
 }
-.settings__theme:focus-visible {
+.settings__theme:focus-within {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
+}
+.settings__theme--disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 .settings__theme-preview {
   box-sizing: border-box;
@@ -630,7 +627,7 @@ async function openChangelog(): Promise<void> {
   border-radius: 6px;
   padding: 8px;
   background: var(--q-card);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--q-shadow-card);
 }
 .settings__theme-line {
   height: 5px;
@@ -671,25 +668,27 @@ async function openChangelog(): Promise<void> {
 .settings__theme--on .settings__theme-name {
   color: var(--q-ink);
 }
-@media (pointer: coarse) {
-  .settings__theme {
-    min-height: 44px;
-  }
-}
 .settings__select-wrap {
   position: relative;
   display: inline-flex;
 }
 .settings__select {
+  min-height: var(--q-control-height);
   padding: 8px var(--q-control-chevron-padding-end) 8px 13px;
   border: 1px solid var(--q-border-3);
   border-radius: 8px;
   background: var(--q-card);
+  color: var(--q-ink);
+  font-family: inherit;
   font-size: 12.5px;
   font-weight: 600;
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+}
+.settings__select:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
 }
 .settings__select-chevron {
   position: absolute;
@@ -699,15 +698,6 @@ async function openChangelog(): Promise<void> {
   color: var(--q-mut);
   font-size: 16px;
   pointer-events: none;
-}
-.settings__section {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  background: var(--q-card);
-  border: 1px solid var(--q-border);
-  border-radius: 12px;
 }
 .settings__adv {
   display: flex;
@@ -755,31 +745,16 @@ async function openChangelog(): Promise<void> {
   box-shadow: 0 0 0 3px var(--q-accent-ring);
   background: var(--q-card);
 }
-@media (pointer: coarse) {
-  .settings__segment {
-    min-height: 44px;
-    padding: 10px 16px;
-  }
-  .settings__select {
-    min-height: 44px;
-  }
-}
 .settings__adv-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 6px;
 }
-.settings__versions-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-}
 .settings__vlist {
   display: flex;
   flex-direction: column;
+  margin: 0 20px 16px;
   border: 1px solid var(--q-border-soft);
   border-radius: 10px;
   overflow: hidden;
@@ -788,6 +763,7 @@ async function openChangelog(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-height: var(--q-control-height);
   padding: 11px 13px;
   background: var(--q-panel);
   border: none;
@@ -857,13 +833,6 @@ async function openChangelog(): Promise<void> {
   font: 500 10.5px ui-monospace, Menlo, monospace;
   color: var(--q-faint);
 }
-.settings__versions-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-}
-
 /* ---- Versionen detail modal ---- */
 .vdetail__card {
   width: 100%;
@@ -926,11 +895,6 @@ async function openChangelog(): Promise<void> {
   .vdetail__dt {
     width: auto;
   }
-}
-.settings__account-sep {
-  height: 1px;
-  background: var(--q-border-soft);
-  margin: 2px 0;
 }
 .settings__sync-status {
   font-size: 12px;

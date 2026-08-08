@@ -201,7 +201,7 @@ jobs:
             exit 1
           fi
           if [[ "$BANK_SHA" != "$QED2_EXPECTED_BANK_SHA" ]]; then
-            echo "Desktop 2.1.0 must pin the reviewed question-bank commit $QED2_EXPECTED_BANK_SHA." >&2
+            echo "Desktop must pin the reviewed question-bank commit $QED2_EXPECTED_BANK_SHA." >&2
             exit 1
           fi
           echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"

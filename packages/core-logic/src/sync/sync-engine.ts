@@ -1,6 +1,6 @@
 /**
  * Sync engine — client behavior for the sync protocol (contract §5, verified
- * against the real server; see docs/CONVENTIONS.md):
+ * against the real server):
  *
  *  - fast-forward → adopt new baseVersion, keep local content.
  *  - merged → replace local content with the server's merge; user not notified.
