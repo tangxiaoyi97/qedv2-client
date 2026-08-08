@@ -54,7 +54,7 @@ import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useAiStore } from '../stores/ai.js';
 import { useAuthStore } from '../stores/auth.js';
-import { historyLog } from '../services.js';
+import { historyLog, ports } from '../services.js';
 import { shortCommit } from '../version-info.js';
 
 const route = useRoute();
@@ -128,8 +128,23 @@ async function flushPendingGrading(): Promise<void> {
 }
 
 const mobileRailOpen = ref(false);
+const mobileSourceFooterReady = ref(false);
 const exitArmed = ref(false);
 const provenanceHeading = ref<HTMLHeadingElement | null>(null);
+
+/**
+ * The drawer is owned by @qed2/ui and intentionally has no product-specific
+ * content. Wait until its panel exists, then append this view's provenance
+ * footer to that panel. This keeps the Web/Desktop distinction in the Web
+ * shell and avoids teaching the shared list component about platform ports.
+ */
+watch(mobileRailOpen, async (open) => {
+  mobileSourceFooterReady.value = false;
+  if (!open) return;
+  await nextTick();
+  mobileSourceFooterReady.value =
+    mobileRailOpen.value && document.querySelector('.practice-session-drawer__panel') !== null;
+});
 
 watch(
   () => practice.phase,
@@ -777,6 +792,31 @@ const syncNote = computed(() => {
   }
 });
 const showProgramRail = computed(() => practice.total > 1);
+const desktopShell = ports.shell.capabilities.desktop;
+const bankSourceIsLocal = computed(
+  () => desktopShell && practice.contentSource === 'local',
+);
+const bankSourceName = computed(() => {
+  if (!desktopShell) return 'Remote-Core';
+  return bankSourceIsLocal.value ? 'Lokale Bank' : 'Remote-Core';
+});
+const bankSourceText = computed(() => {
+  const revision = practice.contentId ? shortCommit(practice.contentId) : 'Version wird geprüft';
+  const archive = practice.contentMode === 'revision' ? 'Archiv ' : '';
+  return `${bankSourceName.value} · ${archive}${revision}`;
+});
+const bankSourceA11yText = computed(() => {
+  const revision = practice.contentId
+    ? `Revision ${practice.contentId}`
+    : 'Revision wird geprüft';
+  const archive = practice.contentMode === 'revision' ? 'Archiv. ' : '';
+  return `${bankSourceName.value}. ${archive}${revision}`;
+});
+const bankSourceTitle = computed(() => {
+  if (!practice.contentId) return undefined;
+  const archive = practice.contentMode === 'revision' ? ' · Archiv' : '';
+  return `${bankSourceName.value}${archive} · ${practice.contentId}`;
+});
 
 /* --- session rail (left sidebar): the session's items + current position --- */
 const railItems = computed<SessionItem[]>(() => {
@@ -855,19 +895,6 @@ const currentCompetencyCodes = computed(() =>
           <template v-if="practice.phase === 'running'">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
           <template v-else-if="practice.phase === 'summary'">Programm abgeschlossen</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
-        </div>
-        <div
-          v-if="practice.phase === 'running' || practice.phase === 'summary'"
-          class="practice__source-badge"
-          :data-source="practice.contentSource"
-          :title="practice.contentId ? `Bank ${practice.contentId}` : undefined"
-        >
-          <HardDrive v-if="practice.contentSource === 'local'" :size="12" aria-hidden="true" />
-          <Cloud v-else :size="12" aria-hidden="true" />
-          <span>
-            {{ practice.contentSource === 'local' ? 'Lokale Bank' : 'Remote-Core' }}
-            · {{ practice.contentMode === 'revision' ? 'Archiv ' : '' }}{{ practice.contentId ? shortCommit(practice.contentId) : 'Version wird geprüft' }}
-          </span>
         </div>
         <SessionProgressBar
           :items="practice.items"
@@ -984,19 +1011,40 @@ const currentCompetencyCodes = computed(() =>
           </section>
 
           <QButton class="practice__summary-cta" @click="exitNow">Zurück</QButton>
+          <div
+            class="practice__source-footer practice__source-footer--summary"
+            :data-source="bankSourceIsLocal ? 'local' : 'remote'"
+            :title="bankSourceTitle"
+          >
+            <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
+            <Cloud v-else :size="12" aria-hidden="true" />
+            <span aria-hidden="true">{{ bankSourceText }}</span>
+            <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
+          </div>
         </div>
       </div>
 
       <!-- running -->
       <div v-else-if="practice.phase === 'running' && current" key="running" class="practice__running">
         <div class="practice__body">
-          <PracticeSessionRail
-            v-if="showProgramRail"
-            :items="railItems"
-            :graded-count="gradedCount"
-            :total="practice.total"
-            @jump="jumpToSessionItem"
-          />
+          <div v-if="showProgramRail" class="practice__session-rail-shell">
+            <PracticeSessionRail
+              :items="railItems"
+              :graded-count="gradedCount"
+              :total="practice.total"
+              @jump="jumpToSessionItem"
+            />
+            <div
+              class="practice__source-footer"
+              :data-source="bankSourceIsLocal ? 'local' : 'remote'"
+              :title="bankSourceTitle"
+            >
+              <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
+              <Cloud v-else :size="12" aria-hidden="true" />
+              <span aria-hidden="true">{{ bankSourceText }}</span>
+              <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
+            </div>
+          </div>
 
           <PracticeSessionDrawer
             v-if="showProgramRail"
@@ -1007,6 +1055,22 @@ const currentCompetencyCodes = computed(() =>
             @close="mobileRailOpen = false"
             @jump="jumpToSessionItem"
           />
+
+          <Teleport
+            v-if="mobileSourceFooterReady && mobileRailOpen"
+            to=".practice-session-drawer__panel"
+          >
+            <div
+              class="practice__source-footer practice__source-footer--drawer"
+              :data-source="bankSourceIsLocal ? 'local' : 'remote'"
+              :title="bankSourceTitle"
+            >
+              <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
+              <Cloud v-else :size="12" aria-hidden="true" />
+              <span aria-hidden="true">{{ bankSourceText }}</span>
+              <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
+            </div>
+          </Teleport>
 
           <div class="practice__content" :class="{ 'practice__content--sheet-open': solutionOpen }">
             <PracticeQuestionHeader
@@ -1045,6 +1109,18 @@ const currentCompetencyCodes = computed(() =>
                 class="practice__verdict"
                 @view-solution="openSolutionFromVerdict"
               />
+            </div>
+
+            <div
+              v-if="!showProgramRail"
+              class="practice__source-footer practice__source-footer--inline"
+              :data-source="bankSourceIsLocal ? 'local' : 'remote'"
+              :title="bankSourceTitle"
+            >
+              <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
+              <Cloud v-else :size="12" aria-hidden="true" />
+              <span aria-hidden="true">{{ bankSourceText }}</span>
+              <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
             </div>
 
           </div>
@@ -1212,21 +1288,91 @@ const currentCompetencyCodes = computed(() =>
   text-align: center;
   color: var(--q-ink-2);
 }
-.practice__source-badge {
-  width: max-content;
-  max-width: 100%;
-  margin: 3px auto 0;
+.practice__session-rail-shell {
+  width: var(--practice-rail-width);
+  height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
+  flex: none;
+  position: sticky;
+  top: 56px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 10px 10px;
+  overflow: hidden;
+  background: var(--q-panel);
+  border-right: 1px solid var(--q-border);
+}
+.practice__session-rail-shell :deep(.practice-rail) {
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  position: static;
+  padding: 0;
+  overflow-y: auto;
+  background: transparent;
+  border: 0;
+}
+.practice__source-footer {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  color: var(--q-neutral);
-  font-size: 9.5px;
-  font-weight: 680;
-  line-height: 1;
+  flex: none;
+  gap: 5px;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 10px 8px 1px;
+  border-top: 1px solid var(--q-border-soft);
+  color: var(--q-faint);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.25;
   white-space: nowrap;
 }
-.practice__source-badge[data-source='local'] {
+.practice__source-footer > svg {
+  flex: none;
+}
+.practice__source-footer > span[aria-hidden='true'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.practice__source-footer[data-source='local'] {
   color: var(--q-ok-ink);
+}
+.practice__source-footer--drawer {
+  width: 100%;
+  margin-top: auto;
+  padding: 14px 8px 2px;
+}
+.practice__source-footer--inline,
+.practice__source-footer--summary {
+  width: max-content;
+  max-width: 100%;
+  margin-right: auto;
+  margin-left: auto;
+  padding-right: 8px;
+  padding-left: 8px;
+}
+.practice__source-footer--inline {
+  margin-top: 22px;
+}
+.practice__source-footer--summary {
+  margin-top: 0;
+}
+.practice__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.practice__body :deep(.practice-session-drawer__panel) {
+  display: flex;
+  flex-direction: column;
 }
 .practice__logo-accent {
   color: var(--q-accent);
@@ -1529,6 +1675,9 @@ const currentCompetencyCodes = computed(() =>
 }
 
 @media (max-width: 1023px) {
+  .practice__session-rail-shell {
+    display: none;
+  }
   .practice__session-button {
     visibility: visible;
   }

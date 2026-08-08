@@ -146,31 +146,38 @@ describe('AI settings view', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows a textual readiness summary and uses native exclusive source controls', async () => {
+  it('shows a compact readiness summary and an exclusive source control only when both sources work', async () => {
     const host = mountSettings();
 
-    expect(getElement(host, 'section').getAttribute('aria-labelledby')).toBe('ai-settings-title');
+    const card = getElement(host, 'section.q-settings-card');
+    expect(card.getAttribute('aria-labelledby')).toBeTruthy();
     expect(getElement(host, 'h2').textContent).toBe('KI-Erklärungen');
     expect(host.textContent).toContain('Einsatzbereit');
-    expect(host.textContent).toContain('Eigener Schlüssel');
-    expect(host.textContent).toContain('OpenAI · gpt-test');
-    expect(host.textContent).toContain('Erklärungen & Bewertungsvorschläge');
-    expect(host.textContent).toContain('Nur auf deinen Klick');
+    expect(host.textContent).toContain('Erklären · Bewerten');
+    expect(host.textContent).toContain('OpenAI · gpt-test · •••• 1234');
 
+    const sourceControl = getElement(host, '[role="radiogroup"][aria-labelledby]');
+    const labelledBy = sourceControl.getAttribute('aria-labelledby');
+    expect(labelledBy && document.getElementById(labelledBy)?.textContent).toBe('Quelle');
     const ownKey = getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="byo"]');
     const serverPool = getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="pool"]');
+    expect(ownKey.type).toBe('radio');
+    expect(serverPool.name).toBe(ownKey.name);
+    expect(ownKey.labels?.[0]?.textContent).toContain('Eigener Schlüssel');
     expect(ownKey.checked).toBe(true);
     expect(serverPool.checked).toBe(false);
+    ownKey.focus();
+    expect(document.activeElement).toBe(ownKey);
 
     serverPool.click();
     await nextTick();
 
     expect(aiStore.setMode).toHaveBeenCalledWith('pool');
     expect(serverPool.checked).toBe(true);
-    expect(host.textContent).toMatch(/noch 1\s000 Token/);
+    expect(host.textContent).toMatch(/1\s000 Token/);
   });
 
-  it('guides an unconfigured account and never leaves the secret in the form', async () => {
+  it('hides unavailable server pooling and never leaves a saved secret in the form', async () => {
     aiStore.status = readyStatus({
       byo: { configured: false },
       pool: { eligible: false },
@@ -181,10 +188,19 @@ describe('AI settings view', () => {
     const host = mountSettings();
 
     expect(host.textContent).toContain('Einrichtung nötig');
-    expect(getElement(host, 'details.ai-set__key-details').hasAttribute('open')).toBe(true);
-    expect(getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="pool"]').disabled).toBe(true);
+    expect(getElement(host, '#ai-credential-editor')).toBeTruthy();
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect([...host.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Server')).toBe(false);
 
-    getElement<HTMLInputElement>(host, 'input[name="ai-provider"][value="gemini"]').click();
+    buttonWithText(host, 'Schließen').click();
+    await nextTick();
+    expect(host.querySelector('#ai-credential-editor')).toBeNull();
+    buttonWithText(host, 'Einrichten').click();
+    await nextTick();
+
+    const provider = getElement<HTMLSelectElement>(host, 'select[aria-labelledby]');
+    provider.value = 'gemini';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
     inputValue(getElement<HTMLInputElement>(host, '#ai-key'), '  test-secret  ');
     inputValue(getElement<HTMLInputElement>(host, '#ai-model'), '  model-test  ');
     getElement<HTMLFormElement>(host, 'form[aria-label="Eigenen KI-Schlüssel einrichten"]').dispatchEvent(
@@ -201,17 +217,39 @@ describe('AI settings view', () => {
     expect(host.textContent).toContain('Schlüssel gespeichert');
   });
 
-  it('announces a failed status without relying on colour and offers a retry', async () => {
+  it('does not auto-open the own-key editor while the entitled server source is selected', async () => {
+    aiStore.status = readyStatus({
+      byo: { configured: false },
+      active: 'pool',
+    });
+    aiStore.mode = 'pool';
+    const host = mountSettings();
+
+    expect(host.querySelector('#ai-credential-editor')).toBeNull();
+    buttonWithText(host, 'Einrichten').click();
+    await nextTick();
+    expect(getElement(host, '#ai-credential-editor')).toBeTruthy();
+  });
+
+  it('announces loading and failed status without rendering unusable source choices', async () => {
+    aiStore.status = null;
+    const loadingHost = mountSettings();
+
+    expect(getElement(loadingHost, '[role="status"]').textContent).toContain('Wird geladen');
+    expect(loadingHost.querySelector('[role="radiogroup"]')).toBeNull();
+    mounted?.app.unmount();
+    mounted = undefined;
+    document.body.innerHTML = '';
+
     aiStore.status = null;
     aiStore.statusError = 'Netzwerk nicht erreichbar';
     const host = mountSettings();
 
     expect(getElement(host, '[role="alert"]').textContent).toContain('Netzwerk nicht erreichbar');
     expect(host.textContent).toContain('Status nicht verfügbar');
-    expect(getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="pool"]').disabled).toBe(true);
-    expect(getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="byo"]').disabled).toBe(true);
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
 
-    buttonWithText(host, 'Status erneut laden').click();
+    buttonWithText(host, 'Erneut laden').click();
     await settle();
     expect(aiStore.refreshStatus).toHaveBeenCalledTimes(1);
   });
@@ -219,30 +257,128 @@ describe('AI settings view', () => {
   it('confirms credential removal and reports local cache clearing', async () => {
     const host = mountSettings();
 
-    buttonWithText(host, 'Schlüssel entfernen').click();
+    buttonWithText(host, 'Ändern').click();
     await nextTick();
-    expect(host.textContent).toContain('Wirklich entfernen?');
+    buttonWithText(host, 'Entfernen').click();
+    await nextTick();
+    expect(getElement(host, '[role="group"][aria-label="Schlüssel wirklich entfernen"]').textContent).toContain(
+      'Schlüssel entfernen?',
+    );
     buttonWithText(host, 'Entfernen').click();
     await settle();
     expect(aiStore.deleteCredential).toHaveBeenCalledTimes(1);
 
-    const maintenance = getElement<HTMLDetailsElement>(host, 'details.ai-set__maintenance');
-    maintenance.open = true;
-    await nextTick();
-    buttonWithText(host, 'Antworten leeren').click();
+    buttonWithText(host, 'Leeren').click();
     await settle();
 
     expect(aiStore.clearCache).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain('Lokale KI-Antworten wurden geleert');
+    expect(host.textContent).toContain('Geleert.');
+  });
+
+  it('keeps a stored credential removable after own-key access is revoked', async () => {
+    aiStore.byoOffered = false;
+    const host = mountSettings();
+
+    expect(host.textContent).toContain('OpenAI · gpt-test · •••• 1234');
+    expect(host.textContent).toContain('Zugriff nicht freigeschaltet');
+    expect(host.querySelector('#ai-credential-editor')).toBeNull();
+    expect(host.textContent).not.toContain('Einrichten');
+    expect(host.textContent).not.toContain('Ändern');
+
+    buttonWithText(host, 'Entfernen').click();
+    await nextTick();
+    expect(getElement(host, '[role="group"][aria-label="Schlüssel wirklich entfernen"]')).toBeTruthy();
+
+    buttonWithText(host, 'Entfernen').click();
+    await settle();
+    expect(aiStore.deleteCredential).toHaveBeenCalledTimes(1);
+    expect(aiStore.saveCredential).not.toHaveBeenCalled();
+  });
+
+  it('expands response and privacy details only on request and saves preferences', async () => {
+    const host = mountSettings();
+
+    expect(host.querySelector('#ai-preferences-editor')).toBeNull();
+    expect(host.querySelector('#ai-privacy-details')).toBeNull();
+
+    buttonWithText(host, 'Bearbeiten').click();
+    await nextTick();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-language'), ' Kroatisch ');
+    inputValue(getElement<HTMLTextAreaElement>(host, '#ai-instructions'), ' Kurz erklären. ');
+    getElement<HTMLFormElement>(host, '#ai-preferences-editor').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+    await settle();
+
+    expect(appStore.updateConfig).toHaveBeenCalledWith({
+      aiLanguage: 'Kroatisch',
+      aiCustomInstructions: 'Kurz erklären.',
+    });
+    expect(host.textContent).toContain('Antwortstil gespeichert');
+
+    buttonWithText(host, 'Details').click();
+    await nextTick();
+    expect(getElement(host, '#ai-privacy-details').textContent).toContain(
+      'Aufgabe, Musterlösung und deine Antwort',
+    );
+    expect(getElement(host, '#ai-privacy-details').textContent).toContain(
+      'Konto, Lernfortschritt und Statistiken',
+    );
+  });
+
+  it('keeps credential, preference and cache failures visible', async () => {
+    aiStore.status = readyStatus({
+      byo: { configured: false },
+      pool: { eligible: false },
+      active: 'none',
+    });
+    aiStore.poolAllowed = false;
+    aiStore.poolOffered = false;
+    aiStore.saveCredential = vi.fn(async () => {
+      throw new Error('Schlüssel ungültig');
+    });
+    aiStore.clearCache = vi.fn(async () => {
+      throw new Error('Cache gesperrt');
+    });
+    appStore.updateConfig = vi.fn(async () => {
+      throw new Error('Einstellungen nicht gespeichert');
+    });
+    const host = mountSettings();
+
+    inputValue(getElement<HTMLInputElement>(host, '#ai-key'), 'test-secret');
+    getElement<HTMLFormElement>(host, '#ai-credential-editor').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+    await settle();
+    expect(host.textContent).toContain('Schlüssel ungültig');
+
+    buttonWithText(host, 'Bearbeiten').click();
+    await nextTick();
+    getElement<HTMLFormElement>(host, '#ai-preferences-editor').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+    await settle();
+    expect(host.textContent).toContain('Einstellungen nicht gespeichert');
+
+    buttonWithText(host, 'Leeren').click();
+    await settle();
+    expect(host.textContent).toContain('Cache gesperrt');
+    expect(host.querySelectorAll('[role="alert"]')).toHaveLength(3);
   });
 
   it('uses shared components and theme tokens without a platform-specific UI branch', () => {
     expect(aiSettingsSource).toContain("import { QButton, QChip, QNotice } from '@qed2/ui';");
+    expect(aiSettingsSource).toContain("import SettingsCard from './SettingsCard.vue';");
+    expect(aiSettingsSource).toContain("import SettingsRow from './SettingsRow.vue';");
+    expect(aiSettingsSource).toContain("from 'lucide-vue-next';");
     expect(aiSettingsSource).toContain('min-height: var(--q-control-height);');
-    expect(aiSettingsSource).toContain('background: var(--q-accent-bg);');
+    expect(aiSettingsSource).toContain('type="radio"');
+    expect(aiSettingsSource).toContain('name="ai-source"');
+    expect(aiSettingsSource).toContain('background: var(--q-accent-strong);');
     expect(aiSettingsSource).toContain('color: var(--q-ink);');
     expect(aiSettingsSource).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(aiSettingsSource).not.toMatch(/rgba?\(/i);
+    expect(aiSettingsSource).not.toContain('ai-set__overview');
     expect(aiSettingsSource).not.toContain('qed2Desktop');
     expect(aiSettingsSource).not.toContain('ports.shell');
     expect(aiSettingsSource).not.toContain('Electron');

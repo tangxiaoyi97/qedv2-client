@@ -15,11 +15,9 @@ export const LOCALE_ENABLED: Record<Locale, boolean> = {
 const messages = {
   de: {
     settingsLanguage: 'Sprache',
-    settingsLanguageHint: 'Oberfläche',
   },
   en: {
     settingsLanguage: 'Language',
-    settingsLanguageHint: 'Interface',
   },
 } satisfies Record<Locale, Record<string, string>>;
 
