@@ -85,22 +85,11 @@ const activeRevisionText = computed(() =>
 );
 const sourceStatusText = computed(() => {
   if (sourcePreference.value === 'local') {
-    const state = selectedSourceReady.value
-      ? 'Lokale Aufgabenbank · offline verfügbar'
-      : 'Lokale Aufgabenbank gewählt · Remote-Ersatz aktiv';
-    return `${state} · ${activeRevisionText.value}`;
+    return selectedSourceReady.value
+      ? activeRevisionText.value
+      : `Remote-Ersatz · ${activeRevisionText.value}`;
   }
-  const state = app.online
-    ? 'Remote-Core · Netzwerkverbindung erforderlich'
-    : 'Remote-Core gewählt · derzeit offline';
-  return `${state} · ${activeRevisionText.value}`;
-});
-const userDataStatusText = computed(() => {
-  const state = progress.syncStatus.state;
-  if (!app.online || state === 'offline') return 'Fortschritt lokal gesichert · Cloud-Sync wartet';
-  if (state === 'syncing') return 'Fortschritt lokal gesichert · Cloud-Sync läuft';
-  if (state === 'error' || state === 'conflict') return 'Fortschritt lokal gesichert · Cloud-Abgleich benötigt Aufmerksamkeit';
-  return 'Aufgabenquelle getrennt von Konto und Cloud-Speicher';
+  return app.online ? activeRevisionText.value : `Offline · ${activeRevisionText.value}`;
 });
 
 async function load(force = false): Promise<void> {
@@ -377,6 +366,26 @@ function partGrading(partId: string): GradingOrUnseen {
   return progress.partState.get(partId)?.grading ?? 'unseen';
 }
 
+function gradingGroups(parts: QuestionSummary['parts']): { grading: GradingOrUnseen; count: number }[] {
+  const order = [...new Set<GradingOrUnseen>([...VALID_GRADINGS, 'unseen'])];
+  const counts = new Map<GradingOrUnseen, number>();
+  for (const part of parts) {
+    const grading = partGrading(part.id);
+    counts.set(grading, (counts.get(grading) ?? 0) + 1);
+  }
+  return order
+    .flatMap((grading) => {
+      const count = counts.get(grading) ?? 0;
+      return count > 0 ? [{ grading, count }] : [];
+    });
+}
+
+function gradingSummary(parts: QuestionSummary['parts']): string {
+  const groups = gradingGroups(parts);
+  if (groups.length === 0) return 'Bewertung nicht verfügbar';
+  return groups.map(({ grading, count }) => `${count} ${GRADING_FILTER_LABELS[grading]}`).join(' · ');
+}
+
 /**
  * Grading semantics: a question matches when ANY part's grading is in the
  * selected set; starredOnly: any part starred.
@@ -510,7 +519,7 @@ const activeChips = computed<ActiveChip[]>(() => {
   if (f.starredOnly) {
     out.push({
       key: 'star',
-      label: 'Nur markierte (★)',
+      label: 'Markiert ★',
       remove: () => (filter.value = { ...f, starredOnly: false }),
     });
   }
@@ -618,7 +627,7 @@ function firstCode(q: QuestionSummary): string | undefined {
             @click="selectSource('local')"
           >
             <HardDrive :size="18" aria-hidden="true" />
-            <span><strong>Lokal</strong><small>Auf diesem Gerät</small></span>
+            <strong>Lokal</strong>
           </button>
           <button
             type="button"
@@ -630,10 +639,9 @@ function firstCode(q: QuestionSummary): string | undefined {
             @click="selectSource('remote')"
           >
             <Cloud :size="18" aria-hidden="true" />
-            <span><strong>Remote-Core</strong><small>Über das Netzwerk</small></span>
+            <strong>Remote-Core</strong>
           </button>
         </div>
-        <p class="browse__source-safety">{{ userDataStatusText }}. Ein Quellenwechsel löscht keine Antworten oder Speicherstände.</p>
         <QNotice v-if="sourceError" tone="error" class="browse__source-error">
           Quelle konnte nicht gewechselt werden: {{ sourceError }}
         </QNotice>
@@ -643,7 +651,7 @@ function firstCode(q: QuestionSummary): string | undefined {
         <SearchBox
           v-model="searchQuery"
           class="browse__search"
-          placeholder="Aufgaben durchsuchen — Titel, Kompetenz, Angabe, Lösung …"
+          placeholder="Aufgaben suchen"
           :busy="searchBusy"
           @search="runSearch"
         />
@@ -693,7 +701,7 @@ function firstCode(q: QuestionSummary): string | undefined {
       <div class="browse__meta">
         <span v-if="searchBusy">Suche …</span>
         <span v-else-if="searchResult">{{ searchResult.total }} Treffer für „{{ searchResult.query }}“</span>
-        <span v-if="filterCount > 0" class="browse__meta-note">(Filter sind während der Suche pausiert)</span>
+        <span v-if="filterCount > 0" class="browse__meta-note">Filter pausiert</span>
       </div>
       <QNotice v-if="searchError" tone="error">
         Suche fehlgeschlagen: {{ searchError }}
@@ -704,7 +712,7 @@ function firstCode(q: QuestionSummary): string | undefined {
         </template>
       </QNotice>
       <QNotice v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy">
-        Keine Treffer — Tippfehler sind erlaubt, aber probier ein anderes Wort.
+        Keine Treffer.
       </QNotice>
       <div v-else-if="searchResult" class="browse__list">
         <button
@@ -715,13 +723,20 @@ function firstCode(q: QuestionSummary): string | undefined {
           :class="{ 'browse__row--excluded': hitExcluded(hit.id) }"
           @click="openHit(hit.id)"
         >
-          <span class="browse__dots" aria-hidden="false">
-            <GradingDot
-              v-for="p in summaryById.get(hit.id)?.parts ?? []"
-              :key="p.id"
-              :grading="partGrading(p.id)"
-              :size="11"
-            />
+          <span
+            class="browse__dots"
+            role="img"
+            :aria-label="gradingSummary(summaryById.get(hit.id)?.parts ?? [])"
+          >
+            <span
+              v-for="group in gradingGroups(summaryById.get(hit.id)?.parts ?? [])"
+              :key="group.grading"
+              class="browse__dot-group"
+              aria-hidden="true"
+            >
+              <GradingDot :grading="group.grading" :size="11" />
+              <span v-if="group.count > 1" class="browse__dot-count">×{{ group.count }}</span>
+            </span>
           </span>
           <span class="browse__hit-main">
             <span class="browse__hit-title">
@@ -783,8 +798,16 @@ function firstCode(q: QuestionSummary): string | undefined {
         @click="toggleSelection(q)"
         @dblclick="q.playable && practiceSingle(q.id)"
       >
-        <span class="browse__dots" aria-hidden="false">
-          <GradingDot v-for="p in q.parts" :key="p.id" :grading="partGrading(p.id)" :size="11" />
+        <span class="browse__dots" role="img" :aria-label="gradingSummary(q.parts)">
+          <span
+            v-for="group in gradingGroups(q.parts)"
+            :key="group.grading"
+            class="browse__dot-group"
+            aria-hidden="true"
+          >
+            <GradingDot :grading="group.grading" :size="11" />
+            <span v-if="group.count > 1" class="browse__dot-count">×{{ group.count }}</span>
+          </span>
         </span>
         <span class="browse__nr">{{ q.source.nr }}</span>
         <QChip v-if="firstCode(q)" class="browse__chip">{{ firstCode(q) }}</QChip>
@@ -798,7 +821,7 @@ function firstCode(q: QuestionSummary): string | undefined {
         <span class="browse__qtitle">{{ q.title }}</span>
         <span v-if="rowInfo(q).starred" class="browse__star" title="Gemerkt" aria-label="Gemerkt">★</span>
 
-        <span v-if="!q.playable" class="browse__state browse__state--na">Noch nicht verfügbar</span>
+        <span v-if="!q.playable" class="browse__state browse__state--na">Nicht verfügbar</span>
         <template v-else-if="rowInfo(q).practiced">
           <span v-if="rowInfo(q).due" class="browse__due">
             <span class="browse__due-dot" aria-hidden="true" />Fällig
@@ -809,17 +832,6 @@ function firstCode(q: QuestionSummary): string | undefined {
         </template>
         <span v-else class="browse__state browse__state--new">Neu</span>
 
-        <Transition name="pop-in">
-          <span
-            v-if="selectedIds.has(q.id) && selectedIds.size === 1"
-            role="button"
-            class="browse__single-btn"
-            title="Diese Aufgabe üben"
-            @click.stop="practiceSingle(q.id)"
-          >
-            →
-          </span>
-        </Transition>
       </button>
       <div
         v-if="windowed.length < filtered.length"
@@ -918,19 +930,9 @@ function firstCode(q: QuestionSummary): string | undefined {
   cursor: pointer;
   transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
 }
-.browse__source-option span {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
 .browse__source-option strong {
   color: inherit;
   font-size: 12px;
-  line-height: 1.2;
-}
-.browse__source-option small {
-  color: var(--q-faint);
-  font-size: 10.5px;
   line-height: 1.2;
 }
 .browse__source-option--selected {
@@ -953,13 +955,6 @@ function firstCode(q: QuestionSummary): string | undefined {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
-.browse__source-safety {
-  grid-column: 1 / -1;
-  margin: -2px 0 0;
-  color: var(--q-faint);
-  font-size: 10.75px;
-  line-height: 1.4;
-}
 .browse__source-error {
   grid-column: 1 / -1;
 }
@@ -969,7 +964,6 @@ function firstCode(q: QuestionSummary): string | undefined {
 @keyframes browse-source-spin { to { transform: rotate(360deg); } }
 @media (max-width: 680px) {
   .browse__sources { grid-template-columns: 1fr; }
-  .browse__source-safety,
   .browse__source-error { grid-column: auto; }
 }
 .browse__searchrow {
@@ -1194,8 +1188,18 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__dots {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   flex: none;
+}
+.browse__dot-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.browse__dot-count {
+  color: var(--q-faint);
+  font: 700 9.5px ui-monospace, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
 }
 .browse__nr {
   font-weight: 700;
@@ -1250,37 +1254,6 @@ function firstCode(q: QuestionSummary): string | undefined {
   flex: none;
   margin-left: auto;
 }
-.browse__single-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  background: var(--q-accent-strong);
-  color: var(--q-on-accent);
-  font-weight: 800;
-  font-size: 14px;
-  margin-left: 8px;
-  flex: none;
-  cursor: pointer;
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-.pop-in-enter-active,
-.pop-in-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-.pop-in-enter-from,
-.pop-in-leave-to {
-  opacity: 0;
-  transform: scale(0.6) translateX(-10px);
-}
-@media (hover: hover) and (pointer: fine) {
-  .browse__single-btn:hover {
-    background: var(--q-ink);
-    transform: translateX(2px);
-  }
-}
 .browse__state--new {
   color: var(--q-faint);
   font-weight: 600;
@@ -1298,71 +1271,47 @@ function firstCode(q: QuestionSummary): string | undefined {
   font-size: 12px;
 }
 @media (max-width: 640px) {
-  /* Two-line row (search hits keep their own layout):
-       line 1: dots · title (ellipsis) · star
-       line 2: Nr · Kompetenz-chip · due/points/state (muted, smaller)
-     The ::after break is a zero-height 100%-width flex item — everything
-     ordered after it wraps onto the second line. */
+  /* A phone is a scanning surface: keep every catalogue entry on one
+     touch-sized line and let the title yield space with an ellipsis. */
   .browse__row:not(.browse__hit) {
-    flex-wrap: wrap;
-    gap: 3px 9px;
-    contain-intrinsic-size: auto 72px;
-  }
-  .browse__row:not(.browse__hit)::after {
-    content: '';
-    order: 4;
-    width: 100%;
-    height: 0;
+    min-height: 52px;
+    flex-wrap: nowrap;
+    gap: 7px;
+    padding: 8px 10px;
+    contain-intrinsic-size: auto 52px;
   }
   .browse__row:not(.browse__hit) .browse__dots {
-    order: 1;
+    gap: 3px;
   }
   .browse__row:not(.browse__hit) .browse__qtitle {
-    order: 2;
     font-size: 13px;
     font-weight: 600;
     color: var(--q-ink);
   }
-  .browse__row:not(.browse__hit) .browse__star {
-    order: 3;
-  }
   .browse__row:not(.browse__hit) .browse__nr {
-    order: 5;
     min-width: 0;
     font-size: 11.5px;
     color: var(--q-mut);
   }
   .browse__row:not(.browse__hit) .browse__chip {
-    order: 5;
+    padding: 3px 8px;
+    font-size: 10.75px;
   }
   .browse__row:not(.browse__hit) .browse__excl {
-    order: 5;
     font-size: 11.5px;
-  }
-  .browse__row:not(.browse__hit) .browse__due {
-    order: 6;
   }
   .browse__row:not(.browse__hit) .browse__points {
-    order: 6;
     font-size: 11.5px;
     color: var(--q-mut);
-  }
-  .browse__row:not(.browse__hit) .browse__state {
-    order: 6;
-  }
-  .browse__row:not(.browse__hit) .browse__single-btn {
-    order: 7;
   }
 }
 @media (pointer: coarse) {
   /* Invisible ≥44px hit-area extensions, keeping the compact visuals —
      same trick as GradingCapsule/StarButton in @qed2/ui. */
-  .browse__active-x,
-  .browse__single-btn {
+  .browse__active-x {
     position: relative;
   }
-  .browse__active-x::after,
-  .browse__single-btn::after {
+  .browse__active-x::after {
     content: '';
     position: absolute;
     left: 50%;

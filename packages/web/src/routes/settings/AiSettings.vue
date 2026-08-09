@@ -61,20 +61,20 @@ const sourceUnavailable = computed(
 type ReadinessTone = 'accent' | 'neutral' | 'warn';
 
 const readiness = computed<{ label: string; tone: ReadinessTone }>(() => {
-  if (ai.statusError) return { label: 'Status nicht verfügbar', tone: 'warn' };
-  if (!status.value) return { label: 'Wird geladen', tone: 'neutral' };
+  if (ai.statusError) return { label: 'Status fehlt', tone: 'warn' };
+  if (!status.value) return { label: 'Lädt', tone: 'neutral' };
   if (!status.value.features.explain && !status.value.features.assess) {
     return { label: 'Nicht verfügbar', tone: 'warn' };
   }
   if (ai.mode === 'pool') {
     return ai.poolOffered
-      ? { label: 'Einsatzbereit', tone: 'accent' }
+      ? { label: 'Bereit', tone: 'accent' }
       : { label: 'Quelle wählen', tone: 'warn' };
   }
   if (!ai.byoOffered) return { label: 'Nicht verfügbar', tone: 'warn' };
   return configured.value
-    ? { label: 'Einsatzbereit', tone: 'accent' }
-    : { label: 'Einrichtung nötig', tone: 'warn' };
+    ? { label: 'Bereit', tone: 'accent' }
+    : { label: 'Einrichten', tone: 'warn' };
 });
 
 function providerLabel(value: string | undefined): string {
@@ -95,7 +95,7 @@ const featureLabel = computed(() => {
 const credentialSummary = computed(() => {
   if (!configured.value) return 'Nicht eingerichtet';
   const route = status.value?.byo;
-  const parts = [providerLabel(route?.provider)];
+  const parts = ['Verschlüsselt', providerLabel(route?.provider)];
   if (route?.model) parts.push(route.model);
   if (route?.last4) parts.push(`•••• ${route.last4}`);
   return parts.join(' · ');
@@ -316,7 +316,7 @@ async function clearCache(): Promise<void> {
         </SettingsRow>
 
         <QNotice v-if="sourceUnavailable" class="ai-settings__notice">
-          Das Server-Kontingent ist derzeit nicht verfügbar.
+          Server-Kontingent nicht verfügbar.
           <template #action>
             <QButton variant="secondary" @click="selectMode('byo')">
               Eigenen Schlüssel verwenden
@@ -330,10 +330,10 @@ async function clearCache(): Promise<void> {
 
         <SettingsRow v-if="ai.byoOffered || configured" label="API-Schlüssel">
           <template #description>{{ credentialSummary }}</template>
-          <template v-if="configured" #status>
+          <template v-if="configured && !ai.byoOffered" #status>
             <span class="ai-settings__secure">
               <ShieldCheck :size="14" aria-hidden="true" />
-              {{ ai.byoOffered ? 'Verschlüsselt gespeichert' : 'Gespeichert · Zugriff nicht freigeschaltet' }}
+              Gespeichert · nicht verfügbar
             </span>
           </template>
           <div
@@ -535,7 +535,7 @@ async function clearCache(): Promise<void> {
           </div>
         </form>
 
-        <SettingsRow label="Datenschutz" description="Nur auf deinen Klick">
+        <SettingsRow label="Datenschutz">
           <QButton
             variant="secondary"
             :aria-expanded="privacyOpen"
@@ -551,13 +551,13 @@ async function clearCache(): Promise<void> {
 
         <div v-if="privacyOpen" id="ai-privacy-details" class="ai-settings__privacy">
           <p>
-            <strong>Übertragen an {{ privacyRecipient }}:</strong>
-            Aufgabe, Musterlösung und deine Antwort.
+            <strong>Nur nach deinem Klick:</strong>
+            Aufgabe, Musterlösung und deine Antwort gehen an {{ privacyRecipient }}.
           </p>
           <p><strong>Nicht übertragen:</strong> Konto, Lernfortschritt und Statistiken.</p>
         </div>
 
-        <SettingsRow label="KI-Cache" description="Antworten auf diesem Gerät">
+        <SettingsRow label="KI-Cache">
           <template v-if="cacheCleared" #status>
             <span class="ai-settings__saved" role="status">Geleert.</span>
           </template>
@@ -772,6 +772,16 @@ async function clearCache(): Promise<void> {
   .ai-settings__segments,
   .ai-settings__input {
     width: 100%;
+  }
+
+  .ai-settings__editor :deep(.q-settings-row--inline) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .ai-settings__editor :deep(.q-settings-row__control) {
+    width: 100%;
+    justify-self: stretch;
   }
 
   .ai-settings__editor-actions,

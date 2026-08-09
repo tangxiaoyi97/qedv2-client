@@ -20,6 +20,14 @@ const modelValue: IntervalSubmission = {
 };
 
 describe('IntervalControl', () => {
+  it('uses a compact unbounded and decimal hint', () => {
+    const wrapper = mount(IntervalControl, {
+      props: { answer, modelValue, showPreview: true },
+    });
+
+    expect(wrapper.get('.q-interval__hint').text()).toBe('leer/∞: unbeschränkt · , oder .');
+  });
+
   it('renders bracket toggles in interval notation order: ([ input ; input ])', async () => {
     const wrapper = mount(IntervalControl, {
       props: { answer, modelValue },

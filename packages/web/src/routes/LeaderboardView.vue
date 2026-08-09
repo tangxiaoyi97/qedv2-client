@@ -190,7 +190,6 @@ onMounted(() => {
       <section class="leaderboard__auth">
         <span class="leaderboard__auth-icon" aria-hidden="true"><Trophy /></span>
         <h1>Leaderboard</h1>
-        <p>Bitte anmelden.</p>
         <QButton @click="ui.openAuthModal()">Anmelden</QButton>
       </section>
     </template>
@@ -284,7 +283,6 @@ onMounted(() => {
               <UserRound />
             </span>
             <span class="leaderboard__profile-copy">
-              <span>Dein Nickname</span>
               <strong>{{ profile?.participating ? profile.nickname : '' }}</strong>
             </span>
           </div>
@@ -531,17 +529,7 @@ onMounted(() => {
 
 .leaderboard__profile-copy {
   min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.leaderboard__profile-copy > span {
-  color: var(--q-faint);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  line-height: 1.2;
-  text-transform: uppercase;
+  display: block;
 }
 
 .leaderboard__profile-copy strong {
@@ -631,12 +619,6 @@ onMounted(() => {
 .leaderboard__auth-icon svg {
   width: 24px;
   height: 24px;
-}
-
-.leaderboard__auth p {
-  margin: 8px 0 20px;
-  color: var(--q-mut);
-  font-size: 13px;
 }
 
 @media (max-width: 700px) {

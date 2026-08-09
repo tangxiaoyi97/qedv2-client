@@ -131,9 +131,17 @@ describe('HistoryView activity filter', () => {
     app.mount(host);
 
     await vi.waitFor(() => expect(host.querySelector('.hist__row')).not.toBeNull());
-    expect(host.textContent).toContain('Lokal');
-    expect(host.querySelector('.hist__row-copy > .hist__row-source')).not.toBeNull();
-    host.querySelector<HTMLButtonElement>('.hist__row')?.click();
+    const row = host.querySelector<HTMLButtonElement>('.hist__row');
+    expect(row?.textContent).toContain('question-local');
+    expect(row?.textContent).toContain('1/1 P');
+    expect(row?.textContent).not.toContain('part-local');
+    expect(row?.textContent).not.toContain('Lokal');
+    expect(row?.querySelector('.hist__row-source')).toBeNull();
+    expect(row?.querySelector('.hist__row-provenance')).toBeNull();
+    expect(row?.getAttribute('aria-label')).toContain('Erneut üben');
+    expect(row?.getAttribute('aria-label')).toContain(`Quelle Lokal, Bank ${commit.slice(0, 7)}`);
+    expect(host.textContent).not.toContain('auf diesem Gerät gespeichert');
+    row?.click();
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
     expect(router.currentRoute.value.query).toMatchObject({
       questions: 'question-local',
@@ -216,11 +224,21 @@ describe('HistoryView activity filter', () => {
 
     // Rows written by pre-provenance clients must be honest about replaying
     // against today's bank. They never receive a fabricated source/revision.
-    expect(host.textContent).toContain('Quellversion unbekannt · Wiederholung mit aktueller Bank');
+    expect(host.textContent).toContain('Version unbekannt');
+    expect(host.textContent).not.toContain('Wiederholung mit aktueller Bank');
+    expect(host.textContent).not.toContain('Verlauf aus deinem Konto');
     const legacyRow = host.querySelector<HTMLButtonElement>('.hist__row');
-    expect(legacyRow?.title).toContain('mit der aktuellen Aufgabenbank');
+    expect(legacyRow?.getAttribute('aria-label')).toContain('Version unbekannt');
+    expect(legacyRow?.getAttribute('aria-label')).toContain('Aktuelle Bank muss bestätigt werden');
     expect(calls.some((url) => url.includes('/content/'))).toBe(false);
     legacyRow?.click();
+    await nextTick();
+    expect(router.currentRoute.value.path).toBe('/history');
+    expect(document.body.textContent).toContain('Diese Antwort nennt keine Aufgabenbank.');
+    const confirm = [...document.body.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Aktuelle Bank verwenden');
+    expect(confirm).toBeDefined();
+    confirm?.click();
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
     expect(router.currentRoute.value.query).toMatchObject({
       questions: 'question-cloud',
@@ -287,11 +305,14 @@ describe('HistoryView activity filter', () => {
     app.mount(host);
 
     await vi.waitFor(() => expect(host.querySelector('.hist__row')).not.toBeNull());
-    expect(host.textContent).toContain('Remote');
-    expect(host.textContent).not.toContain('Quellversion unbekannt');
-    const source = host.querySelector<HTMLElement>('.hist__row-copy > .hist__row-source');
-    expect(source?.title).toBe(`Bank ${commit}`);
-    host.querySelector<HTMLButtonElement>('.hist__row')?.click();
+    const row = host.querySelector<HTMLButtonElement>('.hist__row');
+    expect(row?.textContent).toContain('question-remote');
+    expect(row?.textContent).not.toContain('part-remote');
+    expect(row?.textContent).not.toContain('Remote');
+    expect(row?.textContent).not.toContain('Version unbekannt');
+    expect(row?.querySelector('.hist__row-source')).toBeNull();
+    expect(row?.getAttribute('aria-label')).toContain(`Quelle Remote-Core, Bank ${commit.slice(0, 7)}`);
+    row?.click();
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
     expect(router.currentRoute.value.query).toMatchObject({
       questions: 'question-remote',

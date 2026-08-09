@@ -133,7 +133,7 @@ const emit = defineEmits<{
         />
         <div v-if="assessing && state.selfAssessment" class="practice-bar__preview">
           <span class="practice-bar__preview-main">
-            <span class="practice-bar__preview-label">Deine Punkte:</span>
+            <span class="practice-bar__visually-hidden">Deine Punkte: </span>
             <b class="practice-bar__preview-value">{{ assessedScore }}</b>
           </span>
         </div>
@@ -291,6 +291,19 @@ const emit = defineEmits<{
 .practice-bar__preview-value {
   color: var(--q-ink);
   font-size: 15px;
+}
+
+.practice-bar__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .practice-bar__preview-hint {

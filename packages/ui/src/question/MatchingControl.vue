@@ -313,8 +313,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
     <div v-if="!review && !groupedOptionMode" class="q-match__pool">
       <div class="q-match__pool-title">
         Optionen
-        <span v-if="!review" class="q-match__pool-hint q-match__pool-hint--fine">ziehen oder per Auswahl zuordnen</span>
-        <span v-if="!review" class="q-match__pool-hint q-match__pool-hint--coarse">per Auswahl zuordnen</span>
+        <span class="q-match__pool-hint q-match__pool-hint--fine">Ziehen / auswählen</span>
+        <span class="q-match__pool-hint q-match__pool-hint--coarse">Auswählen</span>
       </div>
       <div class="q-match__pool-items">
         <div
@@ -670,7 +670,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   color: var(--q-hint);
   margin-left: 8px;
 }
-/* drag & drop is mouse-only — on touch the hint must not promise it */
 .q-match__pool-hint--coarse {
   display: none;
 }

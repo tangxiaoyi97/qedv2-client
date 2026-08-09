@@ -151,7 +151,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(states(wrapper).at(-1)!.answerPreview).toEqual({
       label: 'Ergebnis',
       value: '( −∞ ; ∞ )',
-      hint: 'leer oder ∞ = unbeschränkt · Komma oder Punkt',
+      hint: 'leer/∞: unbeschränkt · , oder .',
     });
 
     const inputs = wrapper.findAll('input.q-interval__input');

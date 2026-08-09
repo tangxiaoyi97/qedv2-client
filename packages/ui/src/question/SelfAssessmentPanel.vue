@@ -89,7 +89,6 @@ function isSelectedScore(value: number): boolean {
   <div class="q-selfassess">
     <div class="q-selfassess__head">
       <span class="q-selfassess__title">Selbstbewertung</span>
-      <span class="q-selfassess__sub">Vergleiche mit der Lösung</span>
     </div>
 
     <div v-if="rubric && rubric.length > 0" class="q-selfassess__rubric">
@@ -116,7 +115,6 @@ function isSelectedScore(value: number): boolean {
     </div>
 
     <div v-else class="q-selfassess__overall">
-      <span class="q-selfassess__overall-label">Meine Punkte:</span>
       <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung" @keydown="onRadioGroupKeydown">
         <button
           v-for="option in scoreOptions"
@@ -159,10 +157,6 @@ function isSelectedScore(value: number): boolean {
 .q-selfassess__title {
   font-weight: 700;
   font-size: 13px;
-}
-.q-selfassess__sub {
-  font-size: 11.5px;
-  color: var(--q-mut-2);
 }
 .q-selfassess__rubric {
   padding: 11px 13px;
@@ -237,10 +231,6 @@ function isSelectedScore(value: number): boolean {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-.q-selfassess__overall-label {
-  font-size: 12.5px;
-  color: var(--q-mut);
 }
 .q-selfassess__segments {
   display: flex;

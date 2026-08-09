@@ -70,7 +70,6 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
     <div v-if="loading" class="q-aix__loading">
       <!-- Rows shaped like the prose that replaces them, so nothing jumps. -->
       <QSkeleton :rows="3" height="16px" radius="6px" gap="9px" label="Erklärung wird erzeugt …" />
-      <span class="q-aix__loading-label">Die KI liest deine Antwort …</span>
     </div>
 
     <div v-else-if="error" class="q-aix__error" role="alert">
@@ -208,11 +207,6 @@ const idle = computed(() => !hasAnswer.value && !props.loading && !props.error);
   flex-direction: column;
   gap: 8px;
 }
-.q-aix__loading-label {
-  font-size: 11.5px;
-  color: var(--q-faint);
-}
-
 .q-aix__error {
   display: flex;
   flex-direction: column;

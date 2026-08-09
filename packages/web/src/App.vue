@@ -161,8 +161,7 @@ watch(
           <div class="app__guest-header">
             <UserCircle class="app__guest-avatar" aria-hidden="true" />
             <div class="app__guest-info">
-              <div class="app__guest-title">Als Gast unterwegs</div>
-              <div class="app__guest-text">Lokal gespeichert</div>
+              <div class="app__guest-title">Gast</div>
             </div>
           </div>
           <button type="button" class="app__guest-btn" @click="ui.openAuthModal()">Anmelden</button>

@@ -14,6 +14,7 @@ import { ports } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
+import { useUiStore } from '../src/stores/ui.js';
 
 function stubBrowserApis(): void {
   window.matchMedia ??= ((query: string) =>
@@ -63,12 +64,21 @@ describe('web shell boot (guest, offline)', () => {
     await router.isReady();
     await nextTick();
 
-    expect(host.textContent).toContain('Empfohlen für heute');
-    expect(host.textContent).toContain('Programm starten');
-    expect(host.textContent).toContain('Als Gast unterwegs');
+    expect(host.textContent).toContain('Empfohlen');
+    expect(host.textContent).toContain('Starten');
+    expect(host.textContent).toContain('Gast');
+    expect(host.textContent).not.toContain('Lokal gespeichert');
     expect(host.querySelector('[data-desktop-capability-entry]')).toBeNull();
     expect(auth.isLoggedIn).toBe(false);
     expect(progress.loaded).toBe(true);
+
+    const ui = useUiStore();
+    ui.openAuthModal('login');
+    await nextTick();
+    expect(document.body.querySelector('.authm__scope')?.textContent).toBe(
+      'Lokal üben · mit Konto synchronisieren',
+    );
+    ui.closeAuthModal();
 
     app.unmount();
     vi.unstubAllGlobals();

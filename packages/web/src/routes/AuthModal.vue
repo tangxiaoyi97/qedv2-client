@@ -110,7 +110,7 @@ watch(
       <form v-if="ui.authModalMode === 'login'" class="authm__card" @submit.prevent="doLogin">
         <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
         <div class="authm__brand">QED<span class="authm__brand-accent">2</span></div>
-        <div class="authm__sub">Willkommen zurück</div>
+        <p class="authm__scope">Lokal üben · mit Konto synchronisieren</p>
 
         <label class="authm__field">
           <span class="authm__label">Benutzername</span>
@@ -124,11 +124,10 @@ watch(
         <div v-if="loginError" class="authm__error" role="alert">{{ loginError }}</div>
 
         <QButton type="submit" :disabled="loginPending">
-          {{ loginPending ? 'Fortschritt wird zusammengeführt …' : 'Anmelden' }}
+          {{ loginPending ? 'Wird angemeldet …' : 'Anmelden' }}
         </QButton>
-        <div class="authm__note">Anmeldung dient nur der Synchronisierung. Üben geht auch als Gast.</div>
         <button type="button" class="authm__switch" @click="switchMode('register')">
-          Neu hier? Mit Einladungscode registrieren →
+          Einladungscode einlösen →
         </button>
       </form>
 
@@ -137,7 +136,6 @@ watch(
         <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
         <div class="authm__invite-head">
           <div class="authm__invite-title">Einladungscode einlösen</div>
-          <div class="authm__invite-sub">Registrierung nur mit Code</div>
         </div>
 
         <label class="authm__field">
@@ -217,10 +215,11 @@ watch(
 .authm__brand-accent {
   color: var(--q-accent);
 }
-.authm__sub {
-  font-size: 13px;
+.authm__scope {
+  margin: -6px 0 2px;
   color: var(--q-mut-2);
-  margin-top: -8px;
+  font-size: 11.5px;
+  line-height: 1.4;
 }
 .authm__field {
   display: flex;
@@ -258,15 +257,6 @@ watch(
   border-radius: 8px;
   padding: 9px 12px;
 }
-.authm__note {
-  padding: 11px 13px;
-  background: var(--q-panel);
-  border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--q-mut-2);
-}
 .authm__switch {
   border: none;
   background: none;
@@ -292,10 +282,5 @@ watch(
   font-weight: 800;
   font-size: 16px;
   letter-spacing: -0.01em;
-}
-.authm__invite-sub {
-  font-size: 12px;
-  color: var(--q-mut-2);
-  margin-top: 2px;
 }
 </style>

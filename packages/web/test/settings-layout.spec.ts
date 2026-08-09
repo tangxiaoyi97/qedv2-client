@@ -43,8 +43,11 @@ describe('settings appearance layout', () => {
     expect(settingsSource).not.toContain('Ruhige Flächen, abgestimmte Akzent- und Statusfarben');
     expect(settingsSource).not.toContain("ui.t('settingsLanguageHint')");
     expect(settingsSource).not.toContain('Manuelle Synchronisierung außerhalb des Auto-Syncs');
-    expect(settingsSource).toContain('label="Archiv synchronisieren"');
-    expect(settingsSource).toContain("'Jetzt hochladen'");
+    expect(settingsSource).toContain('label="Archiv"');
+    expect(settingsSource).toContain("'Hochladen'");
+    expect(settingsSource).not.toContain('Lokaler Fortschritt bleibt erhalten');
+    expect(settingsSource).not.toContain('Als Gast unterwegs —');
+    expect(settingsSource).not.toContain('settings__vsub');
     expect(settingsSource).toContain('tone="danger"');
   });
 
@@ -58,6 +61,10 @@ describe('settings appearance layout', () => {
     expect(desktopViewSource).toContain('v-if="isDesktopShell"');
     expect(desktopViewSource).toContain('data-desktop-control-center');
     expect(desktopViewSource).toContain('<DesktopSettings :panel="panel" />');
+    expect(desktopViewSource).not.toContain('desktop-view__title');
+    expect(desktopSettingsSource).not.toContain('Parallel arbeiten');
+    expect(desktopSettingsSource).not.toContain('Die Quellenwahl betrifft ausschließlich');
+    expect(desktopSettingsSource).toContain('Unsigniert · manuelle Installation');
   });
 });
 
@@ -72,7 +79,8 @@ describe('AI settings information hierarchy', () => {
     expect(aiSettingsSource).toContain('aria-controls="ai-privacy-details"');
     expect(aiSettingsSource).not.toContain('ai-set__overview');
     expect(aiSettingsSource).not.toContain('ai-set__readiness-detail');
-    expect(aiSettingsSource).not.toContain('Nur auf deinen Klick.</strong>');
+    expect(aiSettingsSource).not.toContain('description="Nur auf deinen Klick"');
+    expect(aiSettingsSource).not.toContain('description="Antworten auf diesem Gerät"');
   });
 
   it('renders the source selector only when both sources are usable', () => {

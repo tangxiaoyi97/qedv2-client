@@ -71,15 +71,9 @@ describe('capability-gated desktop settings', () => {
     mounted.unmount();
   });
 
-  it('lays out the four runtime facts as responsive 4, 2 and 1 column grids', () => {
+  it('lets the variable runtime facts fill the available width', () => {
     expect(desktopSettingsSource).toMatch(
-      /\.desktop-settings__facts\s*{[^}]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/s,
-    );
-    expect(desktopSettingsSource).toMatch(
-      /@media \(max-width: 720px\)\s*{\s*\.desktop-settings__facts\s*{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/s,
-    );
-    expect(desktopSettingsSource).toMatch(
-      /@media \(max-width: 560px\)\s*{\s*\.desktop-settings__facts\s*{\s*grid-template-columns:\s*1fr;/s,
+      /\.desktop-settings__facts\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit, minmax\(130px, 1fr\)\);/s,
     );
   });
 
@@ -240,9 +234,11 @@ describe('capability-gated desktop settings', () => {
     expect(checkForUpdates).toHaveBeenCalledTimes(1);
     expect(mounted.host.textContent).toContain('Nicht alle Komponenten konnten geprüft werden');
     expect(mounted.host.textContent).not.toContain('Alle Komponenten sind aktuell');
-    expect(mounted.host.textContent).toContain('ohne Apple-/Windows-Entwicklerzertifikat');
-    expect(mounted.host.textContent).toContain('manuellen Installation');
-    expect(mounted.host.textContent).toContain('Metadaten und Prüfsummen');
+    expect(mounted.host.textContent).toContain('Unsigniert');
+    expect(mounted.host.textContent).toContain('manuelle Installation');
+    expect(mounted.host.textContent).toContain('Core & Bank enthalten');
+    expect(mounted.host.textContent).not.toContain('Apple-/Windows-Entwicklerzertifikat');
+    expect(mounted.host.textContent).not.toContain('Metadaten und Prüfsummen');
     expect(mounted.host.textContent).not.toContain('Pakete sind signiert');
     mounted.unmount();
   });

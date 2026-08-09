@@ -135,7 +135,7 @@ function onToolClick(tool: FormulaTool, ev: MouseEvent): void {
       :value="modelValue.text"
       :readonly="review"
       rows="4"
-      placeholder="Deine Antwort (optional — du kannst auch auf Papier arbeiten)"
+      placeholder="Antwort (optional)"
       aria-label="Offene Antwort"
       autocomplete="off"
       autocapitalize="off"
@@ -148,9 +148,7 @@ function onToolClick(tool: FormulaTool, ev: MouseEvent): void {
       <RichTextView :nodes="previewNodes" />
     </div>
 
-    <div v-if="!review" class="q-open__hint">
-      Text oder Formel · in Fließtext Formeln mit $…$ markieren · ^ Potenz · / Bruch · sqrt() Wurzel
-    </div>
+    <div v-if="!review" class="q-open__hint">Formeln: $…$ · ^ · / · sqrt()</div>
   </div>
 </template>
 

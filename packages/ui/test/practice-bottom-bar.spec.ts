@@ -110,9 +110,9 @@ describe('PracticeBottomBar', () => {
 
   it('keeps the running score in the bar, where the sheet cannot hide it', () => {
     const { host, unmount } = mountBar(selfAssessing, { solutionDetent: 'collapsed' });
-    const row = host.querySelector('.practice-bar__row')?.textContent ?? '';
-    expect(row).toContain('Deine Punkte');
-    expect(row).toContain('– / 1');
+    expect(host.querySelector('.practice-bar__preview-value')?.textContent).toBe('– / 1');
+    expect(host.querySelector('.practice-bar__visually-hidden')?.textContent).toBe('Deine Punkte: ');
+    expect(host.querySelector('.practice-bar__preview-main')?.getAttribute('aria-label')).toBeNull();
     unmount();
   });
 

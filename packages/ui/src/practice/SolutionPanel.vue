@@ -33,7 +33,6 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
     v-if="entries.length > 0"
     class="q-solution"
     title="Lösung"
-    subtitle="Offizieller Lösungsweg"
     :default-open="defaultOpen"
   >
     <div class="q-solution__body">

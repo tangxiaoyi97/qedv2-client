@@ -24,7 +24,7 @@ import { useAuthStore } from '../stores/auth.js';
 import { useLeaderboardStore } from '../stores/leaderboard.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useUiStore } from '../stores/ui.js';
-import { databaseSchemaLabel, databaseStatusLabel, shortCommit } from '../version-info.js';
+import { databaseStatusLabel } from '../version-info.js';
 
 const app = useAppStore();
 const auth = useAuthStore();
@@ -343,47 +343,23 @@ async function openChangelog(): Promise<void> {
       </template>
       <div class="settings__vlist">
         <button type="button" class="settings__vrow" @click="versionDetail = 'web'">
-          <div class="settings__vmain">
-            <div class="settings__vname">Web-App</div>
-            <a
-              class="settings__vsub settings__vlink"
-              href="https://github.com/tangxiaoyi97/qedv2-client"
-              target="_blank"
-              rel="noopener noreferrer"
-              @click.stop
-            >github.com/tangxiaoyi97/qedv2-client</a>
-          </div>
+          <div class="settings__vname">Web-App</div>
           <div class="settings__vver">
             <b>{{ APP_VERSION }}</b>
-            <span v-if="ui.appCommit !== 'dev'" class="settings__vmeta">{{ ui.appCommit.slice(0, 7) }}</span>
           </div>
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
         <button type="button" class="settings__vrow" @click="versionDetail = 'core'">
-          <div class="settings__vmain">
-            <div class="settings__vname">Core</div>
-            <div class="settings__vsub">
-              <template v-if="app.coreInfo">Inhalte · {{ app.coreInfo.bank.questionCount }} Aufgaben</template>
-              <template v-else>nicht erreichbar</template>
-            </div>
-          </div>
+          <div class="settings__vname">Core</div>
           <div class="settings__vver">
             <b>{{ app.coreInfo?.version ?? '—' }}</b>
-            <span v-if="app.coreInfo" class="settings__vmeta">{{ shortCommit(app.coreInfo.commit) }}</span>
           </div>
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
         <button type="button" class="settings__vrow" @click="versionDetail = 'server'">
-          <div class="settings__vmain">
-            <div class="settings__vname">Server</div>
-            <div class="settings__vsub">
-              <template v-if="app.serverInfo">{{ databaseSchemaLabel(app.serverInfo.database) }}</template>
-              <template v-else>nicht erreichbar</template>
-            </div>
-          </div>
+          <div class="settings__vname">Server</div>
           <div class="settings__vver">
             <b>{{ app.serverInfo?.version ?? '—' }}</b>
-            <span v-if="app.serverInfo" class="settings__vmeta">{{ shortCommit(app.serverInfo.commit) }}</span>
           </div>
           <span class="settings__vchev" aria-hidden="true">›</span>
         </button>
@@ -411,27 +387,20 @@ async function openChangelog(): Promise<void> {
             {{ leaderboard.profile?.participating ? 'Verwalten' : 'Beitreten' }}
           </QButton>
         </SettingsRow>
-        <SettingsRow label="Archiv synchronisieren">
+        <SettingsRow label="Archiv">
           <template #status>
             <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
           </template>
           <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
-            {{ uploading ? 'Lädt hoch …' : 'Jetzt hochladen' }}
+            {{ uploading ? 'Lädt hoch …' : 'Hochladen' }}
           </QButton>
         </SettingsRow>
-        <SettingsRow
-          label="Abmelden"
-          description="Lokaler Fortschritt bleibt erhalten"
-          tone="danger"
-        >
+        <SettingsRow label="Abmelden" tone="danger">
           <QButton variant="danger" @click="doLogout">Abmelden</QButton>
         </SettingsRow>
       </template>
       <template v-else>
-        <SettingsRow
-          label="Konto"
-          description="Als Gast unterwegs — Anmelden aktiviert die Synchronisierung"
-        >
+        <SettingsRow label="Konto">
           <QButton @click="ui.openAuthModal()">Anmelden</QButton>
         </SettingsRow>
       </template>
@@ -440,7 +409,7 @@ async function openChangelog(): Promise<void> {
     <CollapsePanel title="Erweitert · Serveradressen">
       <div class="settings__adv">
         <div class="settings__warn">
-          Standardwerte sind bereits gesetzt. Nur ändern, wenn du einen eigenen Server nutzt.
+          Nur für eigene Server.
         </div>
         <label class="settings__field">
           <span class="settings__label">Inhalts-Server (core)</span>
@@ -451,13 +420,11 @@ async function openChangelog(): Promise<void> {
           <input v-model="form.serverBaseUrl" class="settings__input" spellcheck="false" />
         </label>
         <div class="settings__group-note">
-          Die installierte Desktop-Version bringt ihren geprüften Core und die
-          Aufgabenbank selbst mit. Repository-Adressen dienen nur der
-          Versionsherkunft und können hier keinen fremden Code aktivieren.
+          Desktop-Core und Bank bleiben unverändert.
         </div>
         <div v-if="urlError" class="settings__url-error" role="alert">{{ urlError }}</div>
         <div class="settings__adv-actions">
-          <QButton variant="ghost" :disabled="saving" @click="resetServers">Zurücksetzen auf Standard</QButton>
+          <QButton variant="ghost" :disabled="saving" @click="resetServers">Standard wiederherstellen</QButton>
           <QButton :disabled="saving" @click="saveServers">{{ saved ? '✓ Übernommen' : 'Übernehmen' }}</QButton>
         </div>
       </div>
@@ -785,32 +752,11 @@ async function openChangelog(): Promise<void> {
 .settings__vrow + .settings__vrow {
   border-top: 1px solid var(--q-border-soft);
 }
-.settings__vmain {
+.settings__vname {
   flex: 1;
   min-width: 0;
-}
-.settings__vname {
   font-size: 13px;
   font-weight: 700;
-}
-.settings__vsub {
-  font-size: 11.5px;
-  color: var(--q-mut-2);
-  margin-top: 2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.settings__vlink {
-  display: inline-block;
-  color: var(--q-mut-2);
-  text-decoration: none;
-}
-@media (hover: hover) and (pointer: fine) {
-  .settings__vlink:hover {
-    color: var(--q-accent-strong);
-    text-decoration: underline;
-  }
 }
 .settings__vchev {
   flex: none;
@@ -821,17 +767,10 @@ async function openChangelog(): Promise<void> {
 .settings__vver {
   flex: none;
   text-align: right;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 .settings__vver b {
   font: 700 12.5px ui-monospace, Menlo, monospace;
   font-variant-numeric: tabular-nums;
-}
-.settings__vmeta {
-  font: 500 10.5px ui-monospace, Menlo, monospace;
-  color: var(--q-faint);
 }
 /* ---- Versionen detail modal ---- */
 .vdetail__card {

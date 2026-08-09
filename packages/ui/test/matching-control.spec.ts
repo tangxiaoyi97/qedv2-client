@@ -63,6 +63,8 @@ describe('MatchingControl', () => {
     const pool = wrapper.findAll('.q-match__pool-item');
     expect(pool).toHaveLength(4);
     expect(wrapper.find('.q-match__pool').text()).toContain('Optionen');
+    expect(wrapper.get('.q-match__pool-hint--fine').text()).toBe('Ziehen / auswählen');
+    expect(wrapper.get('.q-match__pool-hint--coarse').text()).toBe('Auswählen');
     expect(pool[0]!.text()).toContain('A ·');
     expect(pool[1]!.find('.katex').exists()).toBe(true);
   });

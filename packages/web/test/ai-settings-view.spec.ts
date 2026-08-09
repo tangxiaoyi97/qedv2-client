@@ -152,7 +152,7 @@ describe('AI settings view', () => {
     const card = getElement(host, 'section.q-settings-card');
     expect(card.getAttribute('aria-labelledby')).toBeTruthy();
     expect(getElement(host, 'h2').textContent).toBe('KI-Erklärungen');
-    expect(host.textContent).toContain('Einsatzbereit');
+    expect(host.textContent).toContain('Bereit');
     expect(host.textContent).toContain('Erklären · Bewerten');
     expect(host.textContent).toContain('OpenAI · gpt-test · •••• 1234');
 
@@ -187,7 +187,7 @@ describe('AI settings view', () => {
     aiStore.poolOffered = false;
     const host = mountSettings();
 
-    expect(host.textContent).toContain('Einrichtung nötig');
+    expect(host.textContent).toContain('Einrichten');
     expect(getElement(host, '#ai-credential-editor')).toBeTruthy();
     expect(host.querySelector('[role="radiogroup"]')).toBeNull();
     expect([...host.querySelectorAll('button')].some((button) => button.textContent?.trim() === 'Server')).toBe(false);
@@ -235,7 +235,7 @@ describe('AI settings view', () => {
     aiStore.status = null;
     const loadingHost = mountSettings();
 
-    expect(getElement(loadingHost, '[role="status"]').textContent).toContain('Wird geladen');
+    expect(getElement(loadingHost, '[role="status"]').textContent).toContain('Lädt');
     expect(loadingHost.querySelector('[role="radiogroup"]')).toBeNull();
     mounted?.app.unmount();
     mounted = undefined;
@@ -246,7 +246,7 @@ describe('AI settings view', () => {
     const host = mountSettings();
 
     expect(getElement(host, '[role="alert"]').textContent).toContain('Netzwerk nicht erreichbar');
-    expect(host.textContent).toContain('Status nicht verfügbar');
+    expect(host.textContent).toContain('Status fehlt');
     expect(host.querySelector('[role="radiogroup"]')).toBeNull();
 
     buttonWithText(host, 'Erneut laden').click();
@@ -280,7 +280,7 @@ describe('AI settings view', () => {
     const host = mountSettings();
 
     expect(host.textContent).toContain('OpenAI · gpt-test · •••• 1234');
-    expect(host.textContent).toContain('Zugriff nicht freigeschaltet');
+    expect(host.textContent).toContain('Gespeichert · nicht verfügbar');
     expect(host.querySelector('#ai-credential-editor')).toBeNull();
     expect(host.textContent).not.toContain('Einrichten');
     expect(host.textContent).not.toContain('Ändern');
@@ -318,6 +318,7 @@ describe('AI settings view', () => {
 
     buttonWithText(host, 'Details').click();
     await nextTick();
+    expect(getElement(host, '#ai-privacy-details').textContent).toContain('Nur nach deinem Klick');
     expect(getElement(host, '#ai-privacy-details').textContent).toContain(
       'Aufgabe, Musterlösung und deine Antwort',
     );

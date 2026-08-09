@@ -35,7 +35,8 @@ describe('AiExplainPanel', () => {
 
   it('shows a placeholder shaped like the text that replaces it', () => {
     const wrapper = mount(AiExplainPanel, { props: { loading: true } });
-    expect(wrapper.find('.q-skeleton-list').exists()).toBe(true);
+    expect(wrapper.get('.q-skeleton-list').attributes('aria-label')).toBe('Erklärung wird erzeugt …');
+    expect(wrapper.text()).not.toContain('Die KI liest deine Antwort');
     expect(wrapper.find('.q-aix__ask').exists()).toBe(false);
   });
 

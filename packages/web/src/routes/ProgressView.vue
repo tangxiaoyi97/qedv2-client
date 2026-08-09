@@ -338,13 +338,13 @@ const detailKind = ref<DetailKind>(null);
 const detailTitle = computed(() => {
   switch (detailKind.value) {
     case 'status':
-      return 'Details · Bewertung nach Status';
+      return 'Bewertung';
     case 'activity':
-      return `Details · Aktivität ${formatDayKey(selectedActivityDate.value)}`;
+      return `Aktivität · ${formatDayKey(selectedActivityDate.value)}`;
     case 'radar':
-      return 'Details · Kompetenz-Radar';
+      return 'Kompetenzen';
     case 'category':
-      return 'Details · Nach Bereich';
+      return 'Bereiche';
     default:
       return '';
   }
@@ -524,7 +524,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
     <CompetencyGroups v-if="entries.length > 0" :entries="entries" />
     <div v-else class="prog__empty">
-      Noch kein Fortschritt — starte dein erstes Programm.
+      Noch kein Fortschritt.
       <RouterLink to="/practice" class="prog__cta">Programm starten →</RouterLink>
     </div>
 
@@ -542,13 +542,13 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
           <div v-if="detailKind === 'status'" class="prog-modal__body">
             <div v-if="partMetaFailed" class="prog-modal__metawarn" role="status">
-              Aufgaben-Titel konnten nicht geladen werden (Core nicht erreichbar) — IDs werden angezeigt.
+              Core nicht erreichbar · IDs statt Titel.
             </div>
             <div class="prog-modal__chart-grid">
               <section class="prog-modal__chart-card">
                 <div class="prog-modal__chart-title">
                   <b>Bewertete Teile</b>
-                  <span>{{ gradedPartCount }} Teile mit Status</span>
+                  <span>{{ gradedPartCount }} Teile</span>
                 </div>
                 <GradingDistribution size="large" :counts="progress.gradingCounts" @select="openStatusFilter" />
               </section>
@@ -589,9 +589,8 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
                       <div class="prog-modal__row-title">
                         {{ row.title }}<template v-if="row.partLabel"> · {{ row.partLabel }}</template>
                       </div>
-                      <div class="prog-modal__row-sub">
-                        {{ row.partId }}
-                        <template v-if="row.codes.length > 0"> · {{ row.codes.join(', ') }}</template>
+                      <div v-if="row.codes.length > 0" class="prog-modal__row-sub">
+                        {{ row.codes.join(', ') }}
                       </div>
                     </div>
                   </div>
@@ -605,7 +604,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
               <section class="prog-modal__chart-card prog-modal__radar-card">
                 <div class="prog-modal__chart-title">
                   <b>Kompetenzen</b>
-                  <span>Durchschnitt nach Bereich</span>
+                  <span>Durchschnitt</span>
                 </div>
                 <RadarChart :axes="radarAxes" :size="380" />
               </section>

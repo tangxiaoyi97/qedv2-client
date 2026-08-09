@@ -22,7 +22,6 @@ const isDesktopShell = ports.shell.capabilities.desktop;
     class="desktop-view q-page"
     data-desktop-control-center
   >
-    <h1 v-if="panel === 'overview'" class="desktop-view__title q-page-title">Desktop</h1>
     <DesktopSettings :panel="panel" />
   </div>
 </template>
@@ -33,10 +32,5 @@ const isDesktopShell = ports.shell.capabilities.desktop;
   max-width: 720px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.desktop-view__title {
-  margin-bottom: 4px;
 }
 </style>

@@ -25,13 +25,13 @@ const review = computed(() => props.result != null || props.indeterminate === tr
 
 const previewLatex = computed(() => expressionPreviewLatex(props.modelValue));
 
-const TOOLBAR: { label: string; insert: string; cursorBack?: number }[] = [
-  { label: 'xⁿ', insert: '^' },
-  { label: '√', insert: 'sqrt()', cursorBack: 1 },
-  { label: 'a⁄b', insert: '/' },
-  { label: 'π', insert: 'pi' },
-  { label: '·', insert: '*' },
-  { label: '( )', insert: '()', cursorBack: 1 },
+const TOOLBAR: { label: string; ariaLabel: string; insert: string; cursorBack?: number }[] = [
+  { label: 'xⁿ', ariaLabel: 'Potenz einfügen', insert: '^' },
+  { label: '√', ariaLabel: 'Wurzel einfügen', insert: 'sqrt()', cursorBack: 1 },
+  { label: 'a⁄b', ariaLabel: 'Division einfügen', insert: '/' },
+  { label: 'π', ariaLabel: 'Pi einfügen', insert: 'pi' },
+  { label: '·', ariaLabel: 'Multiplikation einfügen', insert: '*' },
+  { label: '( )', ariaLabel: 'Klammern einfügen', insert: '()', cursorBack: 1 },
 ];
 
 function insert(tool: (typeof TOOLBAR)[number]): void {
@@ -75,6 +75,7 @@ function onToolClick(tool: (typeof TOOLBAR)[number]): void {
         :key="tool.label"
         type="button"
         class="q-expr__tool"
+        :aria-label="tool.ariaLabel"
         :title="tool.insert"
         @mousedown.prevent="onToolMousedown(tool)"
         @click="onToolClick(tool)"
@@ -106,7 +107,7 @@ function onToolClick(tool: (typeof TOOLBAR)[number]): void {
       <span class="q-expr__preview-label">Vorschau</span>
       <MathText :src="previewLatex" />
     </div>
-    <div v-if="!review" class="q-expr__hint">^ Potenz · * Mal · / Bruch · sqrt() Wurzel · Komma oder Punkt</div>
+    <div v-if="!review" class="q-expr__hint">^ · * · / · sqrt() · , oder .</div>
 
     <template v-if="review">
       <div v-if="result" class="q-expr__verdict-note">

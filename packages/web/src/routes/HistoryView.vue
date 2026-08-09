@@ -23,12 +23,11 @@ import {
   type CoreSourcePreference,
   type Verdict,
 } from '@qed2/core-logic';
-import { ActivityHeatmap, QButton, QSkeleton, StateIcon } from '@qed2/ui';
+import { ActivityHeatmap, QButton, QIconButton, QSkeleton, StateIcon, useModalA11y } from '@qed2/ui';
 import { historyLog, ports, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
-import { shortCommit } from '../version-info.js';
 
 const router = useRouter();
 const app = useAppStore();
@@ -60,10 +59,18 @@ const loading = ref(false);
 const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
 const selectedDate = ref<string | null>(null);
+const legacyRedo = ref<Row | null>(null);
+const legacyRedoCard = ref<HTMLElement | null>(null);
 let loadRequest = 0;
 let activityRequest = 0;
 
 const cloudMode = computed(() => auth.isLoggedIn);
+
+useModalA11y(
+  legacyRedoCard,
+  computed(() => legacyRedo.value !== null),
+  () => { legacyRedo.value = null; },
+);
 
 /** Disambiguates duplicate local rows (see key construction below). */
 let rowSeq = 0;
@@ -341,7 +348,19 @@ function fmtPoints(r: Row): string {
   return r.maxPoints !== undefined ? `${a}/${formatScore(r.maxPoints)} P` : `${a} P`;
 }
 
-function redo(row: Row): void {
+function redoLabel(row: Row): string {
+  const title = titles.value.get(titleKey(row)) ?? row.questionId;
+  const verdict = VERDICT_LABELS[row.verdict];
+  const time = timeFmt.format(new Date(row.gradedAt));
+  const provenance = row.provenanceUnknown
+    ? ' Version unbekannt. Aktuelle Bank muss bestätigt werden.'
+    : hasExactProvenance(row)
+      ? ` Quelle ${row.contentSource === 'local' ? 'Lokal' : 'Remote-Core'}, Bank ${row.contentId.slice(0, 7)}.`
+      : '';
+  return `${verdict}: ${title}. ${fmtPoints(row)}, ${time} Uhr.${provenance} Erneut üben.`;
+}
+
+function openRedo(row: Row): void {
   const exactProvenance = hasExactProvenance(row)
     ? { coreSource: row.contentSource, contentId: row.contentId }
     : {};
@@ -356,6 +375,21 @@ function redo(row: Row): void {
     },
   });
 }
+
+function redo(row: Row): void {
+  if (!hasExactProvenance(row)) {
+    legacyRedo.value = row;
+    return;
+  }
+  openRedo(row);
+}
+
+function confirmLegacyRedo(): void {
+  const row = legacyRedo.value;
+  if (!row) return;
+  legacyRedo.value = null;
+  openRedo(row);
+}
 </script>
 
 <template>
@@ -366,10 +400,6 @@ function redo(row: Row): void {
         {{ total }} {{ total === 1 ? 'Antwort' : 'Antworten' }}
       </span>
     </div>
-    <p class="hist__note">
-      <template v-if="cloudMode">Verlauf aus deinem Konto (alle Geräte, ab Anmeldung).</template>
-      <template v-else>Verlauf wird lokal auf diesem Gerät gespeichert.</template>
-    </p>
 
     <section class="hist__section">
       <div class="hist__section-head">
@@ -448,9 +478,7 @@ function redo(row: Row): void {
             :key="r.key"
             type="button"
             class="hist__row"
-            :title="r.provenanceUnknown
-              ? `${r.questionId} mit der aktuellen Aufgabenbank erneut üben; Quellversion unbekannt`
-              : `${r.questionId} erneut üben`"
+            :aria-label="redoLabel(r)"
             @click="redo(r)"
           >
             <StateIcon
@@ -461,17 +489,9 @@ function redo(row: Row): void {
             <span class="hist__row-copy">
               <span class="hist__row-title">{{ titles.get(titleKey(r)) ?? r.questionId }}</span>
               <span v-if="r.provenanceUnknown" class="hist__row-provenance">
-                Quellversion unbekannt · Wiederholung mit aktueller Bank
-              </span>
-              <span
-                v-else-if="r.contentSource && r.contentId"
-                class="hist__row-source"
-                :title="`Bank ${r.contentId}`"
-              >
-                {{ r.contentSource === 'local' ? 'Lokal' : 'Remote' }} · {{ shortCommit(r.contentId) }}
+                Version unbekannt
               </span>
             </span>
-            <span class="hist__row-part">{{ r.partId }}</span>
             <span class="hist__row-points">{{ fmtPoints(r) }}</span>
             <span class="hist__row-time">{{ timeFmt.format(new Date(r.gradedAt)) }}</span>
           </button>
@@ -487,6 +507,27 @@ function redo(row: Row): void {
     </div>
     </transition>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="legacyRedo"
+        class="hist-legacy q-modal-scrim q-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="hist-legacy-title"
+        @click.self="legacyRedo = null"
+      >
+        <div ref="legacyRedoCard" class="hist-legacy__card">
+          <QIconButton class="hist-legacy__close" aria-label="Schließen" @click="legacyRedo = null" />
+          <h2 id="hist-legacy-title" class="hist-legacy__title">Aufgabenversion unbekannt</h2>
+          <p class="hist-legacy__text">Diese Antwort nennt keine Aufgabenbank.</p>
+          <div class="hist-legacy__actions">
+            <QButton variant="secondary" @click="legacyRedo = null">Abbrechen</QButton>
+            <QButton @click="confirmLegacyRedo">Aktuelle Bank verwenden</QButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -498,15 +539,11 @@ function redo(row: Row): void {
   display: flex;
   align-items: baseline;
   gap: 12px;
+  margin-bottom: 16px;
 }
 .hist__count {
   font-size: 12.5px;
   color: var(--q-mut-2);
-}
-.hist__note {
-  font-size: 11.5px;
-  color: var(--q-faint);
-  margin: 6px 0 16px;
 }
 .hist__section {
   background: var(--q-card);
@@ -566,9 +603,11 @@ function redo(row: Row): void {
   gap: 6px;
 }
 .hist__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 38px;
   align-items: center;
   gap: 11px;
+  min-height: 44px;
   padding: 11px 13px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
@@ -597,13 +636,13 @@ function redo(row: Row): void {
   outline-offset: 1px;
 }
 .hist__row-copy {
-  flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 7px;
 }
 .hist__row-title {
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -611,30 +650,12 @@ function redo(row: Row): void {
   white-space: nowrap;
 }
 .hist__row-provenance {
+  flex: none;
   color: var(--q-mut-2);
   font-size: 9.5px;
   font-weight: 650;
   line-height: 1.25;
-}
-.hist__row-source {
-  align-self: flex-start;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 2px 6px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 999px;
-  background: var(--q-panel-2);
-  color: var(--q-mut-2);
-  font-size: 9.5px;
-  font-weight: 700;
-  line-height: 1.25;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.hist__row-part {
-  font: 500 10.5px ui-monospace, Menlo, monospace;
-  color: var(--q-faint);
-  flex: none;
 }
 .hist__row-points {
   font: 700 12px ui-monospace, Menlo, monospace;
@@ -687,9 +708,73 @@ function redo(row: Row): void {
 .hist__heatmap-note--error {
   color: var(--q-err-ink);
 }
+.hist-legacy__card {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid var(--q-border);
+  border-radius: 14px;
+  background: var(--q-card);
+  box-shadow: var(--q-shadow-modal);
+}
+.hist-legacy__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.hist-legacy__title {
+  margin: 0 44px 6px 0;
+  color: var(--q-ink);
+  font-size: 17px;
+  line-height: 1.35;
+}
+.hist-legacy__text {
+  margin: 0;
+  color: var(--q-mut);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.hist-legacy__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
 @media (max-width: 640px) {
-  .hist__row-part {
-    display: none;
+  .hist__head {
+    margin-bottom: 12px;
+  }
+  .hist__section {
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .hist__day {
+    margin-bottom: 12px;
+  }
+  .hist__list {
+    gap: 4px;
+  }
+  .hist__row {
+    grid-template-columns: auto minmax(0, 1fr) auto 34px;
+    gap: 8px;
+    padding: 9px 10px;
+  }
+  .hist__row-copy {
+    gap: 5px;
+  }
+  .hist__row-time {
+    width: 34px;
+  }
+}
+
+@media (max-width: 420px) {
+  .hist__row-copy {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
   }
 }
 </style>
