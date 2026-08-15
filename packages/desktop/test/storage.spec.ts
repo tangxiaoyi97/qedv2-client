@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AuthStore } from '@qed2/core-logic';
 import {
   openSqliteStorageWithRecovery,
   SqliteStorage,
@@ -168,6 +169,49 @@ describe('SqliteStorage', () => {
 
     const reopened = openStorage();
     expect(reopened.get('auth', 'session')).toBeUndefined();
+  });
+
+  it('keeps session-only safeStorage auth revision-fenced across login CAS', async () => {
+    const volatileCodec: StorageCodec = {
+      encode: (_collection, json) => ({
+        payload: Buffer.from(json),
+        encoding: 'volatile',
+        persistent: false,
+      }),
+      decode: (_collection, payload) => Buffer.from(payload).toString('utf8'),
+    };
+    const file = join(temporaryDirectory, 'volatile-cas.sqlite');
+    const storage = new SqliteStorage(file, volatileCodec);
+    openStores.push(storage);
+    const auth = new AuthStore({
+      get: async <T>(collection: string, key: string) => storage.get<T>(collection, key),
+      set: async (collection, key, value) => storage.set(collection, key, value),
+      delete: async (collection, key) => storage.delete(collection, key),
+      keys: async (collection) => storage.keys(collection),
+      clear: async (collection) => storage.clear(collection),
+      readBatch: async (addresses) => storage.readBatch(addresses),
+      commitBatch: async (request) => storage.commitBatch(request),
+    });
+    const session = {
+      token: 'session-only',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'desktop-user', username: 'desktop' },
+      serverBaseUrl: 'https://server.example',
+    };
+    const empty = await auth.snapshot();
+    expect(await auth.setSessionIfUnchanged(session, empty)).toBe(true);
+    expect(await auth.getSession()).toEqual(session);
+    expect(await auth.setSessionIfUnchanged({ ...session, token: 'stale' }, empty)).toBe(false);
+    expect(await auth.getSession()).toEqual(session);
+    const committed = await auth.snapshot();
+    expect(await auth.clearSessionIfUnchanged(committed)).toBe(true);
+    expect(await auth.getSession()).toBeUndefined();
+    storage.close();
+
+    const reopened = openStorage('volatile-cas.sqlite');
+    expect(reopened.readBatch([{ collection: 'auth', key: 'session' }])).toEqual([
+      { collection: 'auth', key: 'session', revision: 2, exists: false },
+    ]);
   });
 
   it('retains monotonic revisions across overwrite and deletion', () => {

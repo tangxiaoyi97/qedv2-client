@@ -19,6 +19,10 @@ import {
   AiCache,
   HistoryLog,
   LocalGradeCommitStore,
+  LocalProfileStore,
+  LocalRecoveryStore,
+  RegistrationJournal,
+  SyncMutationJournal,
   QuestionCache,
   type PlatformPorts,
   type StoragePort,
@@ -47,14 +51,27 @@ export const storage: StoragePort = injected.shell?.capabilities.desktop
   : baseStorage;
 export const configStore = new ConfigStore(storage);
 export const authStore = new AuthStore(storage);
-export const archiveStore = new ArchiveStore(storage);
+export const localProfileStore = new LocalProfileStore(storage);
+export const attemptOutbox = new AttemptOutbox(storage);
+export const localRecoveryStore = new LocalRecoveryStore(storage, attemptOutbox);
+export const registrationJournal = new RegistrationJournal(storage);
+const activeProfile = () => localProfileStore.currentIfInitialized();
+const readableProfiles = () => activeProfile()
+  ? localProfileStore.readableProfiles()
+  : undefined;
+export const archiveStore = new ArchiveStore(storage, activeProfile);
 export const questionCache = new QuestionCache(storage);
-export const historyLog = new HistoryLog(storage);
+export const historyLog = new HistoryLog(storage, readableProfiles);
 /** AI answers already paid for — survives a reload, unlike a Map. */
 export const aiCache = new AiCache(storage);
-export const attemptOutbox = new AttemptOutbox(storage);
 /** One answer -> outbox/archive/history/session as a single CAS commit. */
-export const localGradeCommitStore = new LocalGradeCommitStore(storage);
+export const localGradeCommitStore = new LocalGradeCommitStore(
+  storage,
+  activeProfile,
+  (profileId) => localProfileStore.resolve(profileId),
+);
+/** Stable UUIDs for ambiguous archive-sync retries. */
+export const syncMutationJournal = new SyncMutationJournal(storage);
 
 /** Env-provided dev defaults (fall back to production defaults otherwise). */
 export function envConfigDefaults(): Partial<Record<'coreBaseUrl' | 'serverBaseUrl', string>> {

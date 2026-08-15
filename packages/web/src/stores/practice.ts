@@ -14,6 +14,7 @@ import {
   CoreProtocolError,
   GUEST_ATTEMPT_OWNER,
   hasAtomicStorage,
+  isLocalProfileId,
   questionContentHash,
   STORAGE,
 } from '@qed2/core-logic';
@@ -24,6 +25,8 @@ import type {
   FsrsState,
   GradeResult,
   Grading,
+  LocalProfileId,
+  ManifestAssetV2,
   ManifestResponse,
   Question,
   QuestionPart,
@@ -32,7 +35,7 @@ import type {
   Submission,
   QueuedAttempt,
 } from '@qed2/core-logic';
-import { ports, questionCache, storage } from '../services.js';
+import { attemptOutbox, localProfileStore, ports, questionCache, storage } from '../services.js';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 import { useProgressStore } from './progress.js';
@@ -52,7 +55,8 @@ const MANUAL_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  */
 const SMART_SESSION_GRACE_MS = 6 * 60 * 60 * 1000;
 const SESSION_STORAGE_KEY = 'practice-session';
-const SESSION_STORAGE_VERSION = 4;
+const SESSION_STORAGE_VERSION = 5;
+const SESSION_PROFILE_KEY_VERSION = 1;
 const MAX_PINNED_ASSET_BYTES = 128 * 1024 * 1024;
 const MAX_SINGLE_ASSET_BYTES = 32 * 1024 * 1024;
 
@@ -82,7 +86,7 @@ export interface GradedRecord {
 }
 
 interface PersistedPracticeSession {
-  version: 2 | 3 | typeof SESSION_STORAGE_VERSION;
+  version: 2 | 3 | 4 | typeof SESSION_STORAGE_VERSION;
   /** Added in v3; v2 is migrated using the owner of the key being read. */
   owner?: AttemptOwnerSnapshot;
   /** Added in v4; older/malformed sessions require an explicit current-bank choice. */
@@ -99,13 +103,20 @@ interface PersistedPracticeSession {
 function isPersistedPracticeSession(value: unknown): value is PersistedPracticeSession {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PersistedPracticeSession>;
-  return (candidate.version === 2 || candidate.version === 3 || candidate.version === SESSION_STORAGE_VERSION)
+  return (candidate.version === 2
+    || candidate.version === 3
+    || candidate.version === 4
+    || candidate.version === SESSION_STORAGE_VERSION)
     && (candidate.version === 2
       || (candidate.owner !== undefined
         && typeof candidate.owner.userId === 'string'
         && (candidate.owner.guestGeneration === undefined
-          || typeof candidate.owner.guestGeneration === 'string')))
+          || typeof candidate.owner.guestGeneration === 'string')
+        && (candidate.owner.localProfileId === undefined
+          || isLocalProfileId(candidate.owner.localProfileId))))
     && (candidate.version !== SESSION_STORAGE_VERSION
+      || isLocalProfileId(candidate.owner?.localProfileId))
+    && (candidate.version < 4
       || ((candidate.contentSource === undefined
         || candidate.contentSource === 'local'
         || candidate.contentSource === 'remote')
@@ -152,6 +163,22 @@ function hasExactContentProvenance(
     && (snapshot.contentSource === 'local' || snapshot.contentSource === 'remote')
     && typeof snapshot.contentId === 'string'
     && /^[0-9a-f]{40}$/u.test(snapshot.contentId);
+}
+
+/**
+ * Durable practice-session address. The local profile — not the current auth
+ * token or the generic word "guest" — is the ownership boundary. A rotated
+ * guest therefore receives a different key, while a route created by invite
+ * registration can still make the old profile readable by its destination.
+ */
+export function practiceSessionStorageKey(
+  profileId: LocalProfileId,
+  windowKind?: string,
+): string {
+  if (!isLocalProfileId(profileId)) throw new TypeError('Invalid practice-session profile');
+  const profile = encodeURIComponent(profileId);
+  const window = windowKind ? `:${encodeURIComponent(windowKind)}` : '';
+  return `${SESSION_STORAGE_KEY}/v${SESSION_PROFILE_KEY_VERSION}/${profile}${window}`;
 }
 
 function isSameLocalDay(a: Date, b: Date): boolean {
@@ -220,9 +247,43 @@ function questionAssetPaths(question: Question): string[] {
   return [...paths];
 }
 
+function assertQuestionMatchesManifest(
+  manifest: ManifestResponse,
+  question: Question,
+  advertisedWireHash?: string,
+): void {
+  if (manifest.formatVersion !== 2) return;
+  const record = manifest.questions[question.id];
+  if (!record) {
+    throw new ContentIntegrityError(
+      `Aufgabe ${question.id} fehlt im überprüften Aufgabenbank-Manifest.`,
+    );
+  }
+  const actualWireHash = questionContentHash(question);
+  if (
+    actualWireHash !== record.wireSha256
+    || (advertisedWireHash !== undefined && advertisedWireHash !== record.wireSha256)
+  ) {
+    throw new ContentIntegrityError(
+      `Die Übertragungs-Prüfsumme von Aufgabe ${question.id} stimmt nicht mit der Aufgabenbank überein.`,
+    );
+  }
+  const actualAssets = questionAssetPaths(question);
+  const expectedAssets = new Set(record.assets);
+  if (
+    actualAssets.length !== record.assets.length
+    || actualAssets.some((path) => !expectedAssets.has(path))
+  ) {
+    throw new ContentIntegrityError(
+      `Die Grafiken von Aufgabe ${question.id} stimmen nicht mit der Aufgabenbank überein.`,
+    );
+  }
+}
+
 async function readBoundedAsset(
   response: Response,
   remainingBytes: number,
+  expected?: ManifestAssetV2,
 ): Promise<Blob> {
   if (!response.ok) {
     throw new ContentIntegrityError(`Eine Aufgabengrafik konnte nicht geladen werden (${response.status}).`);
@@ -239,14 +300,20 @@ async function readBoundedAsset(
   if (declared > allowed) {
     throw new ContentIntegrityError('Eine Aufgabengrafik überschreitet das sichere Größenlimit.');
   }
-  const contentType = response.headers.get('content-type');
-  if (contentType?.split(';', 1)[0]?.trim().toLowerCase() !== 'image/png') {
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+  if (contentType !== 'image/png' || (expected && contentType !== expected.mimeType)) {
     throw new ContentIntegrityError('Eine Aufgabengrafik hat einen unerwarteten Dateityp geliefert.');
+  }
+  if (expected && declared !== expected.bytes) {
+    throw new ContentIntegrityError('Eine Aufgabengrafik hat eine unerwartete Größe geliefert.');
   }
   const etag = response.headers.get('etag');
   const etagMatch = /^"([0-9a-f]{64})"$/u.exec(etag ?? '');
   if (!etagMatch) {
     throw new ContentIntegrityError('Eine Aufgabengrafik hat keine starke Prüfsumme geliefert.');
+  }
+  if (expected && etagMatch[1] !== expected.sha256) {
+    throw new ContentIntegrityError('Die angekündigte Prüfsumme einer Aufgabengrafik ist ungültig.');
   }
 
   let bytes: Uint8Array;
@@ -382,6 +449,8 @@ export const usePracticeStore = defineStore('practice', () => {
     client: CoreClient,
     questionMap: Map<string, Question>,
     revision: string,
+    manifest: ManifestResponse,
+    mode: 'current' | 'revision',
   ): Promise<Map<string, Blob>> {
     const paths = new Set<string>();
     for (const question of questionMap.values()) {
@@ -390,55 +459,347 @@ export const usePracticeStore = defineStore('practice', () => {
     const blobs = new Map<string, Blob>();
     let total = 0;
     for (const path of paths) {
-      const response = await fetch(client.revisionAssetUrl(path, revision), {
+      const expected = manifest.formatVersion === 2 ? manifest.assets[path] : undefined;
+      if (manifest.formatVersion === 2 && !expected) {
+        throw new ContentIntegrityError(
+          `Aufgabengrafik ${path} fehlt im überprüften Aufgabenbank-Manifest.`,
+        );
+      }
+      const url = mode === 'current' && manifest.formatVersion === 2
+        ? client.assetUrl(path, revision)
+        : client.revisionAssetUrl(path, revision);
+      const response = await fetch(url, {
         cache: 'no-store',
         credentials: 'omit',
       });
-      const blob = await readBoundedAsset(response, MAX_PINNED_ASSET_BYTES - total);
+      const blob = await readBoundedAsset(
+        response,
+        MAX_PINNED_ASSET_BYTES - total,
+        expected,
+      );
       total += blob.size;
       blobs.set(path, blob);
     }
     return blobs;
   }
 
-  function storageKeyForOwner(owner: AttemptOwnerSnapshot): string {
-    const keyOwner = owner.userId === GUEST_ATTEMPT_OWNER ? 'guest' : owner.userId;
-    const windowKind = ports.shell.capabilities.desktop ? ports.shell.windowKind : undefined;
-    return `${SESSION_STORAGE_KEY}:${keyOwner}${windowKind ? `:${windowKind}` : ''}`;
+  interface SessionProfileCandidate {
+    profileId: LocalProfileId;
+    claimed: boolean;
   }
 
-  function legacyStorageKeyForOwner(owner: AttemptOwnerSnapshot): string {
+  interface LocatedPracticeSession {
+    snapshot: PersistedPracticeSession;
+    key: string;
+    profileId: LocalProfileId;
+    resolvedOwnerId: string;
+  }
+
+  function currentWindowKind(): string | undefined {
+    return ports.shell.capabilities.desktop ? ports.shell.windowKind : undefined;
+  }
+
+  function storageKeyForProfile(profileId: LocalProfileId): string {
+    return practiceSessionStorageKey(profileId, currentWindowKind());
+  }
+
+  function requiredOwnerProfile(owner: AttemptOwnerSnapshot): LocalProfileId {
+    if (!isLocalProfileId(owner.localProfileId)) {
+      throw new Error('Practice session has no local profile identity');
+    }
+    return owner.localProfileId;
+  }
+
+  function legacyStorageKeysForOwner(owner: AttemptOwnerSnapshot): string[] {
     const keyOwner = owner.userId === GUEST_ATTEMPT_OWNER ? 'guest' : owner.userId;
-    return `${SESSION_STORAGE_KEY}:${keyOwner}`;
+    const base = `${SESSION_STORAGE_KEY}:${keyOwner}`;
+    const windowKind = currentWindowKind();
+    return windowKind ? [`${base}:${windowKind}`, base] : [base];
+  }
+
+  function sameCapturedOwner(
+    persisted: AttemptOwnerSnapshot,
+    requested: AttemptOwnerSnapshot,
+  ): boolean {
+    if (persisted.userId !== requested.userId) return false;
+    return persisted.userId !== GUEST_ATTEMPT_OWNER
+      || persisted.guestGeneration === requested.guestGeneration;
+  }
+
+  function upgradeSessionForProfile(
+    value: unknown,
+    requestedOwner: AttemptOwnerSnapshot,
+    candidate: SessionProfileCandidate,
+    claimedGuestGeneration?: string,
+  ): PersistedPracticeSession | undefined {
+    if (!isPersistedPracticeSession(value)) return undefined;
+    if (value.version === SESSION_STORAGE_VERSION) {
+      const owner = value.owner!;
+      if (owner.localProfileId !== candidate.profileId) return undefined;
+      if (candidate.claimed) {
+        const ownedByClaimedGuest = owner.userId === GUEST_ATTEMPT_OWNER
+          && !!claimedGuestGeneration
+          && owner.guestGeneration === claimedGuestGeneration;
+        const ownedByDestination = owner.userId === requestedOwner.userId;
+        if (!ownedByClaimedGuest && !ownedByDestination) {
+          return undefined;
+        }
+      } else if (!sameCapturedOwner(owner, requestedOwner)) {
+        return undefined;
+      }
+      return value;
+    }
+
+    let owner: AttemptOwnerSnapshot;
+    if (value.version === 2) {
+      // A generic v2 guest key has no generation and can therefore not be
+      // attributed after multiple guest rotations. Keep it untouched rather
+      // than risk handing one person's programme to another account.
+      if (candidate.claimed) return undefined;
+      owner = { ...requestedOwner, localProfileId: candidate.profileId };
+    } else {
+      const legacyOwner = value.owner!;
+      if (candidate.claimed) {
+        if (
+          legacyOwner.userId !== GUEST_ATTEMPT_OWNER
+          || !claimedGuestGeneration
+          || legacyOwner.guestGeneration !== claimedGuestGeneration
+        ) {
+          return undefined;
+        }
+      } else if (!sameCapturedOwner(legacyOwner, requestedOwner)) {
+        return undefined;
+      }
+      owner = { ...legacyOwner, localProfileId: candidate.profileId };
+    }
+    return {
+      ...value,
+      version: SESSION_STORAGE_VERSION,
+      owner,
+    };
+  }
+
+  async function upgradeSessionAtKey(
+    key: string,
+    requestedOwner: AttemptOwnerSnapshot,
+    candidate: SessionProfileCandidate,
+    claimedGuestGeneration?: string,
+  ): Promise<PersistedPracticeSession | undefined> {
+    if (!hasAtomicStorage(storage)) {
+      const upgrade = async (): Promise<PersistedPracticeSession | undefined> => {
+        const raw = await storage.get<unknown>(STORAGE.app, key);
+        const snapshot = upgradeSessionForProfile(
+          raw,
+          requestedOwner,
+          candidate,
+          claimedGuestGeneration,
+        );
+        if (!snapshot) return undefined;
+        if (
+          (raw as { version?: unknown } | undefined)?.version !== SESSION_STORAGE_VERSION
+        ) {
+          await storage.set(STORAGE.app, key, snapshot);
+        }
+        return snapshot;
+      };
+      return storage.runExclusiveMutation ? storage.runExclusiveMutation(upgrade) : upgrade();
+    }
+    const address = { collection: STORAGE.app, key } as const;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const [entry] = await storage.readBatch([address]);
+      if (!entry?.exists) return undefined;
+      const snapshot = upgradeSessionForProfile(
+        entry.value,
+        requestedOwner,
+        candidate,
+        claimedGuestGeneration,
+      );
+      if (!snapshot) return undefined;
+      if (
+        (entry.value as { version?: unknown }).version === SESSION_STORAGE_VERSION
+      ) {
+        return snapshot;
+      }
+      try {
+        const committed = await storage.commitBatch({
+          ifRevisions: [{ ...address, revision: entry.revision }],
+          mutations: [{ ...address, operation: 'set', value: snapshot }],
+        });
+        if (committed.committed) return snapshot;
+      } catch (cause) {
+        const durable = await storage.get<unknown>(STORAGE.app, key).catch(() => undefined);
+        const confirmed = upgradeSessionForProfile(
+          durable,
+          requestedOwner,
+          candidate,
+          claimedGuestGeneration,
+        );
+        if (confirmed?.version === SESSION_STORAGE_VERSION) return confirmed;
+        throw cause;
+      }
+    }
+    throw new Error('Practice session changed too often to upgrade safely');
   }
 
   /**
-   * First Desktop launch after the scoped-key upgrade claims the legacy
-   * snapshot atomically. Only one native window may win; all later writes are
-   * isolated by its stable main/practice key.
+   * Move one validated pre-2.2 key into its profile scope. The source is
+   * deleted in the same CAS as the destination write; an occupied destination
+   * is never overwritten and an unowned/malformed source is never deleted.
    */
-  async function readPersistedSession(owner: AttemptOwnerSnapshot): Promise<unknown> {
-    const key = storageKeyForOwner(owner);
-    const current = await storage.get<unknown>(STORAGE.app, key);
-    const legacyKey = legacyStorageKeyForOwner(owner);
-    if (current !== undefined || key === legacyKey) return current;
-    const migrate = async (): Promise<unknown> => {
-      const alreadyMigrated = await storage.get<unknown>(STORAGE.app, key);
-      if (alreadyMigrated !== undefined) return alreadyMigrated;
-      const legacy = await storage.get<unknown>(STORAGE.app, legacyKey);
-      if (legacy === undefined) return undefined;
-      await storage.set(STORAGE.app, key, legacy);
-      await storage.delete(STORAGE.app, legacyKey);
-      return legacy;
-    };
-    return storage.runExclusiveMutation ? storage.runExclusiveMutation(migrate) : migrate();
+  async function migrateLegacySession(
+    sourceKey: string,
+    destinationKey: string,
+    requestedOwner: AttemptOwnerSnapshot,
+    candidate: SessionProfileCandidate,
+    claimedGuestGeneration?: string,
+  ): Promise<PersistedPracticeSession | undefined> {
+    const legacyGuestKey = `${SESSION_STORAGE_KEY}:guest`;
+    const ownerlessGuestBecameAmbiguous = (raw: unknown): boolean =>
+      (sourceKey === legacyGuestKey || sourceKey.startsWith(`${legacyGuestKey}:`))
+      && isPersistedPracticeSession(raw)
+      && raw.version === 2
+      && localProfileStore.snapshot().routes.length > 0;
+    if (!hasAtomicStorage(storage)) {
+      const migrate = async (): Promise<PersistedPracticeSession | undefined> => {
+        if (await storage.get<unknown>(STORAGE.app, destinationKey) !== undefined) return undefined;
+        const raw = await storage.get<unknown>(STORAGE.app, sourceKey);
+        if (ownerlessGuestBecameAmbiguous(raw)) return undefined;
+        const snapshot = upgradeSessionForProfile(
+          raw,
+          requestedOwner,
+          candidate,
+          claimedGuestGeneration,
+        );
+        if (!snapshot) return undefined;
+        await storage.set(STORAGE.app, destinationKey, snapshot);
+        await storage.delete(STORAGE.app, sourceKey);
+        return snapshot;
+      };
+      return storage.runExclusiveMutation ? storage.runExclusiveMutation(migrate) : migrate();
+    }
+    const source = { collection: STORAGE.app, key: sourceKey } as const;
+    const destination = { collection: STORAGE.app, key: destinationKey } as const;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const [sourceEntry, destinationEntry] = await storage.readBatch([source, destination]);
+      if (!sourceEntry || !destinationEntry || !sourceEntry.exists || destinationEntry.exists) {
+        return undefined;
+      }
+      if (ownerlessGuestBecameAmbiguous(sourceEntry.value)) return undefined;
+      const snapshot = upgradeSessionForProfile(
+        sourceEntry.value,
+        requestedOwner,
+        candidate,
+        claimedGuestGeneration,
+      );
+      if (!snapshot) return undefined;
+      try {
+        const committed = await storage.commitBatch({
+          ifRevisions: [
+            { ...source, revision: sourceEntry.revision },
+            { ...destination, revision: destinationEntry.revision },
+          ],
+          mutations: [
+            { ...destination, operation: 'set', value: snapshot },
+            { ...source, operation: 'delete' },
+          ],
+        });
+        if (committed.committed) return snapshot;
+      } catch (cause) {
+        const durable = await storage.get<unknown>(STORAGE.app, destinationKey).catch(() => undefined);
+        const confirmed = upgradeSessionForProfile(
+          durable,
+          requestedOwner,
+          candidate,
+          claimedGuestGeneration,
+        );
+        if (confirmed?.version === SESSION_STORAGE_VERSION) return confirmed;
+        throw cause;
+      }
+    }
+    throw new Error('Legacy practice session changed too often to migrate safely');
   }
 
-  function setSessionIdentity(owner: AttemptOwnerSnapshot): AttemptOwnerSnapshot {
-    sessionOwner = { ...owner };
-    sessionStorageKey = storageKeyForOwner(owner);
-    sessionResolvedOwnerId = owner.userId;
+  async function locatePersistedSession(
+    requestedOwner: AttemptOwnerSnapshot,
+  ): Promise<LocatedPracticeSession | undefined> {
+    const requestedProfile = requiredOwnerProfile(requestedOwner);
+    const profiles = localProfileStore.readableProfiles(requestedProfile);
+    const candidates: SessionProfileCandidate[] = profiles.map((profileId) => ({
+      profileId,
+      claimed: profileId !== requestedProfile,
+    }));
+    const claimedRoute = requestedOwner.userId === GUEST_ATTEMPT_OWNER
+      ? undefined
+      : await attemptOutbox.guestClaimRouteForUser(requestedOwner.userId);
+
+    // Profile-scoped snapshots always win over pre-2.2 compatibility keys.
+    for (const candidate of candidates) {
+      const key = storageKeyForProfile(candidate.profileId);
+      const snapshot = await upgradeSessionAtKey(
+        key,
+        requestedOwner,
+        candidate,
+        candidate.claimed ? claimedRoute?.sourceGeneration : undefined,
+      );
+      if (snapshot) {
+        return {
+          snapshot,
+          key,
+          profileId: candidate.profileId,
+          resolvedOwnerId: candidate.claimed ? requestedOwner.userId : snapshot.owner!.userId,
+        };
+      }
+    }
+
+    const visitedLegacyKeys = new Set<string>();
+    for (const candidate of candidates) {
+      const legacyOwner: AttemptOwnerSnapshot = candidate.claimed
+        ? { userId: GUEST_ATTEMPT_OWNER, guestGeneration: claimedRoute?.sourceGeneration }
+        : requestedOwner;
+      for (const legacyKey of legacyStorageKeysForOwner(legacyOwner)) {
+        if (visitedLegacyKeys.has(legacyKey)) continue;
+        visitedLegacyKeys.add(legacyKey);
+        const key = storageKeyForProfile(candidate.profileId);
+        const snapshot = await migrateLegacySession(
+          legacyKey,
+          key,
+          requestedOwner,
+          candidate,
+          candidate.claimed ? claimedRoute?.sourceGeneration : undefined,
+        );
+        if (snapshot) {
+          return {
+            snapshot,
+            key,
+            profileId: candidate.profileId,
+            resolvedOwnerId: candidate.claimed ? requestedOwner.userId : snapshot.owner!.userId,
+          };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function setSessionIdentity(
+    owner: AttemptOwnerSnapshot,
+    options: { key?: string; resolvedOwnerId?: string } = {},
+  ): AttemptOwnerSnapshot {
+    const profileId = requiredOwnerProfile(owner);
+    sessionOwner = { ...owner, localProfileId: profileId };
+    sessionStorageKey = options.key ?? storageKeyForProfile(profileId);
+    sessionResolvedOwnerId = options.resolvedOwnerId ?? owner.userId;
     return sessionOwner;
+  }
+
+  function profileCanAccessSession(profileId: LocalProfileId): boolean {
+    const ownerProfile = sessionOwner?.localProfileId;
+    return isLocalProfileId(ownerProfile)
+      && localProfileStore.readableProfiles(profileId).includes(ownerProfile);
+  }
+
+  function activeProfileCanAccessSession(): boolean {
+    const activeProfile = localProfileStore.currentIfInitialized();
+    return !!activeProfile && profileCanAccessSession(activeProfile);
   }
 
   async function ensureSessionIdentity(): Promise<AttemptOwnerSnapshot> {
@@ -604,6 +965,7 @@ export const usePracticeStore = defineStore('practice', () => {
   async function persistSession(options: { replaceExisting?: boolean } = {}): Promise<void> {
     if (phase.value !== 'running' || items.value.length === 0) return;
     const owner = await ensureSessionIdentity();
+    if (!activeProfileCanAccessSession()) return;
     const key = sessionStorageKey!;
     const snapshot = buildPersistedSession(owner, graded.value, new Date().toISOString());
     try {
@@ -619,7 +981,10 @@ export const usePracticeStore = defineStore('practice', () => {
 
   async function clearPersistedSession(): Promise<void> {
     const key = sessionStorageKey;
-    if (!key) return;
+    // An auth/profile switch can leave an old Pinia instance alive for a few
+    // frames. Never let the newly active account abort or expire somebody
+    // else's durable programme through that stale in-memory reference.
+    if (!key || !activeProfileCanAccessSession()) return;
     try {
       await enqueueSessionPersistence(() => storage.delete(STORAGE.app, key));
     } catch {
@@ -675,17 +1040,23 @@ export const usePracticeStore = defineStore('practice', () => {
     }
     const cacheScope = manifest?.commit ?? contentId.value;
     for (const id of unique) {
-      const expectedHash = manifest?.items[id];
+      // Legacy manifest items authenticate Core's contentHash. Manifest v2's
+      // rawSha256 instead authenticates the exact repository file bytes; the
+      // wireSha256 is the proof available for a parsed Question response.
+      const expectedHash = manifest?.formatVersion === 2 ? undefined : manifest?.items[id];
       // Strict sessions never reuse a legacy plain Question. getVerified
       // requires one atomic revision/raw-hash/wire-hash envelope and checks
       // the wire payload again on every read.
-      const cached = cacheScope && (!manifest || isSha256(expectedHash))
+      const cached = cacheScope && (
+        !manifest || manifest.formatVersion === 2 || isSha256(expectedHash)
+      )
         ? await questionCache.getVerified(id, cacheScope, expectedHash)
         : undefined;
       if (!cached) {
         missing.push(id);
         continue;
       }
+      if (manifest) assertQuestionMatchesManifest(manifest, cached);
       map.set(id, cached);
     }
     const fetched: ContentQuestion[] = [];
@@ -719,13 +1090,16 @@ export const usePracticeStore = defineStore('practice', () => {
             throw new ContentIntegrityError(`Der Core hat Aufgabe ${q.id} doppelt geliefert.`);
           }
           returned.add(q.id);
-          const expectedHash = manifest.items[q.id];
+          const expectedHash = manifest.formatVersion === 2 ? undefined : manifest.items[q.id];
           if (!isSha256(entry.contentHash) || !isSha256(entry.wireHash)) {
             throw new ContentIntegrityError(
               `Der Core hat für Aufgabe ${q.id} keine überprüfbaren Prüfsummen geliefert.`,
             );
           }
-          if (!isSha256(expectedHash) || entry.contentHash !== expectedHash) {
+          if (
+            manifest.formatVersion !== 2
+            && (!isSha256(expectedHash) || entry.contentHash !== expectedHash)
+          ) {
             throw new ContentIntegrityError(
               `Die Inhalts-Prüfsumme von Aufgabe ${q.id} stimmt nicht mit der Aufgabenbank überein.`,
             );
@@ -735,6 +1109,7 @@ export const usePracticeStore = defineStore('practice', () => {
               `Die Übertragungs-Prüfsumme von Aufgabe ${q.id} ist ungültig.`,
             );
           }
+          assertQuestionMatchesManifest(manifest, q, entry.wireHash);
           fetched.push(entry);
         }
         const reportedMissing = new Set(res.missing);
@@ -789,6 +1164,8 @@ export const usePracticeStore = defineStore('practice', () => {
           client,
           map,
           manifest!.commit,
+          manifest!,
+          contentMode.value,
         );
       }
     }
@@ -805,7 +1182,15 @@ export const usePracticeStore = defineStore('practice', () => {
         );
       }
       const changed = confirmed.commit !== manifest?.commit
-        || unique.some((id) => confirmed.items[id] !== manifest?.items[id]);
+        || unique.some((id) => confirmed.items[id] !== manifest?.items[id])
+        || (
+          manifest?.formatVersion === 2
+          && (
+            confirmed.formatVersion !== 2
+            || confirmed.bank.rootSha256 !== manifest.bank.rootSha256
+            || confirmed.bank.immutableAssetBaseUrl !== manifest.bank.immutableAssetBaseUrl
+          )
+        );
       if (changed) {
         throw new ContentIntegrityError(
           'Die Aufgabenbank wurde während des Ladens aktualisiert. Bitte lade das Programm erneut.',
@@ -830,6 +1215,9 @@ export const usePracticeStore = defineStore('practice', () => {
 
   async function beginSession(list: SessionItem[], from: SessionOrigin): Promise<void> {
     await ensureSessionIdentity();
+    if (!activeProfileCanAccessSession()) {
+      throw new Error('Das Konto wurde während des Ladens gewechselt.');
+    }
     items.value = list;
     origin.value = from;
     lastActivityAt.value = new Date().toISOString();
@@ -877,11 +1265,13 @@ export const usePracticeStore = defineStore('practice', () => {
     try {
       const app = useAppStore();
       const client = await bindSessionContent(requestedSource, expectedContentId);
-      const auth = useAuthStore();
+      if (!activeProfileCanAccessSession()) {
+        throw new Error('Das Konto wurde während des Ladens gewechselt.');
+      }
       const progress = useProgressStore();
       // Logged in: reconcile with the cloud archive before asking for
       // recommendations (contract §8.2 step 2 — checksum compare inside).
-      if (auth.session?.user.id === sessionResolvedOwnerId) {
+      if (sessionResolvedOwnerId && progress.isActiveAccountOwner(sessionResolvedOwnerId)) {
         const syncResult = await progress.syncBeforeRecommendation();
         if (syncResult === 'conflict' || syncResult === 'blocked') {
           throw new Error('Bitte löse zuerst den offenen Speicherkonflikt. Danach kann das Programm starten.');
@@ -892,7 +1282,15 @@ export const usePracticeStore = defineStore('practice', () => {
           warning.value = 'Cloud-Abgleich fehlgeschlagen — Empfehlungen basieren auf dem lokalen Fortschritt.';
         }
       }
-      const userState = await progress.toUserState();
+      if (!activeProfileCanAccessSession()) {
+        throw new Error('Das Konto wurde während des Ladens gewechselt.');
+      }
+      const ownerProfile = sessionOwner?.localProfileId;
+      if (!ownerProfile) throw new Error('Practice session has no local profile identity');
+      const userState = await progress.toUserState(ownerProfile);
+      if (!activeProfileCanAccessSession()) {
+        throw new Error('Das Konto wurde während des Ladens gewechselt.');
+      }
       const req: Parameters<CoreClient['recommend']>[0] = {
         userState,
         count: opts?.count ?? 20,
@@ -972,6 +1370,9 @@ export const usePracticeStore = defineStore('practice', () => {
     // let a cross-window account switch put an old guest snapshot into a new
     // user's key even if the audit outbox itself retained the old owner.
     const attemptOwner = await ensureSessionIdentity();
+    if (!activeProfileCanAccessSession()) {
+      throw new Error('Dieses Programm gehört zu einem anderen lokalen Profil.');
+    }
     const gradedAt = new Date().toISOString();
     const elapsedMs = Math.max(0, Date.now() - partShownAt.value);
     const record: GradedRecord = {
@@ -1033,6 +1434,13 @@ export const usePracticeStore = defineStore('practice', () => {
           return isPersistedPracticeSession(current)
             && current.graded.some((candidate) => candidate.clientAttemptId === clientAttemptId);
         },
+        matchesAttempt(current, attempt) {
+          if (!isPersistedPracticeSession(current)) return false;
+          const record = current.graded.find(
+            (candidate) => candidate.clientAttemptId === attempt.clientAttemptId,
+          );
+          return !!record && JSON.stringify(toAttemptRecord(record)) === JSON.stringify(attempt);
+        },
       },
     });
     // Nothing reactive changes before all four durable records are committed.
@@ -1048,7 +1456,7 @@ export const usePracticeStore = defineStore('practice', () => {
     void progress.flushStagedAttempt(committed.ownerId).catch(() => {
       progress.scheduleCloudRecovery();
     });
-    if (auth.session?.user.id === committed.ownerId && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
+    if (progress.isActiveAccountOwner(committed.ownerId) && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
       void progress.syncNow({ quiet: true });
     }
   }
@@ -1106,9 +1514,8 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   async function syncSessionProgress(): Promise<void> {
-    const auth = useAuthStore();
     const progress = useProgressStore();
-    if (!sessionResolvedOwnerId || auth.session?.user.id !== sessionResolvedOwnerId) return;
+    if (!sessionResolvedOwnerId || !progress.isActiveAccountOwner(sessionResolvedOwnerId)) return;
     await progress.syncNow({ quiet: true });
     await progress.flushAttemptOutbox();
   }
@@ -1235,9 +1642,24 @@ export const usePracticeStore = defineStore('practice', () => {
    * the position inside that ad-hoc set goes away.
    */
   async function restoreSession(want?: SessionOrigin): Promise<boolean> {
-    if (phase.value === 'loading' || phase.value === 'provenance-choice') return true;
-    if (phase.value === 'error' && pendingUnprovenancedSession) return true;
+    if (phase.value === 'loading') return true;
+    if (phase.value === 'provenance-choice' || (phase.value === 'error' && pendingUnprovenancedSession)) {
+      const requestedOwner = await useProgressStore().captureAttemptOwner();
+      return profileCanAccessSession(requiredOwnerProfile(requestedOwner));
+    }
     if (phase.value === 'running') {
+      const requestedOwner = await useProgressStore().captureAttemptOwner();
+      const requestedProfile = requiredOwnerProfile(requestedOwner);
+      const ownerProfile = sessionOwner?.localProfileId;
+      if (
+        !isLocalProfileId(ownerProfile)
+        || !profileCanAccessSession(requestedProfile)
+      ) {
+        // Keep the old snapshot untouched. The caller may now start a session
+        // in the newly active profile without seeing or deleting this one.
+        return false;
+      }
+      if (ownerProfile !== requestedProfile) sessionResolvedOwnerId = requestedOwner.userId;
       if (want && origin.value !== want) return false;
       try {
         await bindSessionContent(contentSource.value, contentId.value);
@@ -1258,28 +1680,18 @@ export const usePracticeStore = defineStore('practice', () => {
       return true;
     }
     const requestedOwner = await useProgressStore().captureAttemptOwner();
-    // Fix the candidate key before any await below. Invalid/stale cleanup must
-    // delete exactly what was read, even if auth changes in another window.
-    setSessionIdentity(requestedOwner);
     await sessionPersistenceTail;
-    const snapshot = await readPersistedSession(requestedOwner);
-    if (!isPersistedPracticeSession(snapshot) || snapshot.items.length === 0) {
-      if (snapshot !== undefined) await clearPersistedSession();
-      return false;
-    }
-    const persistedOwner = snapshot.version >= 3
-      ? snapshot.owner!
-      : requestedOwner;
-    const ownerMatchesKey = persistedOwner.userId === requestedOwner.userId;
-    const guestGenerationMatches = persistedOwner.userId !== GUEST_ATTEMPT_OWNER
-      || persistedOwner.guestGeneration === requestedOwner.guestGeneration;
-    if (!ownerMatchesKey || !guestGenerationMatches) {
-      // A rotated guest generation belongs to the account that claimed it,
-      // not to whoever later uses this device as a guest.
+    const located = await locatePersistedSession(requestedOwner);
+    if (!located) return false;
+    const { snapshot } = located;
+    setSessionIdentity(snapshot.owner!, {
+      key: located.key,
+      resolvedOwnerId: located.resolvedOwnerId,
+    });
+    if (snapshot.items.length === 0) {
       await clearPersistedSession();
       return false;
     }
-    setSessionIdentity(persistedOwner);
     if (want && snapshot.origin !== want) return false;
     if (!isResumable(snapshot.origin, snapshot.savedAt, new Date())) {
       await clearPersistedSession();

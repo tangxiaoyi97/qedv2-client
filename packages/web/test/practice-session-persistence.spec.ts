@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import {
+  accountStorageIdentity,
+  DEFAULT_CONFIG,
   GUEST_ATTEMPT_OWNER,
   STORAGE,
   questionContentHash,
@@ -14,13 +16,19 @@ import {
 import {
   archiveStore,
   attemptOutbox,
+  authStore as authStorage,
   historyLog,
+  localProfileStore,
   questionCache,
   storage,
   ports,
 } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
-import { usePracticeStore, type SessionItem } from '../src/stores/practice.js';
+import {
+  practiceSessionStorageKey,
+  usePracticeStore,
+  type SessionItem,
+} from '../src/stores/practice.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
 
@@ -87,6 +95,13 @@ function contentQuestion(q: Question, contentHash = 'd'.repeat(64)) {
   return { ...q, contentHash, wireHash: questionContentHash(q) };
 }
 
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 function stubObjectUrls(value = 'blob:test'): {
   createObjectURL: ReturnType<typeof vi.fn>;
   revokeObjectURL: ReturnType<typeof vi.fn>;
@@ -148,11 +163,15 @@ async function gradeCurrent(practice: ReturnType<typeof usePracticeStore>): Prom
 }
 
 async function guestSession(): Promise<{
-  owner?: { userId: string; guestGeneration?: string };
+  owner?: { userId: string; guestGeneration?: string; localProfileId?: string };
   index?: number;
   graded: Array<{ clientAttemptId: string }>;
 } | undefined> {
-  return storage.get(STORAGE.app, 'practice-session:guest');
+  return storage.get(STORAGE.app, activeSessionKey());
+}
+
+function activeSessionKey(windowKind?: string): string {
+  return practiceSessionStorageKey(localProfileStore.current(), windowKind);
 }
 
 describe('practice session persistence', () => {
@@ -166,6 +185,7 @@ describe('practice session persistence', () => {
       storage.clear(STORAGE.history),
       storage.clear(STORAGE.auth),
     ]);
+    await localProfileStore.initialize();
     await archiveStore.save(EMPTY_ARCHIVE);
     await seedImmutableOfflineQuestions([question('q1', 1), question('q2', 2)]);
   });
@@ -225,7 +245,7 @@ describe('practice session persistence', () => {
     first.practice.abort();
 
     await vi.waitFor(async () => {
-      expect(await storage.get(STORAGE.app, 'practice-session:guest')).toBeUndefined();
+      expect(await storage.get(STORAGE.app, activeSessionKey())).toBeUndefined();
     });
     const restored = await freshStores();
 
@@ -244,13 +264,14 @@ describe('practice session persistence', () => {
   }) => {
     const first = await freshStores();
     await first.practice.startQuestions(['q1', 'q2']);
-    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, 'practice-session:guest');
+    const key = activeSessionKey();
+    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, key);
     expect(saved).toBeDefined();
     const legacy: Record<string, unknown> = { ...(saved ?? {}), version };
     delete legacy.contentId;
     if (dropOwner) delete legacy.owner;
     if (dropSource) delete legacy.contentSource;
-    await storage.set(STORAGE.app, 'practice-session:guest', legacy);
+    await storage.set(STORAGE.app, key, legacy);
 
     const getEndpoint = vi.fn(async () => ({
       baseUrl: 'http://core.must-not-be-contacted.test',
@@ -270,18 +291,23 @@ describe('practice session persistence', () => {
     expect(restored.practice.phase).toBe('provenance-choice');
     expect(getEndpoint).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
-    await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toEqual(legacy);
+    await expect(storage.get(STORAGE.app, key)).resolves.toMatchObject({
+      ...legacy,
+      version: 5,
+      owner: expect.objectContaining({ localProfileId: localProfileStore.current() }),
+    });
   });
 
   it('upgrades an unprovenanced snapshot only after choosing the current bank', async () => {
     const first = await freshStores();
     await first.practice.startQuestions(['q1', 'q2']);
-    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, 'practice-session:guest');
+    const key = activeSessionKey();
+    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, key);
     expect(saved).toBeDefined();
     const legacy: Record<string, unknown> = { ...(saved ?? {}), version: 3 };
     delete legacy.contentSource;
     delete legacy.contentId;
-    await storage.set(STORAGE.app, 'practice-session:guest', legacy);
+    await storage.set(STORAGE.app, key, legacy);
 
     const getEndpoint = vi.fn(async () => ({
       baseUrl: 'http://core.current-choice.test',
@@ -306,8 +332,8 @@ describe('practice session persistence', () => {
     expect(restored.practice.items.map((item) => item.questionId)).toEqual(['q1', 'q2']);
     expect(getEndpoint).toHaveBeenCalledOnce();
     expect(fetchSpy).toHaveBeenCalledOnce();
-    await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toMatchObject({
-      version: 4,
+    await expect(storage.get(STORAGE.app, key)).resolves.toMatchObject({
+      version: 5,
       contentSource: 'local',
       contentId: TEST_COMMIT,
     });
@@ -316,7 +342,16 @@ describe('practice session persistence', () => {
   it('exposes none of outbox, archive, history, session or memory when the atomic batch fails', async () => {
     const { practice } = await freshStores();
     await practice.startQuestions(['q1', 'q2']);
-    vi.spyOn(atomicStorage, 'commitBatch').mockRejectedValueOnce(new Error('simulated disk failure'));
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      if (request.mutations.some(
+        (mutation) => mutation.collection === STORAGE.app
+          && mutation.key === activeSessionKey(),
+      )) {
+        throw new Error('simulated disk failure');
+      }
+      return commit(request);
+    });
 
     await expect(gradeCurrent(practice)).rejects.toThrow('simulated disk failure');
 
@@ -409,7 +444,7 @@ describe('practice session persistence', () => {
     vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
       const sessionMutation = request.mutations.find(
         (mutation) => mutation.collection === STORAGE.app
-          && mutation.key === 'practice-session:guest',
+          && mutation.key === activeSessionKey(),
       );
       const position = sessionMutation?.operation === 'set'
         && typeof sessionMutation.value === 'object'
@@ -487,14 +522,17 @@ describe('practice session persistence', () => {
   });
 
   it('retries against a concurrent guest claim and keeps its session key fixed', async () => {
-    const { practice, progress } = await freshStores();
+    const { practice } = await freshStores();
+    const guestKey = practiceSessionStorageKey(localProfileStore.current());
     await practice.startQuestions(['q1', 'q2']);
     const commit = atomicStorage.commitBatch.bind(atomicStorage);
     let raced = false;
     vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
       if (!raced) {
         raced = true;
-        await expect(progress.claimGuestAttempts('claimed-user')).resolves.toBe(0);
+        await expect(localProfileStore.claimGuestForUser('claimed-user')).resolves.toMatchObject({
+          activeProfileId: 'user:claimed-user',
+        });
         useAuthStore().session = {
           token: 'claimed-token',
           expiresAt: '2099-01-01T00:00:00.000Z',
@@ -508,11 +546,228 @@ describe('practice session persistence', () => {
 
     expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
     expect(await attemptOutbox.count('claimed-user')).toBe(1);
-    expect((await guestSession())?.owner).toMatchObject({ userId: GUEST_ATTEMPT_OWNER });
-    expect((await guestSession())?.graded).toHaveLength(1);
+    const guestSnapshot = await storage.get<{
+      owner?: { userId?: string };
+      graded?: unknown[];
+    }>(STORAGE.app, guestKey);
+    expect(guestSnapshot?.owner).toMatchObject({ userId: GUEST_ATTEMPT_OWNER });
+    expect(guestSnapshot?.graded).toHaveLength(1);
     await expect(
-      storage.get(STORAGE.app, 'practice-session:claimed-user'),
+      storage.get(STORAGE.app, practiceSessionStorageKey('user:claimed-user')),
     ).resolves.toBeUndefined();
+  });
+
+  it('restores an explicitly claimed guest session for only its destination account', async () => {
+    const first = await freshStores();
+    const guestProfile = localProfileStore.current();
+    const guestKey = practiceSessionStorageKey(guestProfile);
+    await first.practice.startQuestions(['q1', 'q2']);
+
+    await first.progress.beginGuestAttemptClaim('created-account');
+    await first.progress.claimGuestProfile('created-account');
+    await first.progress.recoverGuestAttemptClaim('created-account');
+
+    const destination = await freshStores();
+    useAuthStore().session = {
+      token: 'created-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'created-account', username: 'created' },
+    };
+    await expect(destination.practice.restoreSession()).resolves.toBe(true);
+    expect(destination.practice.items.map((item) => item.questionId)).toEqual(['q1', 'q2']);
+    await expect(storage.get(STORAGE.app, guestKey)).resolves.toMatchObject({
+      owner: expect.objectContaining({
+        userId: GUEST_ATTEMPT_OWNER,
+        localProfileId: guestProfile,
+      }),
+    });
+    await expect(
+      storage.get(STORAGE.app, practiceSessionStorageKey('user:created-account')),
+    ).resolves.toBeUndefined();
+
+    // Continuing the restored programme resolves its old guest generation to
+    // the account that explicitly claimed it.
+    await gradeCurrent(destination.practice);
+    expect(await attemptOutbox.count('created-account')).toBe(1);
+  });
+
+  it('rejects a claimed v5 guest session from a different guest generation', async () => {
+    const first = await freshStores();
+    const guestProfile = localProfileStore.current();
+    const guestKey = practiceSessionStorageKey(guestProfile);
+    await first.practice.startQuestions(['q1', 'q2']);
+    const snapshot = await storage.get<Record<string, unknown>>(STORAGE.app, guestKey);
+    expect(snapshot).toBeDefined();
+
+    await first.progress.beginGuestAttemptClaim('generation-owner');
+    await first.progress.claimGuestProfile('generation-owner');
+    await first.progress.recoverGuestAttemptClaim('generation-owner');
+    await storage.set(STORAGE.app, guestKey, {
+      ...snapshot,
+      owner: {
+        ...((snapshot?.owner ?? {}) as Record<string, unknown>),
+        guestGeneration: 'different-generation',
+      },
+    });
+
+    const destination = await freshStores();
+    await destination.progress.activateUserProfile('generation-owner');
+    useAuthStore().session = {
+      token: 'generation-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'generation-owner', username: 'generation' },
+    };
+    await expect(destination.practice.restoreSession()).resolves.toBe(false);
+  });
+
+  it('recovers and safely scopes a pre-2.2 guest session after a registration crash', async () => {
+    const first = await freshStores();
+    const sourceProfile = localProfileStore.current();
+    const scopedSourceKey = practiceSessionStorageKey(sourceProfile);
+    await first.practice.startQuestions(['q1', 'q2']);
+    const snapshot = await storage.get<Record<string, unknown>>(STORAGE.app, scopedSourceKey);
+    expect(snapshot).toBeDefined();
+    const legacyOwner = { ...((snapshot?.owner ?? {}) as Record<string, unknown>) };
+    delete legacyOwner.localProfileId;
+    await storage.set(STORAGE.app, 'practice-session:guest', {
+      ...snapshot,
+      version: 4,
+      owner: legacyOwner,
+    });
+    await storage.delete(STORAGE.app, scopedSourceKey);
+
+    await first.progress.beginGuestAttemptClaim(
+      accountStorageIdentity(DEFAULT_CONFIG.serverBaseUrl, 'crash-account'),
+    );
+    await authStorage.setSession({
+      token: 'crash-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'crash-account', username: 'crash' },
+      serverBaseUrl: DEFAULT_CONFIG.serverBaseUrl,
+    });
+
+    // Restart after the auth write but before profile/outbox claim completion.
+    setActivePinia(createPinia());
+    vi.stubGlobal('fetch', vi.fn(async () => json({ id: 'crash-account', username: 'crash' })));
+    const restartedAuth = useAuthStore();
+    await restartedAuth.init();
+    const restartedPractice = usePracticeStore();
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    let migrationReplyLost = false;
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      const migratesLegacy = request.mutations.some(
+        (mutation) => mutation.collection === STORAGE.app
+          && mutation.key === 'practice-session:guest'
+          && mutation.operation === 'delete',
+      );
+      if (migratesLegacy && !migrationReplyLost) {
+        migrationReplyLost = true;
+        await commit(request);
+        throw new Error('simulated migration response loss');
+      }
+      return commit(request);
+    });
+
+    await expect(restartedPractice.restoreSession()).resolves.toBe(true);
+    expect(migrationReplyLost).toBe(true);
+    await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toBeUndefined();
+    await expect(storage.get(STORAGE.app, scopedSourceKey)).resolves.toMatchObject({
+      version: 5,
+      owner: expect.objectContaining({ localProfileId: sourceProfile }),
+    });
+  });
+
+  it('keeps the rotated guest separate from the session claimed by an account', async () => {
+    const first = await freshStores();
+    const claimedGuestProfile = localProfileStore.current();
+    const claimedKey = practiceSessionStorageKey(claimedGuestProfile);
+    await first.practice.startQuestions(['q1', 'q2']);
+    await first.progress.beginGuestAttemptClaim('owner-account');
+    await first.progress.claimGuestProfile('owner-account');
+    await first.progress.recoverGuestAttemptClaim('owner-account');
+
+    useAuthStore().session = undefined;
+    await first.progress.activateGuestProfile();
+    const rotatedGuestProfile = localProfileStore.current();
+    expect(rotatedGuestProfile).not.toBe(claimedGuestProfile);
+
+    const nextGuest = await freshStores();
+    useAuthStore().session = undefined;
+    await expect(nextGuest.practice.restoreSession()).resolves.toBe(false);
+    await nextGuest.practice.startQuestions(['q2']);
+
+    await expect(storage.get(STORAGE.app, claimedKey)).resolves.toBeDefined();
+    await expect(
+      storage.get(STORAGE.app, practiceSessionStorageKey(rotatedGuestProfile)),
+    ).resolves.toMatchObject({
+      items: [expect.objectContaining({ questionId: 'q2' })],
+      owner: expect.objectContaining({ localProfileId: rotatedGuestProfile }),
+    });
+  });
+
+  it('does not give an ownerless v2 guest session to a later guest generation', async () => {
+    const first = await freshStores();
+    await first.practice.startQuestions(['q1', 'q2']);
+    const scopedKey = activeSessionKey();
+    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, scopedKey);
+    const legacy: Record<string, unknown> = { ...(saved ?? {}), version: 2 };
+    delete legacy.owner;
+    await storage.set(STORAGE.app, 'practice-session:guest', legacy);
+    await storage.delete(STORAGE.app, scopedKey);
+
+    await first.progress.beginGuestAttemptClaim('claimed-account');
+    useAuthStore().session = undefined;
+    await first.progress.activateGuestProfile();
+
+    const laterGuest = await freshStores();
+    useAuthStore().session = undefined;
+    await expect(laterGuest.practice.restoreSession()).resolves.toBe(false);
+    await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toEqual(legacy);
+  });
+
+  it('keeps practice sessions isolated while switching between existing accounts', async () => {
+    const first = await freshStores();
+    await first.progress.activateUserProfile('account-a');
+    useAuthStore().session = {
+      token: 'token-a',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-a', username: 'a' },
+    };
+    await first.practice.startQuestions(['q1']);
+    const accountAKey = practiceSessionStorageKey('user:account-a');
+
+    await first.progress.activateUserProfile('account-b');
+    useAuthStore().session = {
+      token: 'token-b',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-b', username: 'b' },
+    };
+    await expect(gradeCurrent(first.practice)).rejects.toThrow('anderen lokalen Profil');
+    first.practice.abort();
+    await expect(storage.get(STORAGE.app, accountAKey)).resolves.toBeDefined();
+    const second = await freshStores();
+    useAuthStore().session = {
+      token: 'token-b',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-b', username: 'b' },
+    };
+    await expect(second.practice.restoreSession()).resolves.toBe(false);
+    await second.practice.startQuestions(['q2']);
+    const accountBKey = practiceSessionStorageKey('user:account-b');
+
+    await second.progress.activateUserProfile('account-a');
+    const restoredA = await freshStores();
+    useAuthStore().session = {
+      token: 'token-a',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'account-a', username: 'a' },
+    };
+    await expect(restoredA.practice.restoreSession()).resolves.toBe(true);
+    expect(restoredA.practice.items.map((item) => item.questionId)).toEqual(['q1']);
+    await expect(storage.get(STORAGE.app, accountAKey)).resolves.toBeDefined();
+    await expect(storage.get(STORAGE.app, accountBKey)).resolves.toMatchObject({
+      items: [expect.objectContaining({ questionId: 'q2' })],
+    });
   });
 });
 
@@ -530,6 +785,7 @@ describe('session origin', () => {
       storage.clear(STORAGE.questions),
       storage.clear(STORAGE.archive),
     ]);
+    await localProfileStore.initialize();
     await archiveStore.save(EMPTY_ARCHIVE);
     await seedImmutableOfflineQuestions([question('q1', 1), question('q2', 2)]);
   });
@@ -561,12 +817,10 @@ describe('session origin', () => {
     await practice.startQuestions(['q1', 'q2']);
     await practice.finishSession();
 
-    const stale = await storage.get<Record<string, unknown>>(
-      STORAGE.app,
-      'practice-session:guest',
-    );
+    const key = activeSessionKey();
+    const stale = await storage.get<Record<string, unknown>>(STORAGE.app, key);
     const yesterday = new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString();
-    await storage.set(STORAGE.app, 'practice-session:guest', {
+    await storage.set(STORAGE.app, key, {
       ...stale,
       origin: 'smart',
       savedAt: yesterday,
@@ -577,7 +831,7 @@ describe('session origin', () => {
     expect(reloaded.practice.phase).toBe('idle');
     // …and the stale snapshot is cleared rather than left to be re-offered.
     await expect(
-      storage.get(STORAGE.app, 'practice-session:guest'),
+      storage.get(STORAGE.app, key),
     ).resolves.toBeUndefined();
   });
 
@@ -586,11 +840,9 @@ describe('session origin', () => {
     await practice.startQuestions(['q1', 'q2']);
     await practice.finishSession();
 
-    const saved = await storage.get<Record<string, unknown>>(
-      STORAGE.app,
-      'practice-session:guest',
-    );
-    await storage.set(STORAGE.app, 'practice-session:guest', {
+    const key = activeSessionKey();
+    const saved = await storage.get<Record<string, unknown>>(STORAGE.app, key);
+    await storage.set(STORAGE.app, key, {
       ...saved,
       origin: 'smart',
       savedAt: new Date(Date.now() - 60_000).toISOString(),
@@ -677,6 +929,7 @@ describe('practice content revision integrity', () => {
       storage.clear(STORAGE.questions),
       storage.clear(STORAGE.archive),
     ]);
+    await localProfileStore.initialize();
     await archiveStore.save(EMPTY_ARCHIVE);
     ports.coreRuntime = {
       capabilities: { localCore: true },
@@ -693,6 +946,15 @@ describe('practice content revision integrity', () => {
       status: 200,
       statusText: 'OK',
       text: async () => JSON.stringify(body),
+    };
+  }
+
+  function notFound(): object {
+    return {
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      text: async () => JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Cannot GET route' } }),
     };
   }
 
@@ -717,6 +979,7 @@ describe('practice content revision integrity', () => {
     const rawHash = '1'.repeat(64);
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         return reply({ commit: commitA, items: { q1: rawHash } });
       }
@@ -740,6 +1003,7 @@ describe('practice content revision integrity', () => {
     const rawHash = '2'.repeat(64);
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         return reply({ commit: commitA, items: { q1: rawHash } });
       }
@@ -768,6 +1032,7 @@ describe('practice content revision integrity', () => {
     let manifestCalls = 0;
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         manifestCalls += 1;
         const commit = manifestCalls === 1 ? commitA : commitB;
@@ -802,6 +1067,7 @@ describe('practice content revision integrity', () => {
     } satisfies CoreRuntimePort;
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) throw new TypeError('offline');
       if (path.endsWith('/content/questions/batch')) {
         batchCalls();
@@ -854,6 +1120,7 @@ describe('practice content revision integrity', () => {
     stubObjectUrls('blob:q1-commit-a');
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         return reply({ commit: deployment, items: { q1: rawHash } });
       }
@@ -886,6 +1153,7 @@ describe('practice content revision integrity', () => {
     const { createObjectURL } = stubObjectUrls();
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         return reply({ commit: deployment, items: { q1: rawHash } });
       }
@@ -919,6 +1187,7 @@ describe('practice content revision integrity', () => {
     const { createObjectURL } = stubObjectUrls('blob:historical-asset');
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path === '/content/manifest/v2') return notFound();
       if (path === '/content/manifest') {
         return reply({ commit: commitB, items: { q1: '8'.repeat(64) } });
       }
@@ -964,6 +1233,7 @@ describe('practice content revision integrity', () => {
     const rawHash = '7'.repeat(64);
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) return reply({ commit: commitA, items: { q1: rawHash } });
       if (path.endsWith('/content/questions/batch')) {
         return reply({ questions: [contentQuestion(q1, rawHash)], missing: [] });
@@ -989,6 +1259,7 @@ describe('practice content revision integrity', () => {
     let batchCalls = 0;
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
       const path = new URL(rawUrl).pathname;
+      if (path.endsWith('/content/manifest/v2')) return notFound();
       if (path.endsWith('/content/manifest')) {
         return reply({ commit: deployment, items: { q1: rawHash } });
       }
@@ -1021,6 +1292,7 @@ describe('desktop practice window isolation', () => {
       storage.clear(STORAGE.questions),
       storage.clear(STORAGE.archive),
     ]);
+    await localProfileStore.initialize();
     await archiveStore.save(EMPTY_ARCHIVE);
     await seedImmutableOfflineQuestions([question('q1', 1), question('q2', 2)]);
   });
@@ -1034,9 +1306,9 @@ describe('desktop practice window isolation', () => {
     const native = await freshStores();
     await native.practice.startQuestions(['q2']);
 
-    expect(await storage.get<{ items: SessionItem[] }>(STORAGE.app, 'practice-session:guest:main'))
+    expect(await storage.get<{ items: SessionItem[] }>(STORAGE.app, activeSessionKey('main')))
       .toMatchObject({ items: [expect.objectContaining({ questionId: 'q1' }), expect.objectContaining({ questionId: 'q2' })] });
-    expect(await storage.get<{ items: SessionItem[] }>(STORAGE.app, 'practice-session:guest:practice'))
+    expect(await storage.get<{ items: SessionItem[] }>(STORAGE.app, activeSessionKey('practice')))
       .toMatchObject({ items: [expect.objectContaining({ questionId: 'q2' })] });
     await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toBeUndefined();
   });
@@ -1045,13 +1317,17 @@ describe('desktop practice window isolation', () => {
     ports.shell = originalShell;
     const oldWebSession = await freshStores();
     await oldWebSession.practice.startQuestions(['q1', 'q2']);
-    expect(await storage.get(STORAGE.app, 'practice-session:guest')).toBeDefined();
+    const scopedWebKey = activeSessionKey();
+    const oldSnapshot = await storage.get(STORAGE.app, scopedWebKey);
+    expect(oldSnapshot).toBeDefined();
+    await storage.set(STORAGE.app, 'practice-session:guest', oldSnapshot);
+    await storage.delete(STORAGE.app, scopedWebKey);
 
     ports.shell = desktopShell('practice');
     const desktop = await freshStores();
     await expect(desktop.practice.restoreSession()).resolves.toBe(true);
 
     await expect(storage.get(STORAGE.app, 'practice-session:guest')).resolves.toBeUndefined();
-    await expect(storage.get(STORAGE.app, 'practice-session:guest:practice')).resolves.toBeDefined();
+    await expect(storage.get(STORAGE.app, activeSessionKey('practice'))).resolves.toBeDefined();
   });
 });

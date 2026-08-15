@@ -9,6 +9,7 @@ import {
   type StorageAddress,
   type StorageBatchCommit,
   type StorageBatchCommitResult,
+  type StorageChange,
   type StoragePort,
   type StorageVersionedEntry,
 } from '@qed2/core-logic';
@@ -20,6 +21,14 @@ const COLLECTIONS = Object.values(STORAGE);
 const COLLECTION_SET = new Set<string>(COLLECTIONS);
 const MAX_KEY_LENGTH = 512;
 const MAX_BATCH_ADDRESSES = 32;
+const BROADCAST_CHANNEL = 'qed2-storage-v1';
+const FALLBACK_SIGNAL_KEY = '__qed2_storage_signal_v1__';
+
+interface StorageBroadcast {
+  version: 1;
+  sourceId: string;
+  changes: StorageChange[];
+}
 
 type RevisionKey = [collection: string, key: string];
 
@@ -127,6 +136,51 @@ function openDb(): Promise<IDBDatabase> {
 
 export class WebStorage implements StoragePort {
   private db: Promise<IDBDatabase> | undefined;
+  private readonly sourceId = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  private readonly listeners = new Set<(change: StorageChange) => void>();
+  private readonly channel: BroadcastChannel | undefined;
+  private signalSequence = 0;
+
+  private readonly onStorageSignal = (event: StorageEvent): void => {
+    if (event.key !== FALLBACK_SIGNAL_KEY || !event.newValue) return;
+    try {
+      const message = this.parseBroadcast(JSON.parse(event.newValue));
+      if (!message || message.sourceId === this.sourceId) return;
+      for (const change of message.changes) {
+        for (const listener of this.listeners) listener(change);
+      }
+    } catch {
+      // localStorage is an untrusted compatibility signal; IndexedDB remains
+      // authoritative and malformed values are ignored.
+    }
+  };
+
+  constructor() {
+    try {
+      globalThis.addEventListener?.('storage', this.onStorageSignal);
+    } catch {
+      // visibility/focus revalidation in the stores remains the final fallback.
+    }
+    try {
+      this.channel = typeof globalThis.BroadcastChannel === 'function'
+        ? new globalThis.BroadcastChannel(BROADCAST_CHANNEL)
+        : undefined;
+      if (this.channel) {
+        this.channel.onmessage = (event: MessageEvent<unknown>) => {
+          const message = this.parseBroadcast(event.data);
+          if (!message || message.sourceId === this.sourceId) return;
+          for (const change of message.changes) {
+            for (const listener of this.listeners) listener(change);
+          }
+        };
+      }
+    } catch {
+      // BroadcastChannel can be disabled by a browser privacy policy. IndexedDB
+      // remains authoritative; tabs then converge on their next ordinary read.
+      this.channel = undefined;
+    }
+  }
 
   private ready(): Promise<IDBDatabase> {
     this.db ??= openDb();
@@ -153,13 +207,15 @@ export class WebStorage implements StoragePort {
     validateAddress({ collection, key });
     if (value === undefined) throw new TypeError('Storage value must be defined');
     const db = await this.ready();
-    await this.mutateOne(db, collection, key, { operation: 'set', value });
+    const revision = await this.mutateOne(db, collection, key, { operation: 'set', value });
+    this.publish([{ collection, key, operation: 'set', revision }]);
   }
 
   async delete(collection: string, key: string): Promise<void> {
     validateAddress({ collection, key });
     const db = await this.ready();
-    await this.mutateOne(db, collection, key, { operation: 'delete' });
+    const revision = await this.mutateOne(db, collection, key, { operation: 'delete' });
+    this.publish([{ collection, key, operation: 'delete', revision }]);
   }
 
   async keys(collection: string): Promise<string[]> {
@@ -205,6 +261,7 @@ export class WebStorage implements StoragePort {
       transaction.onerror = () => reject(transactionFailure(transaction, 'IndexedDB clear failed'));
       transaction.onabort = () => reject(transactionFailure(transaction, 'IndexedDB clear aborted'));
     });
+    this.publish([{ collection, operation: 'clear' }]);
   }
 
   async readBatch(addresses: readonly StorageAddress[]): Promise<StorageVersionedEntry[]> {
@@ -253,7 +310,7 @@ export class WebStorage implements StoragePort {
       ...request.mutations.map((mutation) => mutation.collection),
       META_STORE,
     ])];
-    return await new Promise<StorageBatchCommitResult>((resolve, reject) => {
+    const result = await new Promise<StorageBatchCommitResult>((resolve, reject) => {
       const transaction = db.transaction(stores, 'readwrite');
       const revisions = transaction.objectStore(META_STORE);
       let pending = request.ifRevisions.length;
@@ -306,6 +363,23 @@ export class WebStorage implements StoragePort {
           : transactionFailure(transaction, 'IndexedDB batch commit aborted'),
       );
     });
+    if (result.committed) {
+      const expected = new Map(
+        request.ifRevisions.map((condition) => [addressId(condition), condition.revision]),
+      );
+      this.publish(request.mutations.map((mutation) => ({
+        collection: mutation.collection,
+        key: mutation.key,
+        operation: mutation.operation,
+        revision: (expected.get(addressId(mutation)) ?? 0) + 1,
+      })));
+    }
+    return result;
+  }
+
+  onChange(cb: (change: StorageChange) => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
   }
 
   private async mutateOne(
@@ -313,11 +387,12 @@ export class WebStorage implements StoragePort {
     collection: string,
     key: string,
     mutation: { operation: 'set'; value: unknown } | { operation: 'delete' },
-  ): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
+  ): Promise<number> {
+    return await new Promise<number>((resolve, reject) => {
       const transaction = db.transaction([collection, META_STORE], 'readwrite');
       const revisions = transaction.objectStore(META_STORE);
       const getRevision = revisions.get([collection, key] satisfies RevisionKey);
+      let nextRevision = 0;
       getRevision.onsuccess = () => {
         const revision = currentRevision(getRevision.result);
         if (revision >= Number.MAX_SAFE_INTEGER) {
@@ -327,11 +402,71 @@ export class WebStorage implements StoragePort {
         const store = transaction.objectStore(collection);
         if (mutation.operation === 'set') store.put(mutation.value, key);
         else store.delete(key);
-        revisions.put(revision + 1, [collection, key] satisfies RevisionKey);
+        nextRevision = revision + 1;
+        revisions.put(nextRevision, [collection, key] satisfies RevisionKey);
       };
-      transaction.oncomplete = () => resolve();
+      transaction.oncomplete = () => resolve(nextRevision);
       transaction.onerror = () => reject(transactionFailure(transaction, 'IndexedDB mutation failed'));
       transaction.onabort = () => reject(transactionFailure(transaction, 'IndexedDB mutation aborted'));
     });
+  }
+
+  private publish(changes: StorageChange[]): void {
+    if (changes.length === 0) return;
+    const message: StorageBroadcast = { version: 1, sourceId: this.sourceId, changes };
+    if (this.channel) {
+      try {
+        this.channel.postMessage(message);
+        return;
+      } catch {
+        // Fall through to the metadata-only storage-event signal.
+      }
+    }
+    try {
+      const payload = JSON.stringify({
+        ...message,
+        nonce: `${this.sourceId}:${this.signalSequence += 1}`,
+      });
+      globalThis.localStorage?.setItem(FALLBACK_SIGNAL_KEY, payload);
+      globalThis.localStorage?.removeItem(FALLBACK_SIGNAL_KEY);
+    } catch {
+      // A notification is only an invalidation hint. The committed IndexedDB
+      // value remains authoritative; visibility/focus performs a full read.
+    }
+  }
+
+  private parseBroadcast(value: unknown): StorageBroadcast | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const message = value as Partial<StorageBroadcast>;
+    if (
+      message.version !== 1
+      || typeof message.sourceId !== 'string'
+      || !Array.isArray(message.changes)
+      || message.changes.length === 0
+      || message.changes.length > MAX_BATCH_ADDRESSES
+    ) return undefined;
+    const changes: StorageChange[] = [];
+    for (const raw of message.changes) {
+      if (!raw || typeof raw !== 'object' || !COLLECTION_SET.has(raw.collection)) return undefined;
+      if (raw.operation === 'clear') {
+        if (raw.key !== undefined || raw.revision !== undefined) return undefined;
+        changes.push({ collection: raw.collection, operation: 'clear' });
+        continue;
+      }
+      if (raw.operation !== 'set' && raw.operation !== 'delete') return undefined;
+      try {
+        validateAddress({ collection: raw.collection, key: raw.key ?? '' });
+      } catch {
+        return undefined;
+      }
+      if (!validRevision(raw.revision) || raw.revision === 0) return undefined;
+      changes.push({
+        collection: raw.collection,
+        key: raw.key,
+        operation: raw.operation,
+        revision: raw.revision,
+      });
+    }
+    return { version: 1, sourceId: message.sourceId, changes };
   }
 }

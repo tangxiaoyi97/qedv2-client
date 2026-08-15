@@ -8,10 +8,16 @@ import { defineStore } from 'pinia';
 import { computed, onScopeDispose, ref, shallowRef } from 'vue';
 import {
   archiveChecksum,
+  accountStorageIdentity,
+  ATTEMPT_OUTBOX_ROW_PREFIX,
   assessLoginArchives,
   buildResolvedArchive,
   canonicalizeArchive,
+  canonicalServiceBaseUrl,
+  AMBIGUOUS_GUEST_ATTEMPT_OWNER,
   GUEST_ATTEMPT_OWNER,
+  HISTORY_EVENT_ROW_PREFIX,
+  LOCAL_PROFILE_STATE_KEY,
   overwriteServerArchive,
   performSync,
   submitResolution,
@@ -19,6 +25,7 @@ import {
   isPartDue,
   isPracticed,
   ApiError,
+  ArchiveStore,
   NetworkError,
   ServerClient,
   type AttemptOwnerSnapshot,
@@ -31,19 +38,25 @@ import {
   type GradingOrUnseen,
   type HistoryEntry,
   type LocalArchive,
+  type LocalProfileId,
+  type RegistrationIntent,
   type LocalGradeSessionMutation,
   type ServerArchiveState,
   type SyncConflict,
   type RecommendUserState,
   type CoreSourcePreference,
   STORAGE,
+  userLocalProfileId,
 } from '@qed2/core-logic';
 import {
   archiveStore,
   attemptOutbox,
   historyLog,
   localGradeCommitStore,
+  localProfileStore,
+  registrationJournal,
   storage,
+  syncMutationJournal,
 } from '../services.js';
 import { useAppClock } from '../composables/app-clock.js';
 import { runStorageMutation } from '../platform/desktop-storage.js';
@@ -101,7 +114,7 @@ export const useProgressStore = defineStore('progress', () => {
   /** Per-account audit-upload state; the computed view follows the current account. */
   const attemptUploadByOwner = ref<Record<string, AttemptUploadStatus>>({});
   const attemptUploadStatus = computed<AttemptUploadStatus>(() => {
-    const ownerId = useAuthStore().session?.user.id;
+    const ownerId = localAccountOwner(useAuthStore().session);
     return ownerId
       ? attemptUploadByOwner.value[ownerId] ?? { state: 'idle', pendingCount: 0 }
       : { state: 'idle', pendingCount: 0 };
@@ -124,17 +137,25 @@ export const useProgressStore = defineStore('progress', () => {
   const latestAttemptFlushByOwner = new Map<string, symbol>();
   let storageSubscribed = false;
   let archiveChoiceBase: LocalArchive | undefined;
+  let archiveChoiceContext: AccountArchiveContext | undefined;
+  let archiveChoicePendingPick: 'merge' | 'server' | 'local' | undefined;
   let conflictArchiveBase: LocalArchive | undefined;
+  let conflictContext: AccountArchiveContext | undefined;
   let cloudRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let cloudRecoveryAttempt = 0;
   let cloudRecoveryGeneration = 0;
   const CLOUD_RECOVERY_DELAYS = [5_000, 15_000, 45_000, 120_000, 300_000] as const;
 
-  interface CloudRecoveryContext {
-    generation: number;
+  interface AccountArchiveContext {
+    remoteUserId: string;
     ownerId: string;
     token: string;
     serverBaseUrl: string;
+    profileId: LocalProfileId;
+  }
+
+  interface CloudRecoveryContext extends AccountArchiveContext {
+    generation: number;
   }
 
   function isTransientCloudError(error: unknown): boolean {
@@ -159,23 +180,17 @@ export const useProgressStore = defineStore('progress', () => {
   }
 
   function captureCloudRecoveryContext(): CloudRecoveryContext | undefined {
-    const current = useAuthStore().session;
-    if (!current) return undefined;
-    return {
+    const current = captureAccountArchiveContext();
+    return current ? {
+      ...current,
       generation: cloudRecoveryGeneration,
-      ownerId: current.user.id,
-      token: current.token,
-      serverBaseUrl: useAppStore().config.serverBaseUrl,
-    };
+    } : undefined;
   }
 
   function isCurrentCloudRecoveryContext(context: CloudRecoveryContext): boolean {
-    const current = useAuthStore().session;
     return (
       context.generation === cloudRecoveryGeneration &&
-      current?.user.id === context.ownerId &&
-      current.token === context.token &&
-      useAppStore().config.serverBaseUrl === context.serverBaseUrl
+      isCurrentAccountArchiveContext(context)
     );
   }
 
@@ -204,7 +219,17 @@ export const useProgressStore = defineStore('progress', () => {
         }
         await flushAttemptOutbox(context);
         if (!isCurrentCloudRecoveryContext(context)) return;
-        await syncNowForRecovery(context);
+        if (
+          archiveChoicePendingPick
+          && archiveChoiceContext
+          && isCurrentAccountArchiveContext(archiveChoiceContext)
+          && archiveChoiceContext.ownerId === context.ownerId
+          && archiveChoiceContext.profileId === context.profileId
+        ) {
+          await resolveArchiveChoice(archiveChoicePendingPick);
+        } else {
+          await syncNowForRecovery(context);
+        }
         if (!isCurrentCloudRecoveryContext(context)) return;
         const retryAttempt = attemptUploadByOwner.value[context.ownerId]?.state === 'pending';
         const retrySync = syncStatus.value.state === 'offline';
@@ -240,11 +265,235 @@ export const useProgressStore = defineStore('progress', () => {
     );
   }
 
+  function localAccountOwner(
+    current: { user: { id: string }; serverBaseUrl?: string } | undefined,
+  ): string | undefined {
+    if (!current) return undefined;
+    // Directly injected sessions exist only in isolated store tests. Durable
+    // production sessions are upgraded with an issuer before publication.
+    if (!current.serverBaseUrl) return current.user.id;
+    const configured = canonicalServiceBaseUrl(useAppStore().config.serverBaseUrl);
+    const issuer = canonicalServiceBaseUrl(current.serverBaseUrl);
+    if (issuer !== configured) return undefined;
+    return accountStorageIdentity(issuer, current.user.id);
+  }
+
+  function captureAccountArchiveContext(): AccountArchiveContext | undefined {
+    const current = useAuthStore().session;
+    const profileId = localProfileStore.currentIfInitialized();
+    const ownerId = localAccountOwner(current);
+    if (!current || !ownerId || !profileId || profileId !== userLocalProfileId(ownerId)) {
+      return undefined;
+    }
+    return {
+      remoteUserId: current.user.id,
+      ownerId,
+      token: current.token,
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
+      profileId,
+    };
+  }
+
+  function isCurrentAccountArchiveContext(context: AccountArchiveContext): boolean {
+    const current = useAuthStore().session;
+    return current?.user.id === context.remoteUserId
+      && localAccountOwner(current) === context.ownerId
+      && current.token === context.token
+      && useAppStore().config.serverBaseUrl === context.serverBaseUrl
+      && localProfileStore.currentIfInitialized() === context.profileId;
+  }
+
+  function isSameAccountArchiveContext(
+    left: AccountArchiveContext,
+    right: AccountArchiveContext,
+  ): boolean {
+    return left.ownerId === right.ownerId
+      && left.remoteUserId === right.remoteUserId
+      && left.token === right.token
+      && left.serverBaseUrl === right.serverBaseUrl
+      && left.profileId === right.profileId;
+  }
+
+  function clearConflictForContext(context: AccountArchiveContext): void {
+    if (!conflictContext || !isSameAccountArchiveContext(conflictContext, context)) return;
+    conflict.value = undefined;
+    conflictArchiveBase = undefined;
+    conflictContext = undefined;
+  }
+
+  function clientForContext(context: AccountArchiveContext): ServerClient {
+    return new ServerClient(context.serverBaseUrl, () => context.token);
+  }
+
+  function archiveForContext(context: AccountArchiveContext): ArchiveStore {
+    return new ArchiveStore(storage, context.profileId);
+  }
+
+  function syncFingerprint(local: LocalArchive): string {
+    return `v1-${local.baseVersion}-${archiveChecksum(local.content)}`;
+  }
+
+  function resolveFingerprint(serverVersion: number, content: ArchiveContent): string {
+    return `v1-${serverVersion}-${archiveChecksum(canonicalizeArchive(content))}`;
+  }
+
+  function mutationScope(context: AccountArchiveContext) {
+    return { serverBaseUrl: context.serverBaseUrl, userId: context.remoteUserId };
+  }
+
+  async function performJournaledSync(
+    client: ServerClient,
+    context: AccountArchiveContext,
+    local: LocalArchive,
+    hints?: { serverChecksumHint?: string; serverVersionHint?: number },
+  ) {
+    if (
+      hints?.serverChecksumHint !== undefined
+      && hints.serverVersionHint !== undefined
+      && hints.serverChecksumHint === archiveChecksum(local.content)
+    ) {
+      return {
+        ...await performSync(client, local, hints),
+        journal: undefined,
+      };
+    }
+    const fingerprint = syncFingerprint(local);
+    const record = await syncMutationJournal.getOrCreate(mutationScope(context), {
+      operation: 'sync',
+      fingerprint,
+      baseVersion: local.baseVersion,
+      localArchive: local.content,
+    });
+    const result = await performSync(client, local, {
+      ...hints,
+      clientMutationId: record.clientMutationId,
+    });
+    return { ...result, journal: record };
+  }
+
+  async function submitJournaledResolution(
+    client: ServerClient,
+    context: AccountArchiveContext,
+    serverVersion: number,
+    content: ArchiveContent,
+    expected: LocalArchive,
+    submit: (clientMutationId: string) => ReturnType<typeof submitResolution>,
+  ) {
+    const fingerprint = resolveFingerprint(serverVersion, content);
+    const record = await syncMutationJournal.getOrCreate(mutationScope(context), {
+      operation: 'resolve',
+      fingerprint,
+      baseServerVersion: serverVersion,
+      resolvedArchive: content,
+      expectedLocalFingerprint: syncFingerprint(expected),
+    });
+    const result = await submit(record.clientMutationId);
+    return { ...result, journal: record };
+  }
+
+  async function completeJournal(
+    context: AccountArchiveContext,
+    record: {
+      operation: 'sync' | 'resolve';
+      fingerprint: string;
+      clientMutationId: string;
+    } | undefined,
+  ): Promise<void> {
+    if (!record) return;
+    await syncMutationJournal.complete(
+      mutationScope(context),
+      record.operation,
+      record.fingerprint,
+      record.clientMutationId,
+    );
+  }
+
+  /** Replay durable response-ambiguous writes before creating any newer one. */
+  async function recoverPendingMutations(
+    context: AccountArchiveContext,
+  ): Promise<'conflict' | 'blocked' | 'recovered' | undefined> {
+    const records = await syncMutationJournal.listPending(mutationScope(context));
+    if (records.length === 0) return undefined;
+    const client = clientForContext(context);
+    for (const record of records) {
+      if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+      if (record.operation === 'sync') {
+        const result = await performSync(client, {
+          baseVersion: record.intent.baseVersion,
+          content: record.intent.localArchive,
+        }, { clientMutationId: record.clientMutationId });
+        if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+        const latest = await loadLatestArchive(context);
+        const stillExpected = syncFingerprint(latest) === record.fingerprint;
+        if (result.outcome.type === 'conflict') {
+          await completeJournal(context, record);
+          continue;
+        }
+        if (stillExpected) {
+          await commitArchiveIfUnchanged(latest, result.archive, context);
+        }
+        await completeJournal(context, record);
+        continue;
+      }
+
+      const result = await overwriteServerArchive(
+        client,
+        record.intent.baseServerVersion,
+        record.intent.resolvedArchive,
+        record.clientMutationId,
+      );
+      if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+      const latest = await loadLatestArchive(context);
+      const stillExpected = syncFingerprint(latest) === record.intent.expectedLocalFingerprint;
+      if (result.outcome.type === 'conflict') {
+        await completeJournal(context, record);
+        continue;
+      }
+      if (stillExpected && result.archive) {
+        await commitArchiveIfUnchanged(latest, result.archive, context);
+      }
+      await completeJournal(context, record);
+    }
+
+    // Receipt creation order is not server commit order: two renderers can
+    // submit F1/F2 concurrently and F2 may arrive first. A read-only state
+    // check after draining receipts is the only authoritative way to decide
+    // whether another POST is necessary. It also calibrates baseVersion
+    // without incrementing the archive again.
+    if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+    const serverState = await client.getState();
+    if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+    const serverContent = canonicalizeArchive({
+      perPart: serverState.perPart,
+      perCompetency: serverState.perCompetency,
+    });
+    if (archiveChecksum(serverContent) !== serverState.checksum) {
+      throw new Error('Server archive checksum does not match its content');
+    }
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const latest = await loadLatestArchive(context);
+      if (archiveChecksum(latest.content) !== serverState.checksum) return undefined;
+      if (latest.baseVersion !== serverState.archiveVersion) {
+        const calibrated = { content: latest.content, baseVersion: serverState.archiveVersion };
+        if (!(await commitArchiveIfUnchanged(latest, calibrated, context))) continue;
+      }
+      if (!isCurrentAccountArchiveContext(context)) return 'blocked';
+      // A replayed resolution can be the response to the conflict dialog
+      // that is still open after a renderer/network interruption. Clear only
+      // state owned by this exact account epoch; never dismiss a newer
+      // account's conflict.
+      clearConflictForContext(context);
+      syncStatus.value = { state: 'synced', at: new Date() };
+      return 'recovered';
+    }
+    return undefined;
+  }
+
   /** A short lock: storage I/O only, never a core/server request. */
-  async function loadLatestArchive(): Promise<LocalArchive> {
+  async function loadLatestArchive(context?: AccountArchiveContext): Promise<LocalArchive> {
     return runStorageMutation(storage, async () => {
-      const latest = await archiveStore.load();
-      archive.value = latest;
+      const latest = await (context ? archiveForContext(context) : archiveStore).load();
+      if (!context || isCurrentAccountArchiveContext(context)) archive.value = latest;
       return latest;
     });
   }
@@ -253,18 +502,24 @@ export const useProgressStore = defineStore('progress', () => {
   async function commitArchiveIfUnchanged(
     expected: LocalArchive,
     next: LocalArchive,
+    context?: AccountArchiveContext,
   ): Promise<boolean> {
     return runStorageMutation(storage, async () => {
-      const committed = await archiveStore.saveIfUnchanged(expected, next);
-      archive.value = committed ? next : await archiveStore.load();
+      const target = context ? archiveForContext(context) : archiveStore;
+      const committed = await target.saveIfUnchanged(expected, next);
+      const latest = committed ? next : await target.load();
+      if (!context || isCurrentAccountArchiveContext(context)) archive.value = latest;
       return committed;
     });
   }
 
-  async function archiveIsStillCurrent(expected: LocalArchive): Promise<boolean> {
+  async function archiveIsStillCurrent(
+    expected: LocalArchive,
+    context?: AccountArchiveContext,
+  ): Promise<boolean> {
     return runStorageMutation(storage, async () => {
-      const current = await archiveStore.load();
-      archive.value = current;
+      const current = await (context ? archiveForContext(context) : archiveStore).load();
+      if (!context || isCurrentAccountArchiveContext(context)) archive.value = current;
       return sameArchive(current, expected);
     });
   }
@@ -276,15 +531,38 @@ export const useProgressStore = defineStore('progress', () => {
       if (change.collection === STORAGE.archive) {
         // Join the local queue as well as the origin-wide mutex: neither a
         // stale notification nor a local in-flight mutation may win later.
-        void enqueueArchiveMutation(loadLatestArchive).catch(() => undefined);
+        void enqueueArchiveMutation(async () => {
+          if (change.key === 'current') await localProfileStore.refresh();
+          await loadLatestArchive();
+        }).catch(() => undefined);
+      }
+      if (change.collection === STORAGE.app && change.key === LOCAL_PROFILE_STATE_KEY) {
+        void enqueueArchiveMutation(async () => {
+          await localProfileStore.refresh();
+          await loadLatestArchive();
+          historyVersion.value += 1;
+        }).catch(() => undefined);
       }
       if (
         change.collection === STORAGE.history &&
-        (change.operation === 'clear' || change.key === 'log')
+        (
+          change.operation === 'clear'
+          || change.key === 'log'
+          || change.key?.startsWith(HISTORY_EVENT_ROW_PREFIX)
+        )
       ) {
+        if (change.key === 'log') {
+          void enqueueArchiveMutation(async () => {
+            await localProfileStore.refresh();
+            await loadLatestArchive();
+          }).catch(() => undefined);
+        }
         historyVersion.value += 1;
       }
-      if (change.collection === STORAGE.history && change.key === 'attempt-outbox') {
+      if (
+        change.collection === STORAGE.history
+        && (change.key === 'attempt-outbox' || change.key?.startsWith(ATTEMPT_OUTBOX_ROW_PREFIX))
+      ) {
         // Other desktop renderers are notified for both enqueue and ack. An
         // early cloud read is harmless; the ack notification causes the
         // authoritative second read that removes any empty pre-upload view.
@@ -320,12 +598,77 @@ export const useProgressStore = defineStore('progress', () => {
 
   async function init(): Promise<void> {
     subscribeStorageChanges();
+    if (localProfileStore.currentIfInitialized()) {
+      await localProfileStore.refresh().catch(async () => {
+        await runStorageMutation(storage, () => localProfileStore.initialize());
+      });
+    } else {
+      await runStorageMutation(storage, () => localProfileStore.initialize());
+    }
     archive.value = await loadLatestArchive();
     loaded.value = true;
   }
 
   async function refresh(): Promise<void> {
     await enqueueArchiveMutation(loadLatestArchive);
+  }
+
+  async function activateUserProfile(userId: string): Promise<void> {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
+      await localProfileStore.activateUser(userId);
+      archive.value = await archiveStore.load();
+      conflict.value = undefined;
+      conflictArchiveBase = undefined;
+      conflictContext = undefined;
+      archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
+      archiveChoiceContext = undefined;
+      historyVersion.value += 1;
+    }));
+  }
+
+  async function activateGuestProfile(): Promise<void> {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
+      await localProfileStore.activateGuest();
+      archive.value = await archiveStore.load();
+      conflict.value = undefined;
+      conflictArchiveBase = undefined;
+      conflictContext = undefined;
+      archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
+      archiveChoiceContext = undefined;
+      syncStatus.value = { state: 'idle' };
+      historyVersion.value += 1;
+    }));
+  }
+
+  async function claimGuestProfile(
+    userId: string,
+    expectedGuestProfileId?: LocalProfileId,
+    expectedGuestGeneration?: string,
+  ): Promise<void> {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
+      await localProfileStore.claimGuestForUser(
+        userId,
+        expectedGuestProfileId,
+        expectedGuestGeneration,
+      );
+      archive.value = await archiveStore.load();
+      conflict.value = undefined;
+      conflictArchiveBase = undefined;
+      conflictContext = undefined;
+      archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
+      archiveChoiceContext = undefined;
+      historyVersion.value += 1;
+    }));
+  }
+
+  /** Resume only an invite marker naming this exact account. */
+  async function activateProfileForAuth(userId: string): Promise<void> {
+    const pending = await attemptOutbox.pendingGuestClaim();
+    if (pending === userId) await claimGuestProfile(userId);
+    else await activateUserProfile(userId);
   }
 
   function setAttemptUploadStatus(
@@ -337,9 +680,15 @@ export const useProgressStore = defineStore('progress', () => {
     attemptUploadByOwner.value = { ...attemptUploadByOwner.value, [ownerId]: status };
   }
 
-  function sameAttemptSession(snapshot: { ownerId: string; token: string }): boolean {
+  function sameAttemptSession(snapshot: {
+    ownerId: string;
+    token: string;
+    serverBaseUrl: string;
+  }): boolean {
     const current = useAuthStore().session;
-    return current?.user.id === snapshot.ownerId && current.token === snapshot.token;
+    return localAccountOwner(current) === snapshot.ownerId
+      && current?.token === snapshot.token
+      && useAppStore().config.serverBaseUrl === snapshot.serverBaseUrl;
   }
 
   /**
@@ -354,8 +703,10 @@ export const useProgressStore = defineStore('progress', () => {
     const current = auth.session;
     if (!current) return;
     const app = useAppStore();
+    const ownerId = localAccountOwner(current);
+    if (!ownerId) return;
     const snapshot = {
-      ownerId: current.user.id,
+      ownerId,
       token: current.token,
       serverBaseUrl: app.config.serverBaseUrl,
     };
@@ -482,9 +833,44 @@ export const useProgressStore = defineStore('progress', () => {
    * this already-open session while leaving later guest sessions untouched.
    */
   async function captureAttemptOwner(): Promise<AttemptOwnerSnapshot> {
-    const userId = useAuthStore().session?.user.id;
-    if (userId) return { userId };
-    return runStorageMutation(storage, () => attemptOutbox.captureGuestOwner());
+    return runStorageMutation(storage, async () => {
+      // BroadcastChannel may be unavailable under strict browser privacy
+      // policies. Double-check both durable profile routing and the reactive
+      // auth epoch around guest-generation capture; a claim or login between
+      // either read must retry instead of producing a split ownership pair.
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const beforeProfileState = await localProfileStore.refresh();
+        const beforeSession = useAuthStore().session;
+        const beforeProfile = localProfileStore.current();
+        const beforeRemoteUserId = beforeSession?.user.id;
+        const beforeUserId = localAccountOwner(beforeSession);
+        const beforeToken = beforeSession?.token;
+        if (beforeSession && !beforeUserId) continue;
+        if (beforeUserId && beforeProfile !== userLocalProfileId(beforeUserId)) continue;
+        if (!beforeUserId && beforeProfile !== beforeProfileState.guestProfileId) continue;
+
+        const guestOwner = beforeUserId
+          ? undefined
+          : await attemptOutbox.captureGuestOwner();
+
+        const afterProfileState = await localProfileStore.refresh();
+        const afterSession = useAuthStore().session;
+        const afterProfile = localProfileStore.current();
+        if (
+          afterSession?.user.id !== beforeRemoteUserId
+          || localAccountOwner(afterSession) !== beforeUserId
+          || afterSession?.token !== beforeToken
+          || afterProfile !== beforeProfile
+        ) {
+          continue;
+        }
+        if (beforeUserId) return { userId: beforeUserId, localProfileId: beforeProfile };
+        if (afterProfile !== afterProfileState.guestProfileId) continue;
+        if (!guestOwner?.guestGeneration) continue;
+        return { ...guestOwner, localProfileId: beforeProfile };
+      }
+      throw new Error('Local account ownership changed too often to start a practice session');
+    });
   }
 
   /**
@@ -519,9 +905,16 @@ export const useProgressStore = defineStore('progress', () => {
   }): Promise<{ ownerId: string; previousFsrs: FsrsState | undefined; session: unknown }> {
     return enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
       const result = await localGradeCommitStore.commit(input);
-      // Reactive state follows durable state, never the other way around.
-      archive.value = result.archive;
-      historyVersion.value += 1;
+      // An old practice window may finish after this renderer switched to a
+      // different account. Its durable write stays with its captured profile,
+      // but must never replace the newly active account's reactive archive.
+      const currentProfileId = localProfileStore.currentIfInitialized();
+      if (result.profileId === currentProfileId) {
+        archive.value = result.archive;
+        historyVersion.value += 1;
+      } else {
+        archive.value = await archiveStore.load();
+      }
       return {
         ownerId: result.ownerId,
         previousFsrs: result.previousFsrs,
@@ -536,9 +929,13 @@ export const useProgressStore = defineStore('progress', () => {
     // The resolved owner may have been fixed or guest-routed before later
     // archive/history/session writes. Never flush it through a different
     // account that appeared while those awaits were in flight.
-    if (userId !== GUEST_ATTEMPT_OWNER && auth.session?.user.id === userId) {
+    if (userId !== GUEST_ATTEMPT_OWNER && localAccountOwner(auth.session) === userId) {
       await flushAttemptOutbox();
     }
+  }
+
+  function isActiveAccountOwner(ownerId: string): boolean {
+    return localAccountOwner(useAuthStore().session) === ownerId;
   }
 
   /** Convenience path for callers that do not need a multi-step local commit. */
@@ -551,8 +948,70 @@ export const useProgressStore = defineStore('progress', () => {
   }
 
   /** Persisted before an invite-created session is committed. */
-  async function beginGuestAttemptClaim(userId: string): Promise<void> {
-    await runStorageMutation(storage, () => attemptOutbox.beginGuestClaim(userId));
+  async function beginGuestAttemptClaim(
+    userId: string,
+    expectedGuestProfileId?: LocalProfileId,
+    expectedGuestGeneration?: string,
+  ): Promise<void> {
+    // Legacy rows are migrated first without rotating anything. The following
+    // profile claim then rotates the local guest profile and attempt
+    // generation in one storage transaction, so a crash cannot split them.
+    await runStorageMutation(storage, () => attemptOutbox.prepareForGuestClaim());
+    await claimGuestProfile(userId, expectedGuestProfileId, expectedGuestGeneration);
+  }
+
+  /** Persist the exact guest bucket before the unauthenticated redeem POST. */
+  async function reserveInviteRegistration(
+    serverBaseUrl: string,
+    inviteCode: string,
+    username: string,
+  ): Promise<RegistrationIntent> {
+    return runStorageMutation(storage, async () => {
+      await attemptOutbox.prepareForGuestClaim();
+      await localProfileStore.refresh();
+      const sourceProfileId = localProfileStore.current();
+      const state = localProfileStore.snapshot();
+      if (sourceProfileId !== state.guestProfileId) {
+        throw new Error('Invite registration can only claim the active guest profile');
+      }
+      const owner = await attemptOutbox.captureGuestOwner();
+      if (!owner.guestGeneration) throw new Error('Guest attempt generation is unavailable');
+      return registrationJournal.reserve({
+        serverBaseUrl,
+        inviteCode,
+        username,
+        sourceProfileId,
+        sourceGuestGeneration: owner.guestGeneration,
+      });
+    });
+  }
+
+  /**
+   * A different registration must never inherit an uncertain predecessor's
+   * local work. Rotate to a fresh guest and retain the old profile/attempts in
+   * the explicit recovery export before releasing the registration lock.
+   */
+  async function quarantineInviteRegistration(intent: RegistrationIntent): Promise<void> {
+    await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
+      await localProfileStore.quarantineGuest(
+        intent.sourceProfileId,
+        intent.sourceGuestGeneration,
+      );
+      await attemptOutbox.claim(
+        GUEST_ATTEMPT_OWNER,
+        AMBIGUOUS_GUEST_ATTEMPT_OWNER,
+        intent.sourceGuestGeneration,
+      );
+      await attemptOutbox.finishGuestClaim(AMBIGUOUS_GUEST_ATTEMPT_OWNER);
+      archive.value = await archiveStore.load();
+      conflict.value = undefined;
+      conflictArchiveBase = undefined;
+      conflictContext = undefined;
+      archiveChoice.value = undefined;
+      archiveChoiceBase = undefined;
+      archiveChoiceContext = undefined;
+      historyVersion.value += 1;
+    }));
   }
 
   /**
@@ -561,16 +1020,25 @@ export const useProgressStore = defineStore('progress', () => {
    */
   async function recoverGuestAttemptClaim(userId: string): Promise<number> {
     return runStorageMutation(storage, async () => {
-      if ((await attemptOutbox.pendingGuestClaim()) !== userId) return 0;
-      const claimed = await attemptOutbox.claim(GUEST_ATTEMPT_OWNER, userId);
+      const pending = await attemptOutbox.pendingGuestClaimRoute();
+      if (pending?.destinationUserId !== userId) return 0;
+      const claimed = await attemptOutbox.claim(
+        GUEST_ATTEMPT_OWNER,
+        userId,
+        pending.sourceGeneration,
+      );
       await attemptOutbox.finishGuestClaim(userId);
       return claimed;
     });
   }
 
   /** Registration helper retained for direct callers/tests. */
-  async function claimGuestAttempts(userId: string): Promise<number> {
-    await beginGuestAttemptClaim(userId);
+  async function claimGuestAttempts(
+    userId: string,
+    expectedGuestProfileId?: LocalProfileId,
+    expectedGuestGeneration?: string,
+  ): Promise<number> {
+    await beginGuestAttemptClaim(userId, expectedGuestProfileId, expectedGuestGeneration);
     return recoverGuestAttemptClaim(userId);
   }
 
@@ -658,10 +1126,14 @@ export const useProgressStore = defineStore('progress', () => {
     }));
   }
 
-  async function toUserState(): Promise<RecommendUserState> {
+  async function toUserState(profileId?: LocalProfileId): Promise<RecommendUserState> {
     return runStorageMutation(storage, async () => {
-      archive.value = await archiveStore.load();
-      return archiveStore.toUserState();
+      const target = profileId ? new ArchiveStore(storage, profileId) : archiveStore;
+      const userState = await target.toUserState();
+      if (!profileId || profileId === localProfileStore.currentIfInitialized()) {
+        archive.value = await target.load();
+      }
+      return userState;
     });
   }
 
@@ -676,30 +1148,38 @@ export const useProgressStore = defineStore('progress', () => {
   ): Promise<SyncRunResult> {
     const auth = useAuthStore();
     const app = useAppStore();
-    if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
     if (!auth.isLoggedIn) return 'guest';
+    const context: AccountArchiveContext | undefined = expectedRecovery
+      ?? captureAccountArchiveContext();
+    if (!context) return 'blocked';
+    const isCurrent = () => expectedRecovery
+      ? isCurrentCloudRecoveryContext(expectedRecovery)
+      : isCurrentAccountArchiveContext(context);
+    if (!isCurrent()) return 'blocked';
     if (!app.online) {
       syncStatus.value = { state: 'offline', at: new Date() };
       scheduleCloudRecovery();
       return 'offline';
     }
-    const client = expectedRecovery
-      ? new ServerClient(expectedRecovery.serverBaseUrl, () => expectedRecovery.token)
-      : app.serverClient;
+    const client = clientForContext(context);
     syncStatus.value = { state: 'syncing' };
     try {
+      const recovered = await recoverPendingMutations(context);
+      if (recovered === 'conflict' || recovered === 'blocked') return recovered;
+      if (recovered === 'recovered') return 'synced';
       // Another renderer may grade while this renderer is awaiting the
       // server. Snapshot and commit are tiny lock sections; the network is
       // deliberately outside the lock. A changed snapshot retries against
       // the already-advanced server instead of overwriting newer local work.
       for (let contentionAttempt = 0; contentionAttempt < 4; contentionAttempt += 1) {
-        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
-        const local = await loadLatestArchive();
-        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
+        if (!isCurrent()) return 'blocked';
+        const local = await loadLatestArchive(context);
+        if (!isCurrent()) return 'blocked';
         const serverState = opts.compareChecksum ? await client.getState() : undefined;
-        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
-        const { outcome, archive: next } = await performSync(
+        if (!isCurrent()) return 'blocked';
+        const { outcome, archive: next, journal } = await performJournaledSync(
           client,
+          context,
           local,
           serverState
             ? {
@@ -708,16 +1188,27 @@ export const useProgressStore = defineStore('progress', () => {
               }
             : undefined,
         );
-        if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
+        if (!isCurrent()) return 'blocked';
         if (outcome.type === 'conflict') {
-          if (!(await archiveIsStillCurrent(local))) continue;
+          if (!(await archiveIsStillCurrent(local, context))) {
+            await completeJournal(context, journal);
+            continue;
+          }
+          if (!isCurrent()) return 'blocked';
           conflict.value = outcome.conflict;
           conflictArchiveBase = local;
+          conflictContext = context;
           syncStatus.value = { state: 'conflict', at: new Date() };
+          await completeJournal(context, journal);
           return 'conflict';
         }
-        if (!(await commitArchiveIfUnchanged(local, next))) continue;
-        conflictArchiveBase = undefined;
+        if (!(await commitArchiveIfUnchanged(local, next, context))) {
+          await completeJournal(context, journal);
+          continue;
+        }
+        await completeJournal(context, journal);
+        if (!isCurrent()) return 'blocked';
+        clearConflictForContext(context);
         syncStatus.value = { state: 'synced', at: new Date() };
         return outcome.type === 'in-sync' ? 'in-sync' : 'synced';
       }
@@ -728,7 +1219,7 @@ export const useProgressStore = defineStore('progress', () => {
       };
       return 'blocked';
     } catch (e) {
-      if (expectedRecovery && !isCurrentCloudRecoveryContext(expectedRecovery)) return 'blocked';
+      if (!isCurrent()) return 'blocked';
       if (isTransientCloudError(e)) {
         syncStatus.value = { state: 'offline', at: new Date() };
         scheduleCloudRecovery();
@@ -776,46 +1267,80 @@ export const useProgressStore = defineStore('progress', () => {
    * silently; only "both sides differ" opens the choice dialog. Network
    * failure degrades to the offline state — the user continues locally.
    */
-  async function reconcileOnLoginUnlocked(): Promise<void> {
-    const app = useAppStore();
+  async function reconcileOnLoginUnlocked(
+    expectedContext?: AccountArchiveContext,
+  ): Promise<void> {
+    const context = expectedContext ?? captureAccountArchiveContext();
+    if (!context || !isCurrentAccountArchiveContext(context)) return;
+    const client = clientForContext(context);
     syncStatus.value = { state: 'syncing' };
     try {
+      const recovered = await recoverPendingMutations(context);
+      if (recovered) {
+        if (recovered === 'recovered') {
+          syncStatus.value = { state: 'synced', at: new Date() };
+        }
+        return;
+      }
       for (let contentionAttempt = 0; contentionAttempt < 4; contentionAttempt += 1) {
-        const local = await loadLatestArchive();
-        const serverState = await app.serverClient.getState();
+        if (!isCurrentAccountArchiveContext(context)) return;
+        const local = await loadLatestArchive(context);
+        if (!isCurrentAccountArchiveContext(context)) return;
+        const serverState = await client.getState();
+        if (!isCurrentAccountArchiveContext(context)) return;
         const assessment = assessLoginArchives(local, serverState);
         switch (assessment.kind) {
           case 'adopt-server':
           case 'in-sync':
-            if (!(await commitArchiveIfUnchanged(local, assessment.archive))) continue;
+            if (!(await commitArchiveIfUnchanged(local, assessment.archive, context))) continue;
+            if (!isCurrentAccountArchiveContext(context)) return;
             syncStatus.value = { state: 'synced', at: new Date() };
             return;
           case 'upload-local': {
             // Empty cloud archive — a plain sync from the server's version
             // fast-forwards the local content up (no data on either side lost).
-            const { outcome, archive: next } = await performSync(app.serverClient, {
+            const upload: LocalArchive = {
               content: local.content,
               baseVersion: assessment.baseVersion,
-            });
+            };
+            const { outcome, archive: next, journal } = await performJournaledSync(
+              client,
+              context,
+              upload,
+            );
+            if (!isCurrentAccountArchiveContext(context)) return;
             if (outcome.type === 'conflict') {
-              if (!(await archiveIsStillCurrent(local))) continue;
+              if (!(await archiveIsStillCurrent(local, context))) {
+                await completeJournal(context, journal);
+                continue;
+              }
+              if (!isCurrentAccountArchiveContext(context)) return;
               conflict.value = outcome.conflict;
               conflictArchiveBase = local;
+              conflictContext = context;
               syncStatus.value = { state: 'conflict', at: new Date() };
+              await completeJournal(context, journal);
               return;
             }
-            if (!(await commitArchiveIfUnchanged(local, next))) continue;
+            if (!(await commitArchiveIfUnchanged(local, next, context))) {
+              await completeJournal(context, journal);
+              continue;
+            }
+            await completeJournal(context, journal);
+            if (!isCurrentAccountArchiveContext(context)) return;
             syncStatus.value = { state: 'synced', at: new Date() };
             return;
           }
           case 'choice-needed':
-            if (!(await archiveIsStillCurrent(local))) continue;
+            if (!(await archiveIsStillCurrent(local, context))) continue;
+            if (!isCurrentAccountArchiveContext(context)) return;
             archiveChoice.value = {
               serverState: assessment.serverState,
               server: assessment.server,
               local: assessment.local,
             };
             archiveChoiceBase = local;
+            archiveChoiceContext = context;
             syncStatus.value = { state: 'idle' };
             return;
         }
@@ -826,6 +1351,7 @@ export const useProgressStore = defineStore('progress', () => {
         at: new Date(),
       };
     } catch (e) {
+      if (!isCurrentAccountArchiveContext(context)) return;
       syncStatus.value =
         e instanceof NetworkError
           ? { state: 'offline', at: new Date() }
@@ -834,105 +1360,173 @@ export const useProgressStore = defineStore('progress', () => {
   }
 
   async function reconcileOnLogin(): Promise<void> {
-    await enqueueArchiveMutation(reconcileOnLoginUnlocked);
+    await enqueueArchiveMutation(() => reconcileOnLoginUnlocked());
   }
 
   /** The user's pick in the archive-choice dialog (§2.3). */
   async function resolveArchiveChoice(pick: 'merge' | 'server' | 'local'): Promise<void> {
-    const app = useAppStore();
-    const choice = archiveChoice.value;
-    const expected = archiveChoiceBase;
-    if (!choice || !expected) return;
-    try {
-      if (pick === 'server') {
-        const adopted: LocalArchive = {
-          content: canonicalizeArchive({
-            perPart: choice.serverState.perPart,
-            perCompetency: choice.serverState.perCompetency,
-          }),
-          baseVersion: choice.serverState.archiveVersion,
-        };
-        if (!(await commitArchiveIfUnchanged(expected, adopted))) {
-          archiveChoice.value = undefined;
-          archiveChoiceBase = undefined;
-          await reconcileOnLogin();
-          return;
-        }
-        syncStatus.value = { state: 'synced', at: new Date() };
-      } else if (pick === 'local') {
-        const { outcome, archive: next } = await overwriteServerArchive(
-          app.serverClient,
-          choice.serverState.archiveVersion,
-          expected.content,
-        );
-        if (outcome.type === 'conflict') {
-          // Another device wrote while choosing — re-run the assessment.
-          archiveChoice.value = undefined;
-          archiveChoiceBase = undefined;
-          await reconcileOnLogin();
-          return;
-        }
-        if (next && !(await commitArchiveIfUnchanged(expected, next))) {
-          archiveChoice.value = undefined;
-          archiveChoiceBase = undefined;
-          await reconcileOnLogin();
-          return;
-        }
-        syncStatus.value = { state: 'synced', at: new Date() };
-      } else {
-        // merge — the recommended path: a regular contract-§5 sync round;
-        // a true conflict falls through to the per-entry conflict dialog.
+    await enqueueArchiveMutation(async () => {
+      const choice = archiveChoice.value;
+      const expected = archiveChoiceBase;
+      const context = archiveChoiceContext;
+      if (!choice || !expected || !context) return;
+      archiveChoicePendingPick = pick;
+      if (!isCurrentAccountArchiveContext(context)) {
         archiveChoice.value = undefined;
-        await syncNow({ quiet: false });
+        archiveChoiceBase = undefined;
+        archiveChoiceContext = undefined;
+        archiveChoicePendingPick = undefined;
+        return;
       }
-      archiveChoice.value = undefined;
-      archiveChoiceBase = undefined;
-    } catch (e) {
-      syncStatus.value =
-        e instanceof NetworkError
-          ? { state: 'offline', at: new Date() }
-          : { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
-      archiveChoice.value = undefined;
-      archiveChoiceBase = undefined;
-    }
+      const client = clientForContext(context);
+      try {
+        if (pick === 'server') {
+          const adopted: LocalArchive = {
+            content: canonicalizeArchive({
+              perPart: choice.serverState.perPart,
+              perCompetency: choice.serverState.perCompetency,
+            }),
+            baseVersion: choice.serverState.archiveVersion,
+          };
+          if (!(await commitArchiveIfUnchanged(expected, adopted, context))) {
+            archiveChoice.value = undefined;
+            archiveChoiceBase = undefined;
+            archiveChoiceContext = undefined;
+            await reconcileOnLoginUnlocked(context);
+            return;
+          }
+          if (!isCurrentAccountArchiveContext(context)) return;
+          syncStatus.value = { state: 'synced', at: new Date() };
+        } else if (pick === 'local') {
+          const { outcome, archive: next, journal } = await submitJournaledResolution(
+            client,
+            context,
+            choice.serverState.archiveVersion,
+            expected.content,
+            expected,
+            (clientMutationId) => overwriteServerArchive(
+              client,
+              choice.serverState.archiveVersion,
+              expected.content,
+              clientMutationId,
+            ),
+          );
+          if (!isCurrentAccountArchiveContext(context)) return;
+          if (outcome.type === 'conflict') {
+            await completeJournal(context, journal);
+            // Another device wrote while choosing — re-run the assessment.
+            archiveChoice.value = undefined;
+            archiveChoiceBase = undefined;
+            archiveChoiceContext = undefined;
+            await reconcileOnLoginUnlocked(context);
+            return;
+          }
+          if (next && !(await commitArchiveIfUnchanged(expected, next, context))) {
+            await completeJournal(context, journal);
+            archiveChoice.value = undefined;
+            archiveChoiceBase = undefined;
+            archiveChoiceContext = undefined;
+            await reconcileOnLoginUnlocked(context);
+            return;
+          }
+          await completeJournal(context, journal);
+          if (!isCurrentAccountArchiveContext(context)) return;
+          syncStatus.value = { state: 'synced', at: new Date() };
+        } else {
+          // merge — the recommended path: a regular contract-§5 sync round;
+          // a true conflict falls through to the per-entry conflict dialog.
+          archiveChoice.value = undefined;
+          archiveChoiceBase = undefined;
+          archiveChoiceContext = undefined;
+          await runSyncRound({ quiet: false });
+        }
+        archiveChoice.value = undefined;
+        archiveChoiceBase = undefined;
+        archiveChoiceContext = undefined;
+        archiveChoicePendingPick = undefined;
+      } catch (e) {
+        if (isCurrentAccountArchiveContext(context)) {
+          syncStatus.value =
+            e instanceof NetworkError
+              ? { state: 'offline', at: new Date() }
+              : { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
+          if (isTransientCloudError(e)) scheduleCloudRecovery();
+        } else {
+          archiveChoice.value = undefined;
+          archiveChoiceBase = undefined;
+          archiveChoiceContext = undefined;
+          archiveChoicePendingPick = undefined;
+        }
+      }
+    });
   }
 
   /** Postponing is allowed — the next login re-offers the choice (§2.4). */
   function dismissArchiveChoice(): void {
     archiveChoice.value = undefined;
     archiveChoiceBase = undefined;
+    archiveChoiceContext = undefined;
+    archiveChoicePendingPick = undefined;
     syncStatus.value = { state: 'idle' };
   }
 
   /** User picked sides in the conflict dialog. */
   async function resolveConflict(choices: Record<string, 'server' | 'local'>): Promise<void> {
     await enqueueArchiveMutation(async () => {
-      const app = useAppStore();
       const current = conflict.value;
       const expected = conflictArchiveBase;
-      if (!current || !expected) return;
+      const context = conflictContext;
+      if (!current || !expected || !context) return;
+      if (!isCurrentAccountArchiveContext(context)) {
+        conflict.value = undefined;
+        conflictArchiveBase = undefined;
+        conflictContext = undefined;
+        return;
+      }
+      const client = clientForContext(context);
       const resolved: ArchiveContent = buildResolvedArchive(current, choices);
-      const { outcome, archive: next } = await submitResolution(app.serverClient, current, resolved);
+      const { outcome, archive: next, journal } = await submitJournaledResolution(
+        client,
+        context,
+        current.serverVersion,
+        resolved,
+        expected,
+        (clientMutationId) => submitResolution(
+          client,
+          current,
+          resolved,
+          clientMutationId,
+        ),
+      );
+      if (!isCurrentAccountArchiveContext(context)) return;
       if (outcome.type === 'conflict') {
         // Another device wrote while the user was choosing — new round.
-        if (!(await archiveIsStillCurrent(expected))) {
+        if (!(await archiveIsStillCurrent(expected, context))) {
+          await completeJournal(context, journal);
           conflict.value = undefined;
           conflictArchiveBase = undefined;
+          conflictContext = undefined;
           await runSyncRound({ quiet: true });
           return;
         }
         conflict.value = outcome.conflict;
         conflictArchiveBase = expected;
+        conflictContext = context;
+        await completeJournal(context, journal);
         return;
       }
       conflict.value = undefined;
       conflictArchiveBase = undefined;
+      conflictContext = undefined;
       if (next) {
-        if (!(await commitArchiveIfUnchanged(expected, next))) {
+        if (!(await commitArchiveIfUnchanged(expected, next, context))) {
+          await completeJournal(context, journal);
           await runSyncRound({ quiet: true });
           return;
         }
       }
+      await completeJournal(context, journal);
+      if (!isCurrentAccountArchiveContext(context)) return;
       syncStatus.value = { state: 'synced', at: new Date() };
     });
   }
@@ -942,6 +1536,7 @@ export const useProgressStore = defineStore('progress', () => {
     // the next sync will re-surface the conflict.
     conflict.value = undefined;
     conflictArchiveBase = undefined;
+    conflictContext = undefined;
     syncStatus.value = { state: 'idle' };
   }
 
@@ -969,12 +1564,19 @@ export const useProgressStore = defineStore('progress', () => {
     partState,
     init,
     refresh,
+    activateUserProfile,
+    activateGuestProfile,
+    claimGuestProfile,
+    activateProfileForAuth,
     captureAttemptOwner,
     commitGradeEvent,
     stageAttempt,
     flushStagedAttempt,
+    isActiveAccountOwner,
     queueAttempt,
     beginGuestAttemptClaim,
+    reserveInviteRegistration,
+    quarantineInviteRegistration,
     recoverGuestAttemptClaim,
     claimGuestAttempts,
     flushAttemptOutbox,

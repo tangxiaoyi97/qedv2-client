@@ -43,7 +43,11 @@ export type SyncOutcome =
 export async function performSync(
   transport: SyncTransport,
   local: LocalArchive,
-  opts?: { serverChecksumHint?: string; serverVersionHint?: number },
+  opts?: {
+    serverChecksumHint?: string;
+    serverVersionHint?: number;
+    clientMutationId?: string;
+  },
 ): Promise<{ outcome: SyncOutcome; archive: LocalArchive }> {
   if (
     opts?.serverChecksumHint !== undefined &&
@@ -59,7 +63,11 @@ export async function performSync(
   // Always send canonical content — the checksum the server computes must
   // match what we would compute locally.
   const canonical = canonicalizeArchive(local.content);
-  const res = await transport.sync({ baseVersion: local.baseVersion, localArchive: canonical });
+  const res = await transport.sync({
+    ...(opts?.clientMutationId ? { clientMutationId: opts.clientMutationId } : {}),
+    baseVersion: local.baseVersion,
+    localArchive: canonical,
+  });
 
   switch (res.result) {
     case 'fast-forward':
@@ -110,8 +118,10 @@ export async function submitResolution(
   transport: SyncTransport,
   conflict: SyncConflict,
   resolved: ArchiveContent,
+  clientMutationId?: string,
 ): Promise<{ outcome: SyncOutcome; archive?: LocalArchive }> {
   const res = await transport.resolve({
+    ...(clientMutationId ? { clientMutationId } : {}),
     baseServerVersion: conflict.serverVersion,
     resolvedArchive: resolved,
   });
@@ -226,9 +236,11 @@ export async function overwriteServerArchive(
   transport: SyncTransport,
   serverVersion: number,
   content: ArchiveContent,
+  clientMutationId?: string,
 ): Promise<{ outcome: SyncOutcome; archive?: LocalArchive }> {
   const canonical = canonicalizeArchive(content);
   const res = await transport.resolve({
+    ...(clientMutationId ? { clientMutationId } : {}),
     baseServerVersion: serverVersion,
     resolvedArchive: canonical,
   });

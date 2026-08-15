@@ -96,6 +96,9 @@ async function selectActivityDay(day: string): Promise<void> {
     const entries: ActivityDayEntry[] = [];
     for (;;) {
       const response = await app.serverClient.getHistory({ ...range, page, pageSize });
+      if (response.total === undefined) {
+        throw new Error('Numbered history page omitted its total');
+      }
       entries.push(
         ...response.items.map((item) => ({
           partId: item.partId,

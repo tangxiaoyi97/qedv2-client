@@ -17,6 +17,12 @@ import {
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import {
+  BANK_MANIFEST_FORMAT,
+  BANK_MANIFEST_PATH,
+  BANK_WIRE_CONTRACT_VERSION,
+  readBankManifestV2,
+} from './bank-manifest-v2.mjs';
 
 const runFile = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -77,7 +83,12 @@ const INTEGRITY_ROOTS = [
   'bank/schema',
   'bank/revisions',
 ];
-const INTEGRITY_FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION'];
+const INTEGRITY_FILES = [
+  'core/package.json',
+  'core/pnpm-lock.yaml',
+  'bank/VERSION',
+  BANK_MANIFEST_PATH,
+];
 
 async function mustDirectory(path, label) {
   const info = await stat(path).catch(() => undefined);
@@ -445,6 +456,28 @@ async function main() {
     });
     await stat(resolve(stage, 'core/dist/main.js'));
     await copyBank(resolve(stage, 'bank'), bankCommit);
+    const bankManifestResult = await runFile(
+      process.execPath,
+      [
+        resolve(coreSource, 'dist/bank/generate-bank-manifest.js'),
+        '--bank',
+        bankSource,
+        '--output',
+        resolve(stage, ...BANK_MANIFEST_PATH.split('/')),
+        '--schema-min',
+        '2',
+        '--schema-max',
+        '3',
+      ],
+      { env: process.env, maxBuffer: 16 * 1024 * 1024 },
+    );
+    const bankManifest = await readBankManifestV2(
+      resolve(stage, ...BANK_MANIFEST_PATH.split('/')),
+      bankCommit,
+    );
+    if (bankManifestResult.stdout.trim() !== bankManifest.bank.rootSha256) {
+      throw new Error('Generated Bank Manifest v2 did not report its persisted canonical root');
+    }
     await runFile(
       process.execPath,
       [
@@ -487,7 +520,14 @@ async function main() {
       formatVersion: 3,
       createdAt: new Date().toISOString(),
       core: { version: corePackage.version, commit: coreCommit, entry: 'dist/main.js' },
-      bank: { commit: bankCommit, schemaVersions },
+      bank: {
+        commit: bankCommit,
+        manifest: BANK_MANIFEST_PATH,
+        manifestFormatVersion: BANK_MANIFEST_FORMAT,
+        wireContractVersion: BANK_WIRE_CONTRACT_VERSION,
+        rootSha256: bankManifest.bank.rootSha256,
+        schemaVersions,
+      },
       revisions,
       files,
     };
@@ -513,7 +553,8 @@ async function main() {
     await rm(backup, { recursive: true, force: true });
     console.log(
       `Prepared QED2 runtime: core ${corePackage.version} (${coreCommit.slice(0, 12)}), ` +
-        `bank ${bankCommit.slice(0, 12)}, schemas ${schemaVersions.join('/')}, ` +
+        `bank ${bankCommit.slice(0, 12)} (${bankManifest.bank.rootSha256.slice(0, 12)}), ` +
+        `schemas ${schemaVersions.join('/')}, ` +
         `${revisions.commitCount} immutable revisions (${revisions.objectBytes} bytes)`,
     );
   } catch (error) {

@@ -152,10 +152,11 @@ describe.skipIf(!enabled)('live sync acceptance (real qed2-server)', () => {
 
     /* -------- /me/history: append-only audit, paginated, ids only -------- */
     const historyBefore = await client.getHistory({ pageSize: 1 });
+    if (historyBefore.total === undefined) throw new Error('Initial history page omitted its total');
     const gradedAt = new Date().toISOString();
     await client.recordAttempts([
-      { questionId: '2019-ht-t1-01', partId: '2019-ht-t1-01-a', correct: true, awardedPoints: 1, elapsedMs: 30_000, gradedAt },
-      { questionId: '2019-ht-t1-02', partId: '2019-ht-t1-02-a', correct: false, awardedPoints: 0, gradedAt },
+      { clientAttemptId: `${runId}-history-1`, questionId: '2019-ht-t1-01', partId: '2019-ht-t1-01-a', correct: true, awardedPoints: 1, elapsedMs: 30_000, gradedAt },
+      { clientAttemptId: `${runId}-history-2`, questionId: '2019-ht-t1-02', partId: '2019-ht-t1-02-a', correct: false, awardedPoints: 0, gradedAt },
     ]);
     // attempts never touch the archive (contract §4.2)
     const stateAfterAttempts = await client.getState();
@@ -163,6 +164,7 @@ describe.skipIf(!enabled)('live sync acceptance (real qed2-server)', () => {
     expect(stateAfterAttempts.checksum).toBe(state1.checksum);
 
     const page1 = await client.getHistory({ page: 1, pageSize: 2 });
+    if (page1.total === undefined) throw new Error('Numbered history page omitted its total');
     expect(page1.total).toBe(historyBefore.total + 2);
     expect(page1.items.length).toBeLessThanOrEqual(2);
     // newest first; identifiers only — no question content fields

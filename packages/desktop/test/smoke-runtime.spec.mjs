@@ -10,6 +10,10 @@ import {
   validateRevisionCommitOrder,
   verifyRuntimeInventory,
 } from '../scripts/smoke-runtime.mjs'
+import {
+  bankManifestRootSha256,
+  validateBankManifestV2,
+} from '../scripts/bank-manifest-v2.mjs'
 
 const ROOTS = [
   'core/dist',
@@ -19,7 +23,45 @@ const ROOTS = [
   'bank/schema',
   'bank/revisions',
 ]
-const FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION']
+const FILES = [
+  'core/package.json',
+  'core/pnpm-lock.yaml',
+  'bank/VERSION',
+  'bank/manifest.v2.json',
+]
+
+function bankManifestFixture() {
+  const commit = 'a'.repeat(40)
+  const value = {
+    formatVersion: 2,
+    wireContractVersion: 1,
+    bank: {
+      commit,
+      schema: { path: 'schema/question.ts', sha256: 'b'.repeat(64) },
+      immutableAssetBaseUrl: `/content/banks/${commit}/assets`,
+    },
+    questions: {
+      example: {
+        path: 'content/example.json',
+        rawSha256: 'c'.repeat(64),
+        wireSha256: 'd'.repeat(64),
+        assets: ['example.png'],
+      },
+    },
+    assets: {
+      'example.png': {
+        path: 'assets/example.png',
+        bytes: 24,
+        mimeType: 'image/png',
+        sha256: 'e'.repeat(64),
+      },
+    },
+  }
+  return {
+    ...value,
+    bank: { ...value.bank, rootSha256: bankManifestRootSha256(value) },
+  }
+}
 
 async function runtimeFixture(root) {
   const records = []
@@ -51,6 +93,26 @@ async function runtimeFixture(root) {
 }
 
 describe('runtime smoke helpers', () => {
+  it('accepts a canonical, commit-attested Bank Manifest v2 and rejects root drift', () => {
+    const manifest = bankManifestFixture()
+    expect(validateBankManifestV2(manifest, manifest.bank.commit)).toBe(manifest)
+
+    const reordered = {
+      assets: manifest.assets,
+      questions: manifest.questions,
+      bank: manifest.bank,
+      wireContractVersion: manifest.wireContractVersion,
+      formatVersion: manifest.formatVersion,
+    }
+    expect(bankManifestRootSha256(reordered)).toBe(manifest.bank.rootSha256)
+    expect(() =>
+      validateBankManifestV2(
+        { ...manifest, bank: { ...manifest.bank, rootSha256: 'f'.repeat(64) } },
+        manifest.bank.commit,
+      ),
+    ).toThrow(/canonical inventory/u)
+  })
+
   it('parses source, packaged and explicit runtime modes without ambiguity', () => {
     expect(parseArguments([])).toEqual({ packaged: false, runtimeRoot: undefined })
     expect(parseArguments(['--packaged'])).toEqual({ packaged: true, runtimeRoot: undefined })

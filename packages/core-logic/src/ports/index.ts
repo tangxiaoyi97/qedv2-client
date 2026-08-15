@@ -100,6 +100,8 @@ export interface StorageChange {
   operation: StorageChangeOperation;
   /** Absent for a collection-wide clear. */
   key?: string;
+  /** New durable revision when one address changed. */
+  revision?: number;
 }
 
 /** Well-known storage collections. */

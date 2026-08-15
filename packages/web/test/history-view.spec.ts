@@ -5,7 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE } from '@qed2/core-logic';
 import HistoryView from '../src/routes/HistoryView.vue';
-import { historyLog, storage } from '../src/services.js';
+import { historyLog, localProfileStore, storage } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
 
@@ -22,7 +22,11 @@ async function settle(): Promise<void> {
 
 describe('HistoryView activity filter', () => {
   beforeEach(async () => {
+    await storage.clear(STORAGE.app);
+    await storage.clear(STORAGE.archive);
+    await storage.clear(STORAGE.auth);
     await storage.clear(STORAGE.history);
+    await localProfileStore.initialize();
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
   });
 
@@ -56,6 +60,7 @@ describe('HistoryView activity filter', () => {
       grading: 'baffled',
       gradedAt: yesterday.toISOString(),
     });
+    const snapshotSpy = vi.spyOn(historyLog, 'snapshot');
 
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -76,7 +81,11 @@ describe('HistoryView activity filter', () => {
     app.mount(host);
     await settle();
 
-    await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(2));
+    await vi.waitFor(
+      () => expect(host.querySelectorAll('.hist__row')).toHaveLength(2),
+      { timeout: 5_000 },
+    );
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
 
     host
       .querySelector<SVGGElement>(`[data-key="${yesterdayKey}"]`)!
@@ -85,7 +94,7 @@ describe('HistoryView activity filter', () => {
       expect(host.querySelectorAll('.hist__row')).toHaveLength(1);
       expect(host.textContent).toContain('question-yesterday');
       expect(host.textContent).not.toContain('question-today');
-    });
+    }, { timeout: 5_000 });
     expect(host.textContent).toContain('1 Antwort');
     expect(host.querySelector(`[data-key="${yesterdayKey}"]`)?.getAttribute('aria-pressed')).toBe('true');
     expect(host.textContent).toContain('Verlauf gefiltert:');
@@ -93,7 +102,11 @@ describe('HistoryView activity filter', () => {
     host
       .querySelector<SVGGElement>(`[data-key="${yesterdayKey}"]`)!
       .dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(2));
+    await vi.waitFor(
+      () => expect(host.querySelectorAll('.hist__row')).toHaveLength(2),
+      { timeout: 5_000 },
+    );
+    expect(snapshotSpy).toHaveBeenCalledTimes(1);
     expect(host.querySelector(`[data-key="${todayKey}"]`)).not.toBeNull();
 
     app.unmount();
@@ -191,6 +204,7 @@ describe('HistoryView activity filter', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
     const router = createRouter({
@@ -250,6 +264,84 @@ describe('HistoryView activity filter', () => {
     app.unmount();
   });
 
+  it('ignores an old history response and never sends its bearer to a new endpoint', async () => {
+    let releaseOld!: () => void;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    let oldStarted!: () => void;
+    const oldStart = new Promise<void>((resolve) => { oldStarted = resolve; });
+    const requests: Array<{ hostname: string; authorization: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push({
+        hostname: url.hostname,
+        authorization: new Headers(init?.headers).get('authorization'),
+      });
+      if (url.pathname.endsWith('/me/history/activity')) {
+        return new Response(JSON.stringify({ activity: {} }), { status: 200 });
+      }
+      if (url.pathname.endsWith('/me/history')) {
+        if (url.hostname === 'server-a.example') {
+          oldStarted();
+          await oldGate;
+          return new Response(JSON.stringify({
+            items: [{
+              id: 'old-endpoint-attempt',
+              questionId: 'old-endpoint-question',
+              partId: 'old-endpoint-part',
+              correct: true,
+              awardedPoints: 1,
+              gradedAt: new Date().toISOString(),
+            }],
+            page: 1,
+            pageSize: 50,
+            total: 1,
+          }), { status: 200 });
+        }
+        throw new Error(`old credentials reached ${url.hostname}`);
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const appStore = useAppStore();
+    appStore.config = { ...appStore.config, serverBaseUrl: 'https://server-a.example' };
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'endpoint-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: 'https://server-a.example',
+    };
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const vueApp = createApp(HistoryView);
+    vueApp.use(pinia);
+    vueApp.use(router);
+    vueApp.mount(host);
+
+    await oldStart;
+    await appStore.updateConfig({ serverBaseUrl: 'https://server-b.example' });
+    await vi.waitFor(() => expect(auth.session).toBeUndefined());
+    releaseOld();
+    await settle();
+
+    expect(host.textContent).not.toContain('old-endpoint-question');
+    expect(host.textContent).not.toContain('new-endpoint-question');
+    expect(requests.some((request) =>
+      request.hostname === 'server-b.example' && request.authorization !== null,
+    )).toBe(false);
+    vueApp.unmount();
+  });
+
   it('reopens a cloud history row through the recorded Core source and revision', async () => {
     const commit = 'd'.repeat(40);
     const now = new Date().toISOString();
@@ -287,6 +379,7 @@ describe('HistoryView activity filter', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
     const router = createRouter({
@@ -320,6 +413,88 @@ describe('HistoryView activity filter', () => {
       coreSource: 'remote',
       contentId: commit,
     });
+    app.unmount();
+  });
+
+  it('falls back to numbered continuation when a rolling rollback ignores the cursor', async () => {
+    const now = new Date().toISOString();
+    const calls: string[] = [];
+    const item = (id: string) => ({
+      id,
+      questionId: `question-${id}`,
+      partId: `part-${id}`,
+      correct: true,
+      awardedPoints: 1,
+      elapsedMs: null,
+      gradedAt: now,
+      recordedAt: now,
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.includes('/me/history/activity?')) {
+        return new Response(JSON.stringify({ activity: {} }), { status: 200 });
+      }
+      if (url.includes('/me/history?')) {
+        const parsed = new URL(url);
+        if (parsed.searchParams.get('cursor') === 'cursor-1') {
+          // 2.1-style response: cursor was ignored and page 1 came back.
+          return new Response(JSON.stringify({
+            items: [item('one')], page: 1, pageSize: 50, total: 2,
+          }), { status: 200 });
+        }
+        if (parsed.searchParams.get('page') === '2') {
+          return new Response(JSON.stringify({
+            items: [item('two')], page: 2, pageSize: 50, total: 2,
+          }), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          items: [item('one')],
+          page: 1,
+          pageSize: 50,
+          total: 2,
+          hasMore: true,
+          nextCursor: 'cursor-1',
+        }), { status: 200 });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
+    };
+    useAppStore().setTokenProvider(() => auth.session?.token);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(HistoryView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+
+    await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(1));
+    const more = [...host.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.trim() === 'Mehr laden');
+    expect(more).toBeDefined();
+    more?.click();
+    await vi.waitFor(() => expect(host.querySelectorAll('.hist__row')).toHaveLength(2));
+    expect(host.textContent).toContain('question-one');
+    expect(host.textContent).toContain('question-two');
+    expect(calls.some((url) => url.includes('cursor=cursor-1'))).toBe(true);
+    expect(calls.some((url) => url.includes('page=2'))).toBe(true);
     app.unmount();
   });
 
@@ -375,6 +550,7 @@ describe('HistoryView activity filter', () => {
       token: 'token-a',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'account-a', username: 'a' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
     const router = createRouter({
@@ -397,6 +573,7 @@ describe('HistoryView activity filter', () => {
       token: 'token-b',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'account-b', username: 'b' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     await vi.waitFor(() => expect(host.textContent).toContain('question-b'));
     await vi.waitFor(() => {

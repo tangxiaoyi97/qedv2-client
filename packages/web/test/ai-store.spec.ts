@@ -116,6 +116,7 @@ function setup(statusResponse: AiStatus = status()): {
     token: 'token-u1',
     expiresAt: '2099-01-01T00:00:00.000Z',
     user: { id: 'u1', username: 'user-1' },
+    serverBaseUrl: 'https://server-a.test',
   };
   app.setTokenProvider(() => auth.session?.token);
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -208,6 +209,7 @@ describe('AI store release guards', () => {
       token: 'token-u2',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u2', username: 'user-2' },
+      serverBaseUrl: 'https://server-a.test',
     };
     await settle();
     await ai.explain(explainInput);
@@ -249,6 +251,7 @@ describe('AI store release guards', () => {
       token: 'token-u2',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u2', username: 'user-2' },
+      serverBaseUrl: 'https://server-a.test',
     };
     await nextTick();
     release();
@@ -282,6 +285,7 @@ describe('AI store release guards', () => {
       token: 'token-u2',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u2', username: 'user-2' },
+      serverBaseUrl: 'https://server-a.test',
     };
     await vi.waitFor(() => expect(ai.status?.features).toEqual(newest.features));
     releaseOld();

@@ -11,6 +11,10 @@
  */
 import { normalizeBaseUrl } from '../config/index.js';
 import { requestJson, type RequestOptions } from './http.js';
+import {
+  validateQueuedAttemptBatch,
+  type ValidatedQueuedAttempt,
+} from './attempt-validation.js';
 import type {
   AiAssessRequest,
   AiAssessResponse,
@@ -20,7 +24,6 @@ import type {
   AiStatus,
 } from '../ai/types.js';
 import type {
-  AttemptRecord,
   AuthResponse,
   HealthResponse,
   HistoryQuery,
@@ -73,10 +76,15 @@ export class ServerClient {
   }
 
   /** POST /auth/redeem — invite-code account creation, unauthenticated. */
-  redeem(inviteCode: string, username: string, password: string): Promise<AuthResponse> {
+  redeem(
+    inviteCode: string,
+    username: string,
+    password: string,
+    clientMutationId?: string,
+  ): Promise<AuthResponse> {
     return requestJson<AuthResponse>(this.baseUrl, '/auth/redeem', {
       method: 'POST',
-      body: { inviteCode, username, password },
+      body: { inviteCode, username, password, ...(clientMutationId ? { clientMutationId } : {}) },
     });
   }
 
@@ -110,11 +118,12 @@ export class ServerClient {
   }
 
   /** POST /me/attempts — optional audit-only stream (contract §4.2). */
-  recordAttempts(attempts: AttemptRecord[]): Promise<{ recorded: number }> {
+  async recordAttempts(attempts: ValidatedQueuedAttempt[]): Promise<{ recorded: number }> {
+    const validated = validateQueuedAttemptBatch(attempts);
     return requestJson<{ recorded: number }>(
       this.baseUrl,
       '/me/attempts',
-      this.authed({ method: 'POST', body: { attempts } }),
+      this.authed({ method: 'POST', body: { attempts: validated } }),
     );
   }
 
@@ -131,7 +140,8 @@ export class ServerClient {
         query: {
           since: query.since,
           until: query.until,
-          page: query.page,
+          page: query.cursor ? undefined : query.page,
+          cursor: query.cursor,
           pageSize: query.pageSize,
           partId: query.partId,
           questionId: query.questionId,

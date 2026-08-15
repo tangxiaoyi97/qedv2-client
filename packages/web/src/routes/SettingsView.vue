@@ -7,12 +7,25 @@
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { DEFAULT_CONFIG } from '@qed2/core-logic';
+import {
+  accountStorageIdentity,
+  canonicalServiceBaseUrl,
+  DEFAULT_CONFIG,
+  type LocalProfileId,
+  type LocalRecoveryInventory,
+  userLocalProfileId,
+} from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
 import SettingsCard from './settings/SettingsCard.vue';
 import SettingsRow from './settings/SettingsRow.vue';
-import { APP_VERSION, ports } from '../services.js';
+import {
+  APP_VERSION,
+  attemptOutbox,
+  localProfileStore,
+  localRecoveryStore,
+  ports,
+} from '../services.js';
 import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
 import {
   BUILTIN_THEME_EXTENSIONS,
@@ -38,14 +51,182 @@ const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
 
 onMounted(() => {
   if (auth.isLoggedIn) void leaderboard.refreshProfile();
+  void refreshRecovery();
 });
 watch(
   () => auth.isLoggedIn,
   (loggedIn) => {
     if (loggedIn) void leaderboard.refreshProfile();
     else leaderboard.clear();
+    void refreshRecovery();
   },
 );
+
+/* ---- Explicit recovery of ambiguous rolling-upgrade data ---- */
+const recoveryInventory = ref<LocalRecoveryInventory>();
+const recoveryOpen = ref(false);
+const recoveryBusy = ref(false);
+const recoveryError = ref('');
+const recoveryConfirm = ref<LocalProfileId>();
+const recoveryCard = ref<HTMLElement | null>(null);
+useModalA11y(recoveryCard, recoveryOpen, () => closeRecovery());
+
+async function refreshRecovery(): Promise<void> {
+  try {
+    const target = recoveryTarget();
+    recoveryInventory.value = await localRecoveryStore.inventory(target);
+  } catch {
+    // A malformed profile state is handled by boot's fail-closed path. Do not
+    // guess a count or expose a destructive action from an incomplete read.
+    recoveryInventory.value = undefined;
+  }
+}
+
+function recoveryTarget(): LocalProfileId | undefined {
+  const current = localProfileStore.currentIfInitialized();
+  if (!current) return undefined;
+  const session = auth.session;
+  if (!session) return current.startsWith('guest:') ? current : undefined;
+  if (!session.serverBaseUrl) return undefined;
+  try {
+    const ownerId = accountStorageIdentity(
+      session.serverBaseUrl,
+      session.user.id,
+    );
+    const expected = userLocalProfileId(ownerId);
+    return current === expected ? current : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function openRecovery(): Promise<void> {
+  recoveryError.value = '';
+  recoveryConfirm.value = undefined;
+  await refreshRecovery();
+  if ((recoveryInventory.value?.totalCount ?? 0) > 0) recoveryOpen.value = true;
+}
+
+function closeRecovery(): void {
+  if (recoveryBusy.value) return;
+  recoveryOpen.value = false;
+  recoveryConfirm.value = undefined;
+  recoveryError.value = '';
+}
+
+function recoveryProfileSummary(profile: LocalRecoveryInventory['profiles'][number]): string {
+  const sections = [
+    ...(profile.hasArchive ? ['Fortschritt'] : []),
+    ...((profile.historyCount + profile.historyEventCount) > 0
+      ? [`${profile.historyCount + profile.historyEventCount} Verlauf`]
+      : []),
+    ...(profile.attemptCount > 0 ? [`${profile.attemptCount} Antworten`] : []),
+  ];
+  return sections.join(' · ') || 'Unbekannte Daten';
+}
+
+async function downloadRecovery(): Promise<void> {
+  if (recoveryBusy.value) return;
+  recoveryBusy.value = true;
+  recoveryError.value = '';
+  try {
+    const payload = await localRecoveryStore.export(recoveryTarget());
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: 'application/json;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `qed2-wiederherstellung-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch {
+    recoveryError.value = 'Export fehlgeschlagen.';
+  } finally {
+    recoveryBusy.value = false;
+  }
+}
+
+async function assignRecovery(profileId: LocalProfileId): Promise<void> {
+  const target = recoveryTarget();
+  if (!target || recoveryBusy.value) return;
+  recoveryBusy.value = true;
+  recoveryError.value = '';
+  let syncRecoveredAccount = false;
+  try {
+    await refreshRecovery();
+    const candidate = recoveryInventory.value?.profiles.find(
+      (profile) => profile.profileId === profileId,
+    );
+    if (!candidate?.assignment.safe) throw new Error('Recovery assignment is no longer safe');
+    if (recoveryTarget() !== target) throw new Error('Recovery account changed');
+    const session = auth.session;
+    const scopedOwnerId = target.startsWith('user:') ? target.slice('user:'.length) : undefined;
+    const pendingLegacyRecovery = await attemptOutbox.pendingLegacyAccountRecovery();
+    const pending = pendingLegacyRecovery
+      ? {
+          sourceGeneration: pendingLegacyRecovery.sourceGeneration,
+          destinationUserId: pendingLegacyRecovery.scopedUserId,
+        }
+      : await attemptOutbox.pendingGuestClaimRoute();
+    if (pending && (!session?.serverBaseUrl || !scopedOwnerId)) {
+      throw new Error('Pending account recovery requires a verified account');
+    }
+    if (
+      session?.serverBaseUrl
+      && scopedOwnerId
+      && accountStorageIdentity(session.serverBaseUrl, session.user.id) !== scopedOwnerId
+    ) throw new Error('Recovery account changed');
+    if (candidate.kind === 'unclaimed-guest') {
+      if (!target.startsWith('user:')) throw new Error('Guest recovery requires an account');
+      if (!scopedOwnerId) throw new Error('Verified account identity is missing');
+      // Any pending marker already rotated the attempt generation. It belongs
+      // to the pre-rotation guest, never to this fresh unclaimed profile.
+      if (pending) throw new Error('Resolve the interrupted account claim first');
+      await progress.claimGuestAttempts(scopedOwnerId, candidate.profileId);
+      syncRecoveredAccount = true;
+    } else if (pending) {
+      if (!session?.serverBaseUrl || !scopedOwnerId) {
+        throw new Error('Verified account issuer is missing');
+      }
+      if (
+        pending.destinationUserId !== scopedOwnerId
+        && pending.destinationUserId !== session.user.id
+      ) throw new Error('Guest recovery belongs to another account');
+      if (
+        pendingLegacyRecovery
+        && (pendingLegacyRecovery.sourceProfileId !== profileId
+          || pendingLegacyRecovery.legacyUserId !== session.user.id
+          || pendingLegacyRecovery.scopedUserId !== scopedOwnerId)
+      ) throw new Error('Guest recovery is bound to another Server');
+      await localRecoveryStore.assignLegacyPendingAccount(profileId, target, {
+        legacyUserId: pendingLegacyRecovery?.legacyUserId ?? session.user.id,
+        scopedUserId: pendingLegacyRecovery?.scopedUserId ?? scopedOwnerId,
+        sourceGeneration: pending.sourceGeneration,
+      });
+      syncRecoveredAccount = true;
+    } else {
+      await localRecoveryStore.assign(profileId, target);
+      syncRecoveredAccount = target.startsWith('user:');
+    }
+    await localProfileStore.refresh();
+    await progress.refresh();
+    // Ownership and the recovered archive are durable before cloud work. A
+    // dead connection therefore leaves the outbox/archive pending normally.
+    if (syncRecoveredAccount) {
+      await progress.flushAttemptOutbox().catch(() => undefined);
+      await progress.syncNow({ quiet: true }).catch(() => undefined);
+    }
+    recoveryConfirm.value = undefined;
+    await refreshRecovery();
+    if ((recoveryInventory.value?.totalCount ?? 0) === 0) recoveryOpen.value = false;
+  } catch {
+    recoveryError.value = 'Nicht zugeordnet. Die Daten bleiben erhalten.';
+    await refreshRecovery();
+  } finally {
+    recoveryBusy.value = false;
+  }
+}
 
 interface DetailRow {
   label: string;
@@ -148,15 +329,6 @@ const urlError = ref('');
 
 /** Only absolute http(s) URLs are meaningful server addresses — catch typos
  *  (missing scheme, stray spaces) before they wedge the whole app. */
-function validHttpUrl(value: string): boolean {
-  try {
-    const u = new URL(value);
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 function validateUrls(): string {
   const fields: [string, string][] = [
     ['Core-Adresse', form.coreBaseUrl.trim()],
@@ -164,7 +336,11 @@ function validateUrls(): string {
   ];
   for (const [label, value] of fields) {
     if (value === '') return `${label} darf nicht leer sein.`;
-    if (!validHttpUrl(value)) return `${label}: „${value}“ ist keine gültige URL (https://…).`;
+    try {
+      canonicalServiceBaseUrl(value);
+    } catch {
+      return `${label}: HTTPS verwenden; HTTP nur für localhost.`;
+    }
   }
   return '';
 }
@@ -180,6 +356,8 @@ async function saveServers(): Promise<void> {
     });
     saved.value = true;
     setTimeout(() => (saved.value = false), 2500);
+  } catch {
+    urlError.value = 'Nicht gespeichert. Die bisherigen Adressen bleiben aktiv.';
   } finally {
     saving.value = false;
   }
@@ -374,6 +552,13 @@ async function openChangelog(): Promise<void> {
     <AiSettings />
 
     <SettingsCard>
+      <SettingsRow
+        v-if="(recoveryInventory?.totalCount ?? 0) > 0"
+        label="Lokale Daten"
+        :description="`${recoveryInventory!.totalCount} nicht zugeordnet`"
+      >
+        <QButton variant="secondary" @click="openRecovery">Prüfen</QButton>
+      </SettingsRow>
       <template v-if="auth.isLoggedIn">
         <SettingsRow label="Leaderboard">
           <template #description>
@@ -455,6 +640,138 @@ async function openChangelog(): Promise<void> {
                 </dd>
               </div>
             </dl>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div
+          v-if="recoveryOpen && recoveryInventory"
+          class="recovery q-modal-scrim q-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="recovery-title"
+          @click.self="closeRecovery"
+        >
+          <div ref="recoveryCard" class="recovery__card">
+            <header class="recovery__head">
+              <h2 id="recovery-title" class="recovery__title">Lokale Daten</h2>
+              <QIconButton aria-label="Schließen" data-autofocus @click="closeRecovery" />
+            </header>
+
+            <p class="recovery__intro">Nicht automatisch zugeordnet.</p>
+            <ul class="recovery__list">
+              <li
+                v-for="(profile, index) in recoveryInventory.profiles"
+                :key="profile.profileId"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>
+                    {{ profile.kind === 'unclaimed-guest' ? 'Besucherdaten' : `Datensatz ${index + 1}` }}
+                  </strong>
+                  <span>{{ recoveryProfileSummary(profile) }}</span>
+                </div>
+                <QButton
+                  v-if="profile.assignment.safe && recoveryConfirm !== profile.profileId"
+                  variant="secondary"
+                  :disabled="recoveryBusy"
+                  @click="recoveryConfirm = profile.profileId"
+                >
+                  Wiederherstellen
+                </QButton>
+                <span v-else-if="!profile.assignment.safe" class="recovery__export-only">
+                  Nur Export
+                </span>
+                <div
+                  v-if="recoveryConfirm === profile.profileId"
+                  class="recovery__confirm"
+                  role="group"
+                  aria-label="Wiederherstellung bestätigen"
+                >
+                  <span>Diesem Profil zuordnen?</span>
+                  <div class="recovery__confirm-actions">
+                    <QButton
+                      variant="ghost"
+                      :disabled="recoveryBusy"
+                      @click="recoveryConfirm = undefined"
+                    >
+                      Abbrechen
+                    </QButton>
+                    <QButton
+                      :disabled="recoveryBusy"
+                      @click="assignRecovery(profile.profileId)"
+                    >
+                      Zuordnen
+                    </QButton>
+                  </div>
+                </div>
+              </li>
+              <li
+                v-if="recoveryInventory.ambiguousAttemptCount > 0"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>Offene Antworten</strong>
+                  <span>{{ recoveryInventory.ambiguousAttemptCount }}</span>
+                </div>
+                <span class="recovery__export-only">Nur Export</span>
+              </li>
+              <li
+                v-if="recoveryInventory.ambiguousAccountAttemptCount > 0"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>Kontodaten</strong>
+                  <span>{{ recoveryInventory.ambiguousAccountAttemptCount }}</span>
+                </div>
+                <span class="recovery__export-only">Nur Export</span>
+              </li>
+              <li
+                v-if="recoveryInventory.corruptAttemptCount > 0"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>Beschädigte Antworten</strong>
+                  <span>{{ recoveryInventory.corruptAttemptCount }}</span>
+                </div>
+                <span class="recovery__export-only">Nur Export</span>
+              </li>
+              <li
+                v-if="recoveryInventory.legacySyncMutationCount > 0"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>Alte Synchronisierung</strong>
+                  <span>{{ recoveryInventory.legacySyncMutationCount }}</span>
+                </div>
+                <span class="recovery__export-only">Nur Export</span>
+              </li>
+              <li
+                v-if="recoveryInventory.orphanedPracticeSessionCount > 0"
+                class="recovery__item"
+              >
+                <div class="recovery__item-copy">
+                  <strong>Unterbrochene Übung</strong>
+                  <span>{{ recoveryInventory.orphanedPracticeSessionCount }}</span>
+                </div>
+                <span class="recovery__export-only">Nur Export</span>
+              </li>
+            </ul>
+
+            <p v-if="recoveryError" class="recovery__error" role="alert">
+              {{ recoveryError }}
+            </p>
+            <footer class="recovery__footer">
+              <QButton variant="secondary" :disabled="recoveryBusy" @click="downloadRecovery">
+                Exportieren
+              </QButton>
+              <QButton variant="ghost" :disabled="recoveryBusy" @click="closeRecovery">
+                Später
+              </QButton>
+            </footer>
           </div>
         </div>
       </transition>
@@ -842,5 +1159,121 @@ async function openChangelog(): Promise<void> {
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
   border-radius: 8px;
+}
+
+/* ---- Explicit local recovery ---- */
+.recovery__card {
+  box-sizing: border-box;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(82vh, 680px);
+  overflow-y: auto;
+  background: var(--q-card);
+  border: 1px solid var(--q-border);
+  border-radius: 14px;
+  box-shadow: var(--q-shadow-modal);
+}
+.recovery__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 6px 18px;
+}
+.recovery__title {
+  margin: 0;
+  color: var(--q-ink);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+.recovery__intro {
+  margin: 0;
+  padding: 0 18px 12px;
+  color: var(--q-mut-2);
+  font-size: 12px;
+}
+.recovery__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0 18px;
+  list-style: none;
+}
+.recovery__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--q-border-soft);
+}
+.recovery__item-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.recovery__item-copy strong {
+  color: var(--q-ink);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.recovery__item-copy span,
+.recovery__export-only {
+  color: var(--q-mut-2);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.recovery__export-only {
+  white-space: nowrap;
+}
+.recovery__confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  color: var(--q-ink);
+  font-size: 12px;
+  background: var(--q-panel);
+  border: 1px solid var(--q-border-soft);
+  border-radius: 10px;
+}
+.recovery__confirm-actions,
+.recovery__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recovery__error {
+  margin: 10px 18px 0;
+  color: var(--q-err-ink);
+  font-size: 12px;
+}
+.recovery__footer {
+  padding: 14px 18px 18px;
+}
+@media (max-width: 360px) {
+  .recovery__item,
+  .recovery__confirm {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .recovery__confirm {
+    display: grid;
+  }
+  .recovery__item > :deep(button),
+  .recovery__confirm-actions,
+  .recovery__footer {
+    width: 100%;
+  }
+  .recovery__confirm-actions > :deep(button),
+  .recovery__footer > :deep(button) {
+    flex: 1 1 auto;
+  }
 }
 </style>

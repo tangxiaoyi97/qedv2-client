@@ -150,6 +150,7 @@ describe('LeaderboardView', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
 
@@ -268,6 +269,7 @@ describe('LeaderboardView', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
 

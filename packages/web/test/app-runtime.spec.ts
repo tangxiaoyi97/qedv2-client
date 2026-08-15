@@ -1,7 +1,7 @@
 import { isProxy } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CoreRuntimeStatus } from '@qed2/core-logic';
+import { STORAGE, type CoreRuntimeStatus } from '@qed2/core-logic';
 
 const mocks = vi.hoisted(() => {
   const listeners: {
@@ -33,6 +33,8 @@ const mocks = vi.hoisted(() => {
     setTheme: vi.fn(),
     setBuiltinThemeExtension: vi.fn(),
     setCurrentCoreUrl: vi.fn(),
+    configureLegacyAccountOwner: vi.fn(),
+    clearSession: vi.fn(),
   };
 });
 
@@ -46,6 +48,12 @@ vi.mock('../src/services.js', () => ({
     getTheme: mocks.getTheme,
     setConfig: mocks.setConfig,
     setTheme: mocks.setTheme,
+  },
+  authStore: {
+    clearSession: mocks.clearSession,
+  },
+  attemptOutbox: {
+    configureLegacyAccountOwner: mocks.configureLegacyAccountOwner,
   },
   envConfigDefaults: () => ({}),
   ports: {
@@ -119,6 +127,8 @@ beforeEach(() => {
     mocks.setTheme,
     mocks.setBuiltinThemeExtension,
     mocks.setCurrentCoreUrl,
+    mocks.configureLegacyAccountOwner,
+    mocks.clearSession,
   ]) {
     mock.mockClear();
   }
@@ -191,6 +201,51 @@ describe('desktop core runtime integration', () => {
 
     expect(app.coreEndpointUrl).toBe('https://remote-core.test');
     expect(app.coreEndpointSource).toBe('remote');
+  });
+
+  it('repairs unsafe 2.1 service URLs before use and invalidates unscoped auth', async () => {
+    mocks.getOverrides.mockResolvedValue({
+      coreBaseUrl: 'http://core.example.test',
+      serverBaseUrl: 'http://server.example.test',
+    });
+    mocks.configure.mockResolvedValue({
+      baseUrl: 'https://qedcore.barcarolle.studio',
+      source: 'remote',
+    });
+    const app = useAppStore();
+
+    await app.init();
+
+    expect(mocks.clearSession).toHaveBeenCalledOnce();
+    expect(mocks.storageSet).toHaveBeenCalledWith(STORAGE.config, 'overrides', {
+      coreBaseUrl: 'https://qedcore.barcarolle.studio',
+      serverBaseUrl: 'https://qedsync.barcarolle.studio',
+    });
+    expect(app.config.coreBaseUrl).toBe('https://qedcore.barcarolle.studio');
+    expect(app.config.serverBaseUrl).toBe('https://qedsync.barcarolle.studio');
+    expect(fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('server.example.test'),
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ['an array root', ['broken']],
+    ['non-string service URLs', { coreBaseUrl: [], serverBaseUrl: 7 }],
+  ])('repairs malformed persisted config without blocking boot: %s', async (_label, malformed) => {
+    mocks.getOverrides.mockResolvedValue(malformed);
+    mocks.configure.mockResolvedValue({
+      baseUrl: 'https://qedcore.barcarolle.studio',
+      source: 'remote',
+    });
+    const app = useAppStore();
+
+    await expect(app.init()).resolves.toBeUndefined();
+
+    expect(mocks.clearSession).toHaveBeenCalledOnce();
+    expect(mocks.storageSet).toHaveBeenCalledWith(STORAGE.config, 'overrides', {});
+    expect(app.config.coreBaseUrl).toBe('https://qedcore.barcarolle.studio');
+    expect(app.config.serverBaseUrl).toBe('https://qedsync.barcarolle.studio');
   });
 
   it('discards a slow Local info probe after the renderer fails over to Remote', async () => {

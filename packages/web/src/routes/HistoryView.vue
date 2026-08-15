@@ -12,15 +12,20 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
+  ApiError,
+  canonicalServiceBaseUrl,
   CoreClient,
   NetworkError,
+  ServerClient,
   VERDICT_LABELS,
   formatScore,
   localActivityRange,
+  localDayKey,
   localDayRange,
   parseLocalDayKey,
   questionContentHash,
   type CoreSourcePreference,
+  type HistoryEntry,
   type Verdict,
 } from '@qed2/core-logic';
 import { ActivityHeatmap, QButton, QIconButton, QSkeleton, StateIcon, useModalA11y } from '@qed2/ui';
@@ -55,6 +60,8 @@ interface Row {
 const rows = ref<Row[]>([]);
 const total = ref(0);
 const page = ref(1);
+const cloudHasMore = ref(false);
+const nextCursor = ref<string | null | undefined>();
 const loading = ref(false);
 const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
@@ -63,8 +70,58 @@ const legacyRedo = ref<Row | null>(null);
 const legacyRedoCard = ref<HTMLElement | null>(null);
 let loadRequest = 0;
 let activityRequest = 0;
+let localSnapshot: Promise<HistoryEntry[]> | undefined;
 
-const cloudMode = computed(() => auth.isLoggedIn);
+function invalidateLocalSnapshot(): void {
+  localSnapshot = undefined;
+}
+
+function readLocalSnapshot(): Promise<HistoryEntry[]> {
+  if (!localSnapshot) {
+    const pending = historyLog.snapshot();
+    let guarded: Promise<HistoryEntry[]>;
+    guarded = pending.catch((error) => {
+      if (localSnapshot === guarded) localSnapshot = undefined;
+      throw error;
+    });
+    localSnapshot = guarded;
+  }
+  return localSnapshot;
+}
+
+interface HistoryRequestContext {
+  userId: string;
+  token: string;
+  serverBaseUrl: string;
+}
+
+function captureHistoryRequestContext(): HistoryRequestContext | undefined {
+  const current = auth.session;
+  if (!current?.serverBaseUrl || auth.transitioning) return undefined;
+  try {
+    const issuer = canonicalServiceBaseUrl(current.serverBaseUrl);
+    if (issuer !== canonicalServiceBaseUrl(app.config.serverBaseUrl)) return undefined;
+    return { userId: current.user.id, token: current.token, serverBaseUrl: issuer };
+  } catch {
+    return undefined;
+  }
+}
+
+function isCurrentHistoryRequestContext(context: HistoryRequestContext | undefined): boolean {
+  const current = auth.session;
+  if (!context) return captureHistoryRequestContext() === undefined;
+  if (auth.transitioning || current?.user.id !== context.userId || current.token !== context.token) {
+    return false;
+  }
+  try {
+    return canonicalServiceBaseUrl(current.serverBaseUrl ?? '') === context.serverBaseUrl
+      && canonicalServiceBaseUrl(app.config.serverBaseUrl) === context.serverBaseUrl;
+  } catch {
+    return false;
+  }
+}
+
+const cloudMode = computed(() => captureHistoryRequestContext() !== undefined);
 
 useModalA11y(
   legacyRedoCard,
@@ -158,28 +215,56 @@ async function joinTitles(sourceRows: Row[]): Promise<void> {
 
 async function loadPage(reset: boolean): Promise<void> {
   const request = ++loadRequest;
-  const sourceUserId = auth.session?.user.id;
+  const context = captureHistoryRequestContext();
   const isCurrentRequest = () =>
-    request === loadRequest && auth.session?.user.id === sourceUserId;
+    request === loadRequest && isCurrentHistoryRequestContext(context);
   if (reset) {
     rows.value = [];
     total.value = 0;
     page.value = 1;
+    cloudHasMore.value = false;
+    nextCursor.value = undefined;
   }
   loading.value = true;
   error.value = undefined;
   const target = reset ? 1 : page.value + 1;
   try {
     let batch: Row[] = [];
-    if (cloudMode.value) {
+    if (context) {
+      const client = new ServerClient(context.serverBaseUrl, () => context.token);
       const range = selectedDate.value ? localDayRange(selectedDate.value) : {};
-      const res = await app.serverClient.getHistory({
-        page: target,
-        pageSize: PAGE_SIZE,
-        ...range,
-      });
+      const requestedCursor = reset ? undefined : nextCursor.value ?? undefined;
+      const numberedQuery = { page: target, pageSize: PAGE_SIZE, ...range };
+      let res;
+      try {
+        res = await client.getHistory({
+          ...(requestedCursor
+            ? { cursor: requestedCursor }
+            : { page: target }),
+          pageSize: PAGE_SIZE,
+          ...range,
+        });
+      } catch (cause) {
+        if (!requestedCursor || !(cause instanceof ApiError) || ![400, 422].includes(cause.status)) {
+          throw cause;
+        }
+        // A rolling rollback may route a cursor continuation to a 2.1 server.
+        // Retry as an explicit numbered page instead of appending page 1.
+        res = await client.getHistory(numberedQuery);
+      }
+      if (
+        requestedCursor
+        && res.nextCursor === undefined
+        && res.hasMore === undefined
+        && res.page !== undefined
+      ) {
+        res = await client.getHistory(numberedQuery);
+      }
       if (!isCurrentRequest()) return;
-      total.value = res.total;
+      if (res.total !== undefined) total.value = res.total;
+      nextCursor.value = res.nextCursor;
+      cloudHasMore.value = res.hasMore
+        ?? (res.total !== undefined && rows.value.length + res.items.length < res.total);
       batch = res.items.map((i) => ({
         key: i.id,
         partId: i.partId,
@@ -195,14 +280,13 @@ async function loadPage(reset: boolean): Promise<void> {
       }));
     } else {
       const offset = (target - 1) * PAGE_SIZE;
-      const allForDay = selectedDate.value
-        ? await historyLog.listByLocalDay(selectedDate.value)
-        : undefined;
-      const list = allForDay
-        ? allForDay.slice(offset, offset + PAGE_SIZE)
-        : await historyLog.list(PAGE_SIZE, offset);
+      const snapshot = await readLocalSnapshot();
+      const matching = selectedDate.value
+        ? snapshot.filter((entry) => localDayKey(new Date(entry.gradedAt)) === selectedDate.value)
+        : snapshot;
+      const list = matching.slice(offset, offset + PAGE_SIZE);
       if (!isCurrentRequest()) return;
-      total.value = allForDay?.length ?? await historyLog.count();
+      total.value = matching.length;
       batch = list.map((e) => ({
         // gradedAt+partId alone can collide (same part graded twice within
         // one second) — disambiguate with a load-local sequence number.
@@ -239,7 +323,14 @@ async function loadPage(reset: boolean): Promise<void> {
 onMounted(() => void loadPage(true));
 // Login/logout and direct account replacement switch the source. Reload from
 // page 1 and invalidate in-flight reads so rows from two accounts never mix.
-watch(() => auth.session?.user.id, () => {
+watch(() => [
+  auth.session?.user.id,
+  auth.session?.token,
+  auth.session?.serverBaseUrl,
+  auth.transitioning,
+  app.config.serverBaseUrl,
+] as const, () => {
+  invalidateLocalSnapshot();
   selectedDate.value = null;
   activity.value = {};
   void loadPage(true);
@@ -249,6 +340,7 @@ watch(() => auth.session?.user.id, () => {
 watch(
   () => [progress.historyVersion, progress.cloudHistoryVersion] as const,
   () => {
+    invalidateLocalSnapshot();
     void loadPage(true);
     void loadActivity();
   },
@@ -273,21 +365,30 @@ async function retryPendingHistory(): Promise<void> {
 
 async function loadActivity(): Promise<void> {
   const request = ++activityRequest;
-  const sourceUserId = auth.session?.user.id;
+  const context = captureHistoryRequestContext();
   const isCurrentRequest = () =>
-    request === activityRequest && auth.session?.user.id === sourceUserId;
+    request === activityRequest && isCurrentHistoryRequestContext(context);
   activityLoading.value = true;
   activityError.value = undefined;
   try {
-    if (!cloudMode.value) {
-      const local = await historyLog.dailyActivity(ACTIVITY_DAYS, new Date());
+    if (!context) {
+      const entries = await readLocalSnapshot();
+      const cutoff = new Date(localActivityRange(ACTIVITY_DAYS, new Date()).since);
+      const local: Record<string, number> = {};
+      for (const entry of entries) {
+        const gradedAt = new Date(entry.gradedAt);
+        if (gradedAt.getTime() < cutoff.getTime()) break;
+        const day = localDayKey(gradedAt);
+        local[day] = (local[day] ?? 0) + 1;
+      }
       if (isCurrentRequest()) activity.value = local;
       return;
     }
 
     const range = localActivityRange(ACTIVITY_DAYS, new Date());
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-    const res = await app.serverClient.getHistoryActivity({ ...range, timeZone });
+    const client = new ServerClient(context.serverBaseUrl, () => context.token);
+    const res = await client.getHistoryActivity({ ...range, timeZone });
     if (!isCurrentRequest()) return;
     activity.value = res.activity;
   } catch {
@@ -341,7 +442,9 @@ const groups = computed(() => {
   return [...byDay.values()];
 });
 
-const hasMore = computed(() => rows.value.length < total.value);
+const hasMore = computed(() => cloudMode.value
+  ? cloudHasMore.value
+  : rows.value.length < total.value);
 
 function fmtPoints(r: Row): string {
   const a = formatScore(r.awardedPoints);
