@@ -14,6 +14,16 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.2.0 — 2026-08-15
+
+### stabiler
+
+- **Sync:** sichere Wiederholung nach Verbindungsabbrüchen
+- **Offline:** Wiederherstellung für Profile, Sitzungen und Antworten
+- **Konten:** getrennte Daten für Server, Fenster und Besucher
+- **Verlauf:** feste Quellen und stabile Seitennavigation
+- **Desktop:** Manifest v2 und strengere Integritätsprüfung
+
 ## 2.1.1 — 2026-08-08
 
 ### aufgeräumt
