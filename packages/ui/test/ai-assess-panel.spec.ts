@@ -76,13 +76,13 @@ describe('AiAssessPanel', () => {
     const evidence = wrapper.findAll('.q-aia__evidence');
     expect(evidence[0]!.attributes()).not.toHaveProperty('open');
     expect(evidence[1]!.attributes()).toHaveProperty('open');
-    expect(wrapper.get('.q-aia__summary').text()).toContain('2 / 2');
+    expect(wrapper.get('.q-aia__summary').text()).toContain('2 Abweichungen');
   });
 
-  it('says the ticks are not saved yet', () => {
+  it('keeps the student decision authoritative', () => {
     const wrapper = mount(AiAssessPanel, { props: { labels: LABELS, criteria: [crit()] } });
-    expect(wrapper.get('.q-aia__foot').text()).toContain('nicht gespeichert');
-    expect(wrapper.get('.q-aia__foot').text()).toContain('Bewertung übernehmen');
+    expect(wrapper.get('.q-aia__foot').text()).toContain('bleibt unverändert');
+    expect(wrapper.get('.q-aia__foot').text()).toContain('selbst bestätigen');
   });
 
   it('explains itself when the server refused to vouch for the reply', () => {
@@ -108,12 +108,37 @@ describe('AiAssessPanel', () => {
       props: { labels: LABELS, error: 'Die KI war nicht erreichbar.' },
     });
     expect(wrapper.get('[role="alert"]').text()).toContain('nicht erreichbar');
-    await wrapper.get('.q-aia__retry').trigger('click');
+    await wrapper.get('.q-aia__error .q-btn').trigger('click');
     expect(wrapper.emitted('ask')).toHaveLength(1);
   });
 
   it('falls back to a numbered label if the rubric text is missing', () => {
     const wrapper = mount(AiAssessPanel, { props: { labels: [], criteria: [crit({ index: 1 })] } });
     expect(wrapper.get('.q-aia__criterion').text()).toBe('Kriterium 2');
+  });
+
+  it('shows only disagreements after the learner assessed first', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: LABELS,
+        studentCriteria: [true, false],
+        criteria: [crit({ index: 0, met: true }), crit({ index: 1, met: true })],
+      },
+    });
+    expect(wrapper.findAll('.q-aia__item')).toHaveLength(1);
+    expect(wrapper.get('.q-aia__criterion').text()).toBe('Rechenweg gezeigt');
+    expect(wrapper.get('.q-aia__summary').text()).toContain('1 Abweichung');
+  });
+
+  it('uses a compact agreement state when there is no difference', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: LABELS,
+        studentCriteria: [true],
+        criteria: [crit({ index: 0, met: true })],
+      },
+    });
+    expect(wrapper.find('.q-aia__item').exists()).toBe(false);
+    expect(wrapper.get('.q-aia__same').text()).toContain('stimmen überein');
   });
 });

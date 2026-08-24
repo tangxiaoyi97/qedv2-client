@@ -24,16 +24,25 @@ interface TestAiStore {
   available: boolean;
   status: TestAiStatus | null;
   statusError: string | null;
-  capabilities: { explain: boolean; assess: boolean } | null;
+  capabilities: {
+    explain: boolean;
+    assess: boolean;
+    credentialTest?: boolean;
+    providers: Array<'openai' | 'gemini'>;
+  } | null;
   mode: 'pool' | 'byo';
   poolAllowed: boolean;
   poolOffered: boolean;
   byoOffered: boolean;
+  canTestCredential: boolean;
+  customInstructions: string;
   setMode: ReturnType<typeof vi.fn>;
   refreshStatus: ReturnType<typeof vi.fn>;
   saveCredential: ReturnType<typeof vi.fn>;
   deleteCredential: ReturnType<typeof vi.fn>;
+  testCredential: ReturnType<typeof vi.fn>;
   clearCache: ReturnType<typeof vi.fn>;
+  savePromptPreferences: ReturnType<typeof vi.fn>;
 }
 
 interface TestAppStore {
@@ -117,18 +126,34 @@ describe('AI settings view', () => {
       available: true,
       status: readyStatus(),
       statusError: null,
-      capabilities: { explain: true, assess: true },
+      capabilities: {
+        explain: true,
+        assess: true,
+        credentialTest: true,
+        providers: ['openai', 'gemini'],
+      },
       mode: 'byo',
       poolAllowed: true,
       poolOffered: true,
       byoOffered: true,
+      canTestCredential: true,
+      customInstructions: '',
       setMode: vi.fn((next: 'pool' | 'byo') => {
         aiStore.mode = next;
       }),
       refreshStatus: vi.fn(async () => undefined),
       saveCredential: vi.fn(async () => undefined),
       deleteCredential: vi.fn(async () => undefined),
+      testCredential: vi.fn(async () => ({
+        ok: true,
+        provider: 'openai',
+        model: 'gpt-test',
+        source: 'byo',
+      })),
       clearCache: vi.fn(async () => undefined),
+      savePromptPreferences: vi.fn(async ({ customInstructions }: { customInstructions: string }) => {
+        aiStore.customInstructions = customInstructions;
+      }),
     }) as TestAiStore;
     appStore = reactive({
       config: {
@@ -231,6 +256,26 @@ describe('AI settings view', () => {
     expect(getElement(host, '#ai-credential-editor')).toBeTruthy();
   });
 
+  it('filters providers by server capability and tests BYOK only on an explicit click', async () => {
+    aiStore.capabilities = {
+      explain: true,
+      assess: true,
+      credentialTest: true,
+      providers: ['gemini'],
+    };
+    const host = mountSettings();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    const options = [...getElement<HTMLSelectElement>(host, 'select[aria-labelledby]').options];
+    expect(options.map((option) => option.value)).toEqual(['gemini']);
+    expect(aiStore.testCredential).not.toHaveBeenCalled();
+
+    buttonWithText(host, 'Verbindung testen').click();
+    await settle();
+    expect(aiStore.testCredential).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('Verbunden · OpenAI · gpt-test');
+  });
+
   it('announces loading and failed status without rendering unusable source choices', async () => {
     aiStore.status = null;
     const loadingHost = mountSettings();
@@ -312,7 +357,9 @@ describe('AI settings view', () => {
 
     expect(appStore.updateConfig).toHaveBeenCalledWith({
       aiLanguage: 'Kroatisch',
-      aiCustomInstructions: 'Kurz erklären.',
+    });
+    expect(aiStore.savePromptPreferences).toHaveBeenCalledWith({
+      customInstructions: 'Kurz erklären.',
     });
     expect(host.textContent).toContain('Antwortstil gespeichert');
 
@@ -342,6 +389,9 @@ describe('AI settings view', () => {
       throw new Error('Cache gesperrt');
     });
     appStore.updateConfig = vi.fn(async () => {
+      throw new Error('Einstellungen nicht gespeichert');
+    });
+    aiStore.savePromptPreferences = vi.fn(async () => {
       throw new Error('Einstellungen nicht gespeichert');
     });
     const host = mountSettings();

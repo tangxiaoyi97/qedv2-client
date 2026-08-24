@@ -337,6 +337,18 @@ describe('bundled runtime integrity', () => {
     );
   });
 
+  it('accepts schema v4 metadata but rejects an unknown future schema', async () => {
+    const supported = await createFixture({ schemaVersions: [2, 3, 4] });
+    await expect(readRuntimeManifest(supported.manifestPath)).resolves.toMatchObject({
+      bank: { schemaVersions: [2, 3, 4] },
+    });
+
+    const future = await createFixture({ schemaVersions: [5] });
+    await expect(readRuntimeManifest(future.manifestPath)).rejects.toThrow(
+      'unsupported or non-canonical schema versions',
+    );
+  });
+
   it('rejects legacy v2 manifests without the immutable revision vault contract', async () => {
     const fixture = await createFixture();
     await writeFile(

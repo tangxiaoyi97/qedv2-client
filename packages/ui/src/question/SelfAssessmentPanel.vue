@@ -66,6 +66,22 @@ function toggleCriterion(i: number): void {
   emit('update:modelValue', { ...props.modelValue, criteriaMet: next });
 }
 
+function selectNoCriteria(): void {
+  if (props.disabled) return;
+  emit('update:modelValue', {
+    ...props.modelValue,
+    criteriaMet: criteria.value.map(() => false),
+    awardedPoints: 0,
+    overall: 'none',
+  });
+}
+
+const noCriteriaSelected = computed(() =>
+  Array.isArray(props.modelValue.criteriaMet)
+  && props.modelValue.criteriaMet.length === criteria.value.length
+  && !props.modelValue.criteriaMet.some(Boolean),
+);
+
 function setPoints(value: number): void {
   if (props.disabled) return;
   emit('update:modelValue', {
@@ -83,6 +99,16 @@ function scoreTone(value: number): 'none' | 'partial' | 'full' {
 function isSelectedScore(value: number): boolean {
   return sameScore(props.modelValue.awardedPoints, value);
 }
+
+const selectedScoreIndex = computed(() =>
+  scoreOptions.value.findIndex((option) => isSelectedScore(option.points)),
+);
+
+function scoreTabIndex(index: number): 0 | -1 {
+  if (props.disabled) return -1;
+  if (selectedScoreIndex.value >= 0) return selectedScoreIndex.value === index ? 0 : -1;
+  return index === 0 ? 0 : -1;
+}
 </script>
 
 <template>
@@ -97,6 +123,16 @@ function isSelectedScore(value: number): boolean {
     </div>
 
     <div v-if="rubricMode" class="q-selfassess__criteria">
+      <button
+        type="button"
+        class="q-selfassess__none"
+        :class="{ 'q-selfassess__none--on': noCriteriaSelected }"
+        :aria-pressed="noCriteriaSelected"
+        :disabled="disabled"
+        @click="selectNoCriteria"
+      >
+        Kein Kriterium <span>0&nbsp;P</span>
+      </button>
       <button
         v-for="(criterion, i) in criteria"
         :key="i"
@@ -117,7 +153,7 @@ function isSelectedScore(value: number): boolean {
     <div v-else class="q-selfassess__overall">
       <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung" @keydown="onRadioGroupKeydown">
         <button
-          v-for="option in scoreOptions"
+          v-for="(option, index) in scoreOptions"
           :key="option.points"
           type="button"
           class="q-selfassess__segment"
@@ -128,6 +164,7 @@ function isSelectedScore(value: number): boolean {
           role="radio"
           :aria-checked="isSelectedScore(option.points)"
           :disabled="disabled"
+          :tabindex="scoreTabIndex(index)"
           @click="setPoints(option.points)"
         >
           {{ option.label }}
@@ -179,6 +216,32 @@ function isSelectedScore(value: number): boolean {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.q-selfassess__none {
+  min-height: 44px;
+  padding: 8px 11px;
+  border: 1px dashed var(--q-border-2);
+  border-radius: 9px;
+  background: var(--q-card);
+  color: var(--q-mut);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+.q-selfassess__none span {
+  float: right;
+}
+.q-selfassess__none--on {
+  border-style: solid;
+  border-color: var(--q-accent);
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
+}
+.q-selfassess__none:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 1px;
 }
 .q-selfassess__criterion {
   display: flex;

@@ -467,7 +467,7 @@ async function main() {
         '--schema-min',
         '2',
         '--schema-max',
-        '3',
+        '4',
       ],
       { env: process.env, maxBuffer: 16 * 1024 * 1024 },
     );
@@ -495,13 +495,13 @@ async function main() {
         '--schema-min',
         '2',
         '--schema-max',
-        '3',
+        '4',
       ],
       { env: process.env, maxBuffer: 16 * 1024 * 1024 },
     );
 
     const schemaVersions = await bankSchemaVersions(resolve(stage, 'bank/content'));
-    if (schemaVersions.some((version) => version < 2 || version > 3)) {
+    if (schemaVersions.some((version) => version < 2 || version > 4)) {
       throw new Error(`Bundled bank schema is incompatible with this Core: ${schemaVersions.join(', ')}`);
     }
     const stagedBuildInfo = JSON.parse(

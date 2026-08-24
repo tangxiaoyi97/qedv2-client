@@ -25,16 +25,24 @@ const props = defineProps<{
   result?: GradeResult | null;
   indeterminate?: boolean;
   showPreview?: boolean;
+  /** Freeze the submitted answer while the learner compares it with the solution. */
+  locked?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: Submission] }>();
 
 function up(value: Submission): void {
+  if (props.locked) return;
   emit('update:modelValue', value);
 }
 </script>
 
 <template>
+  <div
+    class="q-answer-control"
+    :inert="locked ? true : undefined"
+    :aria-disabled="locked || undefined"
+  >
   <ChoiceControl
     v-if="answer.kind === 'choice' && modelValue.kind === 'choice'"
     :answer="answer"
@@ -79,4 +87,5 @@ function up(value: Submission): void {
     :result="result"
     @update:model-value="(v: OpenSubmission) => up(v)"
   />
+  </div>
 </template>

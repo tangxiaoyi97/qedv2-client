@@ -215,7 +215,7 @@ function parseManifest(value: unknown): RuntimeManifest {
   if (
     !Array.isArray(schemaVersions) ||
     schemaVersions.length === 0 ||
-    schemaVersions.some((version) => !Number.isInteger(version) || version < 2 || version > 3) ||
+    schemaVersions.some((version) => !Number.isInteger(version) || version < 2 || version > 4) ||
     schemaVersions.some((version, index) => index > 0 && version <= schemaVersions[index - 1]!)
   ) {
     fail('The bundled runtime manifest contains unsupported or non-canonical schema versions.');

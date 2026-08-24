@@ -299,6 +299,24 @@ describe('LocalGradeCommitStore', () => {
     expect(await storage.get(STORAGE.app, 'session-1')).toEqual({ version: 4, graded: ['event-1'] });
   });
 
+  it('replaces the automatic FSRS grade with the manual judgement atomically', async () => {
+    const storage = new AtomicMemoryStorage();
+    const event = input('event-manual', 'session-manual');
+    event.manualGrading = 'baffled';
+
+    const result = await new LocalGradeCommitStore(storage).commit(event);
+
+    expect(result.grading).toBe('baffled');
+    expect(result.historyEntry.grading).toBe('baffled');
+    expect(result.archive.content.perPart).toEqual([
+      expect.objectContaining({
+        partId: event.attempt.partId,
+        grading: 'baffled',
+        fsrs: expect.objectContaining({ reps: 1, lapses: 1 }),
+      }),
+    ]);
+  });
+
   it('retries a cross-window CAS conflict without losing either answer', async () => {
     const storage = new AtomicMemoryStorage();
     const first = new LocalGradeCommitStore(storage);
@@ -477,6 +495,25 @@ describe('LocalGradeCommitStore', () => {
     )).toBeDefined();
   });
 
+  it('recovers a lost response without losing or re-applying the manual judgement', async () => {
+    const storage = new AtomicMemoryStorage();
+    storage.throwAfterCommit = true;
+    const event = input('event-manual-uncertain', 'session-manual-uncertain');
+    event.manualGrading = 'careless';
+    const store = new LocalGradeCommitStore(storage);
+
+    const recovered = await store.commit(event);
+    const retried = await store.commit(event);
+
+    expect(recovered).toMatchObject({ recovered: true, grading: 'careless' });
+    expect(retried).toMatchObject({ recovered: true, grading: 'careless' });
+    const archive = await storage.get<{ content: { perPart: Array<{ fsrs: { reps: number } }> } }>(
+      STORAGE.archive,
+      'current',
+    );
+    expect(archive?.content.perPart[0]?.fsrs.reps).toBe(1);
+  });
+
   it('rejects reuse of one attempt identity with a different payload', async () => {
     const storage = new AtomicMemoryStorage();
     const store = new LocalGradeCommitStore(storage);
@@ -484,6 +521,18 @@ describe('LocalGradeCommitStore', () => {
     await store.commit(original);
     const changed = input('event-reused', 'session-reused');
     changed.attempt.questionId = 'different-question';
+
+    await expect(store.commit(changed)).rejects.toThrow('different history data');
+  });
+
+  it('rejects reuse of one attempt identity with a different manual judgement', async () => {
+    const storage = new AtomicMemoryStorage();
+    const store = new LocalGradeCommitStore(storage);
+    const original = input('event-manual-reused', 'session-manual-reused');
+    original.manualGrading = 'good';
+    await store.commit(original);
+    const changed = input('event-manual-reused', 'session-manual-reused');
+    changed.manualGrading = 'baffled';
 
     await expect(store.commit(changed)).rejects.toThrow('different history data');
   });

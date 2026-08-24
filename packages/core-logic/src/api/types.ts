@@ -5,6 +5,7 @@
 import type { AiCapabilities } from '../ai/types.js';
 import type { AnswerKind, Question, QuestionSummary, Term, ExamPart } from '../model/question.js';
 import type { ArchiveContent, PartEntry, CompetencyEntry, ServerArchiveState } from '../model/archive.js';
+import type { RecommendLearningEvent } from '../store/learning-event-store.js';
 
 /* ================================================================== *
  * Shared error envelope (contract §7.2)
@@ -95,6 +96,7 @@ export interface BatchResponse {
 export interface RecommendUserState {
   perPart: Pick<PartEntry, 'partId' | 'fsrs'>[];
   perCompetency: Pick<CompetencyEntry, 'code' | 'mastery'>[];
+  learning?: { events: RecommendLearningEvent[] };
 }
 
 export interface RecommendRequest {
@@ -104,7 +106,12 @@ export interface RecommendRequest {
   strategy?: 'smart-review';
 }
 
-export type RecommendReason = 'due-review' | 'weak-competency' | 'coldstart';
+export type RecommendReason =
+  | 'due-review'
+  | 'weak-competency'
+  | 'coldstart'
+  | 'correction-due'
+  | 'near-transfer';
 
 export interface RecommendItem {
   questionId: string;
@@ -133,6 +140,7 @@ export interface CoreInfo {
   };
   sourceRepo: string;
   buildTime: string;
+  capabilities?: { learningRecommendations?: boolean };
 }
 
 export interface LegacyManifestResponse {

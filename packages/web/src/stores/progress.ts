@@ -53,6 +53,7 @@ import {
   attemptOutbox,
   historyLog,
   localGradeCommitStore,
+  learningEventStore,
   localProfileStore,
   registrationJournal,
   storage,
@@ -901,6 +902,7 @@ export const useProgressStore = defineStore('progress', () => {
       maxPoints: number;
       now: Date;
     };
+    manualGrading?: Grading;
     session: LocalGradeSessionMutation;
   }): Promise<{ ownerId: string; previousFsrs: FsrsState | undefined; session: unknown }> {
     return enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
@@ -1109,27 +1111,58 @@ export const useProgressStore = defineStore('progress', () => {
     partId: string;
     grading: Grading;
     baseFsrs?: FsrsState | undefined;
+    replaceCurrentReview?: boolean;
   }): Promise<void> {
+    const profileId = localProfileStore.currentIfInitialized();
+    if (!profileId) throw new Error('No local profile is active for grading');
+    const target = new ArchiveStore(storage, profileId);
     await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
-      archive.value = await archiveStore.setGrading({
+      const next = await target.setGrading({
         partId: input.partId,
         grading: input.grading,
         now: new Date(),
         baseFsrs: input.baseFsrs,
+        replaceCurrentReview: input.replaceCurrentReview,
       });
+      if (localProfileStore.currentIfInitialized() === profileId) archive.value = next;
     }));
   }
 
   async function setStarred(partId: string, starred: boolean): Promise<void> {
+    const profileId = localProfileStore.currentIfInitialized();
+    if (!profileId) throw new Error('No local profile is active for starring');
+    const target = new ArchiveStore(storage, profileId);
     await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
-      archive.value = await archiveStore.setStarred(partId, starred, new Date());
+      const next = await target.setStarred(partId, starred, new Date());
+      if (localProfileStore.currentIfInitialized() === profileId) archive.value = next;
     }));
   }
 
-  async function toUserState(profileId?: LocalProfileId): Promise<RecommendUserState> {
+  async function toUserState(
+    profileId?: LocalProfileId,
+    options: { includeLearning?: boolean } = {},
+  ): Promise<RecommendUserState> {
     return runStorageMutation(storage, async () => {
       const target = profileId ? new ArchiveStore(storage, profileId) : archiveStore;
       const userState = await target.toUserState();
+      const learningProfile = profileId ?? localProfileStore.currentIfInitialized();
+      if (options.includeLearning && learningProfile) {
+        try {
+          const events = (await Promise.all(
+            localProfileStore.readableProfiles(learningProfile)
+              .map((readable) => learningEventStore.recommendEvents(readable)),
+          )).flat().sort((left, right) => right.at.localeCompare(left.at));
+          const newest = new Map<string, (typeof events)[number]>();
+          for (const event of events) {
+            if (!newest.has(event.partId)) newest.set(event.partId, event);
+            if (newest.size >= 100) break;
+          }
+          if (newest.size > 0) userState.learning = { events: [...newest.values()] };
+        } catch {
+          // Learning signals are optional advice. A malformed telemetry row
+          // must not block the authoritative FSRS programme.
+        }
+      }
       if (!profileId || profileId === localProfileStore.currentIfInitialized()) {
         archive.value = await target.load();
       }

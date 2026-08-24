@@ -41,6 +41,7 @@ import {
 } from '../platform/theme.js';
 
 export type ThemePref = 'light' | 'dark' | 'system';
+const CORE_CAPABILITY_PROBE_MS = 1_000;
 const ACCENT_STORAGE_KEY = 'accent';
 
 export interface PinnedCoreContent {
@@ -53,6 +54,8 @@ export interface PinnedCoreContent {
   /** True when that initial authentication request failed. */
   manifestUnavailable?: true;
   client: CoreClient;
+  /** Explicit Core opt-in; absent on 2.2 and therefore never probed by POST. */
+  learningRecommendations: boolean;
 }
 
 function applyThemeToDom(pref: ThemePref): void {
@@ -207,6 +210,18 @@ export const useAppStore = defineStore('app', () => {
   ): Promise<PinnedCoreContent> {
     const endpoint = await ports.coreRuntime.getEndpoint(source);
     const client = new CoreClient(endpoint.baseUrl);
+    // Learning signals are additive advice. Never let an old/offline Core's
+    // optional /info probe hold a cache-restored practice session for the
+    // normal 20-second HTTP deadline.
+    let capabilityProbeTimer: number | undefined;
+    const infoPromise = Promise.race([
+      client.info().catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        capabilityProbeTimer = globalThis.setTimeout(resolve, CORE_CAPABILITY_PROBE_MS);
+      }),
+    ]).finally(() => {
+      if (capabilityProbeTimer !== undefined) globalThis.clearTimeout(capabilityProbeTimer);
+    });
     let contentId = endpoint.contentId ?? knownContentId;
     let manifest: ManifestResponse | undefined;
     let manifestUnavailable = false;
@@ -251,6 +266,7 @@ export const useAppStore = defineStore('app', () => {
         );
       }
     }
+    const pinnedInfo = await infoPromise;
     const pin: PinnedCoreContent = {
       baseUrl: endpoint.baseUrl,
       source: endpoint.source,
@@ -259,6 +275,7 @@ export const useAppStore = defineStore('app', () => {
       ...(manifest ? { manifest } : {}),
       ...(manifestUnavailable ? { manifestUnavailable: true as const } : {}),
       client,
+      learningRecommendations: pinnedInfo?.capabilities?.learningRecommendations === true,
     };
     pinnedCoreContent.value = pin;
     return pin;

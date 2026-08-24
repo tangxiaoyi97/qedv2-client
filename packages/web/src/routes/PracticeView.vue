@@ -10,10 +10,12 @@
  *  - PartPlayer runs chromeless: it reports state, the bar triggers it.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { Cloud, HardDrive } from 'lucide-vue-next';
 import {
-  type AiAssessResponse,
+  type AiAssessResult,
+  type AiExplainResult,
+  type AiRequestContext,
   TEIL_LABELS,
   formatScore,
   TERM_LABELS,
@@ -23,8 +25,8 @@ import {
   type Grading,
   type QuestionPart,
   type QuestionsFilter,
+  type RichText,
   type SelfAssessment,
-  suggestedSelfAssessment,
   type Submission,
   type Term,
 } from '@qed2/core-logic';
@@ -32,11 +34,10 @@ import {
   PartPlayer,
   FigureList,
   QButton,
-  QChip,
   QIconButton,
   RichTextView,
   AiAssessPanel,
-  AiExplainPanel,
+  AiLearningPanel,
   PracticeBottomBar,
   PracticeQuestionHeader,
   PracticeSessionDrawer,
@@ -47,6 +48,7 @@ import {
   StateIcon,
   VerdictCard,
   type PartPlayerCommand,
+  type PartPlayerDraft,
   type PartPlayerState,
   type SheetDetent,
 } from '@qed2/ui';
@@ -78,8 +80,10 @@ const progressGraded = computed(() =>
 /* --- PartPlayer shell contract --- */
 const playerState = ref<PartPlayerState>({
   phase: 'answering',
+  attemptPhase: 'first',
   canSubmit: false,
   result: null,
+  firstResult: null,
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
@@ -113,19 +117,41 @@ function measureTopbar(): void {
  * pick). Held until the verdict exists, it goes through the same override
  * path as a post-answer pick — which rebases on the pre-answer snapshot.
  *
- * Holding it is only safe if every way OUT of the part flushes it first;
- * `flushPendingGrading` is called from each of them. A pick the user made
- * must never be silently dropped — least of all „Ausgeschlossen".
+ * The pick is stored on the account-scoped session item immediately. It does
+ * not advance FSRS by itself; returning to the part restores it, and the one
+ * later answer commit applies it atomically.
  */
 const pendingGrading = ref<Grading | null>(null);
-
-/** Write a held pick through as a standalone review event. */
-async function flushPendingGrading(): Promise<void> {
-  const grading = pendingGrading.value;
-  const partId = current.value?.part.id;
-  pendingGrading.value = null;
-  if (grading && partId) await practice.overrideGrading(partId, grading);
-}
+const pendingGradingSaveBusy = ref(false);
+const pendingGradingSaveError = ref<string | null>(null);
+let pendingGradingSaveSequence = 0;
+type GradeCommitPayload = {
+  partId: string;
+  result: GradeResult;
+  submission: Submission;
+  selfAssessed: boolean;
+  manualGrading?: Grading;
+};
+type CorrectionCommitPayload = Omit<GradeCommitPayload, 'manualGrading'>;
+const commitBusy = ref(false);
+const commitError = ref<string | null>(null);
+const pendingGradeCommit = ref<GradeCommitPayload | null>(null);
+const pendingCorrectionCommit = ref<CorrectionCommitPayload | null>(null);
+const pendingOverrideGrading = ref<Grading | null>(null);
+const selfAssessmentDraftDurable = ref(false);
+const selfAssessmentDraftError = ref<string | null>(null);
+const pendingSelfAssessmentDraft = ref<PartPlayerDraft | null>(null);
+let draftSaveSequence = 0;
+let selfAssessmentFocusPending = false;
+const correctionDraftSaveBusy = ref(false);
+const correctionDraftError = ref<string | null>(null);
+const pendingCorrectionDraft = ref<Submission | null>(null);
+let correctionDraftSaveSequence = 0;
+const answerDraftSaveBusy = ref(false);
+const answerDraftSaveError = ref<string | null>(null);
+const pendingAnswerDraft = ref<Submission | null>(null);
+let answerDraftSaveSequence = 0;
+let answerDraftSavePromise: ReturnType<typeof practice.saveAnswerDraft> | undefined;
 
 const mobileRailOpen = ref(false);
 const mobileSourceFooterReady = ref(false);
@@ -167,7 +193,11 @@ function onPlayerState(state: PartPlayerState): void {
   // Full screen, not half: judging means reading the solution AND working
   // the criteria, both of which now live in the sheet. Half would put the
   // controls below the fold on the one step that is nothing but controls.
-  if (state.phase === 'self-assessing' && !wasSelfAssessing) solutionDetent.value = 'full';
+  if (state.phase === 'self-assessing' && !wasSelfAssessing) {
+    selfAssessmentFocusPending = true;
+    selfAssessmentDraftDurable.value = Boolean(practice.currentSelfAssessmentDraft);
+    solutionDetent.value = 'full';
+  }
   if (
     state.phase === 'reviewed' &&
     !wasReviewed &&
@@ -181,20 +211,198 @@ function onPlayerState(state: PartPlayerState): void {
   }
 }
 
-async function onGraded(payload: {
-  partId: string;
-  result: GradeResult;
-  submission: Submission;
-  selfAssessed: boolean;
-  manualGrading?: Grading;
-}): Promise<void> {
+async function onPlayerDraft(draft: PartPlayerDraft): Promise<void> {
+  const partId = current.value?.part.id;
+  // This typed event is emitted only after PartPlayer has entered its own
+  // self-assessment state. Its state projection is delivered by a separate
+  // watcher and can still be one Vue tick behind here, so treating that mirror
+  // as a guard would discard the first (and crash-critical) draft.
+  if (!partId) return;
+  pendingSelfAssessmentDraft.value = draft;
+  const sequence = ++draftSaveSequence;
+  selfAssessmentDraftDurable.value = false;
+  selfAssessmentDraftError.value = null;
+  const saved = await practice.saveSelfAssessmentDraft(partId, draft).catch(() => false);
+  if (sequence === draftSaveSequence && current.value?.part.id === partId) {
+    selfAssessmentDraftDurable.value = saved;
+    selfAssessmentDraftError.value = saved
+      ? null
+      : 'Die Selbstbewertung konnte nicht lokal gespeichert werden.';
+    if (saved && selfAssessmentFocusPending) {
+      selfAssessmentFocusPending = false;
+      await nextTick();
+      document.querySelector<HTMLElement>(
+        '.q-selfassess button:not([disabled]), .q-selfassess [tabindex="0"]',
+      )?.focus();
+    }
+  }
+}
+
+function retrySelfAssessmentDraft(): void {
+  const draft = pendingSelfAssessmentDraft.value;
+  if (draft) void onPlayerDraft(draft);
+}
+
+async function onCorrectionDraft(submission: Submission): Promise<void> {
+  const partId = current.value?.part.id;
+  const attemptId = firstAttemptId.value;
+  if (!partId || !attemptId || playerState.value.attemptPhase !== 'correction') return;
+  pendingCorrectionDraft.value = submission;
+  const sequence = ++correctionDraftSaveSequence;
+  correctionDraftSaveBusy.value = true;
+  correctionDraftError.value = null;
+  const saved = await practice.saveCorrectionDraft(attemptId, partId, submission).catch(() => false);
+  if (
+    sequence === correctionDraftSaveSequence
+    && current.value?.part.id === partId
+    && firstAttemptId.value === attemptId
+  ) {
+    correctionDraftSaveBusy.value = false;
+    correctionDraftError.value = saved
+      ? null
+      : 'Die Korrektur konnte nicht lokal zwischengespeichert werden.';
+  }
+}
+
+function onAnswerDraft(submission: Submission): void {
+  const partId = current.value?.part.id;
+  if (!partId || playerState.value.phase !== 'answering' || playerState.value.attemptPhase !== 'first') return;
+  pendingAnswerDraft.value = submission;
+  const sequence = ++answerDraftSaveSequence;
+  answerDraftSaveBusy.value = true;
+  answerDraftSaveError.value = null;
+  // Enter the profile-bound session queue before yielding. A profile switch
+  // or component unmount may stop this view from publishing UI state, but it
+  // must never cancel or retarget the already captured local draft write.
+  const operation = practice.saveAnswerDraft(partId, submission)
+    .catch(() => ({ status: 'failed' as const }));
+  answerDraftSavePromise = operation;
+  void operation.then((outcome) => {
+    if (answerDraftSavePromise === operation) answerDraftSavePromise = undefined;
+    if (sequence !== answerDraftSaveSequence || current.value?.part.id !== partId) return;
+    answerDraftSaveBusy.value = false;
+    if (outcome.status === 'superseded-by-grade') {
+      const record = outcome.record;
+      firstAttemptId.value = record.clientAttemptId;
+      hintLevel.value = record.hintLevel ?? 0;
+      correctionOutcome.value = record.correctionOutcome ?? null;
+      playerCommand.value = {
+        id: ++playerCommandId,
+        type: 'restore-review',
+        result: record.result,
+        ...(record.pendingSubmission ? { submission: record.pendingSubmission } : {}),
+        ...(!record.pendingSubmission ? { submissionUnavailable: true } : {}),
+      };
+      answerDraftSaveError.value = null;
+      pendingAnswerDraft.value = null;
+      return;
+    }
+    answerDraftSaveError.value = outcome.status === 'saved'
+      ? null
+      : 'Der Antwortentwurf konnte nicht lokal gespeichert werden.';
+    if (outcome.status === 'saved') pendingAnswerDraft.value = null;
+  });
+}
+
+async function flushAnswerDraft(): Promise<boolean> {
+  const operation = answerDraftSavePromise;
+  if (!operation) return answerDraftSaveError.value === null;
+  const outcome = await operation;
+  if (answerDraftSavePromise && answerDraftSavePromise !== operation) return flushAnswerDraft();
+  return outcome.status !== 'failed' && answerDraftSaveError.value === null;
+}
+
+function retryAnswerDraft(): void {
+  if (pendingAnswerDraft.value) onAnswerDraft(pendingAnswerDraft.value);
+}
+
+async function commitGrade(payload: GradeCommitPayload): Promise<void> {
+  if (commitBusy.value) return;
   const part: QuestionPart | undefined = current.value?.part;
   if (!part || part.id !== payload.partId) return;
-  await practice.recordGraded({ part, result: payload.result, submission: payload.submission });
-  // The player's own pick wins over one made before answering.
-  const manual = payload.manualGrading ?? pendingGrading.value ?? undefined;
-  pendingGrading.value = null;
-  if (manual) await practice.overrideGrading(payload.partId, manual);
+  const interactionId = current.value?.item.learningInteractionId;
+  commitBusy.value = true;
+  commitError.value = null;
+  try {
+    const manual = payload.manualGrading ?? pendingGrading.value ?? undefined;
+    const record = await practice.recordGraded({
+      part,
+      result: payload.result,
+      submission: payload.submission,
+      ...(hintLevel.value > 0 ? { hintLevel: hintLevel.value as 1 | 2 | 3 } : {}),
+      ...(manual ? { manualGrading: manual } : {}),
+    });
+    if (current.value?.item.learningInteractionId !== interactionId) return;
+    firstAttemptId.value = record?.clientAttemptId ?? null;
+    if (record && JSON.stringify(record.result) !== JSON.stringify(payload.result)) {
+      playerCommand.value = {
+        id: ++playerCommandId,
+        type: 'restore-review',
+        result: record.result,
+        ...(record.pendingSubmission ? { submission: record.pendingSubmission } : {}),
+        ...(!record.pendingSubmission ? { submissionUnavailable: true } : {}),
+      };
+    }
+    pendingGrading.value = null;
+    pendingGradingSaveSequence += 1;
+    pendingGradingSaveBusy.value = false;
+    pendingGradingSaveError.value = null;
+    pendingGradeCommit.value = null;
+    pendingSelfAssessmentDraft.value = null;
+    selfAssessmentDraftError.value = null;
+    correctionDraftSaveSequence += 1;
+    correctionDraftSaveBusy.value = false;
+    correctionDraftError.value = null;
+    pendingCorrectionDraft.value = null;
+    answerDraftSaveSequence += 1;
+    answerDraftSavePromise = undefined;
+    answerDraftSaveBusy.value = false;
+    answerDraftSaveError.value = null;
+    pendingAnswerDraft.value = null;
+    selfAssessmentDraftDurable.value = true;
+  } catch {
+    if (current.value?.item.learningInteractionId === interactionId) {
+      commitError.value = 'Der Versuch wurde nicht gespeichert.';
+    }
+  } finally {
+    commitBusy.value = false;
+  }
+}
+
+async function onGraded(payload: GradeCommitPayload): Promise<void> {
+  pendingGradeCommit.value = payload;
+  await commitGrade(payload);
+}
+
+async function commitCorrection(payload: CorrectionCommitPayload): Promise<void> {
+  if (commitBusy.value) return;
+  if (current.value?.part.id !== payload.partId) return;
+  const attemptId = firstAttemptId.value;
+  if (!attemptId) return;
+  const interactionId = current.value?.item.learningInteractionId;
+  commitBusy.value = true;
+  commitError.value = null;
+  try {
+    const durable = await practice.recordCorrection(attemptId, payload.partId, payload.result);
+    if (current.value?.item.learningInteractionId !== interactionId) return;
+    correctionOutcome.value = durable?.correctionOutcome ?? null;
+    pendingCorrectionCommit.value = null;
+    correctionDraftSaveSequence += 1;
+    correctionDraftSaveBusy.value = false;
+    correctionDraftError.value = null;
+    pendingCorrectionDraft.value = null;
+  } catch {
+    if (current.value?.item.learningInteractionId === interactionId) {
+      commitError.value = 'Die Korrektur wurde nicht gespeichert.';
+    }
+  } finally {
+    commitBusy.value = false;
+  }
+}
+
+async function onCorrected(payload: CorrectionCommitPayload): Promise<void> {
+  pendingCorrectionCommit.value = payload;
+  await commitCorrection(payload);
 }
 
 /* Double-click / accidental second-tap protection: after „Prüfen" flips the
@@ -204,24 +412,63 @@ async function onGraded(payload: {
 let lastPrimaryAt = 0;
 const PRIMARY_COOLDOWN_MS = 500;
 
+async function advanceAfterReview(): Promise<void> {
+  if (commitBusy.value) return;
+  commitBusy.value = true;
+  commitError.value = null;
+  try {
+    await practice.completeReviewAndNext();
+  } catch {
+    commitError.value = 'Der Programmstand wurde nicht gespeichert.';
+  } finally {
+    commitBusy.value = false;
+  }
+}
+
 function primaryAction(): void {
   const now = Date.now();
   if (now - lastPrimaryAt < PRIMARY_COOLDOWN_MS) return;
   lastPrimaryAt = now;
+  if (pendingGradingSaveError.value && pendingGrading.value) {
+    void persistPendingGrading(pendingGrading.value);
+    return;
+  }
+  if (correctionDraftError.value && pendingCorrectionDraft.value) {
+    void onCorrectionDraft(pendingCorrectionDraft.value);
+    return;
+  }
+  if (answerDraftSaveError.value && pendingAnswerDraft.value) {
+    retryAnswerDraft();
+    return;
+  }
   switch (playerState.value.phase) {
     case 'answering':
       playerCommand.value = { id: ++playerCommandId, type: 'submit' };
       break;
     case 'self-assessing':
-      playerCommand.value = { id: ++playerCommandId, type: 'confirm-self-assessment' };
+      if (selfAssessmentDraftError.value) retrySelfAssessmentDraft();
+      else playerCommand.value = { id: ++playerCommandId, type: 'confirm-self-assessment' };
       break;
     case 'reviewed':
-      practice.next();
+      if (pendingGradeCommit.value) void commitGrade(pendingGradeCommit.value);
+      else if (pendingCorrectionCommit.value) void commitCorrection(pendingCorrectionCommit.value);
+      else if (pendingOverrideGrading.value) void commitGradingOverride(pendingOverrideGrading.value);
+      else void advanceAfterReview();
       break;
   }
 }
 
 const primaryLabel = computed(() => {
+  if (commitBusy.value) return 'Speichert …';
+  if (pendingGradingSaveBusy.value) return 'Speichert …';
+  if (correctionDraftSaveBusy.value) return 'Speichert …';
+  if (answerDraftSaveBusy.value) return 'Speichert …';
+  if (pendingGradingSaveError.value) return 'Speichern wiederholen';
+  if (correctionDraftError.value) return 'Speichern wiederholen';
+  if (answerDraftSaveError.value) return 'Speichern wiederholen';
+  if (selfAssessmentDraftError.value) return 'Speichern wiederholen';
+  if (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value) return 'Speichert …';
+  if (commitError.value) return 'Speichern wiederholen';
   switch (playerState.value.phase) {
     case 'answering':
       return 'Prüfen';
@@ -235,8 +482,17 @@ const primaryLabel = computed(() => {
 
 const primaryDisabled = computed(
   () => {
+    if (commitBusy.value) return true;
+    if (pendingGradingSaveBusy.value) return true;
+    if (correctionDraftSaveBusy.value) return true;
+    if (answerDraftSaveBusy.value) return true;
+    if (pendingGradingSaveError.value) return false;
+    if (correctionDraftError.value) return false;
+    if (answerDraftSaveError.value) return false;
     if (playerState.value.phase === 'answering') return !playerState.value.canSubmit;
     if (playerState.value.phase === 'self-assessing') {
+      if (selfAssessmentDraftError.value) return false;
+      if (!selfAssessmentDraftDurable.value) return true;
       const self = playerState.value.selfAssessment;
       return self?.selectedPoints == null || self.grading == null;
     }
@@ -244,141 +500,251 @@ const primaryDisabled = computed(
   },
 );
 
-/* --- AI explanation -------------------------------------------------------
- * Nothing is fetched until the user presses the button: the call costs real
- * money, and most answers do not need explaining.
- */
+/* --- one learning loop: hint -> diagnosis -> correction ------------------- */
 const ai = useAiStore();
+const learningLoading = ref(false);
+const learningError = ref<string | null>(null);
+const learningResponse = ref<AiExplainResult | null>(null);
+const authoredHint = ref<RichText | null>(null);
+const learningUsesAi = ref(false);
+const learningPanel = ref<{ focus: () => void } | null>(null);
+let learningInvoker: HTMLElement | null = null;
+const pendingHintLevel = ref<1 | 2 | 3 | null>(null);
+const learningRenewGeneration = ref<number | null>(null);
+const hintLevel = ref<0 | 1 | 2 | 3>(0);
+const firstAttemptId = ref<string | null>(null);
+const correctionOutcome = ref<GradeResult['verdict'] | null>(null);
+let learningController: AbortController | undefined;
 
-const explainDismissed = ref(new Set<string>());
-const explainLoading = ref(false);
-const explainError = ref<string | null>(null);
-const explainControllers: Partial<Record<'answer' | 'walkthrough', AbortController>> = {};
-
-/** What the user actually wrote — see PartPlayerState.submittedText. */
-const explainSubmission = computed(() => playerState.value.submittedText);
-
-const showExplain = computed(() => {
-  const result = playerState.value.result;
-  if (!result || result.verdict === 'correct') return false;
-  if (!ai.canExplain) return false;
-  return !explainDismissed.value.has(explainKey.value);
+const firstResult = computed(() => playerState.value.firstResult ?? playerState.value.result);
+const firstNeedsCorrection = computed(() =>
+  firstResult.value != null && firstResult.value.verdict !== 'correct',
+);
+const bankHints = computed(() => current.value?.part.learning?.hints ?? []);
+const aiLearningAllowed = computed(() =>
+  current.value != null
+  && practice.sessionIdentityDurable
+  && ai.canLearn(current.value.question, current.value.part),
+);
+const learningStage = computed<'hint' | 'diagnosis' | 'correction'>(() => {
+  if (playerState.value.attemptPhase === 'correction' || correctionOutcome.value) return 'correction';
+  return firstResult.value ? 'diagnosis' : 'hint';
 });
-
-const explainKey = computed(() => `${current.value?.part.id ?? ''}|${explainSubmission.value}`);
-
-const explainState = computed(() => {
-  const part = current.value;
-  const result = playerState.value.result;
-  const hit = part && result
-    ? ai.cached({
-        question: part.question,
-        part: part.part,
-        submitted: explainSubmission.value,
-        result,
-      })
-    : undefined;
-  return {
-    markdown: hit?.markdown,
-    model: hit?.model,
-    source: hit?.source,
-    loading: explainLoading.value,
-    error: explainError.value ?? undefined,
-  };
+const learningAvailable = computed(() => {
+  if (commitBusy.value || commitError.value) return false;
+  if (playerState.value.phase === 'self-assessing') return false;
+  if (learningResponse.value) return true;
+  if (learningStage.value === 'hint' && authoredHint.value) return true;
+  if (learningStage.value === 'hint') {
+    return bankHints.value.length > 0 || (aiLearningAllowed.value && ai.canHint);
+  }
+  return firstNeedsCorrection.value;
 });
-
-async function askForExplanation(): Promise<void> {
-  await runExplain('answer');
-}
-
-/* --- whole-question walkthrough -------------------------------------------
- * A different question from „why is mine wrong": how is this done at all.
- * Wanted most when the official Lösungsweg is one line of result.
- */
-const walkLoading = ref(false);
-const walkError = ref<string | null>(null);
-
-const showWalkthrough = computed(
-  () => playerState.value.phase === 'reviewed' && current.value != null && ai.canExplain,
+const learningMarkdown = computed(() =>
+  (learningResponse.value?.mode === 'hint' ? learningResponse.value.hint.markdown : undefined)
+    ?? learningResponse.value?.markdown,
+);
+const learningNextAction = computed(() =>
+  (learningResponse.value?.mode === 'hint' ? learningResponse.value.hint.nextAction : undefined)
+    ?? (hintLevel.value > 0 ? 'Versuche jetzt den nächsten eigenen Schritt.' : undefined),
+);
+const canRequestHint = computed(() =>
+  hintLevel.value < 3
+  && (bankHints.value.some((hint) => hint.level > hintLevel.value)
+    || (aiLearningAllowed.value && ai.canHint)),
 );
 
-const walkState = computed(() => {
-  const part = current.value;
-  const result = playerState.value.result;
-  const hit = part && result
-    ? ai.cached({
-        question: part.question,
-        part: part.part,
-        submitted: explainSubmission.value,
-        result,
-        mode: 'walkthrough',
-      })
-    : undefined;
+function requestIdentity(
+  mode: 'hint' | 'diagnosis' | 'assess',
+): AiRequestContext | undefined {
+  const interactionId = current.value?.item.learningInteractionId;
+  const taskVersion = ai.capabilities?.taskVersions?.[mode];
+  if (!practice.sessionIdentityDurable || !interactionId || !taskVersion || !practice.contentId) return undefined;
+  const attemptPhase = playerState.value.attemptPhase;
   return {
-    markdown: hit?.markdown,
-    model: hit?.model,
-    source: hit?.source,
-    loading: walkLoading.value,
-    error: walkError.value ?? undefined,
+    interactionId,
+    taskVersion,
+    contentSource: practice.contentSource,
+    contentId: practice.contentId,
+    attemptPhase,
   };
-});
-
-const aiConversationActive = computed(() =>
-  Boolean(
-    explainState.value.markdown ||
-    explainState.value.loading ||
-    explainState.value.error ||
-    walkState.value.markdown ||
-    walkState.value.loading ||
-    walkState.value.error,
-  ),
-);
-
-async function askForWalkthrough(): Promise<void> {
-  await runExplain('walkthrough');
 }
 
-function dismissWalkthrough(): void {
-  walkError.value = null;
-}
-
-async function runExplain(mode: 'answer' | 'walkthrough'): Promise<void> {
+async function requestHint(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
   const part = current.value;
-  const result = playerState.value.result;
-  const busy = mode === 'answer' ? explainLoading : walkLoading;
-  const error = mode === 'answer' ? explainError : walkError;
-  if (!part || !result || busy.value) return;
+  if (!part || learningLoading.value || hintLevel.value >= 3) return;
+  const nextAuthored = [...bankHints.value]
+    .sort((left, right) => left.level - right.level)
+    .find((hint) => hint.level > hintLevel.value);
+  const level = (!aiLearningAllowed.value || !ai.canHint) && nextAuthored
+    ? nextAuthored.level
+    : pendingHintLevel.value
+      ?? (Math.min(3, hintLevel.value + 1) as 1 | 2 | 3);
+  const bankHint = bankHints.value.find((hint) => hint.level === level);
+  learningError.value = null;
+  if (bankHint) {
+    pendingHintLevel.value = null;
+    authoredHint.value = bankHint.content;
+    learningResponse.value = null;
+    learningUsesAi.value = false;
+    hintLevel.value = level;
+    pendingHintLevel.value = null;
+    await practice.recordHintLevel(part.part.id, level).catch(() => undefined);
+    return;
+  }
+  if (!aiLearningAllowed.value || !ai.canHint) {
+    learningError.value = navigator.onLine
+      ? 'Für diese Stufe ist kein Hinweis verfügbar.'
+      : 'Offline ist nur der gespeicherte Hinweis verfügbar.';
+    return;
+  }
+  const identity = requestIdentity('hint');
+  if (!identity) return;
+  pendingHintLevel.value = level;
+  await runLearningRequest({
+    mode: 'hint',
+    hintLevel: level,
+    submitted: '',
+    identity,
+  }, options);
+}
+
+async function requestDiagnosis(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
+  const part = current.value;
+  const result = firstResult.value;
+  if (
+    !part
+    || !result
+    || !firstNeedsCorrection.value
+    || learningLoading.value
+    || !playerState.value.submittedText.trim()
+  ) return;
+  if (!aiLearningAllowed.value || !ai.canDiagnose) return;
+  const identity = requestIdentity('diagnosis');
+  if (!identity) return;
+  await runLearningRequest({
+    mode: 'diagnosis',
+    submitted: playerState.value.submittedText,
+    result,
+    identity,
+  }, options);
+}
+
+async function runLearningRequest(input: {
+  mode: 'hint' | 'diagnosis';
+  submitted: string;
+  result?: GradeResult;
+  hintLevel?: 1 | 2 | 3;
+  identity?: AiRequestContext;
+}, options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
+  const part = current.value;
+  if (!part || learningLoading.value) return;
   const partId = part.part.id;
   const userId = auth.session?.user.id;
-  const submitted = explainSubmission.value;
   const controller = new AbortController();
-  explainControllers[mode]?.abort();
-  explainControllers[mode] = controller;
-  busy.value = true;
-  error.value = null;
+  learningController?.abort();
+  learningController = controller;
+  learningLoading.value = true;
+  learningUsesAi.value = true;
+  learningError.value = null;
+  learningRenewGeneration.value = null;
+  authoredHint.value = null;
   try {
-    await ai.explain({
+    const requestInput = {
       question: part.question,
       part: part.part,
-      submitted,
-      result,
-      mode,
-    }, controller.signal);
-  } catch (e) {
+      ...input,
+    };
+    const answer = await ai.explain(requestInput, controller.signal, options);
     if (
-      !controller.signal.aborted &&
-      current.value?.part.id === partId &&
-      auth.session?.user.id === userId &&
-      explainSubmission.value === submitted
+      controller.signal.aborted
+      || current.value?.part.id !== partId
+      || auth.session?.user.id !== userId
+    ) return;
+    learningResponse.value = answer;
+    const locator = ai.explainCacheLocator(requestInput, answer);
+    if (locator) {
+      const replayable = await ai.replayExplain(locator, part.part).catch(() => undefined);
+      if (replayable) {
+        await practice.recordAiHelp(
+          partId,
+          locator,
+          answer.mode === 'hint' ? input.hintLevel : undefined,
+        ).catch(() => undefined);
+      }
+    }
+    if (answer.mode === 'hint' && input.hintLevel) {
+      hintLevel.value = input.hintLevel;
+      pendingHintLevel.value = null;
+    }
+    const eventId = firstAttemptId.value;
+    if (answer.mode === 'diagnosis' && eventId) {
+      await practice.recordDiagnosis(eventId, partId, answer.diagnosis.errorCode);
+    }
+  } catch (error) {
+    if (
+      !controller.signal.aborted
+      && current.value?.part.id === partId
+      && auth.session?.user.id === userId
+    ) learningError.value = explainMessage(error);
+    if (
+      (error as { code?: unknown })?.code === 'AI_REQUEST_ALREADY_COMPLETED'
+      && Number.isSafeInteger((error as { paidRequestGeneration?: unknown }).paidRequestGeneration)
     ) {
-      error.value = explainMessage(e);
+      learningRenewGeneration.value = (error as { paidRequestGeneration: number }).paidRequestGeneration;
     }
   } finally {
-    if (explainControllers[mode] === controller) {
-      delete explainControllers[mode];
-      busy.value = false;
+    if (learningController === controller) {
+      learningController = undefined;
+      learningLoading.value = false;
     }
   }
+}
+
+function renewLearning(): void {
+  const expectedGeneration = learningRenewGeneration.value;
+  if (expectedGeneration == null) return;
+  const options = { newRequest: true, expectedGeneration } as const;
+  if (learningStage.value === 'hint') void requestHint(options);
+  else void requestDiagnosis(options);
+}
+
+async function startCorrection(): Promise<void> {
+  if (
+    commitBusy.value
+    || commitError.value
+    || !firstAttemptId.value
+    || !firstNeedsCorrection.value
+    || playerState.value.attemptPhase !== 'first'
+  ) return;
+  playerCommand.value = { id: ++playerCommandId, type: 'start-correction' };
+  solutionDetent.value = 'default';
+  await nextTick();
+  await nextTick();
+  document.querySelector<HTMLElement>(
+    '.q-part__control input:not([disabled]), .q-part__control textarea:not([disabled]), .q-part__control select:not([disabled]), .q-part__control [contenteditable="true"], .q-part__control button:not([disabled])',
+  )?.focus();
+}
+
+async function toggleLearning(): Promise<void> {
+  const opening = solutionDetent.value === 'collapsed';
+  if (opening && document.activeElement instanceof HTMLElement) learningInvoker = document.activeElement;
+  solutionDetent.value = opening ? 'default' : 'collapsed';
+  if (opening) {
+    await nextTick();
+    learningPanel.value?.focus();
+  } else {
+    learningInvoker?.focus();
+  }
+}
+
+function dismissLearning(): void {
+  solutionDetent.value = 'collapsed';
+  void nextTick(() => learningInvoker?.focus());
+}
+
+function closeLockedSession(): void {
+  void router.replace('/');
 }
 
 /* --- AI assistance for self-assessment ------------------------------------
@@ -386,11 +752,18 @@ async function runExplain(mode: 'answer' | 'walkthrough'): Promise<void> {
  */
 const assistLoading = ref(false);
 const assistError = ref<string | null>(null);
-const assistResult = ref<AiAssessResponse | null>(null);
+const assistResult = ref<AiAssessResult | null>(null);
+const assistRenewGeneration = ref<number | null>(null);
 let assistController: AbortController | undefined;
 
 const showAssist = computed(
-  () => playerState.value.phase === 'self-assessing' && current.value != null && ai.canAssess(current.value.part),
+  () => playerState.value.phase === 'self-assessing'
+    && playerState.value.selfAssessment?.selectedPoints != null
+    && playerState.value.selfAssessment?.grading != null
+    && current.value != null
+    && practice.sessionIdentityDurable
+    && selfAssessmentDraftDurable.value
+    && (assistResult.value != null || ai.canAssess(current.value.part, current.value.question)),
 );
 
 const rubricLabels = computed(() => {
@@ -412,36 +785,190 @@ const assist = computed(() => ({
 watch(
   [() => current.value?.part.id, () => auth.session?.user.id],
   () => {
+    const restored = practice.currentReview;
     assistController?.abort();
     assistController = undefined;
-    explainControllers.answer?.abort();
-    explainControllers.walkthrough?.abort();
-    delete explainControllers.answer;
-    delete explainControllers.walkthrough;
+    learningController?.abort();
+    learningController = undefined;
     assistResult.value = null;
     assistError.value = null;
     assistLoading.value = false;
-    explainError.value = null;
-    walkError.value = null;
-    explainLoading.value = false;
-    walkLoading.value = false;
+    assistRenewGeneration.value = null;
+    learningResponse.value = null;
+    authoredHint.value = null;
+    learningUsesAi.value = false;
+    pendingHintLevel.value = null;
+    learningError.value = null;
+    learningLoading.value = false;
+    hintLevel.value = restored?.hintLevel ?? current.value?.item.deliveredHintLevel ?? 0;
+    firstAttemptId.value = restored?.clientAttemptId ?? null;
+    correctionOutcome.value = restored?.correctionOutcome ?? null;
+    commitError.value = null;
+    pendingGradeCommit.value = null;
+    pendingCorrectionCommit.value = null;
+    pendingOverrideGrading.value = null;
+    pendingGrading.value = practice.currentPendingGrading;
+    pendingGradingSaveSequence += 1;
+    pendingGradingSaveBusy.value = false;
+    pendingGradingSaveError.value = null;
+    selfAssessmentDraftDurable.value = Boolean(practice.currentSelfAssessmentDraft);
+    pendingSelfAssessmentDraft.value = null;
+    selfAssessmentDraftError.value = null;
+    correctionDraftSaveSequence += 1;
+    correctionDraftSaveBusy.value = false;
+    correctionDraftError.value = null;
+    pendingCorrectionDraft.value = null;
+    answerDraftSaveSequence += 1;
+    answerDraftSavePromise = undefined;
+    answerDraftSaveBusy.value = false;
+    answerDraftSaveError.value = null;
+    pendingAnswerDraft.value = null;
   },
+  { immediate: true },
 );
 
-async function askForAssessment(): Promise<void> {
+let cachedAssessmentReplay = 0;
+watch(
+  [() => playerState.value.phase, () => playerState.value.attemptPhase],
+  ([phase, attemptPhase], [previousPhase, previousAttemptPhase]) => {
+    if (
+      attemptPhase === previousAttemptPhase
+      && !(previousPhase === 'self-assessing' && phase !== 'self-assessing')
+    ) return;
+    cachedAssessmentReplay += 1;
+    assistController?.abort();
+    assistController = undefined;
+    assistResult.value = null;
+    assistError.value = null;
+    assistLoading.value = false;
+    assistRenewGeneration.value = null;
+  },
+);
+watch(
+  [
+    () => current.value?.item.cachedAiAssessment?.cacheKey,
+    () => current.value?.part.id,
+    () => playerState.value.phase,
+    () => playerState.value.attemptPhase,
+    () => playerState.value.submittedText,
+    () => playerState.value.selfAssessment?.selectedPoints,
+    () => auth.session?.user.id,
+  ],
+  async () => {
+    const marker = current.value?.item.cachedAiAssessment;
+    const part = current.value;
+    const self = playerState.value.selfAssessment;
+    const userId = auth.session?.user.id;
+    const replay = ++cachedAssessmentReplay;
+    if (
+      !marker
+      || !part
+      || !self
+      || marker.partId !== part.part.id
+      || marker.attemptPhase !== playerState.value.attemptPhase
+      || playerState.value.phase !== 'self-assessing'
+      || self.selectedPoints == null
+      || self.grading == null
+      || assistResult.value
+    ) return;
+    const input = {
+      question: part.question,
+      part: part.part,
+      submitted: playerState.value.submittedText,
+      maxPoints: self.maxPoints,
+      scoreOptions: self.scoreOptions.map((option) => option.points),
+    };
+    const cached = await ai.replayAssess(marker, input).catch(() => undefined);
+    if (
+      !cached
+      || replay !== cachedAssessmentReplay
+      || current.value?.part.id !== part.part.id
+      || auth.session?.user.id !== userId
+      || playerState.value.phase !== 'self-assessing'
+      || marker.attemptPhase !== playerState.value.attemptPhase
+    ) return;
+    assistResult.value = cached;
+  },
+  { immediate: true },
+);
+
+let cachedHelpReplay = 0;
+const cachedHelpForStage = computed(() => {
+  const item = current.value?.item;
+  if (!item) return undefined;
+  if (learningStage.value === 'hint') {
+    return item.cachedAiHint
+      ?? (item.cachedAiHelp?.mode === 'hint' ? item.cachedAiHelp : undefined);
+  }
+  return item.cachedAiDiagnosis
+    ?? (item.cachedAiHelp?.mode === 'diagnosis' ? item.cachedAiHelp : undefined);
+});
+watch(learningStage, (stage, previousStage) => {
+  if (stage !== previousStage) {
+    cachedHelpReplay += 1;
+    learningController?.abort();
+    learningController = undefined;
+    learningLoading.value = false;
+    learningError.value = null;
+    learningRenewGeneration.value = null;
+    pendingHintLevel.value = null;
+  }
+  if (stage !== 'hint') authoredHint.value = null;
+  const mode = learningResponse.value?.mode;
+  if ((mode === 'hint' && stage !== 'hint') || (mode === 'diagnosis' && stage === 'hint')) {
+    learningResponse.value = null;
+    learningUsesAi.value = false;
+  }
+});
+watch(
+  [
+    () => cachedHelpForStage.value?.cacheKey,
+    () => current.value?.part.id,
+    () => auth.session?.user.id,
+    learningStage,
+  ],
+  async () => {
+    const marker = cachedHelpForStage.value;
+    const partId = current.value?.part.id;
+    const userId = auth.session?.user.id;
+    const replay = ++cachedHelpReplay;
+    if (!marker || !partId || marker.partId !== partId || learningResponse.value) return;
+    if (
+      (marker.mode === 'hint' && learningStage.value !== 'hint')
+      || (marker.mode === 'diagnosis' && learningStage.value === 'hint')
+    ) return;
+    const cached = await ai.replayExplain(marker, current.value!.part).catch(() => undefined);
+    if (
+      !cached
+      || replay !== cachedHelpReplay
+      || current.value?.part.id !== partId
+      || auth.session?.user.id !== userId
+    ) return;
+    learningResponse.value = cached;
+    learningUsesAi.value = true;
+    if (cached.mode === 'hint') {
+      hintLevel.value = Math.max(hintLevel.value, cached.hint.level) as 1 | 2 | 3;
+    }
+  },
+  { immediate: true },
+);
+
+async function askForAssessment(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
   const part = current.value;
   const self = playerState.value.selfAssessment;
   if (!part || !self || assistLoading.value) return;
   const partId = part.part.id;
   const userId = auth.session?.user.id;
-  const assessmentAtStart = JSON.stringify(self.assessment);
+  if (self.selectedPoints == null || self.grading == null) return;
+  const identity = requestIdentity('assess');
   const controller = new AbortController();
   assistController?.abort();
   assistController = controller;
   assistLoading.value = true;
   assistError.value = null;
+  assistRenewGeneration.value = null;
   try {
-    const answer = await ai.assess({
+    const requestInput = {
       question: part.question,
       part: part.part,
       submitted: playerState.value.submittedText,
@@ -449,7 +976,9 @@ async function askForAssessment(): Promise<void> {
       // Non-rubric parts are judged against the values the part allows, so the
       // model can never return a score this part cannot represent.
       scoreOptions: self.scoreOptions.map((o) => o.points),
-    }, controller.signal);
+      ...(identity ? { identity } : {}),
+    };
+    const answer = await ai.assess(requestInput, controller.signal, options);
     if (
       controller.signal.aborted ||
       current.value?.part.id !== partId ||
@@ -457,11 +986,15 @@ async function askForAssessment(): Promise<void> {
       playerState.value.phase !== 'self-assessing'
     ) return;
     assistResult.value = answer;
-    // Never overwrite a choice the user made while the model was thinking.
-    if (
-      answer &&
-      JSON.stringify(playerState.value.selfAssessment?.assessment) === assessmentAtStart
-    ) applySuggestion(answer);
+    if (answer) {
+      const locator = ai.assessCacheLocator(requestInput, answer);
+      if (locator) {
+        const replayable = await ai.replayAssess(locator, requestInput).catch(() => undefined);
+        if (replayable) {
+          await practice.recordCachedAiAssessment(partId, locator).catch(() => undefined);
+        }
+      }
+    }
   } catch (e) {
     if (
       !controller.signal.aborted &&
@@ -469,6 +1002,12 @@ async function askForAssessment(): Promise<void> {
       auth.session?.user.id === userId
     ) {
       assistError.value = explainMessage(e);
+      if (
+        (e as { code?: unknown })?.code === 'AI_REQUEST_ALREADY_COMPLETED'
+        && Number.isSafeInteger((e as { paidRequestGeneration?: unknown }).paidRequestGeneration)
+      ) {
+        assistRenewGeneration.value = (e as { paidRequestGeneration: number }).paidRequestGeneration;
+      }
     }
   } finally {
     if (assistController === controller) {
@@ -478,22 +1017,10 @@ async function askForAssessment(): Promise<void> {
   }
 }
 
-function applySuggestion(answer: AiAssessResponse): void {
-  const self = playerState.value.selfAssessment;
-  if (!self) return;
-  const suggestion = suggestedSelfAssessment({
-    answer,
-    current: self.assessment,
-    maxPoints: self.maxPoints,
-    criterionCount: rubricLabels.value.length,
-    allowedPoints: self.scoreOptions.map((option) => option.points),
-  });
-  if (suggestion) onSelfAssessmentUpdate(suggestion);
-}
-
-function dismissExplanation(): void {
-  explainDismissed.value = new Set([...explainDismissed.value, explainKey.value]);
-  explainError.value = null;
+function renewAssessment(): void {
+  const expectedGeneration = assistRenewGeneration.value;
+  if (expectedGeneration == null) return;
+  void askForAssessment({ newRequest: true, expectedGeneration });
 }
 
 /** Turn an API error code into something a student can act on. */
@@ -518,8 +1045,16 @@ function explainMessage(e: unknown): string {
     case 'AI_TIMEOUT':
     case 'AI_UNREACHABLE':
       return 'Die KI war nicht erreichbar. Nochmal versuchen?';
+    case 'AI_REQUEST_IN_PROGRESS':
+      return 'Die vorige Anfrage läuft noch. Bitte kurz warten und mit derselben Aktion erneut prüfen.';
+    case 'AI_REQUEST_ALREADY_COMPLETED':
+      return 'Die Antwort wurde bereits erstellt, kam nach dem Verbindungsabbruch aber nicht zurück. Es wird nicht automatisch erneut bezahlt.';
+    case 'AI_REQUEST_ID_REUSED':
+      return 'Die Aufgabe oder KI-Einstellung hat sich geändert. Bitte die Hilfe neu öffnen.';
+    case 'AI_TASK_VERSION_MISMATCH':
+      return 'Client und Server verwenden unterschiedliche KI-Versionen. Bitte QED2 aktualisieren.';
     default:
-      return 'Die Erklärung konnte nicht erzeugt werden.';
+      return 'Die KI-Hilfe konnte nicht erzeugt werden.';
   }
 }
 
@@ -547,7 +1082,10 @@ watch(
         'scroll-margin-bottom',
         `${Math.round(solutionHeight.value) + 90}px`,
       );
-      verdictAnchor.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      verdictAnchor.value?.scrollIntoView({
+        block: 'nearest',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      });
     }, 340);
   },
 );
@@ -569,15 +1107,71 @@ const currentStarred = computed(
   () => progress.partState.get(current.value?.part.id ?? '')?.starred ?? false,
 );
 
+const gradingReviewReplaceable = computed(() => {
+  if (playerState.value.attemptPhase === 'correction') return false;
+  const review = practice.currentReview;
+  return playerState.value.phase === 'answering'
+    || review === undefined
+    || review.gradingBaseCaptured === true;
+});
+const gradingOverrideDisabled = computed(() =>
+  commitBusy.value
+  || commitError.value !== null
+  || pendingGradeCommit.value !== null
+  || pendingCorrectionCommit.value !== null
+  || !gradingReviewReplaceable.value,
+);
+
+async function commitGradingOverride(grading: Grading): Promise<void> {
+  const partId = current.value?.part.id;
+  if (!partId || commitBusy.value || !gradingReviewReplaceable.value) return;
+  const interactionId = current.value?.item.learningInteractionId;
+  pendingOverrideGrading.value = grading;
+  commitBusy.value = true;
+  commitError.value = null;
+  try {
+    await practice.overrideGrading(partId, grading);
+    if (current.value?.item.learningInteractionId !== interactionId) return;
+    pendingOverrideGrading.value = null;
+  } catch {
+    if (current.value?.item.learningInteractionId === interactionId) {
+      commitError.value = 'Die Bewertung wurde nicht gespeichert.';
+    }
+  } finally {
+    commitBusy.value = false;
+  }
+}
+
 async function onGradingSelect(grading: Grading): Promise<void> {
   const partId = current.value?.part.id;
   if (!partId) return;
-  if (playerState.value.phase === 'answering') {
+  if (
+    playerState.value.phase === 'answering'
+    && playerState.value.attemptPhase === 'first'
+    && practice.currentReview === undefined
+  ) {
     pendingGrading.value = grading;
+    await persistPendingGrading(grading);
     return;
   }
+  if (gradingOverrideDisabled.value) return;
   pendingGrading.value = null;
-  await practice.overrideGrading(partId, grading);
+  await commitGradingOverride(grading);
+}
+
+async function persistPendingGrading(grading: Grading): Promise<void> {
+  const partId = current.value?.part.id;
+  if (!partId) return;
+  const sequence = ++pendingGradingSaveSequence;
+  pendingGradingSaveBusy.value = true;
+  pendingGradingSaveError.value = null;
+  const saved = await practice.savePendingGrading(partId, grading).catch(() => false);
+  if (sequence === pendingGradingSaveSequence && current.value?.part.id === partId) {
+    pendingGradingSaveBusy.value = false;
+    pendingGradingSaveError.value = saved
+      ? null
+      : 'Die Bewertung konnte nicht lokal gespeichert werden.';
+  }
 }
 
 async function onStarToggle(): Promise<void> {
@@ -684,6 +1278,22 @@ function returnTarget(): string {
 const EXIT_SYNC_GRACE_MS = 2500;
 
 async function exitNow(): Promise<void> {
+  if (!practice.sessionAccessible) {
+    void router.replace(returnTarget());
+    return;
+  }
+  if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return;
+  if (
+    commitBusy.value
+    || commitError.value
+    || pendingGradingSaveBusy.value
+    || pendingGradingSaveError.value
+    || correctionDraftSaveBusy.value
+    || correctionDraftError.value
+    || answerDraftSaveError.value
+    || selfAssessmentDraftError.value
+    || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value)
+  ) return;
   // Everything that must be attempted before leaving goes INSIDE the race:
   // finishSession persists (fast, local) then syncs (arbitrary network), and
   // a storage write can hang or reject too. A dead-but-accepting server used
@@ -691,7 +1301,6 @@ async function exitNow(): Promise<void> {
   // the archive are durable, so leaving early loses nothing.
   await Promise.race([
     (async () => {
-      await flushPendingGrading();
       await practice.finishSession();
     })().catch(() => undefined),
     new Promise((resolve) => setTimeout(resolve, EXIT_SYNC_GRACE_MS)),
@@ -700,6 +1309,7 @@ async function exitNow(): Promise<void> {
 }
 
 function exit(): void {
+  if (hasUndurableWork.value) return;
   if (!exitArmed.value) {
     exitArmed.value = true;
     return;
@@ -715,16 +1325,88 @@ function onDocumentPointerDown(ev: PointerEvent): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key !== 'ArrowRight') return;
+  if (
+    ev.defaultPrevented
+    || ev.key !== 'ArrowRight'
+    || ev.repeat
+    || ev.isComposing
+    || ev.altKey
+    || ev.ctrlKey
+    || ev.metaKey
+    || ev.shiftKey
+  ) return;
   // Never steal arrows from native controls (selects, menus, text fields) —
   // they need them for their own keyboard navigation.
   const target = ev.target as HTMLElement | null;
-  if (target?.closest('input, select, textarea, [contenteditable="true"], [role="menu"], [role="listbox"]'))
+  if (target?.closest([
+    'input',
+    'select',
+    'textarea',
+    'button',
+    'a',
+    'summary',
+    'details',
+    '[contenteditable="true"]',
+    '[role=dialog]',
+    '[role="menu"]',
+    '[role="listbox"]',
+    '[role="slider"]',
+    '[role="spinbutton"]',
+  ].join(', ')))
     return;
-  if (playerState.value.phase === 'reviewed' && practice.phase === 'running') {
+  if (
+    playerState.value.phase === 'reviewed'
+    && practice.phase === 'running'
+    && practice.sessionAccessible
+    && !commitBusy.value
+    && !commitError.value
+  ) {
     ev.preventDefault();
-    practice.next();
+    void advanceAfterReview();
   }
+}
+
+const hasUndurableWork = computed(() =>
+  commitBusy.value
+  || pendingGradingSaveBusy.value
+  || pendingGradingSaveError.value !== null
+  || correctionDraftSaveBusy.value
+  || correctionDraftError.value !== null
+  || answerDraftSaveBusy.value
+  || answerDraftSaveError.value !== null
+  || commitError.value !== null
+  || selfAssessmentDraftError.value !== null
+  || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value),
+);
+let allowRouteLeave = false;
+
+onBeforeRouteLeave(async () => {
+  if (allowRouteLeave) return true;
+  if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return false;
+  return !hasUndurableWork.value;
+});
+
+function onBeforeUnload(event: BeforeUnloadEvent): void {
+  if (!hasUndurableWork.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+}
+
+function abandonUndurableAndExit(): void {
+  if (commitBusy.value) return;
+  allowRouteLeave = true;
+  pendingGradeCommit.value = null;
+  pendingCorrectionCommit.value = null;
+  pendingOverrideGrading.value = null;
+  pendingSelfAssessmentDraft.value = null;
+  pendingCorrectionDraft.value = null;
+  pendingAnswerDraft.value = null;
+  commitError.value = null;
+  selfAssessmentDraftError.value = null;
+  pendingGradingSaveError.value = null;
+  correctionDraftError.value = null;
+  answerDraftSaveError.value = null;
+  void router.replace(returnTarget());
 }
 onMounted(() => {
   measureTopbar();
@@ -735,19 +1417,16 @@ onMounted(() => {
   }
 });
 onMounted(() => window.addEventListener('keydown', onKeydown));
+onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
 onBeforeUnmount(() => {
   assistController?.abort();
-  explainControllers.answer?.abort();
-  explainControllers.walkthrough?.abort();
+  learningController?.abort();
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('beforeunload', onBeforeUnload);
   window.removeEventListener('resize', measureTopbar);
   topbarObserver?.disconnect();
   document.removeEventListener('pointerdown', onDocumentPointerDown);
-  // Browser/Android back leaves the route without going through exitNow, and
-  // a held pick must never be dropped silently. Fire-and-forget is the best
-  // available here — the write is local and the component is going away.
-  void flushPendingGrading();
   practice.suspendContentPin();
 });
 
@@ -779,6 +1458,13 @@ const summaryVerdictRows = computed(() => {
     { state: 'partial' as const, count: by.partial, label: VERDICT_LABELS_SHORT.partial },
     { state: 'incorrect' as const, count: by.incorrect, label: VERDICT_LABELS_SHORT.incorrect },
   ];
+});
+const summaryAction = computed(() => {
+  if (summaryStats.value.corrections.unresolved > 0) {
+    return 'Als Nächstes: eine ähnliche Aufgabe gezielt üben.';
+  }
+  if (summaryStats.value.corrections.eligible > 0) return 'Als Nächstes: eine ähnliche Aufgabe festigen.';
+  return 'Als Nächstes: eine ähnliche Aufgabe lösen.';
 });
 
 const syncNote = computed(() => {
@@ -837,10 +1523,29 @@ const railItems = computed<SessionItem[]>(() => {
   });
 });
 
-function jumpToSessionItem(index: number): void {
-  void flushPendingGrading();
-  practice.jumpTo(index);
-  mobileRailOpen.value = false;
+async function jumpToSessionItem(index: number): Promise<void> {
+  if (
+    commitBusy.value
+    || commitError.value
+    || pendingGradingSaveBusy.value
+    || pendingGradingSaveError.value
+    || correctionDraftSaveBusy.value
+    || correctionDraftError.value
+    || answerDraftSaveError.value
+    || selfAssessmentDraftError.value
+    || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value)
+  ) return;
+  if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return;
+  commitBusy.value = true;
+  try {
+    if (playerState.value.phase === 'reviewed') await practice.closeCurrentReview();
+    practice.jumpTo(index);
+    mobileRailOpen.value = false;
+  } catch {
+    commitError.value = 'Der Programmstand wurde nicht gespeichert.';
+  } finally {
+    commitBusy.value = false;
+  }
 }
 
 const gradedCount = computed(() => practice.graded.length);
@@ -892,19 +1597,19 @@ const currentCompetencyCodes = computed(() =>
       />
       <div class="practice__progress">
         <div class="practice__progress-label">
-          <template v-if="practice.phase === 'running'">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
-          <template v-else-if="practice.phase === 'summary'">Programm abgeschlossen</template>
+          <template v-if="practice.phase === 'running' && practice.sessionAccessible">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
+          <template v-else-if="practice.phase === 'summary' && practice.sessionAccessible">Programm abgeschlossen</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
         <SessionProgressBar
-          :items="practice.items"
-          :graded="progressGraded"
+          :items="practice.sessionAccessible ? practice.items : []"
+          :graded="practice.sessionAccessible ? progressGraded : []"
           :current-index="practice.index"
-          :active="practice.phase === 'running'"
+          :active="practice.phase === 'running' && practice.sessionAccessible"
         />
       </div>
       <button
-        v-if="practice.phase === 'running' && showProgramRail"
+        v-if="practice.phase === 'running' && practice.sessionAccessible && showProgramRail"
         type="button"
         class="practice__session-button"
         aria-label="Programmliste öffnen"
@@ -917,8 +1622,25 @@ const currentCompetencyCodes = computed(() =>
 
     <div class="practice__stage q-crossfade">
     <transition name="q-crossfade">
+      <!-- A profile switch locks every user-specific surface, including a
+           completed summary. The old snapshot remains untouched and becomes
+           visible again only after switching back to its owning profile. -->
+      <div
+        v-if="!practice.sessionAccessible"
+        key="account-locked"
+        class="practice__center"
+      >
+        <div class="practice__error" role="alert">
+          <div class="practice__error-title">Programm gehört zu einem anderen Konto</div>
+          <div class="practice__error-text">
+            Wechsle zum ursprünglichen Konto zurück, um genau hier weiterzumachen.
+          </div>
+          <QButton variant="secondary" @click="closeLockedSession">Schließen</QButton>
+        </div>
+      </div>
+
       <!-- loading -->
-      <div v-if="practice.phase === 'loading'" key="loading" class="practice__center">
+      <div v-else-if="practice.phase === 'loading'" key="loading" class="practice__center">
         <div class="practice__skeleton">
           <div class="practice__skeleton-bar" style="width: 40%" />
           <div class="practice__skeleton-bar" style="width: 90%" />
@@ -1000,12 +1722,11 @@ const currentCompetencyCodes = computed(() =>
               </li>
             </ul>
 
-            <div v-if="summaryStats.competencies.length > 0" class="practice__result-section">
-              <h3 class="practice__result-section-title">Geübte Kompetenzen</h3>
-              <div class="practice__result-comps">
-                <QChip v-for="c in summaryStats.competencies" :key="c">{{ c }}</QChip>
-              </div>
-            </div>
+            <p v-if="summaryStats.corrections.eligible > 0" class="practice__result-count">
+              Korrektur {{ summaryStats.corrections.correct }} / {{ summaryStats.corrections.eligible }}
+            </p>
+
+            <p class="practice__result-action">{{ summaryAction }}</p>
 
             <p v-if="auth.isLoggedIn && syncNote" class="practice__result-sync">{{ syncNote }}</p>
           </section>
@@ -1094,9 +1815,23 @@ const currentCompetencyCodes = computed(() =>
               :part="current.part"
               :label="multiPart ? `Teil ${current.part.label}` : undefined"
               :command="playerCommand"
+              :restored-first-result="practice.currentReview?.result"
+              :restored-submission="practice.currentReview?.pendingSubmission"
+              :restored-submission-unavailable="Boolean(
+                practice.currentReview
+                && !practice.currentReview.pendingSubmission
+                && !practice.currentReview.correctionDraft
+              )"
+              :restored-correction-draft="practice.currentReview?.correctionDraft?.submission"
+              :restored-draft="practice.currentSelfAssessmentDraft"
+              :restored-answer-draft="practice.currentAnswerDraft"
               chromeless
               @graded="onGraded"
+              @corrected="onCorrected"
               @state="onPlayerState"
+              @draft="onPlayerDraft"
+              @correction-draft="onCorrectionDraft"
+              @answer-draft="onAnswerDraft"
             />
 
             <!-- The authoritative grade feedback lives HERE, in the scroll
@@ -1136,12 +1871,16 @@ const currentCompetencyCodes = computed(() =>
           :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
           :solution="current.part.solution"
           :grading="currentGrading"
+          :grading-disabled="gradingOverrideDisabled"
           :primary-label="primaryLabel"
           :primary-disabled="primaryDisabled"
+          :learning-available="learningAvailable"
+          :solution-ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
           @assessment-update="onSelfAssessmentUpdate"
           @self-grading-select="onSelfGradingSelect"
           @grading-select="onGradingSelect"
           @primary="primaryAction"
+          @learning-toggle="toggleLearning"
         >
           <!-- Offered only for a wrong or half-right answer, and only once the
                account can actually pay for it (see aiStore.canExplain). -->
@@ -1154,10 +1893,15 @@ const currentCompetencyCodes = computed(() =>
               :labels="rubricLabels"
               :loading="assist.loading"
               :error="assist.error"
+              :storage-warning="ai.cacheWarning ?? undefined"
+              :can-renew="assistRenewGeneration != null"
               :advisory-only="assist.advisoryOnly"
               :model="assist.model"
               :source="assist.source"
+              :student-criteria="playerState.selfAssessment?.assessment.criteriaMet"
+              :student-points="playerState.selfAssessment?.selectedPoints ?? undefined"
               @ask="askForAssessment"
+              @renew="renewAssessment"
             />
           </template>
 
@@ -1167,40 +1911,47 @@ const currentCompetencyCodes = computed(() =>
             the drawer and the scrolling question meant the two halves of the
             same feature never appeared together.
           -->
-          <template v-if="showExplain || showWalkthrough" #explain>
-            <div
-              class="practice__ai-panels"
-              :class="{ 'practice__ai-panels--active': aiConversationActive }"
-            >
-              <AiExplainPanel
-                v-if="showExplain"
-                :markdown="explainState.markdown"
-                :loading="explainState.loading"
-                :error="explainState.error"
-                :model="explainState.model"
-                :source="explainState.source"
-                @ask="askForExplanation"
-                @dismiss="dismissExplanation"
-              />
-              <!-- A different question: not "why is mine wrong" but "how is this
-                   done at all". Its own offer, so one ask never spends the other. -->
-              <AiExplainPanel
-                v-if="showWalkthrough"
-                :markdown="walkState.markdown"
-                :loading="walkState.loading"
-                :error="walkState.error"
-                :model="walkState.model"
-                :source="walkState.source"
-                offer-label="Aufgabe erklären"
-                title-label="Lösungsweg erklärt"
-                @ask="askForWalkthrough"
-                @dismiss="dismissWalkthrough"
-              />
-            </div>
+          <template v-if="learningAvailable" #explain>
+            <AiLearningPanel
+              ref="learningPanel"
+              :stage="learningStage"
+              :hint-level="hintLevel || undefined"
+              :markdown="learningMarkdown"
+              :authored-hint="authoredHint ?? undefined"
+              :next-action="learningNextAction"
+              :diagnosis="learningResponse?.mode === 'diagnosis' ? learningResponse.diagnosis : undefined"
+              :correction-outcome="correctionOutcome ?? undefined"
+              :loading="learningLoading"
+              :error="learningError ?? undefined"
+              :storage-warning="ai.cacheWarning ?? undefined"
+              :can-renew="learningRenewGeneration != null"
+              :ai-generated="learningUsesAi"
+              :can-request-hint="canRequestHint"
+              :can-request-diagnosis="learningStage === 'diagnosis' && firstNeedsCorrection && !learningResponse && aiLearningAllowed && ai.canDiagnose && Boolean(playerState.submittedText.trim())"
+              :can-correct="firstNeedsCorrection && playerState.attemptPhase === 'first'"
+              :model="learningResponse?.model"
+              :source="learningResponse?.source"
+              @request-hint="requestHint"
+              @request-diagnosis="requestDiagnosis"
+              @renew="renewLearning"
+              @correct="startCorrection"
+              @dismiss="dismissLearning"
+            />
           </template>
         </PracticeBottomBar>
 
         <div v-if="practice.warning" class="practice__warning" role="alert">{{ practice.warning }}</div>
+        <div v-if="commitError || selfAssessmentDraftError || pendingGradingSaveError || correctionDraftError || answerDraftSaveError" class="practice__warning" role="alert">
+          <span>{{ commitError ?? selfAssessmentDraftError ?? pendingGradingSaveError ?? correctionDraftError ?? answerDraftSaveError }}</span>
+          <QButton
+            v-if="!commitBusy"
+            variant="secondary"
+            size="sm"
+            @click="abandonUndurableAndExit"
+          >
+            Ohne Speichern verlassen
+          </QButton>
+        </div>
         <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
           Offline — wird später synchronisiert
         </div>

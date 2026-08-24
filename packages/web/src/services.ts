@@ -17,10 +17,13 @@ import {
   AuthStore,
   ConfigStore,
   AiCache,
+  AiCredentialTestJournal,
+  AiRequestGenerationJournal,
   HistoryLog,
   LocalGradeCommitStore,
   LocalProfileStore,
   LocalRecoveryStore,
+  LearningEventStore,
   RegistrationJournal,
   SyncMutationJournal,
   QuestionCache,
@@ -54,6 +57,7 @@ export const authStore = new AuthStore(storage);
 export const localProfileStore = new LocalProfileStore(storage);
 export const attemptOutbox = new AttemptOutbox(storage);
 export const localRecoveryStore = new LocalRecoveryStore(storage, attemptOutbox);
+export const learningEventStore = new LearningEventStore(storage);
 export const registrationJournal = new RegistrationJournal(storage);
 const activeProfile = () => localProfileStore.currentIfInitialized();
 const readableProfiles = () => activeProfile()
@@ -64,6 +68,10 @@ export const questionCache = new QuestionCache(storage);
 export const historyLog = new HistoryLog(storage, readableProfiles);
 /** AI answers already paid for — survives a reload, unlike a Map. */
 export const aiCache = new AiCache(storage);
+/** Pending BYOK probes retain one paid identity across a renderer restart. */
+export const aiCredentialTestJournal = new AiCredentialTestJournal(storage);
+/** Explicit re-requests advance a durable generation; ordinary retries do not. */
+export const aiRequestGenerationJournal = new AiRequestGenerationJournal(storage);
 /** One answer -> outbox/archive/history/session as a single CAS commit. */
 export const localGradeCommitStore = new LocalGradeCommitStore(
   storage,

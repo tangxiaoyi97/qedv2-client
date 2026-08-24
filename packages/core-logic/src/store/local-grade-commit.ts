@@ -1,4 +1,4 @@
-import type { LocalArchive, FsrsState, Grading } from '../model/archive.js';
+import { isGrading, type LocalArchive, type FsrsState, type Grading } from '../model/archive.js';
 import { validateQueuedAttempt } from '../api/attempt-validation.js';
 import {
   STORAGE,
@@ -9,6 +9,7 @@ import {
 } from '../ports/index.js';
 import {
   prepareArchiveGrade,
+  prepareArchiveGrading,
   type ApplyGradeInput,
 } from './archive-store.js';
 import {
@@ -52,7 +53,7 @@ interface ProfileAddresses {
 export interface LocalGradeSessionMutation {
   address: StorageAddress;
   /** Pure function; called again after every CAS conflict. */
-  prepare(current: unknown): unknown;
+  prepare(current: unknown, context: { previousFsrs?: FsrsState }): unknown;
   /** Durable idempotency marker used after an uncertain commit response. */
   containsAttempt(current: unknown, clientAttemptId: string): boolean;
   /** Confirms that the durable marker belongs to this exact graded payload. */
@@ -63,6 +64,12 @@ export interface LocalGradeCommitInput {
   owner: AttemptOwnerSnapshot;
   attempt: QueuedAttempt;
   grade: ApplyGradeInput;
+  /**
+   * A self/manual judgement made as part of this answer event. It replaces
+   * the automatic FSRS advance inside the same atomic commit; it is never a
+   * later, second review.
+   */
+  manualGrading?: Grading;
   session: LocalGradeSessionMutation;
 }
 
@@ -127,6 +134,9 @@ function validateInput(input: LocalGradeCommitInput): void {
     || input.attempt.gradedAt !== input.grade.now.toISOString()
   ) {
     throw new TypeError('Attempt, grade and history identities do not match');
+  }
+  if (input.manualGrading !== undefined && !isGrading(input.manualGrading)) {
+    throw new TypeError('Invalid manual grading');
   }
   if (input.session.address.collection !== STORAGE.app) {
     throw new TypeError('Practice session commits must use app storage');
@@ -304,7 +314,17 @@ export class LocalGradeCommitStore {
       valueOf(snapshots, profileAddresses.archive) as LocalArchive | undefined,
       input.grade,
     );
-    const historyEntry = historyEntryFor(input.attempt, input.grade, archiveResult.grading);
+    const grading = input.manualGrading ?? archiveResult.grading;
+    const archive = input.manualGrading === undefined
+      ? archiveResult.archive
+      : prepareArchiveGrading(archiveResult.archive, {
+          partId: input.grade.partId,
+          grading: input.manualGrading,
+          now: input.grade.now,
+          baseFsrs: archiveResult.previousFsrs,
+          replaceCurrentReview: true,
+        });
+    const historyEntry = historyEntryFor(input.attempt, input.grade, grading);
     const history = prepareStoredHistoryEvent(profileAddresses.historyProfileId, historyEntry);
     const existingHistory = valueOf(snapshots, profileAddresses.history);
     if (
@@ -325,7 +345,10 @@ export class LocalGradeCommitStore {
         throw new Error('Client attempt identity was reused with different data');
       }
     }
-    const session = input.session.prepare(valueOf(snapshots, input.session.address));
+    const session = input.session.prepare(
+      valueOf(snapshots, input.session.address),
+      { ...(archiveResult.previousFsrs ? { previousFsrs: archiveResult.previousFsrs } : {}) },
+    );
     if (!input.session.containsAttempt(session, input.attempt.clientAttemptId)) {
       throw new Error('Prepared practice session is missing its attempt identity');
     }
@@ -335,15 +358,15 @@ export class LocalGradeCommitStore {
     const result: PreparedCommit = {
       ownerId: ownership.ownerId,
       ...(profileAddresses.profileId ? { profileId: profileAddresses.profileId } : {}),
-      archive: archiveResult.archive,
+      archive,
       historyEntry,
-      grading: archiveResult.grading,
+      grading,
       ...(archiveResult.previousFsrs ? { previousFsrs: archiveResult.previousFsrs } : {}),
       session,
       recovered: false,
       preconditions: entries.map(({ collection, key, revision }) => ({ collection, key, revision })),
       mutations: [
-        { ...profileAddresses.archive, operation: 'set', value: archiveResult.archive },
+        { ...profileAddresses.archive, operation: 'set', value: archive },
         ...(existingHistory === undefined
           ? [{ ...profileAddresses.history, operation: 'set' as const, value: history }]
           : []),
@@ -374,7 +397,7 @@ export class LocalGradeCommitStore {
     const expectedHistory = historyEntryFor(
       input.attempt,
       input.grade,
-      historyEntry.grading,
+      input.manualGrading ?? historyEntry.grading,
     );
     if (JSON.stringify(historyEntry) !== JSON.stringify(expectedHistory)) {
       throw new Error('Client attempt identity was reused with different history data');

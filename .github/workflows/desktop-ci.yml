@@ -18,11 +18,11 @@ env:
   QED2_BANK_SOURCE: ${{ github.workspace }}/srdpmppr
   QED2_EXPECTED_CORE_REPOSITORY: tangxiaoyi97/qedv2-core
   QED2_EXPECTED_CORE_REF: main
-  QED2_EXPECTED_CORE_VERSION: 1.11.0
+  QED2_EXPECTED_CORE_VERSION: 1.12.0
   QED2_EXPECTED_BANK_REPOSITORY: tangxiaoyi97/srdpmppr
   QED2_EXPECTED_BANK_REF: pastpapers
-  QED2_EXPECTED_BANK_SHA: 3ee201e516926df3d47ac91b4b717dc09a51e181
-  QED2_EXPECTED_BANK_COMMIT_COUNT: '6'
+  QED2_EXPECTED_BANK_SHA: 2a6ae91793916ada3828c0f4dbf0af84f498d711
+  QED2_EXPECTED_BANK_COMMIT_COUNT: '7'
 
 jobs:
   native-verify:
@@ -230,7 +230,7 @@ jobs:
             --repository "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
             --ref "$QED2_EXPECTED_BANK_REF" \
             --schema-min 2 \
-            --schema-max 3
+            --schema-max 4
 
           node --input-type=module - \
             "$PWD/packages/desktop/runtime" \

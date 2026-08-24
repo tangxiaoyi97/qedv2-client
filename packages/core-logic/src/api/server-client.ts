@@ -18,11 +18,18 @@ import {
 import type {
   AiAssessRequest,
   AiAssessResponse,
+  AiCredentialTestRequest,
+  AiCredentialTestResponse,
   AiExplainRequest,
   AiExplainResponse,
   AiProviderId,
   AiStatus,
 } from '../ai/types.js';
+import {
+  parseAiAssessResponse,
+  parseAiCredentialTestResponse,
+  parseAiExplainResponse,
+} from '../ai/response-parser.js';
 import type {
   AuthResponse,
   HealthResponse,
@@ -248,9 +255,23 @@ export class ServerClient {
     );
   }
 
+  /** POST /me/ai/credential/test — explicit, BYOK-only connectivity check. */
+  async testAiCredential(req: AiCredentialTestRequest): Promise<AiCredentialTestResponse> {
+    const response = await requestJson<unknown>(
+      this.baseUrl,
+      '/me/ai/credential/test',
+      this.authed({ method: 'POST', body: req, timeoutMs: AI_REQUEST_TIMEOUT_MS }),
+    );
+    return parseAiCredentialTestResponse(response, req);
+  }
+
   /** POST /me/ai-explain — why this answer is wrong. Advisory text only. */
-  aiExplain(req: AiExplainRequest, signal?: RequestOptions['signal']): Promise<AiExplainResponse> {
-    return requestJson<AiExplainResponse>(
+  async aiExplain(
+    req: AiExplainRequest,
+    signal?: RequestOptions['signal'],
+    expectedPromptVersion?: string,
+  ): Promise<AiExplainResponse> {
+    const response = await requestJson<unknown>(
       this.baseUrl,
       '/me/ai-explain',
       this.authed({
@@ -260,14 +281,19 @@ export class ServerClient {
         ...(signal ? { signal } : {}),
       }),
     );
+    return parseAiExplainResponse(response, req, expectedPromptVersion);
   }
 
   /**
    * POST /me/ai-grade — per-criterion verdicts for a rubric part.
    * The response is a SUGGESTION: the user still has to confirm it.
    */
-  aiAssess(req: AiAssessRequest, signal?: RequestOptions['signal']): Promise<AiAssessResponse> {
-    return requestJson<AiAssessResponse>(
+  async aiAssess(
+    req: AiAssessRequest,
+    signal?: RequestOptions['signal'],
+    expectedPromptVersion?: string,
+  ): Promise<AiAssessResponse> {
+    const response = await requestJson<unknown>(
       this.baseUrl,
       '/me/ai-grade',
       this.authed({
@@ -277,6 +303,7 @@ export class ServerClient {
         ...(signal ? { signal } : {}),
       }),
     );
+    return parseAiAssessResponse(response, req, expectedPromptVersion);
   }
 
   /** GET /info */

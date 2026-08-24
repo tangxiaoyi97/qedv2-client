@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import {
   accountStorageIdentity,
+  ArchiveStore,
   archiveChecksum,
   attemptOutboxRowKey,
   DEFAULT_CONFIG,
@@ -11,6 +12,7 @@ import {
   type AtomicStoragePort,
   type LocalArchive,
   type StorageBatchCommit,
+  userLocalProfileId,
 } from '@qed2/core-logic';
 import {
   archiveStore,
@@ -143,6 +145,48 @@ describe('progress sync orchestration', () => {
     expect(progress.archive.baseVersion).toBe(1);
     expect(progress.archive.content.perPart.map((part) => part.partId)).toEqual(['q1-a']);
     expect(progress.archive.content.perPart[0]?.grading).toBe('good');
+  });
+
+  it('keeps deferred grading and starring bound to the profile that initiated them', async () => {
+    const progress = await setup();
+    const auth = useAuthStore();
+    const atomicStorage = storage as AtomicStoragePort;
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    let release!: () => void;
+    let started!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const mutationStarted = new Promise<void>((resolve) => { started = resolve; });
+    let paused = false;
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      if (!paused && request.mutations.some((mutation) => mutation.collection === STORAGE.archive)) {
+        paused = true;
+        started();
+        await gate;
+      }
+      return commit(request);
+    });
+
+    const starring = progress.setStarred('q-a', true);
+    await mutationStarted;
+    const grading = progress.setGrading({ partId: 'q-a', grading: 'good' });
+
+    auth.session = {
+      token: 'token-b',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'u2', username: 'second' },
+      serverBaseUrl: SERVER,
+    };
+    await localProfileStore.activateUser(OWNER_U2);
+    release();
+    await Promise.all([starring, grading]);
+
+    const accountA = await new ArchiveStore(storage, userLocalProfileId(OWNER_U1)).load();
+    const accountB = await new ArchiveStore(storage, userLocalProfileId(OWNER_U2)).load();
+    expect(accountA.content.perPart).toEqual([
+      expect.objectContaining({ partId: 'q-a', starred: true, grading: 'good' }),
+    ]);
+    expect(accountB.content.perPart).toEqual([]);
+    expect(progress.archive.content.perPart).toEqual([]);
   });
 
   it('retries a network sync instead of overwriting a mutation from another window', async () => {

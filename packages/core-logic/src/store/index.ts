@@ -94,4 +94,23 @@ export {
   REGISTRATION_INTENT_STORAGE_KEY,
 } from './registration-journal.js';
 export type { RegistrationIntent } from './registration-journal.js';
+export {
+  LearningEventStore,
+  LEARNING_EVENT_DOCUMENT_PREFIX,
+  MAX_LEARNING_EVENTS_PER_PROFILE,
+  learningEventStorageKey,
+  parseLearningEvent,
+} from './learning-event-store.js';
+export type {
+  LearningEvent,
+  LearningOutcome,
+  RecommendLearningEvent,
+} from './learning-event-store.js';
+export {
+  AiCredentialTestJournal,
+  aiCredentialTestJournalKey,
+  parsePendingAiCredentialTest,
+} from './ai-credential-test-journal.js';
+export type { PendingAiCredentialTest } from './ai-credential-test-journal.js';
+export { AiRequestGenerationJournal } from './ai-request-generation-journal.js';
 export * from './ai-cache.js';

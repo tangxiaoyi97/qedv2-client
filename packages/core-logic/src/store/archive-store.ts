@@ -178,6 +178,11 @@ export interface SetGradingInput {
    * from the current state.
    */
   baseFsrs?: FsrsState | undefined;
+  /**
+   * Distinguishes a first-ever answer whose pre-answer FSRS is genuinely
+   * undefined from a standalone manual review that should use current FSRS.
+   */
+  replaceCurrentReview?: boolean;
 }
 
 /** Pure manual grading mutation, reused after every CAS retry. */
@@ -194,13 +199,17 @@ export function prepareArchiveGrading(
 
   let fsrs: FsrsState;
   if (input.grading === 'excluded') {
-    fsrs = input.baseFsrs ?? prev?.fsrs ?? placeholderFsrs(input.now);
+    fsrs = input.replaceCurrentReview
+      ? input.baseFsrs ?? placeholderFsrs(input.now)
+      : input.baseFsrs ?? prev?.fsrs ?? placeholderFsrs(input.now);
   } else {
-    const base = input.baseFsrs !== undefined
+    const base = input.replaceCurrentReview
       ? input.baseFsrs
-      : prev && isPracticed(prev)
-        ? prev.fsrs
-        : undefined;
+      : input.baseFsrs !== undefined
+        ? input.baseFsrs
+        : prev && isPracticed(prev)
+          ? prev.fsrs
+          : undefined;
     fsrs = advanceFsrsForGrading(base, input.grading, input.now);
   }
 
@@ -477,8 +486,8 @@ export class ArchiveStore {
   /**
    * Manual grading (supplement §1.2 — always wins over the auto default).
    *
-   * - With `baseFsrs` (same answer event): the advance is recomputed FROM
-   *   THAT SNAPSHOT, replacing the auto advance entirely.
+   * - With `replaceCurrentReview` (same answer event): the advance is
+   *   recomputed from `baseFsrs`, including an undefined first-contact base.
    * - Without: a standalone review event — advance from the current state.
    * - `excluded`: freeze — grading is stored, FSRS state kept at `baseFsrs`
    *   when given (same answer event), otherwise at the current one.
