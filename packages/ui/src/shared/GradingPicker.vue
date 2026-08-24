@@ -12,11 +12,12 @@
  * The label is never dropped — the dot's shape carries the meaning and the
  * colour only assists, but neither is a substitute for the word.
  */
+import { computed } from 'vue';
 import { GRADING_HINTS, GRADING_LABELS, SELECTABLE_GRADINGS, type Grading } from '@qed2/core-logic';
 import GradingDot from './GradingDot.vue';
 import { onRadioGroupKeydown } from './radio-group.js';
 
-defineProps<{
+const props = defineProps<{
   /** Null until the user has picked — no state is preselected for them. */
   grading: Grading | null;
   disabled?: boolean;
@@ -24,6 +25,13 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ select: [grading: Grading] }>();
+const selectedIndex = computed(() => SELECTABLE_GRADINGS.indexOf(props.grading as Grading));
+
+function radioTabIndex(option: Grading, index: number): 0 | -1 {
+  if (props.disabled) return -1;
+  if (selectedIndex.value >= 0) return option === props.grading ? 0 : -1;
+  return index === 0 ? 0 : -1;
+}
 </script>
 
 <template>
@@ -34,7 +42,7 @@ const emit = defineEmits<{ select: [grading: Grading] }>();
     @keydown="onRadioGroupKeydown"
   >
     <button
-      v-for="option in SELECTABLE_GRADINGS"
+      v-for="(option, index) in SELECTABLE_GRADINGS"
       :key="option"
       type="button"
       class="q-gpick__opt"
@@ -42,6 +50,7 @@ const emit = defineEmits<{ select: [grading: Grading] }>();
       role="radio"
       :aria-checked="option === grading"
       :disabled="disabled"
+      :tabindex="radioTabIndex(option, index)"
       :title="`${GRADING_LABELS[option]} · ${GRADING_HINTS[option]}`"
       @click="emit('select', option)"
     >

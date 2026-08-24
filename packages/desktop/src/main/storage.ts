@@ -303,9 +303,6 @@ export class SqliteStorage {
     const prepared = request.mutations.map((mutation) => {
       if (mutation.operation === 'delete') return mutation;
       const encoded = this.encodeValue(mutation.collection, mutation.value);
-      if (encoded.persistent === false) {
-        throw new Error('Atomic storage batches require durable values');
-      }
       return { ...mutation, encoded };
     });
     let committed = false;
@@ -320,13 +317,22 @@ export class SqliteStorage {
         const revision = revisionByAddress.get(addressId(mutation))!;
         if (revision >= Number.MAX_SAFE_INTEGER) throw new Error('Storage revision exhausted');
         if (mutation.operation === 'set') {
-          this.setStatement.run(
-            mutation.collection,
-            mutation.key,
-            mutation.encoded.payload,
-            mutation.encoded.encoding,
-            Date.now(),
-          );
+          if (mutation.encoded.persistent === false) {
+            // Session-only secrets still participate in revision CAS. Their
+            // disk row is removed atomically; the live value is published to
+            // the in-memory map immediately after COMMIT. A process crash may
+            // lose it by design, but another renderer in this process never
+            // observes a torn auth revision/value pair.
+            this.deleteStatement.run(mutation.collection, mutation.key);
+          } else {
+            this.setStatement.run(
+              mutation.collection,
+              mutation.key,
+              mutation.encoded.payload,
+              mutation.encoded.encoding,
+              Date.now(),
+            );
+          }
         } else {
           this.deleteStatement.run(mutation.collection, mutation.key);
         }
@@ -335,8 +341,16 @@ export class SqliteStorage {
       committed = true;
     });
     if (committed) {
-      for (const mutation of request.mutations) {
-        this.volatileRows.delete(`${mutation.collection}\0${mutation.key}`);
+      for (const mutation of prepared) {
+        const id = `${mutation.collection}\0${mutation.key}`;
+        if (mutation.operation === 'set' && mutation.encoded.persistent === false) {
+          this.volatileRows.set(id, {
+            payload: mutation.encoded.payload,
+            encoding: mutation.encoded.encoding,
+          });
+        } else {
+          this.volatileRows.delete(id);
+        }
       }
     }
     return { committed };

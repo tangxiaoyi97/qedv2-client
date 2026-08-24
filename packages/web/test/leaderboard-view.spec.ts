@@ -27,6 +27,31 @@ describe('LeaderboardView', () => {
     document.body.innerHTML = '';
   });
 
+  it('keeps the signed-out state action-only', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/leaderboard', component: LeaderboardView }],
+    });
+    await router.push('/leaderboard');
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp(LeaderboardView);
+    app.use(pinia);
+    app.use(router);
+    app.mount(host);
+    await nextTick();
+
+    expect(host.textContent).toContain('Leaderboard');
+    expect(host.textContent).toContain('Anmelden');
+    expect(host.textContent).not.toContain('Bitte anmelden');
+    expect(host.querySelector('.leaderboard__auth p')).toBeNull();
+
+    app.unmount();
+  });
+
   it('shows the opt-in flow, switches periods and opens aggregate detail', async () => {
     let joined = false;
     const calls: string[] = [];
@@ -125,6 +150,7 @@ describe('LeaderboardView', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
 
@@ -148,10 +174,10 @@ describe('LeaderboardView', () => {
 
     host.querySelector<HTMLFormElement>('.leaderboard__join')!.requestSubmit();
     await vi.waitFor(() => {
-      expect(host.textContent).toContain('Dein Nickname');
       expect(host.textContent).toContain('tester');
       expect(host.querySelector('.leader-row--me')).not.toBeNull();
     });
+    expect(host.textContent).not.toContain('Dein Nickname');
     expect(host.querySelector('.leaderboard__profile-avatar .lucide-user-round')).not.toBeNull();
     expect(host.querySelector('.leaderboard__profile-copy strong')?.textContent).toBe('tester');
     const profileButtons = host.querySelectorAll<HTMLButtonElement>('.leaderboard__profile-buttons .q-btn');
@@ -164,6 +190,7 @@ describe('LeaderboardView', () => {
       expect(document.body.textContent).toContain('Lösungsquote');
       expect(document.body.textContent).toContain('75 %');
     });
+    expect(document.body.querySelector('.leader-detail__header')?.textContent).not.toContain('Statistik');
     expect(document.body.querySelector('.leader-detail__periods .lucide-calendar-check-2')).not.toBeNull();
     expect(document.body.querySelector('.leader-detail__periods .lucide-calendar-range')).not.toBeNull();
 
@@ -242,6 +269,7 @@ describe('LeaderboardView', () => {
       token: 'token',
       expiresAt: '2099-01-01T00:00:00.000Z',
       user: { id: 'u1', username: 'tester' },
+      serverBaseUrl: useAppStore().config.serverBaseUrl,
     };
     useAppStore().setTokenProvider(() => auth.session?.token);
 

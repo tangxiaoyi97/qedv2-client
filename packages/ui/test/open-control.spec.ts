@@ -14,6 +14,15 @@ function submission(text: string): OpenSubmission {
 }
 
 describe('OpenControl', () => {
+  it('uses compact answer and formula hints', () => {
+    const wrapper = mount(OpenControl, {
+      props: { answer, modelValue: submission('') },
+    });
+
+    expect(wrapper.get('textarea').attributes('placeholder')).toBe('Antwort (optional)');
+    expect(wrapper.get('.q-open__hint').text()).toBe('Formeln: $…$ · ^ · / · sqrt()');
+  });
+
   it('inserts formula syntax at the current selection and keeps the plain-text contract', async () => {
     const wrapper = mount(OpenControl, {
       props: { answer, modelValue: submission('x+1') },

@@ -1,7 +1,38 @@
 import 'fake-indexeddb/auto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE } from '@qed2/core-logic';
 import { WebStorage } from '../src/platform/web-storage.js';
+
+class FakeBroadcastChannel {
+  static readonly channels = new Map<string, Set<FakeBroadcastChannel>>();
+  static readonly messages: unknown[] = [];
+  onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+
+  constructor(private readonly name: string) {
+    const peers = FakeBroadcastChannel.channels.get(name) ?? new Set();
+    peers.add(this);
+    FakeBroadcastChannel.channels.set(name, peers);
+  }
+
+  postMessage(value: unknown): void {
+    const cloned = structuredClone(value);
+    FakeBroadcastChannel.messages.push(cloned);
+    for (const peer of FakeBroadcastChannel.channels.get(this.name) ?? []) {
+      if (peer === this) continue;
+      queueMicrotask(() => peer.onmessage?.({ data: structuredClone(cloned) } as MessageEvent));
+    }
+  }
+
+  close(): void {
+    FakeBroadcastChannel.channels.get(this.name)?.delete(this);
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  FakeBroadcastChannel.channels.clear();
+  FakeBroadcastChannel.messages.length = 0;
+});
 
 describe('WebStorage (IndexedDB StoragePort adapter)', () => {
   // One shared instance — deleteDatabase would deadlock on the open
@@ -112,5 +143,81 @@ describe('WebStorage (IndexedDB StoragePort adapter)', () => {
       false,
       false,
     ]);
+  });
+
+  it('broadcasts only committed addresses to other tabs and never values', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    const writer = new WebStorage();
+    const peer = new WebStorage();
+    const writerChanges: unknown[] = [];
+    const peerChanges: unknown[] = [];
+    writer.onChange((change) => writerChanges.push(change));
+    peer.onChange((change) => peerChanges.push(change));
+
+    await writer.set(STORAGE.auth, 'broadcast-session', {
+      token: 'must-never-leave-indexeddb',
+    });
+    await Promise.resolve();
+
+    expect(writerChanges).toEqual([]);
+    expect(peerChanges).toEqual([{
+      collection: STORAGE.auth,
+      key: 'broadcast-session',
+      operation: 'set',
+      revision: 1,
+    }]);
+    expect(JSON.stringify(FakeBroadcastChannel.messages)).not.toContain('must-never-leave-indexeddb');
+    expect(JSON.stringify(FakeBroadcastChannel.messages)).not.toContain('token');
+  });
+
+  it('falls back to a metadata-only storage event when BroadcastChannel is unavailable', async () => {
+    vi.stubGlobal('BroadcastChannel', undefined);
+    const signal = vi.spyOn(Storage.prototype, 'setItem');
+    const writer = new WebStorage();
+    const peer = new WebStorage();
+    const peerChanges: unknown[] = [];
+    peer.onChange((change) => peerChanges.push(change));
+
+    await writer.set(STORAGE.auth, 'fallback-session', {
+      token: 'must-stay-in-indexeddb',
+    });
+    const call = signal.mock.calls.find(([key]) => key === '__qed2_storage_signal_v1__');
+    expect(call).toBeDefined();
+    const payload = String(call?.[1]);
+    expect(payload).not.toContain('must-stay-in-indexeddb');
+    expect(payload).not.toContain('token');
+    globalThis.dispatchEvent(new StorageEvent('storage', {
+      key: '__qed2_storage_signal_v1__',
+      newValue: payload,
+    }));
+
+    expect(peerChanges).toEqual([expect.objectContaining({
+      collection: STORAGE.auth,
+      key: 'fallback-session',
+      operation: 'set',
+    })]);
+  });
+
+  it('does not broadcast an aborted or conflicted transaction', async () => {
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
+    const writer = new WebStorage();
+    const peer = new WebStorage();
+    const peerChanges: unknown[] = [];
+    peer.onChange((change) => peerChanges.push(change));
+    const address = { collection: STORAGE.app, key: 'broadcast-conflict' };
+    const [snapshot] = await writer.readBatch([address]);
+    await writer.set(address.collection, address.key, { current: true });
+    await Promise.resolve();
+    peerChanges.length = 0;
+    FakeBroadcastChannel.messages.length = 0;
+
+    await expect(writer.commitBatch({
+      ifRevisions: [{ ...address, revision: snapshot!.revision }],
+      mutations: [{ ...address, operation: 'set', value: { stale: true } }],
+    })).resolves.toEqual({ committed: false });
+    await Promise.resolve();
+
+    expect(peerChanges).toEqual([]);
+    expect(FakeBroadcastChannel.messages).toEqual([]);
   });
 });

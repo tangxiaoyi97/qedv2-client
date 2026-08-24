@@ -1,11 +1,9 @@
 /**
  * Local archive store — the single durable progress document.
  *
- * PROFILE SEMANTICS: the local archive is ONE shared document regardless of
- * login state (contract: guest progress merges into an account via sync, and
- * login/logout must NEVER clear it). It therefore lives under one fixed key.
- * The profileId constructor arg is kept for future flexibility only; it does
- * not change the storage location today.
+ * PROFILE SEMANTICS: each guest generation and cloud account has an isolated
+ * local archive. Ordinary login only selects that account's profile; explicit
+ * invite registration is the sole path that may claim a guest profile.
  *
  * GRADING SEMANTICS (grading supplement §1): every FSRS advance is driven by
  * a Grading value. Objective grading auto-derives it (correct→good,
@@ -15,7 +13,12 @@
  * on. `excluded` freezes the part completely (§1.4).
  */
 import { hasAtomicStorage, STORAGE } from '../ports/index.js';
-import type { StoragePort } from '../ports/index.js';
+import type {
+  AtomicStoragePort,
+  StorageAddress,
+  StoragePort,
+  StorageVersionedEntry,
+} from '../ports/index.js';
 import { canonicalizeArchive, normNum } from '../model/archive.js';
 import type {
   CompetencyEntry,
@@ -28,6 +31,13 @@ import type { Verdict } from '../grading/types.js';
 import type { RecommendUserState } from '../api/types.js';
 import { archiveChecksum } from '../sync/checksum.js';
 import {
+  archiveStorageKey,
+  LOCAL_PROFILE_STATE_KEY,
+  parseLocalProfileState,
+  resolveLocalProfileId,
+  type LocalProfileId,
+} from './local-profile-store.js';
+import {
   advanceFsrsForGrading,
   verdictToAutoGrading,
   placeholderFsrs,
@@ -37,8 +47,20 @@ import {
   EXCLUDED_DUE_SENTINEL,
 } from '../fsrs/index.js';
 
-/** Single shared archive document — see profile semantics above. */
+/** Legacy pre-2.2 archive key, retained for one-time migration. */
 export const ARCHIVE_STORAGE_KEY = 'current';
+
+const PROFILE_STATE_ADDRESS = {
+  collection: STORAGE.app,
+  key: LOCAL_PROFILE_STATE_KEY,
+} as const;
+const MAX_PROFILE_CAS_ATTEMPTS = 6;
+
+interface ProfileArchiveSnapshot {
+  state: StorageVersionedEntry;
+  archive: StorageVersionedEntry;
+  archiveAddress: StorageAddress;
+}
 
 export interface ApplyGradeInput {
   partId: string;
@@ -156,6 +178,11 @@ export interface SetGradingInput {
    * from the current state.
    */
   baseFsrs?: FsrsState | undefined;
+  /**
+   * Distinguishes a first-ever answer whose pre-answer FSRS is genuinely
+   * undefined from a standalone manual review that should use current FSRS.
+   */
+  replaceCurrentReview?: boolean;
 }
 
 /** Pure manual grading mutation, reused after every CAS retry. */
@@ -172,13 +199,17 @@ export function prepareArchiveGrading(
 
   let fsrs: FsrsState;
   if (input.grading === 'excluded') {
-    fsrs = input.baseFsrs ?? prev?.fsrs ?? placeholderFsrs(input.now);
+    fsrs = input.replaceCurrentReview
+      ? input.baseFsrs ?? placeholderFsrs(input.now)
+      : input.baseFsrs ?? prev?.fsrs ?? placeholderFsrs(input.now);
   } else {
-    const base = input.baseFsrs !== undefined
+    const base = input.replaceCurrentReview
       ? input.baseFsrs
-      : prev && isPracticed(prev)
-        ? prev.fsrs
-        : undefined;
+      : input.baseFsrs !== undefined
+        ? input.baseFsrs
+        : prev && isPracticed(prev)
+          ? prev.fsrs
+          : undefined;
     fsrs = advanceFsrsForGrading(base, input.grading, input.now);
   }
 
@@ -232,13 +263,58 @@ export function prepareArchiveStar(
 export class ArchiveStore {
   constructor(
     private readonly storage: StoragePort,
-    /** Reserved for future multi-profile support; unused today (see above). */
-    private readonly profileId: string = 'guest',
+    private readonly profileId?: LocalProfileId | (() => LocalProfileId | undefined),
   ) {}
 
+  /** Capture the renderer's profile once; durable routes decide every retry. */
+  private requestedProfile(): LocalProfileId | undefined {
+    return typeof this.profileId === 'function' ? this.profileId() : this.profileId;
+  }
+
+  private async readProfileSnapshot(
+    storage: AtomicStoragePort,
+    profileId: LocalProfileId,
+  ): Promise<ProfileArchiveSnapshot> {
+    for (let attempt = 0; attempt < MAX_PROFILE_CAS_ATTEMPTS; attempt += 1) {
+      const [stateHint] = await storage.readBatch([PROFILE_STATE_ADDRESS]);
+      if (!stateHint) throw new Error('Local profile state read returned no entry');
+      const hintedState = parseLocalProfileState(stateHint.value);
+      if (!hintedState) throw new Error('Local profile state is missing');
+      const archiveAddress = {
+        collection: STORAGE.archive,
+        key: archiveStorageKey(resolveLocalProfileId(hintedState, profileId)),
+      } as const;
+      const snapshots = await storage.readBatch([PROFILE_STATE_ADDRESS, archiveAddress]);
+      if (snapshots.length !== 2 || !snapshots[0] || !snapshots[1]) {
+        throw new Error('Profile archive read returned an incomplete snapshot');
+      }
+      const durableState = parseLocalProfileState(snapshots[0].value);
+      if (!durableState) throw new Error('Local profile state is missing');
+      const durableKey = archiveStorageKey(resolveLocalProfileId(durableState, profileId));
+      if (durableKey !== archiveAddress.key) continue;
+      return {
+        state: snapshots[0],
+        archive: snapshots[1],
+        archiveAddress,
+      };
+    }
+    throw new Error('Local profile routing changed too often');
+  }
+
   async load(): Promise<LocalArchive> {
-    const stored = await this.storage.get<LocalArchive>(STORAGE.archive, ARCHIVE_STORAGE_KEY);
-    return prepareLocalArchive(stored);
+    const profileId = this.requestedProfile();
+    if (!profileId) {
+      const stored = await this.storage.get<LocalArchive>(
+        STORAGE.archive,
+        ARCHIVE_STORAGE_KEY,
+      );
+      return prepareLocalArchive(stored);
+    }
+    if (!hasAtomicStorage(this.storage)) {
+      throw new Error('Atomic storage is required for profile-bound archive access');
+    }
+    const snapshot = await this.readProfileSnapshot(this.storage, profileId);
+    return prepareLocalArchive(snapshot.archive.value as LocalArchive | undefined);
   }
 
   /**
@@ -249,16 +325,62 @@ export class ArchiveStore {
    * partial→meh, wrong→baffled) instead of appearing unseen.
    */
   async save(archive: LocalArchive): Promise<void> {
-    await this.storage.set(STORAGE.archive, ARCHIVE_STORAGE_KEY, archive);
+    const profileId = this.requestedProfile();
+    if (!profileId) {
+      await this.storage.set(STORAGE.archive, ARCHIVE_STORAGE_KEY, archive);
+      return;
+    }
+    if (!hasAtomicStorage(this.storage)) {
+      throw new Error('Atomic storage is required for profile-bound archive access');
+    }
+    for (let attempt = 0; attempt < MAX_PROFILE_CAS_ATTEMPTS; attempt += 1) {
+      const snapshot = await this.readProfileSnapshot(this.storage, profileId);
+      const committed = await this.storage.commitBatch({
+        ifRevisions: [
+          { ...PROFILE_STATE_ADDRESS, revision: snapshot.state.revision },
+          { ...snapshot.archiveAddress, revision: snapshot.archive.revision },
+        ],
+        mutations: [{
+          ...snapshot.archiveAddress,
+          operation: 'set',
+          value: archive,
+        }],
+      });
+      if (committed.committed) return;
+    }
+    throw new Error('Archive profile changed too often to save safely.');
   }
 
   private async mutateWithCas<Result>(
     prepare: (stored: LocalArchive | undefined) => { archive: LocalArchive; result: Result },
   ): Promise<Result> {
+    const profileId = this.requestedProfile();
     if (!hasAtomicStorage(this.storage)) {
+      if (profileId) {
+        throw new Error('Atomic storage is required for profile-bound archive access');
+      }
       const prepared = prepare(await this.load());
       await this.save(prepared.archive);
       return prepared.result;
+    }
+    if (profileId) {
+      for (let attempt = 0; attempt < MAX_PROFILE_CAS_ATTEMPTS; attempt += 1) {
+        const snapshot = await this.readProfileSnapshot(this.storage, profileId);
+        const prepared = prepare(snapshot.archive.value as LocalArchive | undefined);
+        const committed = await this.storage.commitBatch({
+          ifRevisions: [
+            { ...PROFILE_STATE_ADDRESS, revision: snapshot.state.revision },
+            { ...snapshot.archiveAddress, revision: snapshot.archive.revision },
+          ],
+          mutations: [{
+            ...snapshot.archiveAddress,
+            operation: 'set',
+            value: prepared.archive,
+          }],
+        });
+        if (committed.committed) return prepared.result;
+      }
+      throw new Error('Archive profile changed too often to commit safely.');
     }
     for (let attempt = 0; attempt < 6; attempt++) {
       const [entry] = await this.storage.readBatch([{
@@ -287,11 +409,37 @@ export class ArchiveStore {
 
   /** Optimistic sync commit that cannot overwrite a newer tab/window write. */
   async saveIfUnchanged(expected: LocalArchive, next: LocalArchive): Promise<boolean> {
+    const profileId = this.requestedProfile();
     if (!hasAtomicStorage(this.storage)) {
+      if (profileId) {
+        throw new Error('Atomic storage is required for profile-bound archive access');
+      }
       const current = await this.load();
       if (!sameArchive(current, expected)) return false;
       await this.save(next);
       return true;
+    }
+    if (profileId) {
+      for (let attempt = 0; attempt < MAX_PROFILE_CAS_ATTEMPTS; attempt += 1) {
+        const snapshot = await this.readProfileSnapshot(this.storage, profileId);
+        const current = prepareLocalArchive(
+          snapshot.archive.value as LocalArchive | undefined,
+        );
+        if (!sameArchive(current, expected)) return false;
+        const committed = await this.storage.commitBatch({
+          ifRevisions: [
+            { ...PROFILE_STATE_ADDRESS, revision: snapshot.state.revision },
+            { ...snapshot.archiveAddress, revision: snapshot.archive.revision },
+          ],
+          mutations: [{
+            ...snapshot.archiveAddress,
+            operation: 'set',
+            value: next,
+          }],
+        });
+        if (committed.committed) return true;
+      }
+      return false;
     }
     for (let attempt = 0; attempt < 3; attempt++) {
       const [entry] = await this.storage.readBatch([{
@@ -338,8 +486,8 @@ export class ArchiveStore {
   /**
    * Manual grading (supplement §1.2 — always wins over the auto default).
    *
-   * - With `baseFsrs` (same answer event): the advance is recomputed FROM
-   *   THAT SNAPSHOT, replacing the auto advance entirely.
+   * - With `replaceCurrentReview` (same answer event): the advance is
+   *   recomputed from `baseFsrs`, including an undefined first-contact base.
    * - Without: a standalone review event — advance from the current state.
    * - `excluded`: freeze — grading is stored, FSRS state kept at `baseFsrs`
    *   when given (same answer event), otherwise at the current one.

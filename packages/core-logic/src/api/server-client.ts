@@ -11,16 +11,26 @@
  */
 import { normalizeBaseUrl } from '../config/index.js';
 import { requestJson, type RequestOptions } from './http.js';
+import {
+  validateQueuedAttemptBatch,
+  type ValidatedQueuedAttempt,
+} from './attempt-validation.js';
 import type {
   AiAssessRequest,
   AiAssessResponse,
+  AiCredentialTestRequest,
+  AiCredentialTestResponse,
   AiExplainRequest,
   AiExplainResponse,
   AiProviderId,
   AiStatus,
 } from '../ai/types.js';
+import {
+  parseAiAssessResponse,
+  parseAiCredentialTestResponse,
+  parseAiExplainResponse,
+} from '../ai/response-parser.js';
 import type {
-  AttemptRecord,
   AuthResponse,
   HealthResponse,
   HistoryQuery,
@@ -73,10 +83,15 @@ export class ServerClient {
   }
 
   /** POST /auth/redeem — invite-code account creation, unauthenticated. */
-  redeem(inviteCode: string, username: string, password: string): Promise<AuthResponse> {
+  redeem(
+    inviteCode: string,
+    username: string,
+    password: string,
+    clientMutationId?: string,
+  ): Promise<AuthResponse> {
     return requestJson<AuthResponse>(this.baseUrl, '/auth/redeem', {
       method: 'POST',
-      body: { inviteCode, username, password },
+      body: { inviteCode, username, password, ...(clientMutationId ? { clientMutationId } : {}) },
     });
   }
 
@@ -110,11 +125,12 @@ export class ServerClient {
   }
 
   /** POST /me/attempts — optional audit-only stream (contract §4.2). */
-  recordAttempts(attempts: AttemptRecord[]): Promise<{ recorded: number }> {
+  async recordAttempts(attempts: ValidatedQueuedAttempt[]): Promise<{ recorded: number }> {
+    const validated = validateQueuedAttemptBatch(attempts);
     return requestJson<{ recorded: number }>(
       this.baseUrl,
       '/me/attempts',
-      this.authed({ method: 'POST', body: { attempts } }),
+      this.authed({ method: 'POST', body: { attempts: validated } }),
     );
   }
 
@@ -131,7 +147,8 @@ export class ServerClient {
         query: {
           since: query.since,
           until: query.until,
-          page: query.page,
+          page: query.cursor ? undefined : query.page,
+          cursor: query.cursor,
           pageSize: query.pageSize,
           partId: query.partId,
           questionId: query.questionId,
@@ -238,9 +255,23 @@ export class ServerClient {
     );
   }
 
+  /** POST /me/ai/credential/test — explicit, BYOK-only connectivity check. */
+  async testAiCredential(req: AiCredentialTestRequest): Promise<AiCredentialTestResponse> {
+    const response = await requestJson<unknown>(
+      this.baseUrl,
+      '/me/ai/credential/test',
+      this.authed({ method: 'POST', body: req, timeoutMs: AI_REQUEST_TIMEOUT_MS }),
+    );
+    return parseAiCredentialTestResponse(response, req);
+  }
+
   /** POST /me/ai-explain — why this answer is wrong. Advisory text only. */
-  aiExplain(req: AiExplainRequest, signal?: RequestOptions['signal']): Promise<AiExplainResponse> {
-    return requestJson<AiExplainResponse>(
+  async aiExplain(
+    req: AiExplainRequest,
+    signal?: RequestOptions['signal'],
+    expectedPromptVersion?: string,
+  ): Promise<AiExplainResponse> {
+    const response = await requestJson<unknown>(
       this.baseUrl,
       '/me/ai-explain',
       this.authed({
@@ -250,14 +281,19 @@ export class ServerClient {
         ...(signal ? { signal } : {}),
       }),
     );
+    return parseAiExplainResponse(response, req, expectedPromptVersion);
   }
 
   /**
    * POST /me/ai-grade — per-criterion verdicts for a rubric part.
    * The response is a SUGGESTION: the user still has to confirm it.
    */
-  aiAssess(req: AiAssessRequest, signal?: RequestOptions['signal']): Promise<AiAssessResponse> {
-    return requestJson<AiAssessResponse>(
+  async aiAssess(
+    req: AiAssessRequest,
+    signal?: RequestOptions['signal'],
+    expectedPromptVersion?: string,
+  ): Promise<AiAssessResponse> {
+    const response = await requestJson<unknown>(
       this.baseUrl,
       '/me/ai-grade',
       this.authed({
@@ -267,6 +303,7 @@ export class ServerClient {
         ...(signal ? { signal } : {}),
       }),
     );
+    return parseAiAssessResponse(response, req, expectedPromptVersion);
   }
 
   /** GET /info */

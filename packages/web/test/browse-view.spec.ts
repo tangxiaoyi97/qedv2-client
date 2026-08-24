@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CoreRuntimePort, QuestionSummary, ShellPort } from '@qed2/core-logic';
 import BrowseView from '../src/routes/BrowseView.vue';
 import { ports } from '../src/services.js';
+import { useAppStore } from '../src/stores/app.js';
 import { usePracticeStore } from '../src/stores/practice.js';
 
 /** Mirrors BrowseView's constants — kept local so a change has to be deliberate. */
@@ -24,7 +25,13 @@ function summary(i: number): QuestionSummary {
     status: 'converted',
     totalPoints: 1,
     playable: true,
-    parts: [{ id: `q-${i}-a`, label: 'a', format: '2 aus 5', competencies: [], hasFigures: false }],
+    parts: Array.from({ length: i === 1 ? 8 : 1 }, (_, partIndex) => ({
+      id: `q-${i}-${partIndex}`,
+      label: String.fromCharCode(97 + partIndex),
+      format: '2 aus 5',
+      competencies: [{ code: 'AG 1.1' }],
+      hasFigures: false,
+    })),
   };
 }
 
@@ -154,6 +161,23 @@ describe('BrowseView catalogue loading', () => {
     expect(host.querySelectorAll('.browse__row')).toHaveLength(ROW_WINDOW);
     expect(host.textContent).toContain(`${TOTAL} Aufgaben`);
     expect(host.querySelector('.browse__more')?.textContent).toContain(String(TOTAL - ROW_WINDOW));
+    expect(host.querySelector<HTMLInputElement>('.browse__search input')?.placeholder).toBe('Aufgaben suchen');
+
+    const firstRow = host.querySelector<HTMLButtonElement>('.browse__row');
+    expect(firstRow).not.toBeNull();
+    expect([...firstRow!.children].map((child) => [...child.classList])).toEqual([
+      ['browse__dots'],
+      ['browse__nr'],
+      expect.arrayContaining(['browse__chip']),
+      ['browse__qtitle'],
+      expect.arrayContaining(['browse__state', 'browse__state--new']),
+    ]);
+    // Ellipsis is purely visual: the full title remains in the accessible
+    // button name instead of being shortened in the DOM.
+    expect(firstRow?.textContent).toContain('Aufgabe 1');
+    expect(firstRow?.querySelector('.browse__dots')?.getAttribute('aria-label')).toBe('8 Neu');
+    expect(firstRow?.querySelectorAll('.browse__dots .q-grading-dot')).toHaveLength(1);
+    expect(firstRow?.querySelector('.browse__dot-count')?.textContent).toBe('×8');
     unmount();
   });
 
@@ -185,18 +209,48 @@ describe('BrowseView catalogue loading', () => {
     const local = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) =>
       button.textContent?.includes('Lokal'),
     );
+    const remote = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) =>
+      button.textContent?.includes('Remote-Core'),
+    );
     expect(local).toBeDefined();
-    expect(host.textContent).toContain('Ein Quellenwechsel löscht keine Antworten oder Speicherstände');
+    expect(local?.textContent?.trim()).toBe('Lokal');
+    expect(remote?.textContent?.trim()).toBe('Remote-Core');
+    expect(host.textContent).not.toContain('Auf diesem Gerät');
+    expect(host.textContent).not.toContain('Über das Netzwerk');
+    expect(host.textContent).not.toContain('Ein Quellenwechsel löscht keine Antworten oder Speicherstände');
     const pagesBeforeSwitch = pages.length;
     local?.click();
     await vi.waitFor(() => expect(selectSource).toHaveBeenCalledWith('local'));
     await vi.waitFor(() => expect(pages.length).toBeGreaterThanOrEqual(pagesBeforeSwitch + 3));
 
     expect(local?.getAttribute('aria-checked')).toBe('true');
-    expect(host.textContent).toContain('Lokale Aufgabenbank · offline verfügbar');
+    expect(host.querySelector('.browse__source-status')?.textContent).toMatch(/Bank |Revision wird geprüft/u);
+    expect(host.textContent).not.toContain('Lokale Aufgabenbank · offline verfügbar');
     // The source transition invalidates the module cache; old list requests
     // cannot be reused just because the route component stayed mounted.
-    expect(pages.slice(pagesBeforeSwitch)).toEqual([1, 2, 3]);
+    expect(pages.slice(pagesBeforeSwitch, pagesBeforeSwitch + 3)).toEqual([1, 2, 3]);
+
+    const app = useAppStore();
+    app.coreEndpointSource = 'remote';
+    app.coreRuntimeStatus = {
+      phase: 'degraded',
+      source: 'remote',
+      preferredSource: 'local',
+      endpoint: 'https://core.example',
+    };
+    await nextTick();
+    expect(host.querySelector('.browse__source-status')?.textContent).toContain('Remote-Ersatz');
+
+    app.online = false;
+    app.coreRuntimeStatus = {
+      phase: 'ready',
+      source: 'remote',
+      preferredSource: 'remote',
+      endpoint: 'https://core.example',
+    };
+    await nextTick();
+    expect(host.querySelector('.browse__source-status')?.textContent).toContain('Offline');
+
     unmount();
   });
 

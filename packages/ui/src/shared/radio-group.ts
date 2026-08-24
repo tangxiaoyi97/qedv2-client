@@ -11,7 +11,9 @@ export function onRadioGroupKeydown(ev: KeyboardEvent): void {
     ev.key !== 'ArrowLeft' &&
     ev.key !== 'ArrowRight' &&
     ev.key !== 'ArrowUp' &&
-    ev.key !== 'ArrowDown'
+    ev.key !== 'ArrowDown' &&
+    ev.key !== 'Home' &&
+    ev.key !== 'End'
   ) {
     return;
   }
@@ -24,7 +26,13 @@ export function onRadioGroupKeydown(ev: KeyboardEvent): void {
   if (idx === -1) return;
   ev.preventDefault();
   const forward = ev.key === 'ArrowRight' || ev.key === 'ArrowDown';
-  const next = forward ? (idx + 1) % items.length : (idx - 1 + items.length) % items.length;
+  const next = ev.key === 'Home'
+    ? 0
+    : ev.key === 'End'
+      ? items.length - 1
+      : forward
+        ? (idx + 1) % items.length
+        : (idx - 1 + items.length) % items.length;
   const el = items[next];
   el?.focus();
   el?.click();

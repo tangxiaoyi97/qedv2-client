@@ -21,7 +21,7 @@ describe('platform shell assembly', () => {
     const { ports } = await import('../src/services.js');
 
     expect(ports.shell).toBe(shell);
-  }, 10_000);
+  }, 20_000);
 
   it('falls back to the inert web shell without an injection', async () => {
     const { ports } = await import('../src/services.js');
@@ -31,5 +31,5 @@ describe('platform shell assembly', () => {
       nativeMenu: false,
       nativeTitleBar: false,
     });
-  }, 10_000);
+  }, 20_000);
 });

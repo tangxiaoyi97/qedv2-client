@@ -11,7 +11,7 @@ export function answerPreview(answer: Answer, submission: Submission): AnswerPre
     return {
       label: 'Ergebnis',
       value: formatIntervalSubmissionPreview(submission),
-      hint: 'leer oder ∞ = unbeschränkt · Komma oder Punkt',
+      hint: 'leer/∞: unbeschränkt · , oder .',
     };
   }
   return null;

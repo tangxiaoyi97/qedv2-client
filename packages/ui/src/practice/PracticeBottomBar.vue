@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { Lightbulb } from 'lucide-vue-next';
 import {
   VERDICT_LABELS,
   formatScore,
@@ -34,8 +35,14 @@ const props = defineProps<{
   /** Manual grading override — the GradingMenu lives in the bar (thumb
    *  reach) instead of the question header. */
   grading: GradingOrUnseen;
+  /** Disabled while the answer commit is pending or a legacy review cannot be safely replaced. */
+  gradingDisabled?: boolean;
   primaryLabel: string;
   primaryDisabled: boolean;
+  /** One low-interruption entry for hints, diagnosis and correction. */
+  learningAvailable?: boolean;
+  /** Official material stays hidden until a self-assessment draft is durable. */
+  solutionReady?: boolean;
 }>();
 
 const assessing = computed(() => props.state.phase === 'self-assessing');
@@ -73,6 +80,7 @@ const emit = defineEmits<{
   /** GradingMenu manual override (any other phase). */
   gradingSelect: [grading: Grading];
   primary: [];
+  learningToggle: [];
 }>();
 
 </script>
@@ -82,8 +90,9 @@ const emit = defineEmits<{
     <SolutionSheet
       :detent="solutionDetent"
       :solution="solution"
+      :show-solution="state.phase !== 'answering' && solutionReady !== false"
       content-max-width="860px"
-      :handle="state.phase !== 'answering'"
+      :handle="state.phase !== 'answering' || learningAvailable"
       :top-reserve="topReserve"
       :verdict="state.result?.verdict"
       :verdict-label="verdictLabel"
@@ -127,13 +136,14 @@ const emit = defineEmits<{
         <GradingMenu
           v-if="!assessing"
           :grading="grading"
+          :disabled="gradingDisabled"
           dense
           class="practice-bar__grading"
           @select="emit('gradingSelect', $event)"
         />
         <div v-if="assessing && state.selfAssessment" class="practice-bar__preview">
           <span class="practice-bar__preview-main">
-            <span class="practice-bar__preview-label">Deine Punkte:</span>
+            <span class="practice-bar__visually-hidden">Deine Punkte: </span>
             <b class="practice-bar__preview-value">{{ assessedScore }}</b>
           </span>
         </div>
@@ -147,6 +157,18 @@ const emit = defineEmits<{
       </div>
 
       <div class="practice-bar__right">
+        <button
+          v-if="learningAvailable"
+          type="button"
+          class="practice-bar__learning-toggle"
+          :class="{ 'practice-bar__learning-toggle--on': solutionDetent !== 'collapsed' }"
+          :aria-expanded="solutionDetent !== 'collapsed'"
+          :aria-label="solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen'"
+          @click="emit('learningToggle')"
+        >
+          <Lightbulb :size="17" aria-hidden="true" />
+          <span>Lernhilfe</span>
+        </button>
         <!-- Hidden on narrow screens: the sheet's grab handle is the control
              there, so this button never has to fight the primary action for
              the last few pixels. -->
@@ -252,7 +274,7 @@ const emit = defineEmits<{
 /* the capsule keeps its state tint, but takes the Lösung toggle's outlined
  * geometry so the bar reads as ONE control family */
 .practice-bar__grading :deep(.q-grading-capsule) {
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 14px;
   border-radius: 9px;
   gap: 7px;
@@ -293,6 +315,19 @@ const emit = defineEmits<{
   font-size: 15px;
 }
 
+.practice-bar__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .practice-bar__preview-hint {
   font: 500 11px ui-monospace, Menlo, monospace;
   color: var(--q-hint);
@@ -321,16 +356,43 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 42px;
+  min-height: 44px;
   padding: 0 var(--q-control-chevron-inset);
   border-radius: 9px;
   border: 1px solid var(--q-border-2);
   background: var(--q-card);
   color: var(--q-mut);
-  font: 700 11.5px 'Public Sans', system-ui, sans-serif;
+  font-size: 11.5px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   cursor: pointer;
+}
+.practice-bar__learning-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--q-border-2);
+  border-radius: 9px;
+  background: var(--q-card);
+  color: var(--q-mut);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.practice-bar__learning-toggle--on {
+  border-color: var(--q-accent);
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
+}
+.practice-bar__learning-toggle:focus-visible,
+.practice-bar__solution-toggle:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -358,6 +420,19 @@ const emit = defineEmits<{
   /* The sheet's grab handle does this job on a phone — see SolutionSheet. */
   .practice-bar__solution-toggle {
     display: none;
+  }
+}
+@media (max-width: 380px) {
+  .practice-bar__learning-toggle {
+    padding: 0 10px;
+  }
+  .practice-bar__learning-toggle span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 }
 

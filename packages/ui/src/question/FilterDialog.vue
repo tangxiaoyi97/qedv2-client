@@ -134,9 +134,7 @@ function onBackdropClick(ev: MouseEvent): void {
   if (ev.target === ev.currentTarget) emit('close');
 }
 
-const countText = computed(() =>
-  props.resultCount === 1 ? '1 Aufgabe entspricht' : `${props.resultCount} Aufgaben entsprechen`,
-);
+const countText = computed(() => `${props.resultCount} Treffer`);
 </script>
 
 <template>
@@ -269,16 +267,18 @@ const countText = computed(() =>
                 @click="toggleStarred"
               >
                 <span v-if="modelValue.starredOnly" class="fdlg__tick" aria-hidden="true">✓</span>
-                Nur markierte (★)
+                Markiert ★
               </button>
             </div>
           </section>
         </div>
 
         <div class="fdlg__footer">
-          <span class="fdlg__count" aria-live="polite">{{ countText }}</span>
-          <QButton variant="ghost" @click="reset">Zurücksetzen</QButton>
-          <QButton @click="emit('close')">Fertig</QButton>
+          <span class="fdlg__count" role="status" :aria-label="countText" aria-live="polite">
+            {{ resultCount }} Treffer
+          </span>
+          <QButton variant="ghost" @click="reset">Leeren</QButton>
+          <QButton @click="emit('close')">Anzeigen</QButton>
         </div>
       </div>
     </div>
@@ -389,9 +389,16 @@ const countText = computed(() =>
 }
 .fdlg__count {
   flex: 1;
-  min-width: 120px;
+  min-width: 0;
   font-size: 12.5px;
   font-weight: 600;
   color: var(--q-mut);
+  white-space: nowrap;
+}
+@media (max-width: 360px) {
+  .fdlg__footer {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
 }
 </style>

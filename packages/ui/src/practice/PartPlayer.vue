@@ -35,7 +35,7 @@ import {
   type SelfAssessment,
   type Submission,
 } from '@qed2/core-logic';
-import type { PartPlayerCommand, PartPlayerState } from './part-player-types.js';
+import type { PartPlayerCommand, PartPlayerDraft, PartPlayerState } from './part-player-types.js';
 import { emptySubmission, isSubmissionComplete } from '../question/submission-defaults.js';
 import AnswerControl from '../question/AnswerControl.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
@@ -62,6 +62,18 @@ const props = defineProps<{
   label?: string;
   chromeless?: boolean;
   command?: PartPlayerCommand | null;
+  /** Durable first result restored after a crash, before the one correction. */
+  restoredFirstResult?: GradeResult;
+  /** Short-lived local snapshot, retained only while one correction is open. */
+  restoredSubmission?: Submission;
+  /** The durable result exists, but its private answer was intentionally discarded. */
+  restoredSubmissionUnavailable?: boolean;
+  /** Local-only correction edit restored without reopening the official solution. */
+  restoredCorrectionDraft?: Submission;
+  /** Local-only first-attempt state saved before the official solution opens. */
+  restoredDraft?: PartPlayerDraft;
+  /** Local-only answer edit restored before the first submission. */
+  restoredAnswerDraft?: Submission;
 }>();
 
 const emit = defineEmits<{
@@ -72,27 +84,84 @@ const emit = defineEmits<{
     selfAssessed: boolean;
     manualGrading?: Grading;
   }];
+  corrected: [payload: {
+    partId: string;
+    result: GradeResult;
+    submission: Submission;
+    selfAssessed: boolean;
+  }];
   state: [payload: PartPlayerState];
+  draft: [payload: PartPlayerDraft];
+  correctionDraft: [payload: Submission];
+  answerDraft: [payload: Submission];
 }>();
 
 type Phase = 'answering' | 'self-assessing' | 'reviewed';
 
-const phase = ref<Phase>('answering');
-const result = ref<GradeResult | null>(null);
-const indeterminate = ref(false);
-const indeterminateMax = ref(1);
-const selfAssessment = ref<SelfAssessment>({});
-const selfAssessmentPoints = ref<number | null>(null);
-const selfAssessmentGrading = ref<Grading | null>(null);
+const phase = ref<Phase>(props.restoredFirstResult
+  ? props.restoredCorrectionDraft ? 'answering' : 'reviewed'
+  : props.restoredDraft
+    ? 'self-assessing'
+    : 'answering');
+const attemptPhase = ref<'first' | 'correction'>(props.restoredCorrectionDraft ? 'correction' : 'first');
+const result = ref<GradeResult | null>(props.restoredCorrectionDraft ? null : props.restoredFirstResult ?? null);
+const firstResult = ref<GradeResult | null>(props.restoredFirstResult ?? null);
+const indeterminate = ref(props.restoredDraft?.indeterminate ?? false);
+const indeterminateMax = ref(props.restoredDraft?.indeterminateMax ?? 1);
+const selfAssessment = ref<SelfAssessment>(props.restoredDraft
+  ? {
+      ...props.restoredDraft.assessment,
+      ...(props.restoredDraft.assessment.criteriaMet
+        ? { criteriaMet: [...props.restoredDraft.assessment.criteriaMet] }
+        : {}),
+    }
+  : {});
+const selfAssessmentPoints = ref<number | null>(props.restoredDraft?.selectedPoints ?? null);
+const selfAssessmentGrading = ref<Grading | null>(props.restoredDraft?.grading ?? null);
+const reviewSubmissionUnavailable = ref(props.restoredSubmissionUnavailable === true);
 
 const answer = computed(() => props.part.answer);
-const submission = ref<Submission | null>(answer.value ? emptySubmission(answer.value) : null);
+const submission = ref<Submission | null>(
+  props.restoredDraft?.submission
+    ?? props.restoredCorrectionDraft
+    ?? props.restoredSubmission
+    ?? props.restoredAnswerDraft
+    ? cloneSubmission((
+        props.restoredDraft?.submission
+        ?? props.restoredCorrectionDraft
+        ?? props.restoredSubmission
+        ?? props.restoredAnswerDraft
+      )!)
+    : answer.value
+      ? emptySubmission(answer.value)
+      : null,
+);
 const currentAnswerPreview = computed(() =>
   answer.value && submission.value ? answerPreview(answer.value, submission.value) : null,
 );
 const showPartHead = computed(() =>
   props.label != null || (!props.chromeless && (props.part.format != null || props.part.points != null)),
 );
+
+function cloneSubmission(value: Submission): Submission {
+  switch (value.kind) {
+    case 'choice': return { kind: 'choice', selected: [...value.selected] };
+    case 'matching': return { kind: 'matching', matches: [...value.matches] };
+    case 'numeric': return { kind: 'numeric', values: { ...value.values } };
+    case 'interval': return { ...value };
+    case 'expression': return { ...value };
+    case 'open': return {
+      kind: 'open',
+      text: value.text,
+      selfAssessment: {
+        ...value.selfAssessment,
+        ...(value.selfAssessment.criteriaMet
+          ? { criteriaMet: [...value.selfAssessment.criteriaMet] }
+          : {}),
+      },
+    };
+  }
+}
 
 const canSubmit = computed(
   () => answer.value != null && submission.value != null && isSubmissionComplete(answer.value, submission.value),
@@ -122,8 +191,10 @@ const selfAssessmentState = computed(() =>
 watchEffect(() => {
   emit('state', {
     phase: phase.value,
+    attemptPhase: attemptPhase.value,
     canSubmit: phase.value === 'answering' && canSubmit.value,
     result: result.value,
+    firstResult: firstResult.value,
     indeterminate: indeterminate.value,
     unplayable: !answer.value,
     answerPreview: currentAnswerPreview.value,
@@ -132,12 +203,46 @@ watchEffect(() => {
   });
 });
 
+/**
+ * Draft events are explicit user intents, not reactive projections. Emitting
+ * them from the state watchEffect lets a synchronous parent listener's reads
+ * become dependencies of this component effect; the parent's eventual save
+ * then retriggers the effect and creates an endless save echo.
+ */
+function emitSelfAssessmentDraft(): void {
+  if (phase.value !== 'self-assessing' || !submission.value) return;
+  emit('draft', {
+    submission: cloneSubmission(submission.value),
+    assessment: {
+      ...selfAssessment.value,
+      ...(selfAssessment.value.criteriaMet
+        ? { criteriaMet: [...selfAssessment.value.criteriaMet] }
+        : {}),
+    },
+    selectedPoints: selfAssessmentPoints.value,
+    grading: selfAssessmentGrading.value,
+    indeterminate: indeterminate.value,
+    indeterminateMax: indeterminateMax.value,
+  });
+}
+
+function onSubmissionUpdate(value: Submission): void {
+  submission.value = cloneSubmission(value);
+  if (phase.value !== 'answering') return;
+  if (attemptPhase.value === 'correction') {
+    emit('correctionDraft', cloneSubmission(value));
+  } else {
+    emit('answerDraft', cloneSubmission(value));
+  }
+}
+
 function submit(): void {
   if (phase.value !== 'answering') return;
   if (!canSubmit.value || !submission.value) return;
   if (submission.value.kind === 'open') {
     // grade only after the user compared with the solution and self-assessed
     phase.value = 'self-assessing';
+    emitSelfAssessmentDraft();
     return;
   }
   const outcome = grade(props.part, submission.value);
@@ -145,11 +250,58 @@ function submit(): void {
     indeterminate.value = true;
     indeterminateMax.value = outcome.maxPoints;
     phase.value = 'self-assessing';
+    emitSelfAssessmentDraft();
     return;
   }
   result.value = outcome;
   phase.value = 'reviewed';
-  emit('graded', { partId: props.part.id, result: outcome, submission: submission.value, selfAssessed: false });
+  emitOutcome(outcome, submission.value, false);
+}
+
+function emitOutcome(outcome: GradeResult, value: Submission, selfAssessed: boolean, manualGrading?: Grading): void {
+  if (attemptPhase.value === 'correction') {
+    emit('corrected', { partId: props.part.id, result: outcome, submission: value, selfAssessed });
+    return;
+  }
+  firstResult.value = outcome;
+  emit('graded', {
+    partId: props.part.id,
+    result: outcome,
+    submission: value,
+    selfAssessed,
+    ...(manualGrading ? { manualGrading } : {}),
+  });
+}
+
+function startCorrection(): void {
+  if (
+    attemptPhase.value !== 'first'
+    || phase.value !== 'reviewed'
+    || !firstResult.value
+    || firstResult.value.verdict === 'correct'
+  ) return;
+  attemptPhase.value = 'correction';
+  phase.value = 'answering';
+  result.value = null;
+  indeterminate.value = false;
+  selfAssessment.value = {};
+  selfAssessmentPoints.value = null;
+  selfAssessmentGrading.value = null;
+}
+
+function restoreReview(
+  restoredResult: GradeResult,
+  restoredSubmission?: Submission,
+  submissionUnavailable = false,
+): void {
+  if (restoredSubmission) submission.value = cloneSubmission(restoredSubmission);
+  else if (answer.value) submission.value = emptySubmission(answer.value);
+  reviewSubmissionUnavailable.value = submissionUnavailable;
+  attemptPhase.value = 'first';
+  firstResult.value = restoredResult;
+  result.value = restoredResult;
+  phase.value = 'reviewed';
+  indeterminate.value = false;
 }
 
 function setSelfAssessmentScore(points: number): void {
@@ -164,11 +316,13 @@ function setSelfAssessmentScore(points: number): void {
     overall: selfAssessmentOverallForScore(option.points, max),
   };
   selfAssessmentGrading.value ??= defaultGradingForScore(option.points, max);
+  emitSelfAssessmentDraft();
 }
 
 function setSelfAssessmentGrading(grading: Grading): void {
   if (phase.value !== 'self-assessing') return;
   selfAssessmentGrading.value = grading;
+  emitSelfAssessmentDraft();
 }
 
 function onSelfAssessmentUpdate(value: SelfAssessment): void {
@@ -176,6 +330,7 @@ function onSelfAssessmentUpdate(value: SelfAssessment): void {
   const selected = selectedPointsFromAssessment(value, maxPointsForSelf.value, props.part.scoring);
   selfAssessmentPoints.value = selected;
   if (selected != null) selfAssessmentGrading.value ??= defaultGradingForScore(selected, maxPointsForSelf.value);
+  emitSelfAssessmentDraft();
 }
 
 /** Chromeless shells render their own SelfAssessmentPanel and feed changes
@@ -195,6 +350,12 @@ watch(
         break;
       case 'confirm-self-assessment':
         confirmSelfAssessment();
+        break;
+      case 'start-correction':
+        startCorrection();
+        break;
+      case 'restore-review':
+        restoreReview(command.result, command.submission, command.submissionUnavailable);
         break;
       case 'set-score':
         setSelfAssessmentScore(command.points);
@@ -238,13 +399,7 @@ function confirmSelfAssessment(): void {
   }
   result.value = final;
   phase.value = 'reviewed';
-  emit('graded', {
-    partId: props.part.id,
-    result: final,
-    submission: submission.value,
-    selfAssessed: true,
-    manualGrading,
-  });
+  emitOutcome(final, submission.value, true, manualGrading);
 }
 
 function onKeydown(ev: KeyboardEvent): void {
@@ -267,6 +422,7 @@ defineExpose({
   setSelfAssessmentScore,
   setSelfAssessmentGrading,
   setSelfAssessment,
+  startCorrection,
 });
 </script>
 
@@ -276,6 +432,10 @@ defineExpose({
       <span v-if="label" class="q-part__label">{{ label }}</span>
       <QChip v-if="!chromeless && part.format" tone="neutral">{{ part.format }}</QChip>
       <span v-if="!chromeless && part.points != null" class="q-part__points">{{ part.points }} P</span>
+    </div>
+
+    <div v-if="attemptPhase === 'correction' && phase !== 'reviewed'" class="q-part__correction" role="status">
+      Korrektur
     </div>
 
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
@@ -296,14 +456,19 @@ defineExpose({
       />
 
       <AnswerControl
-        v-if="submission"
-        v-model="submission"
+        v-if="submission && !reviewSubmissionUnavailable"
+        :model-value="submission"
         :answer="answer"
         :result="phase === 'reviewed' ? result : null"
         :indeterminate="indeterminate && phase !== 'answering'"
         :show-preview="!chromeless"
+        :locked="phase === 'self-assessing'"
         class="q-part__control"
+        @update:model-value="onSubmissionUpdate"
       />
+      <p v-else-if="reviewSubmissionUnavailable" class="q-part__remote-review" role="status">
+        Diese Aufgabe wurde in einem anderen Fenster gespeichert.
+      </p>
 
       <div v-if="phase === 'self-assessing' && !chromeless" class="q-part__selfassess">
         <!-- chromeless: the shell auto-opens its SolutionSheet for comparison -->
@@ -358,6 +523,18 @@ defineExpose({
   margin-bottom: 14px;
   /* wide inline KaTeX scrolls here instead of panning the whole page */
   overflow-x: auto;
+}
+.q-part__correction {
+  width: max-content;
+  margin: 0 0 12px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .q-part__unplayable {
   padding: 14px;

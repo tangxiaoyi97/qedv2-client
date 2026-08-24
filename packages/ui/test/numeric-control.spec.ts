@@ -37,7 +37,7 @@ describe('NumericControl', () => {
     expect(wrapper.find('.q-numeric__unit').exists()).toBe(true);
     expect(wrapper.find('.q-numeric__unit').text()).toBe('cm');
     // hint line
-    expect(wrapper.text()).toContain('Komma oder Punkt erlaubt · Tab wechselt Felder');
+    expect(wrapper.get('.q-numeric__hint').text()).toBe('Komma oder Punkt');
   });
 
   it('renders a single blank without label, full-width', () => {
@@ -91,6 +91,6 @@ describe('NumericControl', () => {
     expect(wrapper.find('.q-numeric__expected').exists()).toBe(true);
     expect(wrapper.find('.q-numeric__expected').text()).toContain('Richtig: 4,5 cm (±0,1)');
     // hint hidden in review
-    expect(wrapper.text()).not.toContain('Tab wechselt Felder');
+    expect(wrapper.find('.q-numeric__hint').exists()).toBe(false);
   });
 });

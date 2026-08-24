@@ -4,6 +4,8 @@ import {
   buildExplainRequest,
   figureAlts,
   hasFigures,
+  hasSolutionFigures,
+  hintRevealsOfficialSolution,
   isAiGradable,
   submittedText,
 } from '../src/ai/projection.js';
@@ -53,6 +55,13 @@ function question(overrides: Partial<Question> = {}): Question {
 }
 
 const result: GradeResult = { verdict: 'partial', correct: false, awardedPoints: 1, maxPoints: 2 };
+const learningIdentity = {
+  interactionId: '4c352212-f3cc-4366-9db0-5247d677b073',
+  taskVersion: 'hint.v1',
+  contentSource: 'remote' as const,
+  contentId: 'a'.repeat(40),
+  attemptPhase: 'first' as const,
+};
 
 describe('explain request', () => {
   it('carries the question text, not just the answer', () => {
@@ -70,7 +79,7 @@ describe('explain request', () => {
     expect(req.officialSolution).toBe('x = 4');
     expect(req.gradingNote).toContain('Teilschritt');
     expect(req.maxPoints).toBe(2);
-    expect(req.verdict).toBe('partial');
+    expect('verdict' in req ? req.verdict : undefined).toBe('partial');
   });
 
   it('omits an empty official solution rather than sending a blank string', () => {
@@ -84,6 +93,26 @@ describe('explain request', () => {
     expect(req.gradingNote).toBeUndefined();
   });
 
+  it('keeps ordered steps-only solutions and short alternatives', () => {
+    const req = buildExplainRequest({
+      question: question(),
+      part: part({
+        solution: [{
+          id: 'weg-1',
+          steps: text('2x = 8, also x = 4'),
+          alternatives: [text('Durch 2 teilen')],
+        }],
+      }),
+      submitted: 'x = 5',
+      result,
+    });
+    expect(req.officialSolution).toContain('2x = 8');
+    expect(req.solution).toEqual({
+      steps: [{ id: 'weg-1', text: '2x = 8, also x = 4' }],
+      alternatives: ['Durch 2 teilen'],
+    });
+  });
+
   it('flattens KaTeX into readable text', () => {
     const req = buildExplainRequest({
       question: question({ prompt: [{ t: 'math', v: '\\mathbb{R}' }] }),
@@ -92,6 +121,76 @@ describe('explain request', () => {
       result,
     });
     expect(req.questionPrompt).toContain('ℝ');
+  });
+
+  it('keeps every official answer field out of a first-attempt hint', () => {
+    const req = buildExplainRequest({
+      question: question(),
+      part: part(),
+      submitted: '',
+      mode: 'hint',
+      hintLevel: 1,
+      identity: learningIdentity,
+    });
+    expect(req.solutionHasFigures).toBe(false);
+    expect(req.officialSolution).toBeUndefined();
+    expect(req.solution).toBeUndefined();
+    expect(req.gradingNote).toBeUndefined();
+  });
+
+  it('grounds a correction hint in the official solution only after the first attempt', () => {
+    const req = buildExplainRequest({
+      question: question(),
+      part: part(),
+      submitted: 'x = 5',
+      mode: 'hint',
+      hintLevel: 2,
+      identity: { ...learningIdentity, attemptPhase: 'correction' },
+    });
+    expect(req.officialSolution).toBe('x = 4');
+    expect(req.solution?.result).toBe('x = 4');
+    expect(req.gradingNote).toContain('Teilschritt');
+  });
+
+  it('detects a final result, every alternative, and the last steps-only clause', () => {
+    const protectedPart = part({
+      solution: [{
+        steps: text('Zuerst umformen; somit y = 9'),
+        result: text('x = 4'),
+        alternatives: [text('x = -4'), text('Keine Lösung')],
+      }],
+    });
+    expect(hintRevealsOfficialSolution('Das Ergebnis ist **x = 4**.', protectedPart)).toBe(true);
+    expect(hintRevealsOfficialSolution('Schreibe nun x=4 hin.', protectedPart)).toBe(true);
+    expect(hintRevealsOfficialSolution('Als Ergebnis erhältst du 4.', protectedPart)).toBe(true);
+    expect(hintRevealsOfficialSolution('Eine andere Möglichkeit wäre x = -4.', protectedPart)).toBe(true);
+    expect(hintRevealsOfficialSolution('Damit erhältst du y = 9.', protectedPart)).toBe(true);
+    expect(hintRevealsOfficialSolution('Prüfe zunächst den Zwischenschritt 17.', protectedPart)).toBe(false);
+  });
+
+  it('protects authoritative answers even when the prose solution rounds differently', () => {
+    const numeric = part({
+      answer: {
+        kind: 'numeric',
+        blanks: [{ id: 'v', value: 37.5, tol: 0.5, unit: 'km/h' }],
+      },
+      solution: [{ result: text('v ≈ 37,2 km/h') }],
+    });
+    expect(hintRevealsOfficialSolution('Trage 37,5 km/h ein.', numeric)).toBe(true);
+    expect(hintRevealsOfficialSolution('Trage 37.5 ein.', numeric)).toBe(true);
+
+    const expression = part({
+      answer: { kind: 'expression', canonical: 'x_n\\cdot 1{,}03', vars: ['x_n'], checker: 'cas' },
+      solution: [],
+    });
+    expect(hintRevealsOfficialSolution('x_n · 1,03', expression)).toBe(true);
+
+    const interval = part({
+      answer: { kind: 'interval', lower: -2, upper: 5, lowerClosed: true, upperClosed: false },
+      solution: [],
+    });
+    expect(hintRevealsOfficialSolution('Die Menge ist [-2; 5[.', interval)).toBe(true);
+    expect(hintRevealsOfficialSolution('Prüfe zunächst den Zwischenschritt 17.', interval)).toBe(false);
   });
 });
 
@@ -122,13 +221,44 @@ describe('figures', () => {
     const req = buildExplainRequest({ question: q, part: p, submitted: 'x', result });
     expect(hasFigures(q, p)).toBe(true);
     expect(req.hasFigures).toBe(true);
-    expect(req.figureAlts).toEqual(['Lösungsskizze']);
+    expect(req.figureAlts).toBeUndefined();
+    expect(req.solutionHasFigures).toBe(true);
+    expect(hasSolutionFigures(p)).toBe(true);
+    expect(() => buildExplainRequest({
+      question: q,
+      part: p,
+      submitted: '',
+      mode: 'hint',
+      hintLevel: 1,
+      identity: learningIdentity,
+    })).toThrow('official solution contains figures');
+  });
+
+  it('treats an open rubric figure as protected answer material', () => {
+    const p = part({
+      answer: {
+        kind: 'open',
+        grader: 'ai',
+        rubric: [{ t: 'fig', src: 'rubric.svg', alt: 'Antwort: 17' }],
+      },
+    });
+    expect(figureAlts(question(), p)).toEqual([]);
+    expect(hasSolutionFigures(p)).toBe(true);
+    expect(() => buildExplainRequest({
+      question: question(),
+      part: p,
+      submitted: '17',
+      result,
+      mode: 'diagnosis',
+      identity: { ...learningIdentity, taskVersion: 'diagnosis.v1' },
+    })).toThrow('official solution contains figures');
   });
 
   it('omits the key entirely when there is nothing to warn about', () => {
     const req = buildExplainRequest({ question: question(), part: part(), submitted: 'x', result });
     expect(req.figureAlts).toBeUndefined();
     expect(req.hasFigures).toBeUndefined();
+    expect(req.solutionHasFigures).toBe(false);
   });
 });
 
@@ -217,14 +347,29 @@ describe('assess gating', () => {
     ).toBeNull();
   });
 
-  it('still sends the figure warning so the server can refuse to pre-fill', () => {
+  it('fails closed for any figure-dependent assessment', () => {
     const req = buildAssessRequest({
       question: question({ figures: [{ kind: 'image', src: 'a.svg', alt: 'Graph' }] }),
       part: part(),
       submitted: 'x = 4',
       maxPoints: 2,
     });
-    expect(req?.figureAlts).toEqual(['Graph']);
+    expect(req).toBeNull();
+  });
+
+  it('fails closed when a figure is hidden inside steps or an alternative', () => {
+    const req = buildAssessRequest({
+      question: question(),
+      part: part({
+        solution: [{
+          steps: [{ t: 'fig', src: 'step.svg' }],
+          alternatives: [[{ t: 'fig', src: 'alternative.svg' }]],
+        }],
+      }),
+      submitted: 'x = 4',
+      maxPoints: 2,
+    });
+    expect(req).toBeNull();
   });
 });
 

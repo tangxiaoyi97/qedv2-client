@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * "Lösung" accordion (prototype 1d): official solution steps/alternatives.
- * Each SolutionEntry renders its RichText result, an optional grader note as
- * a subtle mono annotation ("Beurteilungshinweis") and any image figures.
+ * Each alternative renders steps, result, short alternatives and figures.
+ * All fields are optional because historical Bank rows may be steps-only or
+ * figure-only.
  */
 import { computed } from 'vue';
 import { isRichTextEmpty, type SolutionEntry, type ImageFigure } from '@qed2/core-logic';
@@ -33,7 +34,6 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
     v-if="entries.length > 0"
     class="q-solution"
     title="Lösung"
-    subtitle="Offizieller Lösungsweg"
     :default-open="defaultOpen"
   >
     <div class="q-solution__body">
@@ -42,12 +42,24 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
           <span class="q-solution__divider-label">Alternative</span>
         </div>
         <div class="q-solution__entry">
-          <!-- Figure-only entries render no text at all — see SolutionSheet. -->
+          <RichTextView
+            v-if="!isRichTextEmpty(entry.steps)"
+            class="q-solution__steps"
+            :nodes="entry.steps"
+          />
           <RichTextView
             v-if="!isRichTextEmpty(entry.result)"
             class="q-solution__result"
             :nodes="entry.result"
           />
+          <div
+            v-for="(alternative, ai) in entry.alternatives ?? []"
+            :key="`${entry.id ?? i}-alternative-${ai}`"
+            class="q-solution__alternative"
+          >
+            <span class="q-solution__alternative-label">Alternative</span>
+            <RichTextView :nodes="alternative" />
+          </div>
           <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
             <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
           </figure>
@@ -71,7 +83,26 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   color: var(--q-ink-2);
 }
 .q-solution__result {
+  font-weight: 650;
+  color: var(--q-ink);
   overflow-wrap: break-word;
+}
+.q-solution__steps {
+  overflow-wrap: break-word;
+}
+.q-solution__alternative {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--q-border-2);
+}
+.q-solution__alternative-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--q-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .q-solution__divider {
   display: flex;

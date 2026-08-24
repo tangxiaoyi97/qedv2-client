@@ -8,7 +8,7 @@ import {
   type LocalArchive,
   type Question,
 } from '@qed2/core-logic';
-import { archiveStore, ports, storage } from '../src/services.js';
+import { archiveStore, localProfileStore, ports, storage } from '../src/services.js';
 import { usePracticeStore } from '../src/stores/practice.js';
 
 const COMMIT = 'a'.repeat(40);
@@ -60,6 +60,75 @@ function jsonReply(body: unknown): object {
     status: 200,
     statusText: 'OK',
     text: async () => JSON.stringify(body),
+  };
+}
+
+function notFoundReply(): object {
+  return {
+    ok: false,
+    status: 404,
+    statusText: 'Not Found',
+    text: async () => JSON.stringify({ error: { code: 'NOT_FOUND', message: 'Cannot GET route' } }),
+  };
+}
+
+function canonicalJson(value: unknown): string {
+  const canonicalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(canonicalize);
+    if (input !== null && typeof input === 'object') {
+      const source = input as Record<string, unknown>;
+      return Object.fromEntries(
+        Object.keys(source).sort().filter((key) => source[key] !== undefined)
+          .map((key) => [key, canonicalize(source[key])]),
+      );
+    }
+    return input;
+  };
+  return JSON.stringify(canonicalize(value));
+}
+
+async function currentManifestV2(
+  q1: Question,
+  bytes: Uint8Array,
+  overrides: { wireSha256?: string; assetSha256?: string; assetBytes?: number } = {},
+): Promise<Record<string, unknown>> {
+  const schema = { path: 'schema/question.ts', sha256: '1'.repeat(64) };
+  const assetSha256 = overrides.assetSha256 ?? await sha256(bytes);
+  const assets = {
+    'fig/q1.png': {
+      path: 'assets/fig/q1.png',
+      bytes: overrides.assetBytes ?? bytes.byteLength,
+      mimeType: 'image/png',
+      sha256: assetSha256,
+    },
+  };
+  const questions = {
+    q1: {
+      path: 'content/srdp/q1.json',
+      // Exact file bytes intentionally differ from Core's canonical-JSON
+      // contentHash; Manifest v2 authenticates the parsed response by wire.
+      rawSha256: 'a'.repeat(64),
+      wireSha256: overrides.wireSha256 ?? questionContentHash(q1),
+      assets: ['fig/q1.png'],
+    },
+  };
+  const rootSha256 = await sha256(new TextEncoder().encode(canonicalJson({
+    wireContractVersion: 1,
+    schema,
+    questions,
+    assets,
+  })));
+  return {
+    formatVersion: 2,
+    wireContractVersion: 1,
+    bank: {
+      commit: COMMIT,
+      rootSha256,
+      schema,
+      immutableAssetBaseUrl: `/content/banks/${COMMIT}/assets`,
+    },
+    questions,
+    assets,
   };
 }
 
@@ -136,6 +205,7 @@ async function startWithAsset(response: object, historical = false): Promise<{
   const createObjectURL = stubObjectUrls();
   vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
     const path = new URL(rawUrl).pathname;
+    if (path === '/content/manifest/v2') return notFoundReply();
     if (path === '/content/manifest') {
       return jsonReply({ commit: historical ? OTHER_COMMIT : COMMIT, items: { q1: RAW_HASH } });
     }
@@ -172,6 +242,7 @@ describe('practice asset snapshot integrity', () => {
       storage.clear(STORAGE.questions),
       storage.clear(STORAGE.archive),
     ]);
+    await localProfileStore.initialize();
     await archiveStore.save(EMPTY_ARCHIVE);
     ports.coreRuntime = {
       capabilities: { localCore: true },
@@ -219,5 +290,66 @@ describe('practice asset snapshot integrity', () => {
 
     expect(result.practice.phase).toBe('error');
     expect(result.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('uses Manifest v2 immutable assets and verifies question wire plus asset metadata', async () => {
+    const q1 = question();
+    const bytes = new TextEncoder().encode('manifest-v2-png');
+    const manifest = await currentManifestV2(q1, bytes);
+    const assetRequests: string[] = [];
+    const createObjectURL = stubObjectUrls();
+    vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
+      const path = new URL(rawUrl).pathname;
+      if (path === '/content/manifest/v2') return jsonReply(manifest);
+      if (path === '/content/questions/batch') {
+        return jsonReply({
+          questions: [{ ...q1, contentHash: RAW_HASH, wireHash: questionContentHash(q1) }],
+          missing: [],
+        });
+      }
+      if (path === `/content/banks/${COMMIT}/assets/fig/q1.png`) {
+        assetRequests.push(path);
+        return assetReply(bytes);
+      }
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    setActivePinia(createPinia());
+    const practice = usePracticeStore();
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(assetRequests).toEqual([`/content/banks/${COMMIT}/assets/fig/q1.png`]);
+    expect(createObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['question wire hash', { wireSha256: '6'.repeat(64) }],
+    ['asset SHA', { assetSha256: '7'.repeat(64) }],
+    ['asset size', { assetBytes: 1 }],
+  ])('fails closed when Manifest v2 %s disagrees with transferred content', async (_label, override) => {
+    const q1 = question();
+    const bytes = new TextEncoder().encode('manifest-v2-png');
+    const manifest = await currentManifestV2(q1, bytes, override);
+    const createObjectURL = stubObjectUrls();
+    vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
+      const path = new URL(rawUrl).pathname;
+      if (path === '/content/manifest/v2') return jsonReply(manifest);
+      if (path === '/content/questions/batch') {
+        return jsonReply({
+          questions: [{ ...q1, contentHash: RAW_HASH, wireHash: questionContentHash(q1) }],
+          missing: [],
+        });
+      }
+      if (path === `/content/banks/${COMMIT}/assets/fig/q1.png`) return assetReply(bytes);
+      throw new Error(`unexpected request ${path}`);
+    }));
+
+    setActivePinia(createPinia());
+    const practice = usePracticeStore();
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase).toBe('error');
+    expect(createObjectURL).not.toHaveBeenCalled();
   });
 });

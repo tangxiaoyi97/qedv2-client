@@ -12,23 +12,27 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
+  ApiError,
+  canonicalServiceBaseUrl,
   CoreClient,
   NetworkError,
+  ServerClient,
   VERDICT_LABELS,
   formatScore,
   localActivityRange,
+  localDayKey,
   localDayRange,
   parseLocalDayKey,
   questionContentHash,
   type CoreSourcePreference,
+  type HistoryEntry,
   type Verdict,
 } from '@qed2/core-logic';
-import { ActivityHeatmap, QButton, QSkeleton, StateIcon } from '@qed2/ui';
+import { ActivityHeatmap, QButton, QIconButton, QSkeleton, StateIcon, useModalA11y } from '@qed2/ui';
 import { historyLog, ports, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
-import { shortCommit } from '../version-info.js';
 
 const router = useRouter();
 const app = useAppStore();
@@ -56,14 +60,74 @@ interface Row {
 const rows = ref<Row[]>([]);
 const total = ref(0);
 const page = ref(1);
+const cloudHasMore = ref(false);
+const nextCursor = ref<string | null | undefined>();
 const loading = ref(false);
 const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
 const selectedDate = ref<string | null>(null);
+const legacyRedo = ref<Row | null>(null);
+const legacyRedoCard = ref<HTMLElement | null>(null);
 let loadRequest = 0;
 let activityRequest = 0;
+let localSnapshot: Promise<HistoryEntry[]> | undefined;
 
-const cloudMode = computed(() => auth.isLoggedIn);
+function invalidateLocalSnapshot(): void {
+  localSnapshot = undefined;
+}
+
+function readLocalSnapshot(): Promise<HistoryEntry[]> {
+  if (!localSnapshot) {
+    const pending = historyLog.snapshot();
+    let guarded: Promise<HistoryEntry[]>;
+    guarded = pending.catch((error) => {
+      if (localSnapshot === guarded) localSnapshot = undefined;
+      throw error;
+    });
+    localSnapshot = guarded;
+  }
+  return localSnapshot;
+}
+
+interface HistoryRequestContext {
+  userId: string;
+  token: string;
+  serverBaseUrl: string;
+}
+
+function captureHistoryRequestContext(): HistoryRequestContext | undefined {
+  const current = auth.session;
+  if (!current?.serverBaseUrl || auth.transitioning) return undefined;
+  try {
+    const issuer = canonicalServiceBaseUrl(current.serverBaseUrl);
+    if (issuer !== canonicalServiceBaseUrl(app.config.serverBaseUrl)) return undefined;
+    return { userId: current.user.id, token: current.token, serverBaseUrl: issuer };
+  } catch {
+    return undefined;
+  }
+}
+
+function isCurrentHistoryRequestContext(context: HistoryRequestContext | undefined): boolean {
+  const current = auth.session;
+  if (!context) return captureHistoryRequestContext() === undefined;
+  if (auth.transitioning || current?.user.id !== context.userId || current.token !== context.token) {
+    return false;
+  }
+  try {
+    return canonicalServiceBaseUrl(current.serverBaseUrl ?? '') === context.serverBaseUrl
+      && canonicalServiceBaseUrl(app.config.serverBaseUrl) === context.serverBaseUrl;
+  } catch {
+    return false;
+  }
+}
+
+const cloudMode = computed(() => captureHistoryRequestContext() !== undefined);
+
+useModalA11y(
+  legacyRedoCard,
+  computed(() => legacyRedo.value !== null),
+  () => { legacyRedo.value = null; },
+);
 
 /** Disambiguates duplicate local rows (see key construction below). */
 let rowSeq = 0;
@@ -151,28 +215,56 @@ async function joinTitles(sourceRows: Row[]): Promise<void> {
 
 async function loadPage(reset: boolean): Promise<void> {
   const request = ++loadRequest;
-  const sourceUserId = auth.session?.user.id;
+  const context = captureHistoryRequestContext();
   const isCurrentRequest = () =>
-    request === loadRequest && auth.session?.user.id === sourceUserId;
+    request === loadRequest && isCurrentHistoryRequestContext(context);
   if (reset) {
     rows.value = [];
     total.value = 0;
     page.value = 1;
+    cloudHasMore.value = false;
+    nextCursor.value = undefined;
   }
   loading.value = true;
   error.value = undefined;
   const target = reset ? 1 : page.value + 1;
   try {
     let batch: Row[] = [];
-    if (cloudMode.value) {
+    if (context) {
+      const client = new ServerClient(context.serverBaseUrl, () => context.token);
       const range = selectedDate.value ? localDayRange(selectedDate.value) : {};
-      const res = await app.serverClient.getHistory({
-        page: target,
-        pageSize: PAGE_SIZE,
-        ...range,
-      });
+      const requestedCursor = reset ? undefined : nextCursor.value ?? undefined;
+      const numberedQuery = { page: target, pageSize: PAGE_SIZE, ...range };
+      let res;
+      try {
+        res = await client.getHistory({
+          ...(requestedCursor
+            ? { cursor: requestedCursor }
+            : { page: target }),
+          pageSize: PAGE_SIZE,
+          ...range,
+        });
+      } catch (cause) {
+        if (!requestedCursor || !(cause instanceof ApiError) || ![400, 422].includes(cause.status)) {
+          throw cause;
+        }
+        // A rolling rollback may route a cursor continuation to a 2.1 server.
+        // Retry as an explicit numbered page instead of appending page 1.
+        res = await client.getHistory(numberedQuery);
+      }
+      if (
+        requestedCursor
+        && res.nextCursor === undefined
+        && res.hasMore === undefined
+        && res.page !== undefined
+      ) {
+        res = await client.getHistory(numberedQuery);
+      }
       if (!isCurrentRequest()) return;
-      total.value = res.total;
+      if (res.total !== undefined) total.value = res.total;
+      nextCursor.value = res.nextCursor;
+      cloudHasMore.value = res.hasMore
+        ?? (res.total !== undefined && rows.value.length + res.items.length < res.total);
       batch = res.items.map((i) => ({
         key: i.id,
         partId: i.partId,
@@ -188,14 +280,13 @@ async function loadPage(reset: boolean): Promise<void> {
       }));
     } else {
       const offset = (target - 1) * PAGE_SIZE;
-      const allForDay = selectedDate.value
-        ? await historyLog.listByLocalDay(selectedDate.value)
-        : undefined;
-      const list = allForDay
-        ? allForDay.slice(offset, offset + PAGE_SIZE)
-        : await historyLog.list(PAGE_SIZE, offset);
+      const snapshot = await readLocalSnapshot();
+      const matching = selectedDate.value
+        ? snapshot.filter((entry) => localDayKey(new Date(entry.gradedAt)) === selectedDate.value)
+        : snapshot;
+      const list = matching.slice(offset, offset + PAGE_SIZE);
       if (!isCurrentRequest()) return;
-      total.value = allForDay?.length ?? await historyLog.count();
+      total.value = matching.length;
       batch = list.map((e) => ({
         // gradedAt+partId alone can collide (same part graded twice within
         // one second) — disambiguate with a load-local sequence number.
@@ -232,7 +323,14 @@ async function loadPage(reset: boolean): Promise<void> {
 onMounted(() => void loadPage(true));
 // Login/logout and direct account replacement switch the source. Reload from
 // page 1 and invalidate in-flight reads so rows from two accounts never mix.
-watch(() => auth.session?.user.id, () => {
+watch(() => [
+  auth.session?.user.id,
+  auth.session?.token,
+  auth.session?.serverBaseUrl,
+  auth.transitioning,
+  app.config.serverBaseUrl,
+] as const, () => {
+  invalidateLocalSnapshot();
   selectedDate.value = null;
   activity.value = {};
   void loadPage(true);
@@ -242,6 +340,7 @@ watch(() => auth.session?.user.id, () => {
 watch(
   () => [progress.historyVersion, progress.cloudHistoryVersion] as const,
   () => {
+    invalidateLocalSnapshot();
     void loadPage(true);
     void loadActivity();
   },
@@ -266,21 +365,30 @@ async function retryPendingHistory(): Promise<void> {
 
 async function loadActivity(): Promise<void> {
   const request = ++activityRequest;
-  const sourceUserId = auth.session?.user.id;
+  const context = captureHistoryRequestContext();
   const isCurrentRequest = () =>
-    request === activityRequest && auth.session?.user.id === sourceUserId;
+    request === activityRequest && isCurrentHistoryRequestContext(context);
   activityLoading.value = true;
   activityError.value = undefined;
   try {
-    if (!cloudMode.value) {
-      const local = await historyLog.dailyActivity(ACTIVITY_DAYS, new Date());
+    if (!context) {
+      const entries = await readLocalSnapshot();
+      const cutoff = new Date(localActivityRange(ACTIVITY_DAYS, new Date()).since);
+      const local: Record<string, number> = {};
+      for (const entry of entries) {
+        const gradedAt = new Date(entry.gradedAt);
+        if (gradedAt.getTime() < cutoff.getTime()) break;
+        const day = localDayKey(gradedAt);
+        local[day] = (local[day] ?? 0) + 1;
+      }
       if (isCurrentRequest()) activity.value = local;
       return;
     }
 
     const range = localActivityRange(ACTIVITY_DAYS, new Date());
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-    const res = await app.serverClient.getHistoryActivity({ ...range, timeZone });
+    const client = new ServerClient(context.serverBaseUrl, () => context.token);
+    const res = await client.getHistoryActivity({ ...range, timeZone });
     if (!isCurrentRequest()) return;
     activity.value = res.activity;
   } catch {
@@ -334,14 +442,28 @@ const groups = computed(() => {
   return [...byDay.values()];
 });
 
-const hasMore = computed(() => rows.value.length < total.value);
+const hasMore = computed(() => cloudMode.value
+  ? cloudHasMore.value
+  : rows.value.length < total.value);
 
 function fmtPoints(r: Row): string {
   const a = formatScore(r.awardedPoints);
   return r.maxPoints !== undefined ? `${a}/${formatScore(r.maxPoints)} P` : `${a} P`;
 }
 
-function redo(row: Row): void {
+function redoLabel(row: Row): string {
+  const title = titles.value.get(titleKey(row)) ?? row.questionId;
+  const verdict = VERDICT_LABELS[row.verdict];
+  const time = timeFmt.format(new Date(row.gradedAt));
+  const provenance = row.provenanceUnknown
+    ? ' Version unbekannt. Aktuelle Bank muss bestätigt werden.'
+    : hasExactProvenance(row)
+      ? ` Quelle ${row.contentSource === 'local' ? 'Lokal' : 'Remote-Core'}, Bank ${row.contentId.slice(0, 7)}.`
+      : '';
+  return `${verdict}: ${title}. ${fmtPoints(row)}, ${time} Uhr.${provenance} Erneut üben.`;
+}
+
+function openRedo(row: Row): void {
   const exactProvenance = hasExactProvenance(row)
     ? { coreSource: row.contentSource, contentId: row.contentId }
     : {};
@@ -356,6 +478,21 @@ function redo(row: Row): void {
     },
   });
 }
+
+function redo(row: Row): void {
+  if (!hasExactProvenance(row)) {
+    legacyRedo.value = row;
+    return;
+  }
+  openRedo(row);
+}
+
+function confirmLegacyRedo(): void {
+  const row = legacyRedo.value;
+  if (!row) return;
+  legacyRedo.value = null;
+  openRedo(row);
+}
 </script>
 
 <template>
@@ -366,10 +503,6 @@ function redo(row: Row): void {
         {{ total }} {{ total === 1 ? 'Antwort' : 'Antworten' }}
       </span>
     </div>
-    <p class="hist__note">
-      <template v-if="cloudMode">Verlauf aus deinem Konto (alle Geräte, ab Anmeldung).</template>
-      <template v-else>Verlauf wird lokal auf diesem Gerät gespeichert.</template>
-    </p>
 
     <section class="hist__section">
       <div class="hist__section-head">
@@ -448,9 +581,7 @@ function redo(row: Row): void {
             :key="r.key"
             type="button"
             class="hist__row"
-            :title="r.provenanceUnknown
-              ? `${r.questionId} mit der aktuellen Aufgabenbank erneut üben; Quellversion unbekannt`
-              : `${r.questionId} erneut üben`"
+            :aria-label="redoLabel(r)"
             @click="redo(r)"
           >
             <StateIcon
@@ -461,17 +592,9 @@ function redo(row: Row): void {
             <span class="hist__row-copy">
               <span class="hist__row-title">{{ titles.get(titleKey(r)) ?? r.questionId }}</span>
               <span v-if="r.provenanceUnknown" class="hist__row-provenance">
-                Quellversion unbekannt · Wiederholung mit aktueller Bank
-              </span>
-              <span
-                v-else-if="r.contentSource && r.contentId"
-                class="hist__row-source"
-                :title="`Bank ${r.contentId}`"
-              >
-                {{ r.contentSource === 'local' ? 'Lokal' : 'Remote' }} · {{ shortCommit(r.contentId) }}
+                Version unbekannt
               </span>
             </span>
-            <span class="hist__row-part">{{ r.partId }}</span>
             <span class="hist__row-points">{{ fmtPoints(r) }}</span>
             <span class="hist__row-time">{{ timeFmt.format(new Date(r.gradedAt)) }}</span>
           </button>
@@ -487,6 +610,27 @@ function redo(row: Row): void {
     </div>
     </transition>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="legacyRedo"
+        class="hist-legacy q-modal-scrim q-modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="hist-legacy-title"
+        @click.self="legacyRedo = null"
+      >
+        <div ref="legacyRedoCard" class="hist-legacy__card">
+          <QIconButton class="hist-legacy__close" aria-label="Schließen" @click="legacyRedo = null" />
+          <h2 id="hist-legacy-title" class="hist-legacy__title">Aufgabenversion unbekannt</h2>
+          <p class="hist-legacy__text">Diese Antwort nennt keine Aufgabenbank.</p>
+          <div class="hist-legacy__actions">
+            <QButton variant="secondary" @click="legacyRedo = null">Abbrechen</QButton>
+            <QButton @click="confirmLegacyRedo">Aktuelle Bank verwenden</QButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -498,15 +642,11 @@ function redo(row: Row): void {
   display: flex;
   align-items: baseline;
   gap: 12px;
+  margin-bottom: 16px;
 }
 .hist__count {
   font-size: 12.5px;
   color: var(--q-mut-2);
-}
-.hist__note {
-  font-size: 11.5px;
-  color: var(--q-faint);
-  margin: 6px 0 16px;
 }
 .hist__section {
   background: var(--q-card);
@@ -566,9 +706,11 @@ function redo(row: Row): void {
   gap: 6px;
 }
 .hist__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 38px;
   align-items: center;
   gap: 11px;
+  min-height: 44px;
   padding: 11px 13px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
@@ -597,13 +739,13 @@ function redo(row: Row): void {
   outline-offset: 1px;
 }
 .hist__row-copy {
-  flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 7px;
 }
 .hist__row-title {
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   overflow: hidden;
@@ -611,30 +753,12 @@ function redo(row: Row): void {
   white-space: nowrap;
 }
 .hist__row-provenance {
+  flex: none;
   color: var(--q-mut-2);
   font-size: 9.5px;
   font-weight: 650;
   line-height: 1.25;
-}
-.hist__row-source {
-  align-self: flex-start;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 2px 6px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 999px;
-  background: var(--q-panel-2);
-  color: var(--q-mut-2);
-  font-size: 9.5px;
-  font-weight: 700;
-  line-height: 1.25;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.hist__row-part {
-  font: 500 10.5px ui-monospace, Menlo, monospace;
-  color: var(--q-faint);
-  flex: none;
 }
 .hist__row-points {
   font: 700 12px ui-monospace, Menlo, monospace;
@@ -687,9 +811,73 @@ function redo(row: Row): void {
 .hist__heatmap-note--error {
   color: var(--q-err-ink);
 }
+.hist-legacy__card {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  box-sizing: border-box;
+  padding: 22px;
+  border: 1px solid var(--q-border);
+  border-radius: 14px;
+  background: var(--q-card);
+  box-shadow: var(--q-shadow-modal);
+}
+.hist-legacy__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.hist-legacy__title {
+  margin: 0 44px 6px 0;
+  color: var(--q-ink);
+  font-size: 17px;
+  line-height: 1.35;
+}
+.hist-legacy__text {
+  margin: 0;
+  color: var(--q-mut);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.hist-legacy__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
 @media (max-width: 640px) {
-  .hist__row-part {
-    display: none;
+  .hist__head {
+    margin-bottom: 12px;
+  }
+  .hist__section {
+    padding: 12px;
+    margin-bottom: 14px;
+  }
+  .hist__day {
+    margin-bottom: 12px;
+  }
+  .hist__list {
+    gap: 4px;
+  }
+  .hist__row {
+    grid-template-columns: auto minmax(0, 1fr) auto 34px;
+    gap: 8px;
+    padding: 9px 10px;
+  }
+  .hist__row-copy {
+    gap: 5px;
+  }
+  .hist__row-time {
+    width: 34px;
+  }
+}
+
+@media (max-width: 420px) {
+  .hist__row-copy {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
   }
 }
 </style>

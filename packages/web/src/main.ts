@@ -1,5 +1,9 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
+import {
+  accountStorageIdentity,
+  canonicalServiceBaseUrl,
+} from '@qed2/core-logic';
 import '@fontsource/public-sans/400.css';
 import '@fontsource/public-sans/500.css';
 import '@fontsource/public-sans/600.css';
@@ -17,7 +21,7 @@ import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
 import { watchForBuildUpdates } from './platform/sw-update.js';
 import { installShellCommandRouter } from './platform/shell-commands.js';
-import { ports } from './services.js';
+import { authStore as authStorage, localProfileStore, ports } from './services.js';
 
 /** Drive the boot splash (index.html #boot-bar / #boot-label). */
 function bootProgress(pct: number, text: string): void {
@@ -44,6 +48,23 @@ async function boot(): Promise<void> {
   const appStore = useAppStore();
   await appStore.init();
   bootProgress(55, 'Fortschritt wird gelesen …');
+  const storedSession = await authStorage.getSession();
+  const currentServer = canonicalServiceBaseUrl(appStore.config.serverBaseUrl);
+  let storedAccountId: string | undefined;
+  if (storedSession) {
+    try {
+      const storedServer = storedSession.serverBaseUrl
+        ? canonicalServiceBaseUrl(storedSession.serverBaseUrl)
+        : undefined;
+      if (storedServer === currentServer) {
+        storedAccountId = accountStorageIdentity(storedServer, storedSession.user.id);
+      }
+    } catch {
+      // Auth init clears a malformed/mismatched persisted session. Boot the
+      // isolated guest profile first so no account data becomes visible.
+    }
+  }
+  await localProfileStore.initialize(storedAccountId);
   const progress = useProgressStore();
   await progress.init();
   bootProgress(78, 'Konto wird geprüft …');
@@ -66,7 +87,19 @@ async function boot(): Promise<void> {
   bootProgress(100, 'Bereit');
   app.mount('#app');
   const removeShellCommandListener = installShellCommandRouter(router);
-  window.addEventListener('beforeunload', removeShellCommandListener, { once: true });
+  const revalidateAccount = () => {
+    if (document.visibilityState === 'hidden') return;
+    void auth.refreshFromStorage();
+  };
+  // Final cross-window safety net for browsers whose privacy policy disables
+  // both BroadcastChannel and storage events.
+  window.addEventListener('focus', revalidateAccount);
+  document.addEventListener('visibilitychange', revalidateAccount);
+  window.addEventListener('beforeunload', () => {
+    removeShellCommandListener();
+    window.removeEventListener('focus', revalidateAccount);
+    document.removeEventListener('visibilitychange', revalidateAccount);
+  }, { once: true });
 
   // After mount: announce what changed if this is a new build (non-blocking).
   void useUiStore().checkForChangelog();

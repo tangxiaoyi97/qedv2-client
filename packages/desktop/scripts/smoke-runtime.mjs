@@ -5,6 +5,13 @@ import { lstat, readFile, readdir, readlink } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import {
+  BANK_MANIFEST_FORMAT,
+  BANK_MANIFEST_PATH,
+  BANK_WIRE_CONTRACT_VERSION,
+  readBankManifestV2,
+  validateBankManifestV2,
+} from './bank-manifest-v2.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(here, '..')
@@ -22,7 +29,12 @@ const INTEGRITY_ROOTS = [
   'bank/schema',
   'bank/revisions',
 ]
-const INTEGRITY_FILES = ['core/package.json', 'core/pnpm-lock.yaml', 'bank/VERSION']
+const INTEGRITY_FILES = [
+  'core/package.json',
+  'core/pnpm-lock.yaml',
+  'bank/VERSION',
+  BANK_MANIFEST_PATH,
+]
 
 function usageError(message) {
   throw new Error(
@@ -155,6 +167,12 @@ function validateManifest(value) {
     typeof value.core.commit !== 'string' ||
     typeof value.core.entry !== 'string' ||
     typeof value.bank.commit !== 'string' ||
+    !/^[0-9a-f]{40}$/u.test(value.bank.commit) ||
+    value.bank.manifest !== BANK_MANIFEST_PATH ||
+    value.bank.manifestFormatVersion !== BANK_MANIFEST_FORMAT ||
+    value.bank.wireContractVersion !== BANK_WIRE_CONTRACT_VERSION ||
+    typeof value.bank.rootSha256 !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(value.bank.rootSha256) ||
     !Array.isArray(value.bank.schemaVersions) ||
     value.revisions.catalog !== 'bank/revisions/revision-catalog.v1.json' ||
     value.revisions.formatVersion !== 1 ||
@@ -195,6 +213,10 @@ function validateManifest(value) {
   const catalog = value.files.find((file) => file.path === value.revisions.catalog)
   if (!catalog || catalog.type !== 'file') {
     throw new Error('runtime-manifest.json does not protect the immutable revision catalog.')
+  }
+  const bankManifest = value.files.find((file) => file.path === value.bank.manifest)
+  if (!bankManifest || bankManifest.type !== 'file') {
+    throw new Error('runtime-manifest.json does not protect Bank Manifest v2.')
   }
   return value
 }
@@ -434,6 +456,7 @@ async function waitForIdentity(baseUrl, child, logs, manifest, revisionCatalog, 
         info.version !== manifest.core.version ||
         info.commit !== manifest.core.commit ||
         info.bank?.commit !== manifest.bank.commit ||
+        info.bank?.rootSha256 !== manifest.bank.rootSha256 ||
         info.bank?.revisions?.available !== true ||
         info.bank.revisions.pinnedCommit !== manifest.revisions.pinnedCommit ||
         info.bank.revisions.commitCount !== manifest.revisions.commitCount ||
@@ -445,6 +468,17 @@ async function waitForIdentity(baseUrl, child, logs, manifest, revisionCatalog, 
         )
       ) {
         throw new Error('Bundled Core identity does not match runtime-manifest.json')
+      }
+      const bankManifest = validateBankManifestV2(
+        await boundedJson(`${baseUrl}/content/manifest/v2`, 16 * 1024 * 1024),
+        manifest.bank.commit,
+      )
+      if (
+        bankManifest.bank.rootSha256 !== manifest.bank.rootSha256 ||
+        bankManifest.bank.immutableAssetBaseUrl !==
+          `/content/banks/${manifest.bank.commit}/assets`
+      ) {
+        throw new Error('Bundled Core Bank Manifest v2 does not match runtime-manifest.json')
       }
       const revisions = []
       for (const commit of revisionCommits) {
@@ -508,6 +542,13 @@ export async function runSmoke(argv = process.argv.slice(2)) {
   const revisionCatalog = JSON.parse(
     await readFile(path.join(runtimeRoot, ...manifest.revisions.catalog.split('/')), 'utf8'),
   )
+  const bankManifest = await readBankManifestV2(
+    path.join(runtimeRoot, ...manifest.bank.manifest.split('/')),
+    manifest.bank.commit,
+  )
+  if (bankManifest.bank.rootSha256 !== manifest.bank.rootSha256) {
+    throw new Error('Packaged Bank Manifest v2 root does not match runtime-manifest.json')
+  }
   const revisionCommits = validateRevisionCommitOrder(revisionCatalog, manifest)
   const integrity = await verifyRuntimeInventory(runtimeRoot, manifest)
   process.stdout.write(
@@ -530,6 +571,8 @@ export async function runSmoke(argv = process.argv.slice(2)) {
     PORT: String(port),
     BANK_PATH: bankDirectory,
     BANK_STRICT: 'true',
+    BANK_INTEGRITY_PROFILE: 'production',
+    BANK_ROOT_SHA256: manifest.bank.rootSha256,
     REVISION_VAULT_PATH: path.join(bankDirectory, 'revisions'),
     REVISION_VAULT_REQUIRED: 'true',
     REQUEST_LOG: 'false',

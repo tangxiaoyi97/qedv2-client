@@ -5,6 +5,7 @@
 import type { AiCapabilities } from '../ai/types.js';
 import type { AnswerKind, Question, QuestionSummary, Term, ExamPart } from '../model/question.js';
 import type { ArchiveContent, PartEntry, CompetencyEntry, ServerArchiveState } from '../model/archive.js';
+import type { RecommendLearningEvent } from '../store/learning-event-store.js';
 
 /* ================================================================== *
  * Shared error envelope (contract §7.2)
@@ -95,6 +96,7 @@ export interface BatchResponse {
 export interface RecommendUserState {
   perPart: Pick<PartEntry, 'partId' | 'fsrs'>[];
   perCompetency: Pick<CompetencyEntry, 'code' | 'mastery'>[];
+  learning?: { events: RecommendLearningEvent[] };
 }
 
 export interface RecommendRequest {
@@ -104,7 +106,12 @@ export interface RecommendRequest {
   strategy?: 'smart-review';
 }
 
-export type RecommendReason = 'due-review' | 'weak-competency' | 'coldstart';
+export type RecommendReason =
+  | 'due-review'
+  | 'weak-competency'
+  | 'coldstart'
+  | 'correction-due'
+  | 'near-transfer';
 
 export interface RecommendItem {
   questionId: string;
@@ -133,12 +140,55 @@ export interface CoreInfo {
   };
   sourceRepo: string;
   buildTime: string;
+  capabilities?: { learningRecommendations?: boolean };
 }
 
-export interface ManifestResponse {
+export interface LegacyManifestResponse {
   commit: string;
   items: Record<string, string>;
+  formatVersion?: undefined;
 }
+
+export interface ManifestQuestionV2 {
+  /** Repository path of the raw question JSON. */
+  path: string;
+  /** SHA-256 of the canonical raw bank JSON. */
+  rawSha256: string;
+  /** SHA-256 of the canonical parsed Question wire payload. */
+  wireSha256: string;
+  /** Asset keys relative to the bank's assets/ directory. */
+  assets: string[];
+}
+
+export interface ManifestAssetV2 {
+  /** Repository path; always exactly `assets/${key}`. */
+  path: string;
+  bytes: number;
+  mimeType: 'image/png';
+  sha256: string;
+}
+
+/**
+ * Current-bank Manifest v2. `items` mirrors each question's exact-file
+ * `rawSha256` as a compatibility inventory for commit-sandwich comparisons.
+ * It is deliberately not the legacy manifest's canonical-JSON contentHash.
+ */
+export interface ManifestV2Response {
+  commit: string;
+  items: Record<string, string>;
+  formatVersion: 2;
+  wireContractVersion: 1;
+  bank: {
+    commit: string;
+    rootSha256: string;
+    schema: { path: 'schema/question.ts'; sha256: string };
+    immutableAssetBaseUrl: string;
+  };
+  questions: Record<string, ManifestQuestionV2>;
+  assets: Record<string, ManifestAssetV2>;
+}
+
+export type ManifestResponse = LegacyManifestResponse | ManifestV2Response;
 
 /* --- GET /content/search (search upgrade) — fuzzy full-text, ranked --- */
 
@@ -195,6 +245,11 @@ export interface RefreshResponse {
 }
 
 export interface SyncRequest {
+  /**
+   * Stable identity for one logical write. New clients keep it across an
+   * ambiguous network retry; 2.1 servers safely ignore the additive field.
+   */
+  clientMutationId?: string;
   baseVersion: number;
   localArchive: ArchiveContent;
 }
@@ -244,6 +299,8 @@ export interface SyncConflict {
 export type SyncResponse = SyncFastForward | SyncMerged | SyncConflict;
 
 export interface ResolveRequest {
+  /** Shared idempotency namespace with POST /me/sync. */
+  clientMutationId?: string;
   baseServerVersion: number;
   resolvedArchive: ArchiveContent;
 }
@@ -267,7 +324,7 @@ export interface AttemptRecord {
   partId: string;
   correct: boolean;
   awardedPoints: number;
-  elapsedMs?: number;
+  elapsedMs?: number | null;
   gradedAt: string;
 }
 
@@ -280,6 +337,8 @@ export interface HistoryQuery {
   until?: string;
   /** 1-based; default 1. */
   page?: number;
+  /** Opaque keyset cursor returned by the preceding page. Mutually exclusive with page. */
+  cursor?: string;
   /** Default 50, server max 200. */
   pageSize?: number;
   partId?: string;
@@ -304,9 +363,13 @@ export interface ServerHistoryItem {
 
 export interface HistoryResponse {
   items: ServerHistoryItem[];
-  page: number;
+  /** Present for page-mode responses; omitted on cursor continuation pages. */
+  page?: number;
   pageSize: number;
-  total: number;
+  /** Present for page-mode responses; omitted on cursor continuation pages. */
+  total?: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
 }
 
 export interface HistoryActivityQuery {

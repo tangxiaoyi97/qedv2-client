@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ATTEMPT_OUTBOX_STORAGE_KEY,
+  AMBIGUOUS_GUEST_ATTEMPT_OWNER,
+  attemptOutboxRowKey,
+  archiveStorageKey,
   ArchiveStore,
   AttemptOutbox,
   GUEST_ATTEMPT_OWNER,
   GUEST_CLAIM_STORAGE_KEY,
-  HISTORY_STORAGE_KEY,
+  historyEventRowKey,
+  guestLocalProfileId,
   LocalGradeCommitStore,
+  LocalProfileStore,
   STORAGE,
   type LocalGradeCommitInput,
   type AttemptOwnerSnapshot,
@@ -14,12 +18,14 @@ import {
   type StorageBatchCommit,
   type StoragePort,
   type StorageVersionedEntry,
+  userLocalProfileId,
 } from '../src/index.js';
 
 class AtomicMemoryStorage implements StoragePort {
   readonly values = new Map<string, unknown>();
   readonly revisions = new Map<string, number>();
   beforeCommit: (() => Promise<void>) | undefined;
+  afterCommitBeforeResponse: (() => Promise<void>) | undefined;
   throwAfterCommit = false;
 
   private id(address: StorageAddress): string {
@@ -54,6 +60,7 @@ class AtomicMemoryStorage implements StoragePort {
   }
 
   async readBatch(addresses: readonly StorageAddress[]): Promise<StorageVersionedEntry[]> {
+    if (addresses.length > 32) throw new TypeError('test storage batch exceeds 32 addresses');
     // Yield once so independently created window stores can observe the same
     // snapshot before either reaches commitBatch.
     await Promise.resolve();
@@ -70,6 +77,9 @@ class AtomicMemoryStorage implements StoragePort {
   }
 
   async commitBatch(request: StorageBatchCommit): Promise<{ committed: boolean }> {
+    if (request.ifRevisions.length > 32 || request.mutations.length > 32) {
+      throw new TypeError('test storage batch exceeds 32 addresses');
+    }
     const hook = this.beforeCommit;
     this.beforeCommit = undefined;
     if (hook) await hook();
@@ -90,8 +100,12 @@ class AtomicMemoryStorage implements StoragePort {
     for (const [key, value] of nextValues) this.values.set(key, value);
     this.revisions.clear();
     for (const [key, value] of nextRevisions) this.revisions.set(key, value);
-    if (this.throwAfterCommit) {
-      this.throwAfterCommit = false;
+    const afterCommit = this.afterCommitBeforeResponse;
+    this.afterCommitBeforeResponse = undefined;
+    const throwAfterCommit = this.throwAfterCommit;
+    this.throwAfterCommit = false;
+    if (afterCommit) await afterCommit();
+    if (throwAfterCommit) {
       throw new Error('simulated IPC response loss');
     }
     return { committed: true };
@@ -142,6 +156,12 @@ function input(
           && Array.isArray((current as { graded?: unknown }).graded)
           && (current as { graded: string[] }).graded.includes(attemptId);
       },
+      matchesAttempt(current, attempt) {
+        return !!current
+          && typeof current === 'object'
+          && Array.isArray((current as { graded?: unknown }).graded)
+          && (current as { graded: string[] }).graded.includes(attempt.clientAttemptId);
+      },
     },
   };
 }
@@ -161,6 +181,102 @@ describe('LocalGradeCommitStore', () => {
     expect(left.guestGeneration).toBeTruthy();
   });
 
+  it('migrates a large legacy outbox in bounded atomic chunks', async () => {
+    const storage = new AtomicMemoryStorage();
+    const legacy = Array.from({ length: 65 }, (_, index) => ({
+      userId: GUEST_ATTEMPT_OWNER,
+      attempt: {
+        clientAttemptId: `legacy-${index}`,
+        questionId: `q-${index}`,
+        partId: `p-${index}`,
+        correct: true,
+        awardedPoints: 1,
+        gradedAt: '2026-08-08T08:00:00.000Z',
+      },
+    }));
+    await storage.set(STORAGE.history, 'attempt-outbox', legacy);
+
+    const outbox = new AttemptOutbox(storage);
+    expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(65);
+    expect(await storage.get(STORAGE.history, 'attempt-outbox')).toBeUndefined();
+  });
+
+  it('quarantines generationless guest rows from an interrupted 2.1 claim', async () => {
+    const storage = new AtomicMemoryStorage();
+    await storage.set(STORAGE.history, GUEST_CLAIM_STORAGE_KEY, {
+      version: 1,
+      currentGeneration: 'new-generation',
+      routes: [{ sourceGeneration: 'old-generation', destinationUserId: 'new-user' }],
+      pending: { sourceGeneration: 'old-generation', destinationUserId: 'new-user' },
+    });
+    await storage.set(STORAGE.history, 'attempt-outbox', [{
+      userId: GUEST_ATTEMPT_OWNER,
+      attempt: {
+        clientAttemptId: 'ambiguous-legacy',
+        questionId: 'q',
+        partId: 'p',
+        correct: false,
+        awardedPoints: 0,
+        gradedAt: '2026-08-08T08:00:00.000Z',
+      },
+    }]);
+
+    const outbox = new AttemptOutbox(storage);
+    expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect(await outbox.count(AMBIGUOUS_GUEST_ATTEMPT_OWNER)).toBe(1);
+  });
+
+  it('keeps a late 2.1 write unresolved after an empty journal was claimed and finished', async () => {
+    const storage = new AtomicMemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    await outbox.captureGuestOwner();
+    await outbox.beginGuestClaim('new-user');
+    await outbox.finishGuestClaim('new-user');
+
+    await storage.set(STORAGE.history, 'attempt-outbox', [{
+      userId: GUEST_ATTEMPT_OWNER,
+      attempt: {
+        clientAttemptId: 'late-legacy',
+        questionId: 'q-late',
+        partId: 'p-late',
+        correct: true,
+        awardedPoints: 1,
+        gradedAt: '2026-08-08T08:00:00.000Z',
+      },
+    }]);
+
+    expect(await outbox.count(AMBIGUOUS_GUEST_ATTEMPT_OWNER)).toBe(1);
+    expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect(await outbox.count('new-user')).toBe(0);
+  });
+
+  it('resumes a chunk migration after the marker commit response is lost', async () => {
+    const storage = new AtomicMemoryStorage();
+    const first = new AttemptOutbox(storage);
+    await first.captureGuestOwner();
+    await storage.set(STORAGE.history, 'attempt-outbox', [{
+      userId: GUEST_ATTEMPT_OWNER,
+      attempt: {
+        clientAttemptId: 'marker-recovery',
+        questionId: 'q-marker',
+        partId: 'p-marker',
+        correct: false,
+        awardedPoints: 0,
+        gradedAt: '2026-08-08T08:00:00.000Z',
+      },
+    }]);
+    storage.throwAfterCommit = true;
+
+    await expect(first.count(GUEST_ATTEMPT_OWNER)).rejects.toThrow('simulated IPC response loss');
+    const restarted = new AttemptOutbox(storage);
+    expect(await restarted.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+    expect(await storage.get(STORAGE.history, 'attempt-outbox')).toBeUndefined();
+    expect(await storage.get<{ legacyMigration?: unknown }>(
+      STORAGE.history,
+      GUEST_CLAIM_STORAGE_KEY,
+    )).not.toHaveProperty('legacyMigration');
+  });
+
   it('publishes outbox, archive, history and session in one commit', async () => {
     const storage = new AtomicMemoryStorage();
     const result = await new LocalGradeCommitStore(storage).commit(input('event-1', 'session-1'));
@@ -168,13 +284,37 @@ describe('LocalGradeCommitStore', () => {
     expect(result.recovered).toBe(false);
     expect(result.ownerId).toBe('user-1');
     expect(await storage.get(STORAGE.archive, 'current')).toEqual(result.archive);
-    expect(await storage.get<Array<{ clientAttemptId: string }>>(STORAGE.history, HISTORY_STORAGE_KEY))
-      .toEqual([expect.objectContaining({ clientAttemptId: 'event-1' })]);
-    expect(await storage.get<Array<{ attempt: { clientAttemptId: string } }>>(
+    expect(await storage.get<{ entry: { clientAttemptId: string } }>(
       STORAGE.history,
-      ATTEMPT_OUTBOX_STORAGE_KEY,
-    )).toEqual([expect.objectContaining({ attempt: expect.objectContaining({ clientAttemptId: 'event-1' }) })]);
+      historyEventRowKey('event-1'),
+    )).toEqual(expect.objectContaining({
+      entry: expect.objectContaining({ clientAttemptId: 'event-1' }),
+    }));
+    expect(await storage.get<{ attempt: { clientAttemptId: string } }>(
+      STORAGE.history,
+      attemptOutboxRowKey('user-1', 'event-1'),
+    )).toEqual(expect.objectContaining({
+      attempt: expect.objectContaining({ clientAttemptId: 'event-1' }),
+    }));
     expect(await storage.get(STORAGE.app, 'session-1')).toEqual({ version: 4, graded: ['event-1'] });
+  });
+
+  it('replaces the automatic FSRS grade with the manual judgement atomically', async () => {
+    const storage = new AtomicMemoryStorage();
+    const event = input('event-manual', 'session-manual');
+    event.manualGrading = 'baffled';
+
+    const result = await new LocalGradeCommitStore(storage).commit(event);
+
+    expect(result.grading).toBe('baffled');
+    expect(result.historyEntry.grading).toBe('baffled');
+    expect(result.archive.content.perPart).toEqual([
+      expect.objectContaining({
+        partId: event.attempt.partId,
+        grading: 'baffled',
+        fsrs: expect.objectContaining({ reps: 1, lapses: 1 }),
+      }),
+    ]);
   });
 
   it('retries a cross-window CAS conflict without losing either answer', async () => {
@@ -187,20 +327,14 @@ describe('LocalGradeCommitStore', () => {
       second.commit(input('event-b', 'session-b', { userId: 'user-1' }, 'shared-part')),
     ]);
 
-    const history = await storage.get<Array<{ clientAttemptId: string }>>(
-      STORAGE.history,
-      HISTORY_STORAGE_KEY,
-    );
-    expect(new Set(history?.map((entry) => entry.clientAttemptId))).toEqual(
-      new Set(['event-a', 'event-b']),
-    );
-    const outbox = await storage.get<Array<{ attempt: { clientAttemptId: string } }>>(
-      STORAGE.history,
-      ATTEMPT_OUTBOX_STORAGE_KEY,
-    );
-    expect(new Set(outbox?.map((entry) => entry.attempt.clientAttemptId))).toEqual(
-      new Set(['event-a', 'event-b']),
-    );
+    await expect(storage.get(STORAGE.history, historyEventRowKey('event-a')))
+      .resolves.toBeDefined();
+    await expect(storage.get(STORAGE.history, historyEventRowKey('event-b')))
+      .resolves.toBeDefined();
+    await expect(storage.get(STORAGE.history, attemptOutboxRowKey('user-1', 'event-a')))
+      .resolves.toBeDefined();
+    await expect(storage.get(STORAGE.history, attemptOutboxRowKey('user-1', 'event-b')))
+      .resolves.toBeDefined();
     expect(await storage.get(STORAGE.app, 'session-a')).toEqual({ version: 4, graded: ['event-a'] });
     expect(await storage.get(STORAGE.app, 'session-b')).toEqual({ version: 4, graded: ['event-b'] });
   });
@@ -223,9 +357,10 @@ describe('LocalGradeCommitStore', () => {
         lastResult: expect.objectContaining({ correct: true }),
       }),
     ]);
-    expect(await storage.get(STORAGE.history, HISTORY_STORAGE_KEY)).toEqual([
-      expect.objectContaining({ clientAttemptId: 'event-star' }),
-    ]);
+    expect(await storage.get(STORAGE.history, historyEventRowKey('event-star')))
+      .toEqual(expect.objectContaining({
+        entry: expect.objectContaining({ clientAttemptId: 'event-star' }),
+      }));
   });
 
   it('rejects a stale sync archive after another window commits progress', async () => {
@@ -247,11 +382,10 @@ describe('LocalGradeCommitStore', () => {
     const storage = new AtomicMemoryStorage();
     const outbox = new AttemptOutbox(storage);
     await outbox.enqueue('user-1', input('uploaded-old', 'unused').attempt);
-    storage.beforeCommit = async () => {
-      await new LocalGradeCommitStore(storage).commit(input('graded-during-ack', 'session-ack'));
-    };
-
-    await outbox.remove('user-1', ['uploaded-old']);
+    await Promise.all([
+      outbox.remove('user-1', ['uploaded-old']),
+      new LocalGradeCommitStore(storage).commit(input('graded-during-ack', 'session-ack')),
+    ]);
 
     expect((await outbox.list('user-1')).map((attempt) => attempt.clientAttemptId)).toEqual([
       'graded-during-ack',
@@ -264,10 +398,12 @@ describe('LocalGradeCommitStore', () => {
     const generation = 'claim-race-generation';
     await storage.set(STORAGE.history, GUEST_CLAIM_STORAGE_KEY, {
       version: 1,
-      currentGeneration: 'fresh-generation',
-      routes: [{ sourceGeneration: generation, destinationUserId: 'claimed-user' }],
+      currentGeneration: generation,
+      routes: [],
     });
-    await outbox.enqueue(GUEST_ATTEMPT_OWNER, input('guest-before-claim', 'unused').attempt);
+    const oldGuest = await outbox.captureGuestOwner();
+    await outbox.enqueue(oldGuest, input('guest-before-claim', 'unused').attempt);
+    await outbox.beginGuestClaim('claimed-user');
     storage.beforeCommit = async () => {
       await new LocalGradeCommitStore(storage).commit(input(
         'grade-during-claim',
@@ -276,7 +412,11 @@ describe('LocalGradeCommitStore', () => {
       ));
     };
 
-    await expect(outbox.claim(GUEST_ATTEMPT_OWNER, 'claimed-user')).resolves.toBe(1);
+    await expect(outbox.claim(
+      GUEST_ATTEMPT_OWNER,
+      'claimed-user',
+      generation,
+    )).resolves.toBe(1);
 
     expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
     expect(new Set(
@@ -307,9 +447,37 @@ describe('LocalGradeCommitStore', () => {
       }),
     );
     expect(result.ownerId).toBe('claimed-user');
-    expect(await storage.get(STORAGE.history, ATTEMPT_OUTBOX_STORAGE_KEY)).toEqual([
-      expect.objectContaining({ userId: 'claimed-user' }),
-    ]);
+    expect(await storage.get(
+      STORAGE.history,
+      attemptOutboxRowKey('claimed-user', 'event-claim'),
+    )).toEqual(expect.objectContaining({ userId: 'claimed-user' }));
+  });
+
+  it('does not strand a direct enqueue when claim enumerates before its row commit', async () => {
+    const storage = new AtomicMemoryStorage();
+    const profiles = new LocalProfileStore(storage);
+    await profiles.initialize();
+    const first = new AttemptOutbox(storage);
+    const claimant = new AttemptOutbox(storage);
+    const owner = await first.captureGuestOwner();
+    storage.beforeCommit = async () => {
+      await profiles.claimGuestForUser('claimed-user');
+      await claimant.claim(GUEST_ATTEMPT_OWNER, 'claimed-user', owner.guestGeneration);
+      await claimant.finishGuestClaim('claimed-user');
+    };
+
+    const resolved = await first.enqueue(owner, {
+      clientAttemptId: 'direct-enqueue-claim-race',
+      questionId: 'q-race',
+      partId: 'p-race',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-08-08T08:00:00.000Z',
+    });
+
+    expect(resolved).toBe('claimed-user');
+    expect(await first.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+    expect(await first.count('claimed-user')).toBe(1);
   });
 
   it('recognizes a COMMIT whose IPC response was lost and never duplicates it', async () => {
@@ -320,7 +488,169 @@ describe('LocalGradeCommitStore', () => {
 
     await expect(store.commit(event)).resolves.toMatchObject({ recovered: true });
     await expect(store.commit(event)).resolves.toMatchObject({ recovered: true });
-    expect(await storage.get<Array<unknown>>(STORAGE.history, HISTORY_STORAGE_KEY)).toHaveLength(1);
-    expect(await storage.get<Array<unknown>>(STORAGE.history, ATTEMPT_OUTBOX_STORAGE_KEY)).toHaveLength(1);
+    expect(await storage.get(STORAGE.history, historyEventRowKey('event-uncertain'))).toBeDefined();
+    expect(await storage.get(
+      STORAGE.history,
+      attemptOutboxRowKey('user-1', 'event-uncertain'),
+    )).toBeDefined();
+  });
+
+  it('recovers a lost response without losing or re-applying the manual judgement', async () => {
+    const storage = new AtomicMemoryStorage();
+    storage.throwAfterCommit = true;
+    const event = input('event-manual-uncertain', 'session-manual-uncertain');
+    event.manualGrading = 'careless';
+    const store = new LocalGradeCommitStore(storage);
+
+    const recovered = await store.commit(event);
+    const retried = await store.commit(event);
+
+    expect(recovered).toMatchObject({ recovered: true, grading: 'careless' });
+    expect(retried).toMatchObject({ recovered: true, grading: 'careless' });
+    const archive = await storage.get<{ content: { perPart: Array<{ fsrs: { reps: number } }> } }>(
+      STORAGE.archive,
+      'current',
+    );
+    expect(archive?.content.perPart[0]?.fsrs.reps).toBe(1);
+  });
+
+  it('rejects reuse of one attempt identity with a different payload', async () => {
+    const storage = new AtomicMemoryStorage();
+    const store = new LocalGradeCommitStore(storage);
+    const original = input('event-reused', 'session-reused');
+    await store.commit(original);
+    const changed = input('event-reused', 'session-reused');
+    changed.attempt.questionId = 'different-question';
+
+    await expect(store.commit(changed)).rejects.toThrow('different history data');
+  });
+
+  it('rejects reuse of one attempt identity with a different manual judgement', async () => {
+    const storage = new AtomicMemoryStorage();
+    const store = new LocalGradeCommitStore(storage);
+    const original = input('event-manual-reused', 'session-manual-reused');
+    original.manualGrading = 'good';
+    await store.commit(original);
+    const changed = input('event-manual-reused', 'session-manual-reused');
+    changed.manualGrading = 'baffled';
+
+    await expect(store.commit(changed)).rejects.toThrow('different history data');
+  });
+
+  it('re-resolves both profile and outbox after a committed response is lost during claim', async () => {
+    const storage = new AtomicMemoryStorage();
+    const profiles = new LocalProfileStore(storage);
+    await profiles.initialize();
+    const outbox = new AttemptOutbox(storage);
+    const captured = await outbox.captureGuestOwner();
+    const guest = profiles.current();
+    const event = input('event-claim-after-commit', 'session-claim-after-commit', {
+      ...captured,
+      localProfileId: guest,
+    });
+    const store = new LocalGradeCommitStore(
+      storage,
+      guest,
+      (profileId) => profiles.resolve(profileId),
+    );
+    storage.throwAfterCommit = true;
+    storage.afterCommitBeforeResponse = async () => {
+      await profiles.claimGuestForUser('claimed-user');
+      const route = await outbox.pendingGuestClaimRoute();
+      if (!route) throw new Error('claim route was not persisted');
+      await outbox.claim(GUEST_ATTEMPT_OWNER, 'claimed-user', route.sourceGeneration);
+    };
+
+    await expect(store.commit(event)).resolves.toMatchObject({
+      recovered: true,
+      ownerId: 'claimed-user',
+      profileId: userLocalProfileId('claimed-user'),
+    });
+    expect(await storage.get(STORAGE.archive, archiveStorageKey(guest))).toBeUndefined();
+    expect(await storage.get(
+      STORAGE.history,
+      attemptOutboxRowKey('claimed-user', event.attempt.clientAttemptId),
+    )).toBeDefined();
+  });
+
+  it('routes a late guest-session grade into the explicitly claimed local profile', async () => {
+    const storage = new AtomicMemoryStorage();
+    const guest = guestLocalProfileId('11111111-1111-4111-8111-111111111111');
+    const user = userLocalProfileId('claimed-user');
+    const store = new LocalGradeCommitStore(
+      storage,
+      undefined,
+      (profileId) => profileId === guest ? user : profileId,
+    );
+
+    await store.commit(input('event-profile-route', 'session-profile-route', {
+      userId: 'claimed-user',
+      localProfileId: guest,
+    }));
+
+    expect(await storage.get(STORAGE.archive, archiveStorageKey(guest))).toBeUndefined();
+    expect(await storage.get(STORAGE.archive, archiveStorageKey(user))).toBeDefined();
+    expect(await storage.get<{ profileId: string }>(
+      STORAGE.history,
+      historyEventRowKey('event-profile-route', guest),
+    )).toMatchObject({ profileId: guest });
+  });
+
+  it('retries against the claimed profile when a profile hand-off wins the CAS race', async () => {
+    const storage = new AtomicMemoryStorage();
+    const profiles = new LocalProfileStore(storage);
+    await profiles.initialize();
+    const guest = profiles.current();
+    const user = userLocalProfileId('claimed-user');
+    const grade = new LocalGradeCommitStore(
+      storage,
+      guest,
+      (profileId) => profiles.resolve(profileId),
+    );
+    storage.beforeCommit = () => profiles.claimGuestForUser('claimed-user').then(() => undefined);
+
+    const result = await grade.commit(input('event-profile-race', 'session-profile-race', {
+      userId: 'claimed-user',
+      localProfileId: guest,
+    }));
+
+    expect(result.ownerId).toBe('claimed-user');
+    expect(await storage.get(STORAGE.archive, archiveStorageKey(guest))).toBeUndefined();
+    expect(await storage.get(STORAGE.archive, archiveStorageKey(user))).toEqual(result.archive);
+    expect(await storage.get<{ profileId: string }>(
+      STORAGE.history,
+      historyEventRowKey('event-profile-race', guest),
+    )).toMatchObject({ profileId: guest });
+  });
+
+  it('confirms a lost grade response after claim moves archive and outbox but not history', async () => {
+    const storage = new AtomicMemoryStorage();
+    const profiles = new LocalProfileStore(storage);
+    const guest = (await profiles.initialize()).guestProfileId;
+    const outbox = new AttemptOutbox(storage);
+    const owner = await outbox.captureGuestOwner();
+    const grade = new LocalGradeCommitStore(storage, guest);
+    storage.afterCommitBeforeResponse = async () => {
+      await profiles.claimGuestForUser('claimed-user');
+      await outbox.claim(GUEST_ATTEMPT_OWNER, 'claimed-user', owner.guestGeneration);
+    };
+    storage.throwAfterCommit = true;
+
+    const result = await grade.commit(input('event-claim-response-loss', 'session-claim-loss', {
+      ...owner,
+      localProfileId: guest,
+    }));
+
+    expect(result).toMatchObject({ recovered: true, profileId: 'user:claimed-user' });
+    expect(result.archive.content.perPart[0]?.fsrs.reps).toBe(1);
+    expect(await storage.get(
+      STORAGE.history,
+      historyEventRowKey('event-claim-response-loss', guest),
+    )).toBeDefined();
+    expect(await storage.get(
+      STORAGE.history,
+      historyEventRowKey('event-claim-response-loss', userLocalProfileId('claimed-user')),
+    )).toBeUndefined();
+    expect(await outbox.count('claimed-user')).toBe(1);
   });
 });

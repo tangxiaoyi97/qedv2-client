@@ -3,16 +3,19 @@
  * sticky bottom bar) renders the primary action, feedback pill and solution
  * sheet; PartPlayer reports its state and accepts explicit shell commands.
  */
-import type { GradeResult, Grading, SelfAssessment } from '@qed2/core-logic';
+import type { GradeResult, Grading, SelfAssessment, Submission } from '@qed2/core-logic';
 import type { AnswerPreview } from '../question/submission-preview.js';
 import type { SelfAssessmentUiState } from './self-assessment.js';
 
 export interface PartPlayerState {
   phase: 'answering' | 'self-assessing' | 'reviewed';
+  attemptPhase: 'first' | 'correction';
   /** Enough input to allow Überprüfen (answering phase only). */
   canSubmit: boolean;
   /** Final result once reviewed. */
   result: GradeResult | null;
+  /** Immutable first result while a correction is edited/reviewed. */
+  firstResult: GradeResult | null;
   /** Expression fell back to self-assessment (CAS indeterminate). */
   indeterminate: boolean;
   /** Part is not answerable at all (no answer data). */
@@ -32,9 +35,27 @@ export interface PartPlayerState {
   selfAssessment: SelfAssessmentUiState | null;
 }
 
+/** Local-only draft used while an open/indeterminate answer is self-judged. */
+export interface PartPlayerDraft {
+  submission: Submission;
+  assessment: SelfAssessment;
+  selectedPoints: number | null;
+  grading: Grading | null;
+  indeterminate: boolean;
+  indeterminateMax: number;
+}
+
 export type PartPlayerCommand =
   | { id: number; type: 'submit' }
   | { id: number; type: 'confirm-self-assessment' }
+  | { id: number; type: 'start-correction' }
+  | {
+      id: number;
+      type: 'restore-review';
+      result: GradeResult;
+      submission?: Submission;
+      submissionUnavailable?: boolean;
+    }
   | { id: number; type: 'set-score'; points: number }
   | { id: number; type: 'set-grading'; grading: Grading }
   | { id: number; type: 'set-assessment'; assessment: SelfAssessment };

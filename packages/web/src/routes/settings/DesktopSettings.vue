@@ -68,25 +68,20 @@ const showUpdates = computed(() => activePanel.value !== 'node');
 const title = computed(() => {
   if (activePanel.value === 'updates') return 'Aktualisierungen';
   if (activePanel.value === 'node') return 'Lokaler Knoten';
-  return 'Desktop & lokaler Knoten';
-});
-const subtitle = computed(() => {
-  if (activePanel.value === 'updates') return 'QED2 Desktop sicher laden und anwenden';
-  if (activePanel.value === 'node') return 'Lokaler Core, Laufzeit und Offline-Betrieb';
-  return 'Lokale Laufzeit und Desktop-Aktualisierungen';
+  return 'Desktop';
 });
 
 const runtimePhaseLabel = computed(() => {
-  if (app.coreSourcePreference === 'remote') return 'Remote-Core ist ausgewählt';
-  if (app.coreEndpointSource === 'remote') return 'Lokale Quelle · Remote-Ersatz aktiv';
+  if (app.coreSourcePreference === 'remote') return 'Remote';
+  if (app.coreEndpointSource === 'remote') return 'Remote-Ersatz';
   switch (app.coreRuntimeStatus?.phase) {
-    case 'starting': return 'Lokaler Core startet';
-    case 'ready': return 'Lokaler Core ist bereit';
-    case 'recovering': return 'Lokaler Core wird wiederhergestellt';
-    case 'degraded': return 'Remote-Ersatz ist aktiv';
-    case 'failed': return 'Lokaler Core benötigt Hilfe';
-    case 'stopped': return 'Lokaler Core ist gestoppt';
-    default: return 'Status wird ermittelt';
+    case 'starting': return 'Startet';
+    case 'ready': return 'Bereit';
+    case 'recovering': return 'Wiederherstellung';
+    case 'degraded': return 'Remote-Ersatz';
+    case 'failed': return 'Fehler';
+    case 'stopped': return 'Gestoppt';
+    default: return 'Prüfung';
   }
 });
 
@@ -370,23 +365,17 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
     id="desktop"
     ref="root"
     class="desktop-settings settings__section"
-    :class="{ 'desktop-settings--tool': isToolWindow }"
     aria-labelledby="desktop-title"
   >
     <header class="desktop-settings__head">
-      <div>
-        <h1
-          v-if="isToolWindow"
-          id="desktop-title"
-          ref="toolHeading"
-          class="desktop-settings__title q-page-title"
-          tabindex="-1"
-        >
-          {{ title }}
-        </h1>
-        <h2 v-else id="desktop-title" class="desktop-settings__title">{{ title }}</h2>
-        <p class="desktop-settings__subtitle">{{ subtitle }}</p>
-      </div>
+      <h1
+        id="desktop-title"
+        ref="toolHeading"
+        class="desktop-settings__title q-page-title"
+        tabindex="-1"
+      >
+        {{ title }}
+      </h1>
       <span
         v-if="showRuntime"
         class="desktop-settings__state"
@@ -403,8 +392,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
       aria-labelledby="desktop-windows-title"
     >
       <div>
-        <h3 id="desktop-windows-title" class="desktop-settings__subheading">Eigene Fenster</h3>
-        <p class="desktop-settings__hint">Parallel arbeiten, ohne den aktuellen Bereich zu verlassen.</p>
+        <h2 id="desktop-windows-title" class="desktop-settings__subheading">Eigene Fenster</h2>
       </div>
       <div class="desktop-settings__actions">
         <QButton
@@ -413,7 +401,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('practice')"
         >
-          {{ openingWindow === 'practice' ? 'Wird geöffnet …' : 'Übungsfenster öffnen' }}
+          {{ openingWindow === 'practice' ? 'Wird geöffnet …' : 'Übungsfenster' }}
         </QButton>
         <QButton
           variant="ghost"
@@ -421,7 +409,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('updates')"
         >
-          {{ openingWindow === 'updates' ? 'Wird geöffnet …' : 'Update-Center öffnen' }}
+          {{ openingWindow === 'updates' ? 'Wird geöffnet …' : 'Update-Center' }}
         </QButton>
         <QButton
           variant="ghost"
@@ -429,20 +417,22 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('node')"
         >
-          {{ openingWindow === 'node' ? 'Wird geöffnet …' : 'Knotendiagnose öffnen' }}
+          {{ openingWindow === 'node' ? 'Wird geöffnet …' : 'Knotendiagnose' }}
         </QButton>
       </div>
     </div>
 
     <div v-if="showRuntime" class="desktop-settings__subsection" aria-labelledby="runtime-title">
-      <component :is="isToolWindow ? 'h2' : 'h3'" id="runtime-title" class="desktop-settings__subheading">
+      <h2 id="runtime-title" class="desktop-settings__subheading">
         Lokale Laufzeit
-      </component>
+      </h2>
       <dl class="desktop-settings__facts">
-        <div><dt>Gewählt</dt><dd>{{ app.coreSourcePreference === 'local' ? 'Lokale Aufgabenbank' : 'Remote-Core' }}</dd></div>
-        <div><dt>Aktiv</dt><dd>{{ app.coreEndpointSource === 'local' ? 'Lokaler Core' : 'Remote-Core' }}</dd></div>
+        <div><dt>Quelle</dt><dd>{{ app.coreSourcePreference === 'local' ? 'Lokal' : 'Remote' }}</dd></div>
+        <div v-if="app.coreSourcePreference === 'local' && app.coreEndpointSource === 'remote'">
+          <dt>Aktiv</dt><dd>Remote-Ersatz</dd>
+        </div>
         <div><dt>Core</dt><dd>{{ app.coreInfo?.version ?? 'Wird ermittelt …' }}</dd></div>
-        <div><dt>Aufgabenbank</dt><dd>{{ app.coreInfo ? shortCommit(app.coreInfo.bank.commit) : 'Wird ermittelt …' }}</dd></div>
+        <div><dt>Bank</dt><dd>{{ app.coreInfo ? shortCommit(app.coreInfo.bank.commit) : 'Wird ermittelt …' }}</dd></div>
       </dl>
       <p v-if="app.coreRuntimeStatus?.message" class="desktop-settings__message">
         {{ app.coreRuntimeStatus.message }}
@@ -475,25 +465,19 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           {{ busyAction === 'repair' ? 'Prüfung läuft …' : 'Laufzeit prüfen' }}
         </QButton>
       </div>
-      <p class="desktop-settings__hint">
-        Die Quellenwahl betrifft ausschließlich Aufgabeninhalte. Konto, Fortschritt, lokale Sicherungen und Cloud-Speicher bleiben unverändert.
-      </p>
     </div>
 
     <div v-if="showUpdates" class="desktop-settings__subsection" aria-labelledby="updates-title">
       <div class="desktop-settings__subhead">
         <div>
-          <component :is="isToolWindow ? 'h2' : 'h3'" id="updates-title" class="desktop-settings__subheading">
+          <h2 id="updates-title" class="desktop-settings__subheading">
             Komponenten
-          </component>
+          </h2>
           <p v-if="ports.update.capabilities.manualAppInstall" class="desktop-settings__hint">
-            Diese GitHub-Ausgabe wird ohne Apple-/Windows-Entwicklerzertifikat verteilt. QED2 prüft
-            veröffentlichte Metadaten und Prüfsummen; das verifizierte App-Paket wird zur manuellen
-            Installation angezeigt. Core und Aufgabenbank folgen dem Desktop-Release.
+            Unsigniert · manuelle Installation · Core &amp; Bank enthalten
           </p>
           <p v-else class="desktop-settings__hint">
-            QED2 prüft unterstützte Pakete anhand veröffentlichter Metadaten und Prüfsummen.
-            Core und Aufgabenbank folgen dem Desktop-Release.
+            Geprüfte Pakete · Core &amp; Bank enthalten
           </p>
         </div>
         <QButton
@@ -593,7 +577,6 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   flex-wrap: wrap;
 }
 .desktop-settings__title,
-.desktop-settings__subtitle,
 .desktop-settings__subheading,
 .desktop-settings__hint,
 .desktop-settings__message,
@@ -604,16 +587,12 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
 }
 .desktop-settings__title {
   color: var(--q-ink);
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
   line-height: 1.25;
-}
-.desktop-settings--tool .desktop-settings__title {
-  font-size: 22px;
   letter-spacing: -0.01em;
 }
 .desktop-settings__title:focus { outline: none; }
-.desktop-settings__subtitle,
 .desktop-settings__hint,
 .desktop-settings__target-message {
   margin-top: 3px;
@@ -657,7 +636,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
 }
 .desktop-settings__facts {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -749,11 +728,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   font-size: 10px;
 }
 .desktop-settings__message { color: var(--q-mut); font-size: 12px; }
-@media (max-width: 720px) {
-  .desktop-settings__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 560px) {
-  .desktop-settings__facts { grid-template-columns: 1fr; }
   .desktop-settings__target { grid-template-columns: 1fr; }
   .desktop-settings__target-status { align-items: flex-start; text-align: left; }
   .desktop-settings__target-status progress { width: 100%; }

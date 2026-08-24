@@ -53,9 +53,9 @@ const labelId = `settings-row-${useId()}`;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
-  padding: 16px 20px;
+  padding: 14px 18px;
 }
 
 .q-settings-row--stacked {
@@ -104,13 +104,8 @@ const labelId = `settings-row-${useId()}`;
 
 @media (max-width: 520px) {
   .q-settings-row {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
-  }
-
-  .q-settings-row__control {
-    justify-self: stretch;
-    width: 100%;
+    gap: 10px;
+    padding: 12px 14px;
   }
 }
 </style>

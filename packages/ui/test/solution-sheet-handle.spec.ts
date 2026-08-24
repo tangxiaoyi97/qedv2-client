@@ -19,9 +19,10 @@ const HEIGHTS = {
   full: VIEWPORT - TOP_BAR_RESERVE_PX + FULL_OVERSHOOT_PX,
 };
 
-function mountSheet(props: Record<string, unknown> = {}) {
+function mountSheet(props: Record<string, unknown> = {}, attach = false) {
   return mount(SolutionSheet, {
     props: { solution: [], detent: 'collapsed' as const, handle: true, ...props },
+    ...(attach ? { attachTo: document.body } : {}),
   });
 }
 
@@ -104,7 +105,7 @@ describe('SolutionSheet click', () => {
 
 describe('SolutionSheet drag', () => {
   it('interrupts an in-flight snap as soon as the handle is pressed', async () => {
-    const wrapper = mountSheet({ detent: 'default' });
+    const wrapper = mountSheet({ detent: 'default' }, true);
     const handle = wrapper.get('.q-ssheet__handle');
     await handle.trigger('pointerdown', at(500));
     expect(wrapper.get('.q-ssheet').classes()).toContain('q-ssheet--dragging');
@@ -207,6 +208,18 @@ describe('SolutionSheet keyboard', () => {
     expect(lastDetent(wrapper)).toBe('full');
     await wrapper.get('.q-ssheet__handle').trigger('keydown', { key: 'ArrowDown' });
     expect(lastDetent(wrapper)).toBe('collapsed');
+  });
+
+  it('returns focus to the visible handle when Escape collapses the sheet', async () => {
+    const wrapper = mountSheet({ detent: 'default' }, true);
+    const sheet = wrapper.get<HTMLElement>('.q-ssheet');
+    sheet.element.focus();
+
+    await sheet.trigger('keydown', { key: 'Escape' });
+
+    expect(lastDetent(wrapper)).toBe('collapsed');
+    expect(document.activeElement).toBe(wrapper.get('.q-ssheet__handle').element);
+    wrapper.unmount();
   });
 });
 

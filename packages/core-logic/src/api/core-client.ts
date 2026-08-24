@@ -5,13 +5,18 @@
 import { normalizeBaseUrl } from '../config/index.js';
 import type { Question } from '../model/question.js';
 import { requestJson } from './http.js';
-import { CoreProtocolError } from './types.js';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
+import { ApiError, CoreProtocolError } from './types.js';
 import type {
   BatchResponse,
   ContentQuestion,
   CoreInfo,
   HealthResponse,
+  ManifestAssetV2,
+  ManifestQuestionV2,
   ManifestResponse,
+  ManifestV2Response,
   QuestionsFilter,
   QuestionsListResponse,
   RecommendRequest,
@@ -24,10 +29,18 @@ export const BATCH_CHUNK_SIZE = 200;
 
 /** Defensive bounds for the untrusted manifest map returned by Core. */
 const MAX_MANIFEST_ITEMS = 10_000;
+const MAX_MANIFEST_ASSETS = 10_000;
 const MAX_QUESTION_ID_LENGTH = 256;
+const MAX_BANK_PATH_LENGTH = 2_048;
+const MAX_ASSET_KEY_LENGTH = 1_024;
+const MAX_ASSET_BYTES = 32 * 1024 * 1024;
+const MAX_QUESTION_ASSETS = 128;
 const DANGEROUS_MANIFEST_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MANIFEST_V2_QUESTION_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 
 export class CoreClient {
+  private currentImmutableAssets: { commit: string; baseUrl: string } | undefined;
+
   constructor(private baseUrl: string) {
     this.baseUrl = normalizeBaseUrl(baseUrl);
   }
@@ -111,11 +124,30 @@ export class CoreClient {
     return requestJson<CoreInfo>(this.baseUrl, '/content/info');
   }
 
-  /** GET /content/manifest */
-  manifest(): Promise<ManifestResponse> {
-    return requestJson<unknown>(this.baseUrl, '/content/manifest').then((wire) =>
-      parseManifestResponse(wire),
+  /**
+   * Prefer the authenticated current-bank Manifest v2. A 404 alone is the
+   * compatibility signal for a pre-2.2 Core; malformed v2 responses, service
+   * errors and network failures are never silently downgraded to v1.
+   */
+  async manifest(): Promise<ManifestResponse> {
+    try {
+      const parsed = parseManifestV2(
+        await requestJson<unknown>(this.baseUrl, '/content/manifest/v2'),
+      );
+      this.currentImmutableAssets = {
+        commit: parsed.commit,
+        baseUrl: parsed.bank.immutableAssetBaseUrl,
+      };
+      return parsed;
+    } catch (cause) {
+      if (!(cause instanceof ApiError) || cause.status !== 404) throw cause;
+    }
+
+    const legacy = parseManifestResponse(
+      await requestJson<unknown>(this.baseUrl, '/content/manifest'),
     );
+    this.currentImmutableAssets = undefined;
+    return legacy;
   }
 
   /** Immutable manifest from Core's trusted revision vault. */
@@ -175,6 +207,10 @@ export class CoreClient {
     const relative = src.replace(/^\/+/, '').replace(/^assets\//, '');
     // Encode each segment but keep '/' separators intact.
     const encoded = relative.split('/').map(encodeURIComponent).join('/');
+    const immutable = this.currentImmutableAssets;
+    if (immutable && (contentId === undefined || contentId === immutable.commit)) {
+      return `${this.baseUrl}${immutable.baseUrl}/${encoded}`;
+    }
     const url = `${this.baseUrl}/content/assets/${encoded}`;
     // Core's asset controller ignores query parameters, while browser/PWA
     // caches include them in the cache key. A revision key therefore prevents
@@ -190,6 +226,124 @@ export class CoreClient {
     const encoded = relative.split('/').map(encodeURIComponent).join('/');
     return `${this.baseUrl}/content/revisions/${revisionCommit(commit)}/assets/${encoded}`;
   }
+}
+
+function parseManifestV2(wire: unknown): ManifestV2Response {
+  if (!isPlainObject(wire) || wire.formatVersion !== 2 || wire.wireContractVersion !== 1) {
+    throw invalidManifest('Core returned an unsupported Manifest v2 format.');
+  }
+  if (!isPlainObject(wire.bank) || !isFullLowercaseCommit(wire.bank.commit)) {
+    throw invalidManifest('Core returned an invalid Manifest v2 bank commit.');
+  }
+  const commit = wire.bank.commit;
+  if (
+    !isLowercaseSha256(wire.bank.rootSha256)
+    || !isPlainObject(wire.bank.schema)
+    || wire.bank.schema.path !== 'schema/question.ts'
+    || !isLowercaseSha256(wire.bank.schema.sha256)
+    || wire.bank.immutableAssetBaseUrl !== `/content/banks/${commit}/assets`
+  ) {
+    throw invalidManifest('Core returned invalid Manifest v2 bank metadata.');
+  }
+  if (!isPlainObject(wire.questions) || !isPlainObject(wire.assets)) {
+    throw invalidManifest('Core returned invalid Manifest v2 inventories.');
+  }
+
+  const questionEntries = Object.entries(wire.questions);
+  const assetEntries = Object.entries(wire.assets);
+  if (questionEntries.length > MAX_MANIFEST_ITEMS || assetEntries.length > MAX_MANIFEST_ASSETS) {
+    throw invalidManifest('Core returned an oversized Manifest v2 inventory.');
+  }
+
+  const assets = Object.create(null) as Record<string, ManifestAssetV2>;
+  for (const [key, value] of assetEntries) {
+    if (DANGEROUS_MANIFEST_KEYS.has(key) || !isSafeAssetKey(key) || !isPlainObject(value)) {
+      throw invalidManifest('Core returned an invalid asset in Manifest v2.');
+    }
+    if (
+      value.path !== `assets/${key}`
+      || !Number.isSafeInteger(value.bytes)
+      || (value.bytes as number) <= 0
+      || (value.bytes as number) > MAX_ASSET_BYTES
+      || value.mimeType !== 'image/png'
+      || !isLowercaseSha256(value.sha256)
+    ) {
+      throw invalidManifest('Core returned invalid asset metadata in Manifest v2.');
+    }
+    assets[key] = {
+      path: value.path,
+      bytes: value.bytes as number,
+      mimeType: value.mimeType,
+      sha256: value.sha256,
+    };
+  }
+
+  const questions = Object.create(null) as Record<string, ManifestQuestionV2>;
+  const items = Object.create(null) as Record<string, string>;
+  for (const [questionId, value] of questionEntries) {
+    if (
+      DANGEROUS_MANIFEST_KEYS.has(questionId)
+      || !MANIFEST_V2_QUESTION_ID_PATTERN.test(questionId)
+      || !isPlainObject(value)
+      || !isQuestionPath(value.path, questionId)
+      || !isLowercaseSha256(value.rawSha256)
+      || !isLowercaseSha256(value.wireSha256)
+      || !Array.isArray(value.assets)
+      || value.assets.length > MAX_QUESTION_ASSETS
+    ) {
+      throw invalidManifest('Core returned invalid question metadata in Manifest v2.');
+    }
+    const questionAssets: string[] = [];
+    const seenAssets = new Set<string>();
+    for (const asset of value.assets) {
+      if (
+        typeof asset !== 'string'
+        || !isSafeAssetKey(asset)
+        || !Object.prototype.hasOwnProperty.call(assets, asset)
+        || seenAssets.has(asset)
+      ) {
+        throw invalidManifest('Core returned invalid question assets in Manifest v2.');
+      }
+      questionAssets.push(asset);
+      seenAssets.add(asset);
+    }
+    questions[questionId] = {
+      path: value.path,
+      rawSha256: value.rawSha256,
+      wireSha256: value.wireSha256,
+      assets: questionAssets,
+    };
+    items[questionId] = value.rawSha256;
+  }
+
+  const schema = {
+    path: 'schema/question.ts' as const,
+    sha256: wire.bank.schema.sha256,
+  };
+  const rootSha256 = bytesToHex(sha256(utf8ToBytes(canonicalJson({
+    wireContractVersion: 1,
+    schema,
+    questions,
+    assets,
+  }))));
+  if (rootSha256 !== wire.bank.rootSha256) {
+    throw invalidManifest('Core returned a Manifest v2 root that does not match its inventory.');
+  }
+
+  return {
+    commit,
+    items,
+    formatVersion: 2,
+    wireContractVersion: 1,
+    bank: {
+      commit,
+      rootSha256,
+      schema,
+      immutableAssetBaseUrl: wire.bank.immutableAssetBaseUrl,
+    },
+    questions,
+    assets,
+  };
 }
 
 function revisionCommit(commit: string): string {
@@ -223,7 +377,9 @@ function parseManifestResponse(wire: unknown, expectedCommit?: string): Manifest
     }
   }
 
-  return { commit: wire.commit, items: wire.items as Record<string, string> };
+  const items = Object.create(null) as Record<string, string>;
+  for (const [questionId, hash] of entries) items[questionId] = hash as string;
+  return { commit: wire.commit, items };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -240,12 +396,51 @@ function isQuestionId(value: string): boolean {
   return value.length <= MAX_QUESTION_ID_LENGTH && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value);
 }
 
+function isQuestionPath(value: unknown, questionId: string): value is string {
+  if (typeof value !== 'string' || value.length > MAX_BANK_PATH_LENGTH) return false;
+  if (!isSafeRelativePath(value) || !value.startsWith('content/')) return false;
+  const segments = value.split('/');
+  return segments.length >= 3 && segments.at(-1) === `${questionId}.json`;
+}
+
+function isSafeAssetKey(value: string): boolean {
+  return value.length > 0
+    && value.length <= MAX_ASSET_KEY_LENGTH
+    && isSafeRelativePath(value);
+}
+
+function isSafeRelativePath(value: string): boolean {
+  return !value.includes('\\')
+    && !value.includes('\0')
+    && !value.startsWith('/')
+    && value.split('/').every((segment) => (
+      segment !== '' && segment !== '.' && segment !== '..' && !segment.startsWith('.')
+    ));
+}
+
 function isLowercaseSha256(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{64}$/u.test(value);
 }
 
 function invalidManifest(message: string): CoreProtocolError {
   return new CoreProtocolError('CORE_MANIFEST_INVALID', message);
+}
+
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of Object.keys(source).sort()) {
+      if (source[key] !== undefined) result[key] = canonicalize(source[key]);
+    }
+    return result;
+  }
+  return value;
 }
 
 function splitContentQuestion(
