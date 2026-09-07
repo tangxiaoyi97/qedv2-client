@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientConfig } from '@qed2/core-logic';
 import {
@@ -225,7 +226,7 @@ describe('CoreSupervisor', () => {
         BANK_STRICT: 'true',
         BANK_INTEGRITY_PROFILE: 'production',
         BANK_ROOT_SHA256: 'b'.repeat(64),
-        REVISION_VAULT_PATH: '/runtime/bank/revisions',
+        REVISION_VAULT_PATH: resolve(runtime.bankDirectory, 'revisions'),
         REVISION_VAULT_REQUIRED: 'true',
         REQUEST_LOG: 'false',
         CORE_SOURCE_REPO: 'https://github.com/tangxiaoyi97/qedv2-core',

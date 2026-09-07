@@ -738,12 +738,16 @@ jobs:
             desktop-electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm --dir ../qedv2-core install --frozen-lockfile
 
       - name: Prepare runtime and build
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm --filter @qed2/desktop runtime:prepare
           pnpm --filter @qed2/desktop runtime:smoke
           pnpm --filter @qed2/desktop build

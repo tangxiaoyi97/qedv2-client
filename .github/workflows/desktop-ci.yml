@@ -184,13 +184,17 @@ jobs:
         run: pnpm --dir ../qedv2-core install --frozen-lockfile
 
       - name: Verify complete client workspace
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm typecheck
           pnpm test
           pnpm --filter @qed2/desktop build
 
       - name: Verify bundled Core
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm --dir ../qedv2-core exec jest --runInBand
           pnpm --dir ../qedv2-core test:e2e
 
