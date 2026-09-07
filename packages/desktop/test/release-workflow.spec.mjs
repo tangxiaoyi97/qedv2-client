@@ -5,11 +5,12 @@ const workflowUrl = new URL('../../../.github/workflows/desktop-release.yml', im
 const ciWorkflowUrl = new URL('../../../.github/workflows/desktop-ci.yml', import.meta.url)
 
 function namedStep(workflow, name) {
+  const normalized = workflow.replace(/\r\n?/gu, '\n')
   const marker = `      - name: ${name}`
-  const start = workflow.indexOf(marker)
+  const start = normalized.indexOf(marker)
   if (start < 0) throw new Error(`Missing workflow step: ${name}`)
-  const next = workflow.indexOf('\n      - ', start + marker.length)
-  return workflow.slice(start, next < 0 ? undefined : next)
+  const next = normalized.indexOf('\n      - ', start + marker.length)
+  return normalized.slice(start, next < 0 ? undefined : next)
 }
 
 function expectBashFailFast(workflow, name) {
@@ -40,6 +41,10 @@ describe('desktop release workflow', () => {
     const ciWorkflow = await readFile(ciWorkflowUrl, 'utf8')
     expectBashFailFast(ciWorkflow, 'Verify complete client workspace')
     expectBashFailFast(ciWorkflow, 'Verify bundled Core')
+    expectBashFailFast(
+      ciWorkflow.replace(/\r?\n/gu, '\r\n'),
+      'Verify complete client workspace',
+    )
 
     const releaseWorkflow = await readFile(workflowUrl, 'utf8')
     const windowsJob = releaseWorkflow.slice(
