@@ -19,6 +19,8 @@ import type {
   AiExplainMode,
   AiExplainRequest,
   AiPromptOptions,
+  AiQuestionContext,
+  AiRequestContext,
   AiRubricCriterion,
 } from './types.js';
 
@@ -42,7 +44,9 @@ function answerRichTexts(answer: Answer | undefined): RichText[] {
         ...(answer.candidateGroups ?? []).flatMap((group) => (group.label ? [group.label] : [])),
       ];
     case 'open':
-      return [answer.rubric];
+      // A rubric is official judgement material, not something the learner
+      // sees before answering. Its figures belong to the protected side.
+      return [];
     default:
       return [];
   }
@@ -52,20 +56,37 @@ function inlineFigures(text: RichText | undefined): FigNode[] {
   return (text ?? []).filter((node): node is FigNode => node.t === 'fig');
 }
 
-function allFigures(question: Question, part: QuestionPart): (Figure | FigNode)[] {
-  const solution = part.solution ?? [];
+function promptFigures(question: Question, part: QuestionPart): (Figure | FigNode)[] {
   const richTexts = [
     question.prompt,
     part.prompt,
     ...answerRichTexts(part.answer),
-    ...solution.map((entry) => entry.result),
   ];
   return [
     ...(question.figures ?? []),
     ...(part.figures ?? []),
-    ...solution.flatMap((entry) => entry.figures ?? []),
     ...richTexts.flatMap((text) => inlineFigures(text)),
   ];
+}
+
+function solutionFigures(part: QuestionPart): (Figure | FigNode)[] {
+  const solution = part.solution ?? [];
+  const richTexts = [
+    ...solution.flatMap((entry) => [
+      entry.steps,
+      entry.result,
+      ...(entry.alternatives ?? []),
+    ]),
+  ];
+  return [
+    ...solution.flatMap((entry) => entry.figures ?? []),
+    ...richTexts.flatMap((text) => inlineFigures(text)),
+    ...(part.answer?.kind === 'open' ? inlineFigures(part.answer.rubric) : []),
+  ];
+}
+
+function allFigures(question: Question, part: QuestionPart): (Figure | FigNode)[] {
+  return [...promptFigures(question, part), ...solutionFigures(part)];
 }
 
 function altOf(figure: Figure | FigNode): string {
@@ -73,26 +94,184 @@ function altOf(figure: Figure | FigNode): string {
 }
 
 export function figureAlts(question: Question, part: QuestionPart): string[] {
-  return [...new Set(allFigures(question, part).map(altOf).filter(Boolean))];
+  // Solution alt text often contains the numeric answer. It belongs to the
+  // protected official solution, never to the ordinary blind-figure context.
+  return [...new Set(promptFigures(question, part).map(altOf).filter(Boolean))];
 }
 
 export function hasFigures(question: Question, part: QuestionPart): boolean {
   return allFigures(question, part).length > 0;
 }
 
-/** First solution entry's text, plus its grading note, as plain text. */
-function solutionText(part: QuestionPart): { officialSolution?: string; gradingNote?: string } {
-  const entry = part.solution?.[0];
-  if (!entry) return {};
-  const out: { officialSolution?: string; gradingNote?: string } = {};
-  if (!isRichTextEmpty(entry.result)) out.officialSolution = richTextToPlain(entry.result);
-  if (entry.note?.trim()) out.gradingNote = entry.note.trim();
+export function hasSolutionFigures(part: QuestionPart): boolean {
+  return solutionFigures(part).length > 0;
+}
+
+/** Complete, ordered official material; never silently drops steps-only rows. */
+function solutionText(part: QuestionPart): Pick<AiQuestionContext, 'officialSolution' | 'solution' | 'gradingNote'> {
+  const entries = part.solution ?? [];
+  if (entries.length === 0) return {};
+  const first = entries[0];
+  const steps = entries.flatMap((entry) => {
+    if (isRichTextEmpty(entry.steps)) return [];
+    const text = richTextToPlain(entry.steps);
+    if (!text) return [];
+    return [{ ...(entry.id ? { id: entry.id } : {}), text }];
+  });
+  const firstResult = first && !isRichTextEmpty(first.result)
+    ? richTextToPlain(first.result)
+    : undefined;
+  const alternatives = entries.flatMap((entry, index) => [
+    ...(index > 0 && !isRichTextEmpty(entry.result) ? [richTextToPlain(entry.result)] : []),
+    ...(entry.alternatives ?? []).map((text) => richTextToPlain(text)),
+  ]).filter(Boolean);
+  const officialParts = entries.flatMap((entry) => [entry.steps, entry.result, ...(entry.alternatives ?? [])])
+    .filter((text): text is RichText => !isRichTextEmpty(text))
+    .map((text) => richTextToPlain(text))
+    .filter(Boolean);
+  const gradingNote = entries.map((entry) => entry.note?.trim()).find(Boolean);
+  const structured: NonNullable<AiQuestionContext['solution']> = {};
+  if (firstResult) structured.result = firstResult;
+  if (steps.length > 0) structured.steps = steps;
+  if (alternatives.length > 0) structured.alternatives = alternatives;
+  const out: Pick<AiQuestionContext, 'officialSolution' | 'solution' | 'gradingNote'> = {};
+  if (officialParts.length > 0) out.officialSolution = officialParts.join('\n\n');
+  if (Object.keys(structured).length > 0) out.solution = structured;
+  if (gradingNote) out.gradingNote = gradingNote;
   return out;
 }
 
-function shared(question: Question, part: QuestionPart, submitted: string, maxPoints: number) {
+/**
+ * Last client-side safety net for first-attempt hints.
+ *
+ * The official answer deliberately never enters the provider prompt before a
+ * real attempt. That also means the server cannot compare a surprisingly
+ * complete model reply with the answer it must not see. The renderer still
+ * has the immutable Bank part, so it performs this conservative comparison
+ * before a paid reply is cached, shown, or counted as a delivered hint.
+ */
+export function hintRevealsOfficialSolution(markdown: string, part: QuestionPart): boolean {
+  const shown = normalizeProtectedAnswer(markdown);
+  if (!shown) return false;
+  const compactShown = compactProtectedAnswer(shown);
+  const protectedAnswers = new Set<string>();
+  for (const entry of part.solution ?? []) {
+    addProtected(protectedAnswers, entry.result);
+    for (const alternative of entry.alternatives ?? []) addProtected(protectedAnswers, alternative);
+    if (!isRichTextEmpty(entry.steps)) {
+      const steps = richTextToPlain(entry.steps);
+      addProtectedText(protectedAnswers, steps);
+      // A v2/v3 steps-only solution can be one prose block. Its final clause
+      // is the answer even when there is no separate `result` node.
+      const clauses = steps.split(/(?:\r?\n|[.;](?=\s|$)|\b(?:also|somit|daher|folglich)\b)/iu);
+      addProtectedText(protectedAnswers, clauses.at(-1) ?? '');
+    }
+    if (entry.note) addProtectedText(protectedAnswers, entry.note);
+  }
+  addAnswerProtected(protectedAnswers, part.answer);
+  const legacy = solutionText(part).officialSolution;
+  if (legacy) addProtectedText(protectedAnswers, legacy);
+  return [...protectedAnswers].some((answer) =>
+    containsProtectedAnswer(shown, answer)
+    || containsProtectedAnswer(compactShown, compactProtectedAnswer(answer)));
+}
+
+function addAnswerProtected(target: Set<string>, answer: Answer | undefined): void {
+  if (!answer || answer.kind === 'open') return;
+  switch (answer.kind) {
+    case 'numeric':
+      for (const blank of answer.blanks) {
+        addProtectedText(target, String(blank.value));
+        if (blank.unit) addProtectedText(target, `${blank.value} ${blank.unit}`);
+      }
+      return;
+    case 'expression':
+      addProtectedText(target, answer.canonical);
+      return;
+    case 'interval': {
+      const lower = answer.lower == null ? '-∞' : String(answer.lower);
+      const upper = answer.upper == null ? '∞' : String(answer.upper);
+      const left = answer.lowerClosed ? '[' : ']';
+      const right = answer.upperClosed ? ']' : '[';
+      addProtectedText(target, `${left}${lower}; ${upper}${right}`);
+      addProtectedText(target, `${lower} … ${upper}`);
+      return;
+    }
+    case 'choice': {
+      const correct = answer.correct
+        .map((index) => richTextToPlain(answer.options[index]))
+        .filter(Boolean);
+      for (const option of correct) addProtectedText(target, option);
+      if (correct.length > 1) addProtectedText(target, correct.join(' / '));
+      return;
+    }
+    case 'matching': {
+      const pairs = answer.pairs.map(([left, right]) =>
+        `${richTextToPlain(answer.left[left])} → ${richTextToPlain(answer.right[right])}`);
+      for (const pair of pairs) addProtectedText(target, pair);
+      if (pairs.length > 1) addProtectedText(target, pairs.join(' / '));
+    }
+  }
+}
+
+function addProtected(target: Set<string>, text: RichText | undefined): void {
+  if (!isRichTextEmpty(text)) addProtectedText(target, richTextToPlain(text));
+}
+
+function addProtectedText(target: Set<string>, text: string): void {
+  const normalized = normalizeProtectedAnswer(text);
+  if (!normalized) return;
+  target.add(normalized);
+  // `x = 4`, `x=4`, and a model spelling out just `4` are the same leaked
+  // final answer. Keep the right-hand side as a separate protected candidate.
+  const rhs = normalized.split(/(?:=|≈|≃|\b(?:ist|ergibt)\b)/u).at(-1)?.trim();
+  if (rhs && rhs !== normalized) target.add(rhs);
+}
+
+function compactProtectedAnswer(value: string): string {
+  return value.replace(/\s+/gu, '');
+}
+
+function normalizeProtectedAnswer(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLocaleLowerCase('de')
+    .replace(/(?<=\d)\s*(?:\{,\}|,)\s*(?=\d)/gu, '.')
+    .replace(/\\(?:left|right|mathrm|text|operatorname)\b/gu, '')
+    .replace(/\\(?:cdot|times)\b/gu, '*')
+    .replace(/[·⋅×]/gu, '*')
+    .replace(/\\(?:infty)\b/gu, '∞')
+    .replace(/[{}$]/gu, '')
+    .replace(/[`*_~#>|]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function containsProtectedAnswer(shown: string, answer: string): boolean {
+  if (!answer) return false;
+  let from = 0;
+  while (from <= shown.length - answer.length) {
+    const index = shown.indexOf(answer, from);
+    if (index < 0) return false;
+    const before = index === 0 ? '' : shown[index - 1] ?? '';
+    const afterIndex = index + answer.length;
+    const after = afterIndex >= shown.length ? '' : shown[afterIndex] ?? '';
+    if (!/[\p{L}\p{N}_]/u.test(before) && !/[\p{L}\p{N}_]/u.test(after)) return true;
+    from = index + 1;
+  }
+  return false;
+}
+
+function shared(
+  question: Question,
+  part: QuestionPart,
+  submitted: string,
+  maxPoints: number,
+  includeSolution = true,
+) {
   const alts = figureAlts(question, part);
   const includesFigures = hasFigures(question, part);
+  const solutionIncludesFigures = hasSolutionFigures(part);
   const questionPrompt = richTextToPlain(question.prompt);
   const partPrompt = richTextToPlain(part.prompt);
   return {
@@ -103,8 +282,9 @@ function shared(question: Question, part: QuestionPart, submitted: string, maxPo
     ...(part.format ? { format: part.format } : {}),
     ...(alts.length > 0 ? { figureAlts: alts } : {}),
     ...(includesFigures ? { hasFigures: true } : {}),
+    solutionHasFigures: solutionIncludesFigures,
     submitted,
-    ...solutionText(part),
+    ...(includeSolution ? solutionText(part) : {}),
     maxPoints,
   };
 }
@@ -120,19 +300,81 @@ export function buildExplainRequest(input: {
   question: Question;
   part: QuestionPart;
   submitted: string;
-  result: GradeResult;
+  /** Omitted only for a pre-attempt hint. */
+  result?: GradeResult;
   /** `walkthrough` explains the question itself rather than the answer. */
   mode?: AiExplainMode;
   options?: AiPromptOptions;
+  identity?: AiRequestContext;
+  hintLevel?: 1 | 2 | 3;
 }): AiExplainRequest {
   const { question, part, submitted, result } = input;
+  const mode = input.mode ?? 'answer';
+  if (mode === 'hint' && input.hintLevel == null) {
+    throw new TypeError('A hint request requires a hint level');
+  }
+  if (mode !== 'hint' && !result) {
+    throw new TypeError(`${mode} requires a graded result`);
+  }
+  if ((mode === 'hint' || mode === 'diagnosis') && hasSolutionFigures(part)) {
+    throw new TypeError(`${mode} is unavailable when the official solution contains figures`);
+  }
+  const maxPoints = result?.maxPoints ?? maxPointsForPart(part);
+  const context = shared(
+    question,
+    part,
+    submitted,
+    maxPoints,
+    mode !== 'hint' || input.identity?.attemptPhase === 'correction',
+  );
+  const options = promptOptions(input.options);
+  if (mode === 'hint') {
+    const identity = requireLearningIdentity(input.identity, mode);
+    return { ...context, ...options, ...identity, mode, hintLevel: input.hintLevel! };
+  }
+  if (mode === 'diagnosis') {
+    const identity = requireLearningIdentity(input.identity, mode);
+    return {
+      ...context,
+      ...options,
+      ...identity,
+      mode,
+      verdict: result!.verdict,
+      awardedPoints: result!.awardedPoints,
+    };
+  }
   return {
-    ...shared(question, part, submitted, result.maxPoints),
-    ...promptOptions(input.options),
-    ...(input.mode && input.mode !== 'answer' ? { mode: input.mode } : {}),
-    verdict: result.verdict,
-    awardedPoints: result.awardedPoints,
+    ...context,
+    ...options,
+    ...(mode === 'walkthrough' ? { mode } : {}),
+    verdict: result!.verdict,
+    awardedPoints: result!.awardedPoints,
+    ...(input.identity ?? {}),
   };
+}
+
+function requireLearningIdentity(
+  identity: AiRequestContext | undefined,
+  mode: 'hint' | 'diagnosis',
+): Required<Omit<AiRequestContext, 'clientRequestId'>> & Pick<AiRequestContext, 'clientRequestId'> {
+  if (
+    !identity?.interactionId
+    || !identity.taskVersion
+    || !identity.contentSource
+    || !identity.contentId
+    || !identity.attemptPhase
+  ) throw new TypeError(`${mode} requires immutable request provenance`);
+  return identity as Required<Omit<AiRequestContext, 'clientRequestId'>> & Pick<AiRequestContext, 'clientRequestId'>;
+}
+
+function maxPointsForPart(part: QuestionPart): number {
+  if (typeof part.points === 'number' && Number.isFinite(part.points)) return part.points;
+  const scoring = part.scoring;
+  if (!scoring) return 0;
+  if (scoring.mode === 'allOrNothing') return scoring.points;
+  if (scoring.mode === 'perBlank') return scoring.max;
+  if (scoring.mode === 'tiered') return Math.max(0, ...scoring.tiers.map((tier) => tier.points));
+  return scoring.criteria.reduce((sum, criterion) => sum + criterion.points, 0);
 }
 
 /** Drop empty preferences rather than sending blanks the server must ignore. */
@@ -169,12 +411,20 @@ export function buildAssessRequest(input: {
   /** Point values the part permits — required for non-rubric scoring. */
   scoreOptions?: number[];
   options?: AiPromptOptions;
+  identity?: AiRequestContext;
 }): AiAssessRequest | null {
   const { question, part, submitted, maxPoints } = input;
   if (!isAiGradable(part)) return null;
   if (!submitted.trim()) return null;
+  // A text-only provider cannot safely judge a figure-dependent answer. This
+  // is fail-closed even when old Bank metadata accidentally says grader: ai.
+  if (hasFigures(question, part)) return null;
 
-  const base = { ...shared(question, part, submitted, maxPoints), ...promptOptions(input.options) };
+  const base = {
+    ...shared(question, part, submitted, maxPoints),
+    ...promptOptions(input.options),
+    ...(input.identity ?? {}),
+  };
   const answer = part.answer;
   const rubricText =
     answer?.kind === 'open' && !isRichTextEmpty(answer.rubric)

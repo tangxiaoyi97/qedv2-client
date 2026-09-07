@@ -8,7 +8,7 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { provideAssetResolver, useKeyboardInset } from '@qed2/ui';
+import { provideAssetResolver, QButton, useKeyboardInset, useModalA11y } from '@qed2/ui';
 import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid, Server } from 'lucide-vue-next';
 import { ports } from './services.js';
 import { useAppStore } from './stores/app.js';
@@ -88,9 +88,15 @@ function isTabActive(to: string): boolean {
   return isActive(to);
 }
 
+function reloadApp(): void {
+  window.location.reload();
+}
+
 /** Move focus into the content on every route change so keyboard/screen-
  * reader users don't get dumped back on <body> when a view unmounts. */
 const mainEl = ref<HTMLElement | null>(null);
+const accountLockCard = ref<HTMLElement | null>(null);
+useModalA11y(accountLockCard, computed(() => auth.transitioning), () => undefined);
 watch(
   () => route.fullPath,
   async () => {
@@ -104,12 +110,13 @@ watch(
   <div
     class="app q-app"
     :data-platform="ports.shell.capabilities.desktop ? 'desktop' : 'web'"
+    :aria-busy="auth.transitioning || undefined"
   >
     <aside
       class="app__sidebar"
       :class="{ 'app__sidebar--hidden': chromeHidden }"
-      :aria-hidden="chromeHidden || undefined"
-      :inert="chromeHidden || undefined"
+      :aria-hidden="chromeHidden || auth.transitioning || undefined"
+      :inert="chromeHidden || auth.transitioning || undefined"
     >
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
         <nav class="app__nav" aria-label="Hauptnavigation">
@@ -161,8 +168,7 @@ watch(
           <div class="app__guest-header">
             <UserCircle class="app__guest-avatar" aria-hidden="true" />
             <div class="app__guest-info">
-              <div class="app__guest-title">Als Gast unterwegs</div>
-              <div class="app__guest-text">Lokal gespeichert</div>
+              <div class="app__guest-title">Gast</div>
             </div>
           </div>
           <button type="button" class="app__guest-btn" @click="ui.openAuthModal()">Anmelden</button>
@@ -191,8 +197,8 @@ watch(
       <nav
         class="app__tabbar"
         :class="{ 'app__tabbar--hidden': chromeHidden }"
-        :aria-hidden="chromeHidden || undefined"
-        :inert="chromeHidden || undefined"
+        :aria-hidden="chromeHidden || auth.transitioning || undefined"
+        :inert="chromeHidden || auth.transitioning || undefined"
         aria-label="Hauptnavigation"
       >
         <RouterLink
@@ -212,7 +218,13 @@ watch(
          .app__main padding transition (sibling selector below). -->
     <div class="app__scrim" aria-hidden="true" />
 
-    <main ref="mainEl" class="app__main q-crossfade" tabindex="-1">
+    <main
+      ref="mainEl"
+      class="app__main q-crossfade"
+      tabindex="-1"
+      :aria-hidden="auth.transitioning || undefined"
+      :inert="auth.transitioning || undefined"
+    >
       <RouterView v-slot="{ Component }">
         <transition name="q-crossfade">
           <component :is="Component" :key="$route.path" />
@@ -220,10 +232,32 @@ watch(
       </RouterView>
     </main>
 
-    <ConflictDialog />
-    <AuthModal />
-    <ArchiveChoiceDialog />
-    <ChangelogDialog />
+    <div v-if="!auth.transitioning">
+      <ConflictDialog />
+      <AuthModal />
+      <ArchiveChoiceDialog />
+      <ChangelogDialog />
+    </div>
+    <div
+      v-if="auth.transitioning"
+      class="app__account-lock q-modal-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="account-lock-title"
+    >
+      <div ref="accountLockCard" class="app__account-lock-card" tabindex="-1">
+        <div v-if="!auth.transitionError" class="app__account-spinner" aria-hidden="true" />
+        <p
+          id="account-lock-title"
+          :role="auth.transitionError ? 'alert' : 'status'"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {{ auth.transitionError ? 'Kontowechsel konnte nicht abgeschlossen werden.' : 'Konto wird sicher gewechselt …' }}
+        </p>
+        <QButton v-if="auth.transitionError" data-autofocus @click="reloadApp">Neu laden</QButton>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -232,6 +266,41 @@ watch(
   min-height: 100vh;
   min-height: 100dvh;
   display: flex;
+}
+.app__account-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--q-page) 88%, transparent);
+}
+.app__account-lock-card {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  max-width: 360px;
+  padding: 24px;
+  color: var(--q-ink);
+  text-align: center;
+  background: var(--q-panel);
+  border: 1px solid var(--q-border);
+  border-radius: 18px;
+  box-shadow: var(--q-shadow-modal);
+}
+.app__account-lock-card p { margin: 0; font-weight: 600; }
+.app__account-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--q-border);
+  border-top-color: var(--q-accent-strong);
+  border-radius: 50%;
+  animation: app-account-spin 0.8s linear infinite;
+}
+@keyframes app-account-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .app__account-spinner { animation: none; }
 }
 
 /* sidebar (desktop) */

@@ -100,6 +100,8 @@ export interface StorageChange {
   operation: StorageChangeOperation;
   /** Absent for a collection-wide clear. */
   key?: string;
+  /** New durable revision when one address changed. */
+  revision?: number;
 }
 
 /** Well-known storage collections. */
@@ -118,6 +120,8 @@ export const STORAGE = {
   app: 'app',
   /** AI answers already paid for — see store/ai-cache.ts. */
   aiCache: 'ai-cache',
+  /** Minimal, local-only learning outcomes; never raw answers or AI chats. */
+  learning: 'learning',
 } as const;
 
 /* ------------------------------------------------------------------ *

@@ -39,8 +39,7 @@ const OPTIONS = [
   {
     value: 'merge',
     title: 'Beide zusammenführen',
-    hint: 'Empfohlen — pro Teilaufgabe gewinnt der neuere Stand, nichts geht verloren.',
-    badge: 'Empfohlen',
+    hint: 'Empfohlen · neuere Einträge zusammenführen.',
   },
   { value: 'server', title: 'Nur Cloud behalten', hint: 'Der lokale Stand dieses Geräts wird überschrieben.' },
   { value: 'local', title: 'Nur dieses Gerät behalten', hint: 'Der Cloud-Stand wird überschrieben.' },
@@ -77,8 +76,7 @@ function onEscape(): void {
           <div class="achoice__title">Zwei Spielstände gefunden</div>
         </div>
         <p class="achoice__text">
-          In deinem Konto liegt bereits Fortschritt, und auch auf diesem Gerät wurde geübt.
-          Wähle, wie es weitergehen soll — diese Frage kommt nur direkt nach der Anmeldung.
+          Konto und Gerät enthalten unterschiedliche Stände.
         </p>
 
         <div class="achoice__sides">
@@ -111,7 +109,6 @@ function onEscape(): void {
             <span class="achoice__option-body">
               <span class="achoice__option-title">
                 {{ o.title }}
-                <span v-if="'badge' in o && o.badge" class="achoice__badge">{{ o.badge }}</span>
               </span>
               <span class="achoice__option-hint">{{ o.hint }}</span>
             </span>
@@ -269,17 +266,6 @@ function onEscape(): void {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-.achoice__badge {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--q-chip-ink);
-  background: var(--q-chip-bg);
-  border: 1px solid var(--q-chip-border);
-  padding: 2px 7px;
-  border-radius: 20px;
 }
 .achoice__option-hint {
   font-size: 11.5px;

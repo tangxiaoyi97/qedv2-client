@@ -1,4 +1,5 @@
-import type { LocalArchive, FsrsState, Grading } from '../model/archive.js';
+import { isGrading, type LocalArchive, type FsrsState, type Grading } from '../model/archive.js';
+import { validateQueuedAttempt } from '../api/attempt-validation.js';
 import {
   STORAGE,
   hasAtomicStorage,
@@ -7,48 +8,75 @@ import {
   type StorageVersionedEntry,
 } from '../ports/index.js';
 import {
-  ARCHIVE_STORAGE_KEY,
   prepareArchiveGrade,
+  prepareArchiveGrading,
   type ApplyGradeInput,
 } from './archive-store.js';
 import {
-  ATTEMPT_OUTBOX_STORAGE_KEY,
   GUEST_CLAIM_STORAGE_KEY,
-  prepareAttemptEnqueue,
+  attemptOutboxRowKey,
+  preparePendingAttempts,
+  resolveAttemptOwnership,
   type AttemptOwnerSnapshot,
+  type PendingAttempt,
   type QueuedAttempt,
+  type ResolvedAttemptOwnership,
 } from './attempt-outbox.js';
 import {
-  HISTORY_STORAGE_KEY,
-  prepareHistoryAppend,
-  prepareHistoryLog,
+  historyEventRowKey,
+  parseStoredHistoryEvent,
+  prepareStoredHistoryEvent,
   type HistoryEntry,
 } from './history-log.js';
+import {
+  archiveStorageKey,
+  LOCAL_PROFILE_STATE_KEY,
+  parseLocalProfileState,
+  resolveLocalProfileId,
+  type LocalProfileId,
+} from './local-profile-store.js';
 
 const MAX_CAS_ATTEMPTS = 6;
 
-const ARCHIVE_ADDRESS = { collection: STORAGE.archive, key: ARCHIVE_STORAGE_KEY } as const;
-const HISTORY_ADDRESS = { collection: STORAGE.history, key: HISTORY_STORAGE_KEY } as const;
-const OUTBOX_ADDRESS = { collection: STORAGE.history, key: ATTEMPT_OUTBOX_STORAGE_KEY } as const;
 const GUEST_CLAIM_ADDRESS = { collection: STORAGE.history, key: GUEST_CLAIM_STORAGE_KEY } as const;
+const PROFILE_STATE_ADDRESS = { collection: STORAGE.app, key: LOCAL_PROFILE_STATE_KEY } as const;
+
+interface ProfileAddresses {
+  archive: StorageAddress;
+  history: StorageAddress;
+  /** Immutable session source; claimed accounts keep reading this row. */
+  historyProfileId?: LocalProfileId;
+  /** Current durable archive destination after resolving guest claims. */
+  profileId?: LocalProfileId;
+}
 
 export interface LocalGradeSessionMutation {
   address: StorageAddress;
   /** Pure function; called again after every CAS conflict. */
-  prepare(current: unknown): unknown;
+  prepare(current: unknown, context: { previousFsrs?: FsrsState }): unknown;
   /** Durable idempotency marker used after an uncertain commit response. */
   containsAttempt(current: unknown, clientAttemptId: string): boolean;
+  /** Confirms that the durable marker belongs to this exact graded payload. */
+  matchesAttempt(current: unknown, attempt: QueuedAttempt): boolean;
 }
 
 export interface LocalGradeCommitInput {
   owner: AttemptOwnerSnapshot;
   attempt: QueuedAttempt;
   grade: ApplyGradeInput;
+  /**
+   * A self/manual judgement made as part of this answer event. It replaces
+   * the automatic FSRS advance inside the same atomic commit; it is never a
+   * later, second review.
+   */
+  manualGrading?: Grading;
   session: LocalGradeSessionMutation;
 }
 
 export interface LocalGradeCommitResult {
   ownerId: string;
+  /** Durable profile whose archive/history received this event. */
+  profileId?: LocalProfileId;
   archive: LocalArchive;
   historyEntry: HistoryEntry;
   grading: Grading;
@@ -91,17 +119,14 @@ function historyEntryFor(
     grading,
     gradedAt: attempt.gradedAt,
   };
-  if (attempt.elapsedMs !== undefined) entry.elapsedMs = attempt.elapsedMs;
+  if (attempt.elapsedMs != null) entry.elapsedMs = attempt.elapsedMs;
   if (attempt.contentSource !== undefined) entry.contentSource = attempt.contentSource;
   if (attempt.contentId !== undefined) entry.contentId = attempt.contentId;
   return entry;
 }
 
 function validateInput(input: LocalGradeCommitInput): void {
-  const id = input.attempt.clientAttemptId;
-  if (typeof id !== 'string' || id.length === 0 || id.length > 256) {
-    throw new TypeError('Invalid client attempt identity');
-  }
+  validateQueuedAttempt(input.attempt);
   if (
     input.attempt.partId !== input.grade.partId
     || input.attempt.awardedPoints !== input.grade.awardedPoints
@@ -110,12 +135,19 @@ function validateInput(input: LocalGradeCommitInput): void {
   ) {
     throw new TypeError('Attempt, grade and history identities do not match');
   }
+  if (input.manualGrading !== undefined && !isGrading(input.manualGrading)) {
+    throw new TypeError('Invalid manual grading');
+  }
   if (input.session.address.collection !== STORAGE.app) {
     throw new TypeError('Practice session commits must use app storage');
   }
   if (!input.session.address.key || input.session.address.key.length > 512) {
     throw new TypeError('Invalid practice session key');
   }
+}
+
+function samePending(left: PendingAttempt, right: PendingAttempt): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 /**
@@ -126,28 +158,118 @@ function validateInput(input: LocalGradeCommitInput): void {
  * after COMMIT.
  */
 export class LocalGradeCommitStore {
-  constructor(private readonly storage: StoragePort) {}
+  constructor(
+    private readonly storage: StoragePort,
+    private readonly profileId?: LocalProfileId | (() => LocalProfileId | undefined),
+    private readonly resolveProfile: (profileId: LocalProfileId) => LocalProfileId = (value) => value,
+  ) {}
+
+  private capturedProfile(input: LocalGradeCommitInput): LocalProfileId | undefined {
+    const configured = typeof this.profileId === 'function' ? this.profileId() : this.profileId;
+    return input.owner.localProfileId ?? configured;
+  }
+
+  private addresses(
+    captured: LocalProfileId | undefined,
+    profileStateValue: unknown,
+    clientAttemptId: string,
+  ): ProfileAddresses {
+    const durableState = parseLocalProfileState(profileStateValue);
+    const profileId = captured
+      ? durableState
+        ? resolveLocalProfileId(durableState, captured)
+        : this.resolveProfile(captured)
+      : undefined;
+    return {
+      archive: { collection: STORAGE.archive, key: archiveStorageKey(profileId) },
+      history: {
+        collection: STORAGE.history,
+        key: historyEventRowKey(clientAttemptId, captured),
+      },
+      ...(captured ? { historyProfileId: captured } : {}),
+      ...(profileId ? { profileId } : {}),
+    };
+  }
 
   async commit(input: LocalGradeCommitInput): Promise<LocalGradeCommitResult> {
     validateInput(input);
     if (!hasAtomicStorage(this.storage)) {
       throw new Error('Atomic local grade storage is unavailable; answer was not recorded');
     }
-    const addresses = [
-      ARCHIVE_ADDRESS,
-      HISTORY_ADDRESS,
-      OUTBOX_ADDRESS,
-      GUEST_CLAIM_ADDRESS,
-      input.session.address,
-    ];
+    const capturedProfile = this.capturedProfile(input);
     let lastPrepared: PreparedCommit | undefined;
+    let lastCommitError: unknown;
 
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const previewAddresses = [
+        GUEST_CLAIM_ADDRESS,
+        ...(capturedProfile ? [PROFILE_STATE_ADDRESS] : []),
+      ];
+      const previewEntries = await this.storage.readBatch(previewAddresses);
+      if (previewEntries.length !== previewAddresses.length) {
+        throw new Error('Ownership read returned an incomplete snapshot');
+      }
+      const previewSnapshots = snapshotMap(previewEntries);
+      const previewOwnership = resolveAttemptOwnership(
+        input.owner,
+        valueOf(previewSnapshots, GUEST_CLAIM_ADDRESS),
+      );
+      const profileAddresses = this.addresses(
+        capturedProfile,
+        capturedProfile ? valueOf(previewSnapshots, PROFILE_STATE_ADDRESS) : undefined,
+        input.attempt.clientAttemptId,
+      );
+      const outboxAddress: StorageAddress = {
+        collection: STORAGE.history,
+        key: attemptOutboxRowKey(previewOwnership.ownerId, input.attempt.clientAttemptId),
+      };
+      const addresses = [
+        profileAddresses.archive,
+        profileAddresses.history,
+        outboxAddress,
+        GUEST_CLAIM_ADDRESS,
+        ...(capturedProfile ? [PROFILE_STATE_ADDRESS] : []),
+        input.session.address,
+      ];
       const entries = await this.storage.readBatch(addresses);
+      if (entries.length !== addresses.length) {
+        throw new Error('Atomic storage returned an incomplete snapshot');
+      }
       const snapshots = snapshotMap(entries);
-      const already = this.confirmFromSnapshots(input, snapshots, lastPrepared);
+      const ownership = resolveAttemptOwnership(
+        input.owner,
+        valueOf(snapshots, GUEST_CLAIM_ADDRESS),
+      );
+      const currentProfileAddresses = this.addresses(
+        capturedProfile,
+        capturedProfile ? valueOf(snapshots, PROFILE_STATE_ADDRESS) : undefined,
+        input.attempt.clientAttemptId,
+      );
+      if (
+        ownership.ownerId !== previewOwnership.ownerId
+        || ownership.guestGeneration !== previewOwnership.guestGeneration
+        || currentProfileAddresses.archive.key !== profileAddresses.archive.key
+        || currentProfileAddresses.history.key !== profileAddresses.history.key
+        || currentProfileAddresses.profileId !== profileAddresses.profileId
+      ) {
+        continue;
+      }
+      const already = this.confirmFromSnapshots(
+        input,
+        snapshots,
+        profileAddresses,
+        outboxAddress,
+        lastPrepared,
+      );
       if (already) return already;
-      const prepared = this.prepare(input, entries, snapshots);
+      const prepared = this.prepare(
+        input,
+        entries,
+        snapshots,
+        profileAddresses,
+        outboxAddress,
+        ownership,
+      );
       lastPrepared = prepared;
       try {
         const result = await this.storage.commitBatch({
@@ -164,13 +286,19 @@ export class LocalGradeCommitStore {
           const confirmed = this.confirmFromSnapshots(
             input,
             snapshotMap(confirmationEntries),
+            profileAddresses,
+            outboxAddress,
             prepared,
           );
           if (confirmed) return confirmed;
         }
-        throw error;
+        // A profile claim can move the committed archive between our failed
+        // IPC response and this confirmation read. Re-resolve both durable
+        // ownership maps once more before exposing an error.
+        lastCommitError = error;
       }
     }
+    if (lastCommitError instanceof Error) throw lastCommitError;
     throw new Error('Local progress changed repeatedly; answer was not recorded');
   }
 
@@ -178,37 +306,73 @@ export class LocalGradeCommitStore {
     input: LocalGradeCommitInput,
     entries: StorageVersionedEntry[],
     snapshots: Map<string, StorageVersionedEntry>,
+    profileAddresses: ProfileAddresses,
+    outboxAddress: StorageAddress,
+    ownership: ResolvedAttemptOwnership,
   ): PreparedCommit {
-    if (entries.length !== 5) throw new Error('Atomic storage returned an incomplete snapshot');
     const archiveResult = prepareArchiveGrade(
-      valueOf(snapshots, ARCHIVE_ADDRESS) as LocalArchive | undefined,
+      valueOf(snapshots, profileAddresses.archive) as LocalArchive | undefined,
       input.grade,
     );
-    const historyEntry = historyEntryFor(input.attempt, input.grade, archiveResult.grading);
-    const history = prepareHistoryAppend(valueOf(snapshots, HISTORY_ADDRESS), historyEntry);
-    const outbox = prepareAttemptEnqueue(
-      valueOf(snapshots, OUTBOX_ADDRESS),
-      input.owner,
-      valueOf(snapshots, GUEST_CLAIM_ADDRESS),
-      input.attempt,
+    const grading = input.manualGrading ?? archiveResult.grading;
+    const archive = input.manualGrading === undefined
+      ? archiveResult.archive
+      : prepareArchiveGrading(archiveResult.archive, {
+          partId: input.grade.partId,
+          grading: input.manualGrading,
+          now: input.grade.now,
+          baseFsrs: archiveResult.previousFsrs,
+          replaceCurrentReview: true,
+        });
+    const historyEntry = historyEntryFor(input.attempt, input.grade, grading);
+    const history = prepareStoredHistoryEvent(profileAddresses.historyProfileId, historyEntry);
+    const existingHistory = valueOf(snapshots, profileAddresses.history);
+    if (
+      existingHistory !== undefined
+      && JSON.stringify(parseStoredHistoryEvent(existingHistory)) !== JSON.stringify(history)
+    ) {
+      throw new Error('Client attempt identity was reused with different history data');
+    }
+    const pending: PendingAttempt = {
+      userId: ownership.ownerId,
+      ...(ownership.guestGeneration ? { guestGeneration: ownership.guestGeneration } : {}),
+      attempt: { ...input.attempt },
+    };
+    const existingOutbox = valueOf(snapshots, outboxAddress);
+    if (existingOutbox !== undefined) {
+      const [existing] = preparePendingAttempts([existingOutbox]);
+      if (!existing || !samePending(existing, pending)) {
+        throw new Error('Client attempt identity was reused with different data');
+      }
+    }
+    const session = input.session.prepare(
+      valueOf(snapshots, input.session.address),
+      { ...(archiveResult.previousFsrs ? { previousFsrs: archiveResult.previousFsrs } : {}) },
     );
-    const session = input.session.prepare(valueOf(snapshots, input.session.address));
     if (!input.session.containsAttempt(session, input.attempt.clientAttemptId)) {
       throw new Error('Prepared practice session is missing its attempt identity');
     }
+    if (!input.session.matchesAttempt(session, input.attempt)) {
+      throw new Error('Prepared practice session does not match its graded attempt');
+    }
     const result: PreparedCommit = {
-      ownerId: outbox.ownerId,
-      archive: archiveResult.archive,
+      ownerId: ownership.ownerId,
+      ...(profileAddresses.profileId ? { profileId: profileAddresses.profileId } : {}),
+      archive,
       historyEntry,
-      grading: archiveResult.grading,
+      grading,
       ...(archiveResult.previousFsrs ? { previousFsrs: archiveResult.previousFsrs } : {}),
       session,
       recovered: false,
       preconditions: entries.map(({ collection, key, revision }) => ({ collection, key, revision })),
       mutations: [
-        { ...ARCHIVE_ADDRESS, operation: 'set', value: archiveResult.archive },
-        { ...HISTORY_ADDRESS, operation: 'set', value: history },
-        { ...OUTBOX_ADDRESS, operation: 'set', value: outbox.entries },
+        { ...profileAddresses.archive, operation: 'set', value: archive },
+        ...(existingHistory === undefined
+          ? [{ ...profileAddresses.history, operation: 'set' as const, value: history }]
+          : []),
+        ...(existingOutbox === undefined
+          ? [{ ...outboxAddress, operation: 'set' as const, value: pending }]
+          : []),
         { ...input.session.address, operation: 'set', value: session },
       ],
     };
@@ -218,26 +382,50 @@ export class LocalGradeCommitStore {
   private confirmFromSnapshots(
     input: LocalGradeCommitInput,
     snapshots: Map<string, StorageVersionedEntry>,
+    profileAddresses: ProfileAddresses,
+    outboxAddress: StorageAddress,
     prepared?: PreparedCommit,
   ): LocalGradeCommitResult | undefined {
-    const history = prepareHistoryLog(valueOf(snapshots, HISTORY_ADDRESS));
-    const historyEntry = history.find(
-      (entry) => entry.clientAttemptId === input.attempt.clientAttemptId,
-    );
+    const historyValue = valueOf(snapshots, profileAddresses.history);
+    const historyEntry = historyValue === undefined
+      ? undefined
+      : parseStoredHistoryEvent(historyValue).entry;
     const session = valueOf(snapshots, input.session.address);
     if (!historyEntry || !input.session.containsAttempt(session, input.attempt.clientAttemptId)) {
       return undefined;
     }
-    const archive = valueOf(snapshots, ARCHIVE_ADDRESS) as LocalArchive | undefined;
-    if (!archive) throw new Error('Committed answer is missing its local archive');
-    const owner = prepareAttemptEnqueue(
-      valueOf(snapshots, OUTBOX_ADDRESS),
+    const expectedHistory = historyEntryFor(
+      input.attempt,
+      input.grade,
+      input.manualGrading ?? historyEntry.grading,
+    );
+    if (JSON.stringify(historyEntry) !== JSON.stringify(expectedHistory)) {
+      throw new Error('Client attempt identity was reused with different history data');
+    }
+    if (!input.session.matchesAttempt(session, input.attempt)) {
+      throw new Error('Client attempt identity was reused with different session data');
+    }
+    const archive = valueOf(snapshots, profileAddresses.archive) as LocalArchive | undefined;
+    if (!archive) return undefined;
+    const ownership = resolveAttemptOwnership(
       input.owner,
       valueOf(snapshots, GUEST_CLAIM_ADDRESS),
-      input.attempt,
     );
+    const pendingValue = valueOf(snapshots, outboxAddress);
+    if (pendingValue !== undefined) {
+      const [pending] = preparePendingAttempts([pendingValue]);
+      const expectedPending: PendingAttempt = {
+        userId: ownership.ownerId,
+        ...(ownership.guestGeneration ? { guestGeneration: ownership.guestGeneration } : {}),
+        attempt: { ...input.attempt },
+      };
+      if (!pending || !samePending(pending, expectedPending)) {
+        throw new Error('Client attempt identity was reused with different upload data');
+      }
+    }
     return {
-      ownerId: owner.ownerId,
+      ownerId: ownership.ownerId,
+      ...(profileAddresses.profileId ? { profileId: profileAddresses.profileId } : {}),
       archive,
       historyEntry,
       grading: historyEntry.grading,

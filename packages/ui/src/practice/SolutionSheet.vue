@@ -26,7 +26,7 @@ import {
 export type SheetVerdict = 'correct' | 'partial' | 'incorrect';
 export type { SheetDetent };
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   solution: SolutionEntry[] | undefined;
   detent: SheetDetent;
   /** Constrain the inner content column (e.g. '860px') so the sheet aligns
@@ -37,6 +37,8 @@ const props = defineProps<{
    * nothing to reveal yet, and the handle would invite spoiling the question.
    */
   handle?: boolean;
+  /** Hide official material while an unanswered first attempt asks for a hint. */
+  showSolution?: boolean;
   /**
    * Height to keep clear above the sheet, measured by the shell — its top bar
    * is `56px + env(safe-area-inset-top)`, which no constant in here can know.
@@ -46,7 +48,7 @@ const props = defineProps<{
   verdict?: SheetVerdict;
   verdictLabel?: string;
   verdictPoints?: string;
-}>();
+}>(), { showSolution: true });
 
 const emit = defineEmits<{
   (e: 'update:detent', value: SheetDetent): void;
@@ -57,6 +59,7 @@ const emit = defineEmits<{
 const resolveAsset = useAssetResolver();
 
 const entries = computed(() => props.solution ?? []);
+const showsSolution = computed(() => props.showSolution !== false);
 
 function imageFigures(entry: SolutionEntry): ImageFigure[] {
   return (entry.figures ?? []).filter((f): f is ImageFigure => f.kind === 'image');
@@ -69,7 +72,8 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
  * the cue is not colour-only for anyone who cannot see it.
  */
 const handleLabel = computed(() => {
-  const action = props.detent === 'collapsed' ? 'Lösung anzeigen' : 'Lösung einklappen';
+  const subject = showsSolution.value ? 'Lösung' : 'Lernhilfe';
+  const action = props.detent === 'collapsed' ? `${subject} anzeigen` : `${subject} einklappen`;
   return props.verdictLabel ? `${props.verdictLabel} — ${action}` : action;
 });
 
@@ -113,6 +117,7 @@ const detentHeights = computed(() =>
 /* --- measuring the answer block -------------------------------------------- */
 
 const wrapper = ref<HTMLElement | null>(null);
+const handleEl = ref<HTMLButtonElement | null>(null);
 const sheetEl = ref<HTMLElement | null>(null);
 /** Handle + banner + the parent's action row — everything but the sheet. */
 const chromeHeight = ref(0);
@@ -317,7 +322,7 @@ onMounted(() => {
 });
 
 watch(
-  () => props.solution,
+  () => [props.solution, props.showSolution],
   () => void nextTick(measureAnswer),
 );
 
@@ -337,6 +342,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', readViewport);
   contentObserver?.disconnect();
 });
+
+async function collapseFromKeyboard(): Promise<void> {
+  emit('update:detent', 'collapsed');
+  await nextTick();
+  const handle = handleEl.value
+    ?? wrapper.value?.querySelector<HTMLButtonElement>('.q-ssheet__handle');
+  handle?.focus({ preventScroll: true });
+}
 </script>
 
 <template>
@@ -352,6 +365,7 @@ onBeforeUnmount(() => {
       ]"
     >
       <button
+        ref="handleEl"
         type="button"
         class="q-ssheet__handle"
         :aria-expanded="detent !== 'collapsed'"
@@ -383,10 +397,10 @@ onBeforeUnmount(() => {
       :class="{ 'q-ssheet--dragging': dragging, 'q-ssheet--open': detent !== 'collapsed' }"
       :style="{ height: `${sheetHeight}px` }"
       :aria-hidden="detent === 'collapsed'"
-      :inert="detent === 'collapsed'"
+      :inert="detent === 'collapsed' ? true : undefined"
       :tabindex="detent === 'collapsed' ? -1 : 0"
-      :aria-label="$slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg'"
-      @keydown.esc="emit('update:detent', 'collapsed')"
+      :aria-label="!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg'"
+      @keydown.esc.prevent.stop="collapseFromKeyboard"
     >
     <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
       <!-- The verdict lives here, not in the action row: on a phone it was
@@ -402,14 +416,14 @@ onBeforeUnmount(() => {
         <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
       </div>
 
-      <div class="q-ssheet__head">
+      <div v-if="showsSolution" class="q-ssheet__head">
         <span class="q-ssheet__tick" aria-hidden="true"></span>
         <h3 class="q-ssheet__title">Offizieller Lösungsweg</h3>
       </div>
-      <p v-if="entries.length === 0" class="q-ssheet__empty">
+      <p v-if="showsSolution && entries.length === 0" class="q-ssheet__empty">
         Keine offizielle Lösung verfügbar.
       </p>
-      <template v-else>
+      <template v-else-if="showsSolution">
         <template v-for="(entry, i) in entries" :key="i">
           <div v-if="i > 0" class="q-ssheet__divider" role="separator">
             <span class="q-ssheet__divider-label">Alternative</span>
@@ -420,16 +434,38 @@ onBeforeUnmount(() => {
             <div v-if="i === 0" ref="answerBlock" class="q-ssheet__answer">
               <!-- Some entries are figure-only; the card would be an empty
                    framed box under the title. -->
+              <div v-if="!isRichTextEmpty(entry.steps)" class="q-ssheet__steps">
+                <RichTextView :nodes="entry.steps" />
+              </div>
               <div v-if="!isRichTextEmpty(entry.result)" class="q-ssheet__card">
                 <RichTextView class="q-ssheet__result" :nodes="entry.result" />
+              </div>
+              <div
+                v-for="(alternative, ai) in entry.alternatives ?? []"
+                :key="`${entry.id ?? i}-alternative-${ai}`"
+                class="q-ssheet__short-alternative"
+              >
+                <span>Alternative</span>
+                <RichTextView :nodes="alternative" />
               </div>
               <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
                 <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
               </figure>
             </div>
             <template v-else>
+              <div v-if="!isRichTextEmpty(entry.steps)" class="q-ssheet__steps">
+                <RichTextView :nodes="entry.steps" />
+              </div>
               <div v-if="!isRichTextEmpty(entry.result)" class="q-ssheet__card">
                 <RichTextView class="q-ssheet__result" :nodes="entry.result" />
+              </div>
+              <div
+                v-for="(alternative, ai) in entry.alternatives ?? []"
+                :key="`${entry.id ?? i}-alternative-${ai}`"
+                class="q-ssheet__short-alternative"
+              >
+                <span>Alternative</span>
+                <RichTextView :nodes="alternative" />
               </div>
               <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
                 <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
@@ -709,8 +745,33 @@ onBeforeUnmount(() => {
   line-height: 1.7;
   color: var(--q-ink-2);
 }
-.q-ssheet__result {
+.q-ssheet__steps {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--q-ink-2);
   overflow-wrap: break-word;
+}
+.q-ssheet__result {
+  font-weight: 650;
+  color: var(--q-ink);
+  overflow-wrap: break-word;
+}
+.q-ssheet__short-alternative {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+  border-left: 2px solid var(--q-border-2);
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--q-ink-2);
+}
+.q-ssheet__short-alternative > span {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--q-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 .q-ssheet__divider {
   display: flex;

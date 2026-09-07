@@ -39,10 +39,7 @@ const accuracy = computed(() => {
           tabindex="-1"
         >
           <header class="leader-detail__header">
-            <div>
-              <h2>{{ detail?.nickname ?? 'Details' }}</h2>
-              <span>Statistik</span>
-            </div>
+            <h2>{{ detail?.nickname ?? 'Details' }}</h2>
             <QIconButton aria-label="Schließen" @click="$emit('close')" />
           </header>
 
@@ -154,7 +151,6 @@ const accuracy = computed(() => {
   letter-spacing: -0.025em;
 }
 
-.leader-detail__header span,
 .leader-detail__section h3 {
   color: var(--q-faint);
   font-size: 9px;

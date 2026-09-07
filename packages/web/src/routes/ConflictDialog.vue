@@ -103,8 +103,7 @@ function onEscape(): void {
           <div class="conflict__title">Synchronisierungskonflikt</div>
         </div>
         <p class="conflict__text">
-          Dein Fortschritt wurde auf einem anderen Gerät geändert, während dieses Gerät nicht synchron war.
-          Wähle, welche Version behalten werden soll — die andere wird überschrieben.
+          Cloud und Gerät enthalten unterschiedliche Änderungen. Eine Version wird überschrieben.
         </p>
         <p v-if="rounds > 0" class="conflict__renote">Erneut geändert — bitte noch einmal wählen.</p>
 
@@ -154,11 +153,11 @@ function onEscape(): void {
         </div>
 
         <button type="button" class="conflict__toggle" @click="perEntry = !perEntry">
-          {{ perEntry ? '‹ Zurück zur einfachen Auswahl' : '⚙ Pro Eintrag auswählen (erweitert)' }}
+          {{ perEntry ? '‹ Zurück zur einfachen Auswahl' : 'Einzeln wählen' }}
         </button>
 
         <div class="conflict__footer">
-          <span class="conflict__hint">{{ cloudNewer ? 'Cloud ist neuer — meist die sichere Wahl.' : 'Lokal ist neuer.' }}</span>
+          <span class="conflict__hint">{{ cloudNewer ? 'Cloud ist neuer' : 'Gerät ist neuer' }}</span>
           <QButton variant="secondary" :disabled="pending" @click="progress.dismissConflict()">Später entscheiden</QButton>
           <QButton :disabled="pending" @click="apply">{{ pending ? 'Übernehme …' : 'Auswahl übernehmen' }}</QButton>
         </div>

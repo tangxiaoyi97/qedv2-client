@@ -66,6 +66,18 @@ function fakeTransport(handlers: {
 }
 
 describe('performSync', () => {
+  it('passes a stable client mutation identity to the transport', async () => {
+    const { transport, calls } = fakeTransport({
+      sync: () => ({
+        result: 'fast-forward',
+        archiveVersion: 4,
+        checksum: 'unused',
+      }),
+    });
+    const id = '01234567-89ab-4cde-8fab-0123456789ab';
+    await performSync(transport, localArchive, { clientMutationId: id });
+    expect(calls.sync[0]).toMatchObject({ clientMutationId: id });
+  });
   it('short-circuits to in-sync without network when hints match', async () => {
     const { transport, calls } = fakeTransport({});
     const hint = archiveChecksum(localArchive.content);

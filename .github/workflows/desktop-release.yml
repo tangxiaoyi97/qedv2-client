@@ -37,11 +37,11 @@ env:
   QED2_BANK_SOURCE: ${{ github.workspace }}/srdpmppr
   QED2_EXPECTED_CORE_REPOSITORY: tangxiaoyi97/qedv2-core
   QED2_EXPECTED_CORE_REF: main
-  QED2_EXPECTED_CORE_VERSION: 1.10.0
+  QED2_EXPECTED_CORE_VERSION: 1.12.1
   QED2_EXPECTED_BANK_REPOSITORY: tangxiaoyi97/srdpmppr
   QED2_EXPECTED_BANK_REF: pastpapers
-  QED2_EXPECTED_BANK_SHA: ff304623607463386026ebeebdbc17a576db1925
-  QED2_EXPECTED_BANK_COMMIT_COUNT: '5'
+  QED2_EXPECTED_BANK_SHA: 34a3736b93ca2f9100cbaf3943b831b5d2249475
+  QED2_EXPECTED_BANK_COMMIT_COUNT: '8'
 
 jobs:
   release_context:
@@ -350,7 +350,7 @@ jobs:
             --repository "https://github.com/$QED2_EXPECTED_BANK_REPOSITORY" \
             --ref "$QED2_EXPECTED_BANK_REF" \
             --schema-min 2 \
-            --schema-max 3
+            --schema-max 4
 
           node --input-type=module - \
             "$PWD/packages/desktop/runtime" \
@@ -738,12 +738,16 @@ jobs:
             desktop-electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm --dir ../qedv2-core install --frozen-lockfile
 
       - name: Prepare runtime and build
+        shell: bash
         run: |
+          set -euo pipefail
           pnpm --filter @qed2/desktop runtime:prepare
           pnpm --filter @qed2/desktop runtime:smoke
           pnpm --filter @qed2/desktop build

@@ -96,7 +96,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
       </div>
     </div>
 
-    <div v-if="!review" class="q-numeric__hint">Komma oder Punkt erlaubt · Tab wechselt Felder</div>
+    <div v-if="!review" class="q-numeric__hint">Komma oder Punkt</div>
   </div>
 </template>
 
@@ -191,11 +191,5 @@ function markOf(blankId: string): BreakdownItem | undefined {
   margin-top: 4px;
   font: 500 11px ui-monospace, Menlo, monospace;
   color: var(--q-hint);
-}
-@media (pointer: coarse) {
-  /* „Tab wechselt Felder" is meaningless on touch keyboards */
-  .q-numeric__hint {
-    display: none;
-  }
 }
 </style>

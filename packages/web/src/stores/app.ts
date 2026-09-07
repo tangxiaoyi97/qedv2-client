@@ -8,7 +8,11 @@ import { computed, ref, shallowRef } from 'vue';
 import {
   CoreClient,
   ServerClient,
+  AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER,
+  canonicalServiceBaseUrl,
+  DEFAULT_CONFIG,
   mergeConfig,
+  sanitizeClientConfigOverrides,
   type ClientConfig,
   type CoreEndpoint,
   type CoreInfo,
@@ -18,7 +22,15 @@ import {
   type ServerInfo,
   STORAGE,
 } from '@qed2/core-logic';
-import { configStore, envConfigDefaults, ports, setCurrentCoreUrl, storage } from '../services.js';
+import {
+  attemptOutbox,
+  authStore as authStorage,
+  configStore,
+  envConfigDefaults,
+  ports,
+  setCurrentCoreUrl,
+  storage,
+} from '../services.js';
 import { runStorageMutation } from '../platform/desktop-storage.js';
 import {
   currentBuiltinThemeId,
@@ -29,6 +41,7 @@ import {
 } from '../platform/theme.js';
 
 export type ThemePref = 'light' | 'dark' | 'system';
+const CORE_CAPABILITY_PROBE_MS = 1_000;
 const ACCENT_STORAGE_KEY = 'accent';
 
 export interface PinnedCoreContent {
@@ -41,6 +54,8 @@ export interface PinnedCoreContent {
   /** True when that initial authentication request failed. */
   manifestUnavailable?: true;
   client: CoreClient;
+  /** Explicit Core opt-in; absent on 2.2 and therefore never probed by POST. */
+  learningRecommendations: boolean;
 }
 
 function applyThemeToDom(pref: ThemePref): void {
@@ -78,8 +93,63 @@ export const useAppStore = defineStore('app', () => {
   let networkSubscribed = false;
   let storageSubscribed = false;
   let externalSettingsTail: Promise<void> = Promise.resolve();
+  let beforeServerEndpointChange: (nextServerBaseUrl: string) => Promise<void> = async () => {};
   let coreInfoRequestGeneration = 0;
   let serverInfoRequestGeneration = 0;
+
+  /**
+   * 2.1 accepted arbitrary http(s) strings. Never let one of those legacy
+   * values reach a client constructor during 2.2 boot: repair it first, and
+   * invalidate an unscoped bearer when the Server address itself was unsafe.
+   */
+  async function readSafeConfig(): Promise<{
+    value: ClientConfig;
+    unsafeServer: boolean;
+  }> {
+    const rawOverrides: unknown = await configStore.getOverrides();
+    const sanitized = sanitizeClientConfigOverrides(rawOverrides);
+    const overrides = sanitized.value;
+    const merged = mergeConfig({ ...envConfigDefaults(), ...overrides });
+    const repairs: Partial<ClientConfig> = {};
+    let unsafeServer = sanitized.invalidFields.includes('(root)')
+      || sanitized.invalidFields.includes('serverBaseUrl');
+    const safeFallback = (field: 'coreBaseUrl' | 'serverBaseUrl'): string => {
+      const configured = mergeConfig(envConfigDefaults())[field];
+      try {
+        return canonicalServiceBaseUrl(configured);
+      } catch {
+        return canonicalServiceBaseUrl(DEFAULT_CONFIG[field]);
+      }
+    };
+    for (const field of ['coreBaseUrl', 'serverBaseUrl'] as const) {
+      try {
+        const canonical = canonicalServiceBaseUrl(merged[field]);
+        if (canonical !== merged[field]) repairs[field] = canonical;
+      } catch {
+        repairs[field] = safeFallback(field);
+        if (field === 'serverBaseUrl') unsafeServer = true;
+      }
+    }
+    if (unsafeServer) {
+      // A 2.1 bearer has no issuer, so an invalid/custom legacy address gives
+      // us no safe origin to which it can be sent. Signing out preserves all
+      // local profiles while requiring an explicit login to the repaired URL.
+      await runStorageMutation(storage, () => authStorage.clearSession());
+    }
+    if (sanitized.invalidFields.length > 0 || Object.keys(repairs).length > 0) {
+      // Replace, rather than merge into, a malformed document. Otherwise an
+      // array/non-string field would survive every boot and retrigger repair.
+      await runStorageMutation(storage, () => storage.set(
+        STORAGE.config,
+        'overrides',
+        { ...overrides, ...repairs },
+      ));
+    }
+    return {
+      value: mergeConfig({ ...envConfigDefaults(), ...overrides, ...repairs }),
+      unsafeServer,
+    };
+  }
 
   const coreClient = computed(
     () => new CoreClient(coreEndpointUrl.value || config.value.coreBaseUrl),
@@ -140,6 +210,18 @@ export const useAppStore = defineStore('app', () => {
   ): Promise<PinnedCoreContent> {
     const endpoint = await ports.coreRuntime.getEndpoint(source);
     const client = new CoreClient(endpoint.baseUrl);
+    // Learning signals are additive advice. Never let an old/offline Core's
+    // optional /info probe hold a cache-restored practice session for the
+    // normal 20-second HTTP deadline.
+    let capabilityProbeTimer: number | undefined;
+    const infoPromise = Promise.race([
+      client.info().catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        capabilityProbeTimer = globalThis.setTimeout(resolve, CORE_CAPABILITY_PROBE_MS);
+      }),
+    ]).finally(() => {
+      if (capabilityProbeTimer !== undefined) globalThis.clearTimeout(capabilityProbeTimer);
+    });
     let contentId = endpoint.contentId ?? knownContentId;
     let manifest: ManifestResponse | undefined;
     let manifestUnavailable = false;
@@ -184,6 +266,7 @@ export const useAppStore = defineStore('app', () => {
         );
       }
     }
+    const pinnedInfo = await infoPromise;
     const pin: PinnedCoreContent = {
       baseUrl: endpoint.baseUrl,
       source: endpoint.source,
@@ -192,6 +275,7 @@ export const useAppStore = defineStore('app', () => {
       ...(manifest ? { manifest } : {}),
       ...(manifestUnavailable ? { manifestUnavailable: true as const } : {}),
       client,
+      learningRecommendations: pinnedInfo?.capabilities?.learningRecommendations === true,
     };
     pinnedCoreContent.value = pin;
     return pin;
@@ -252,9 +336,12 @@ export const useAppStore = defineStore('app', () => {
     const reloadAccent = key === undefined || key === ACCENT_STORAGE_KEY;
     if (reloadConfig) {
       const previous = config.value;
-      const overrides = await configStore.getOverrides();
-      const next = mergeConfig({ ...envConfigDefaults(), ...overrides });
+      const { value: next } = await readSafeConfig();
+      if (previous.serverBaseUrl !== next.serverBaseUrl) {
+        await beforeServerEndpointChange(next.serverBaseUrl);
+      }
       config.value = next;
+      attemptOutbox.configureLegacyAccountOwner(() => AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER);
       if (ENDPOINT_KEYS.some((field) => previous[field] !== next[field])) {
         setCurrentCoreUrl(next.coreBaseUrl);
         await resolveCoreEndpoint();
@@ -291,8 +378,8 @@ export const useAppStore = defineStore('app', () => {
 
   async function init(): Promise<void> {
     subscribeStorageChanges();
-    const overrides = await configStore.getOverrides();
-    config.value = mergeConfig({ ...envConfigDefaults(), ...overrides });
+    config.value = (await readSafeConfig()).value;
+    attemptOutbox.configureLegacyAccountOwner(() => AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER);
     setCurrentCoreUrl(config.value.coreBaseUrl);
     subscribeCoreRuntimeStatus();
     // Snapshot first, then configure: configure() is the authoritative endpoint
@@ -371,17 +458,34 @@ export const useAppStore = defineStore('app', () => {
   ];
 
   async function updateConfig(partial: Partial<ClientConfig>): Promise<void> {
+    const safePartial = { ...partial };
+    if (safePartial.coreBaseUrl !== undefined) {
+      safePartial.coreBaseUrl = canonicalServiceBaseUrl(safePartial.coreBaseUrl);
+    }
+    if (safePartial.serverBaseUrl !== undefined) {
+      safePartial.serverBaseUrl = canonicalServiceBaseUrl(safePartial.serverBaseUrl);
+    }
+    if (
+      safePartial.serverBaseUrl !== undefined
+      && safePartial.serverBaseUrl !== config.value.serverBaseUrl
+    ) {
+      // Auth installs this guard during store setup. It synchronously removes
+      // the old bearer from the token provider, then durably signs out before
+      // a different origin becomes observable through serverClient.
+      await beforeServerEndpointChange(safePartial.serverBaseUrl);
+    }
     const overrides = await runStorageMutation(storage, async () => {
-      await configStore.setConfig(partial);
+      await configStore.setConfig(safePartial);
       return configStore.getOverrides();
     });
     config.value = mergeConfig({ ...envConfigDefaults(), ...overrides });
+    attemptOutbox.configureLegacyAccountOwner(() => AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER);
 
     // Only an endpoint change justifies re-resolving and re-probing. Doing it
     // for a preference blanked serverInfo, which the AI settings section is
     // derived from — so changing the AI language made that whole section
     // disappear and come back, and the change looked like it had not stuck.
-    if (!ENDPOINT_KEYS.some((k) => k in partial)) return;
+    if (!ENDPOINT_KEYS.some((k) => k in safePartial)) return;
 
     setCurrentCoreUrl(config.value.coreBaseUrl);
     await resolveCoreEndpoint();
@@ -394,6 +498,12 @@ export const useAppStore = defineStore('app', () => {
     await runStorageMutation(storage, () => configStore.setTheme(pref));
     theme.value = pref;
     applyThemeToDom(pref);
+  }
+
+  function setServerEndpointChangeGuard(
+    guard: (nextServerBaseUrl: string) => Promise<void>,
+  ): void {
+    beforeServerEndpointChange = guard;
   }
 
   async function setAccentTheme(id: BuiltinThemeId): Promise<void> {
@@ -432,6 +542,7 @@ export const useAppStore = defineStore('app', () => {
     setAccentTheme,
     assetUrl,
     setTokenProvider,
+    setServerEndpointChangeGuard,
     selectCoreSource,
     pinCoreContent,
     releaseCoreContentPin,

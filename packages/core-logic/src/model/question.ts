@@ -1,6 +1,6 @@
 /**
  * Question model — mirrors the bank's authoritative Zod schema
- * (srdpmppr `schema/question.ts`, schemaVersion 2/3) as consumed through the
+ * (srdpmppr `schema/question.ts`, schemaVersion 2/3/4) as consumed through the
  * qed2-core API (contract §1.1 / §3.1). The client never redefines semantics;
  * these types describe what the wire actually carries.
  */
@@ -171,12 +171,46 @@ export interface OtherFigure {
 }
 export type Figure = ImageFigure | OtherFigure;
 
+/** One immutable misconception id and its short learner-facing label. */
+export interface LearningMisconception {
+  id: string;
+  label: string;
+}
+
+export type LearningHintLevel = 1 | 2 | 3;
+
+export interface LearningHint {
+  level: LearningHintLevel;
+  content: RichText;
+}
+
 /**
- * Solution entries as actually served by core: each step/alternative is an
- * object with a RichText `result`, an optional grader `note` and figures.
+ * Optional Bank v4 learning metadata. Older v2/v3 questions simply omit it;
+ * the client must never invent metadata while replaying an old revision.
+ */
+export interface PartLearningMetadata {
+  schemaVersion: 1;
+  concepts?: string[];
+  prerequisites?: string[];
+  difficulty?: 1 | 2 | 3 | 4 | 5;
+  estimatedMinutes?: number;
+  misconceptions?: LearningMisconception[];
+  hints?: LearningHint[];
+}
+
+/**
+ * One official solution alternative.
+ *
+ * Bank v2/v3 already allowed either `steps`, `result`, or both. `result` was
+ * incorrectly required in the old client model, which made steps-only
+ * solutions disappear. Bank v4 adds a stable entry id and short alternative
+ * results while preserving the frozen historical wire shape.
  */
 export interface SolutionEntry {
-  result: RichText;
+  id?: string;
+  steps?: RichText;
+  result?: RichText;
+  alternatives?: RichText[];
   note?: string;
   figures?: Figure[];
 }
@@ -193,6 +227,7 @@ export interface QuestionPart {
   scoring?: Scoring;
   points?: number;
   solution?: SolutionEntry[];
+  learning?: PartLearningMetadata;
   externalRefs?: unknown[];
 }
 

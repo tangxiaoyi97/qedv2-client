@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { StoragePort } from '../src/ports/index.js';
 import { STORAGE } from '../src/ports/index.js';
-import { ArchiveStore, AttemptOutbox, AuthStore, ConfigStore, GUEST_ATTEMPT_OWNER, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
+import { AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER, ArchiveStore, AttemptOutbox, AuthStore, ConfigStore, GUEST_ATTEMPT_OWNER, QuestionCache, HistoryLog, questionContentHash } from '../src/store/index.js';
 import { DEFAULT_CONFIG } from '../src/config/index.js';
 import { archiveChecksum } from '../src/sync/index.js';
 import { EXCLUDED_DUE_SENTINEL } from '../src/fsrs/index.js';
@@ -39,6 +39,27 @@ class MemoryStorage implements StoragePort {
 }
 
 describe('AttemptOutbox', () => {
+  it('scopes authenticated rows from the 2.1 array before they can upload', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE.history, 'attempt-outbox', [{
+      userId: 'same-user',
+      attempt: {
+        clientAttemptId: 'legacy-scoped-attempt',
+        questionId: 'q1',
+        partId: 'q1-a',
+        correct: true,
+        awardedPoints: 1,
+        gradedAt: '2026-08-07T07:00:00.000Z',
+      },
+    }]);
+    const outbox = new AttemptOutbox(storage);
+    outbox.configureLegacyAccountOwner((userId) => `account-v1-${userId}`);
+
+    await outbox.migrateLegacy();
+    expect(await outbox.count('same-user')).toBe(0);
+    expect(await outbox.count('account-v1-same-user')).toBe(1);
+  });
+
   it('keeps retries durable, idempotent and isolated by account', async () => {
     const storage = new MemoryStorage();
     const outbox = new AttemptOutbox(storage);
@@ -69,6 +90,7 @@ describe('AttemptOutbox', () => {
   it('claims guest attempts once, de-duplicates them and leaves other accounts alone', async () => {
     const storage = new MemoryStorage();
     const outbox = new AttemptOutbox(storage);
+    const guest = await outbox.captureGuestOwner();
     const attempt = {
       clientAttemptId: 'guest-attempt-1',
       questionId: 'q1',
@@ -78,17 +100,28 @@ describe('AttemptOutbox', () => {
       gradedAt: '2026-08-07T08:00:00.000Z',
     };
 
-    await outbox.enqueue(GUEST_ATTEMPT_OWNER, attempt);
+    await outbox.enqueue(guest, attempt);
     await outbox.enqueue('new-user', attempt);
     await outbox.enqueue('other-user', { ...attempt, clientAttemptId: 'other-attempt' });
     const secondGuestAttempt = { ...attempt, clientAttemptId: 'guest-attempt-2' };
-    await outbox.enqueue(GUEST_ATTEMPT_OWNER, secondGuestAttempt);
+    await outbox.enqueue(guest, secondGuestAttempt);
 
-    await expect(outbox.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(1);
+    await outbox.beginGuestClaim('new-user');
+    const pending = await outbox.pendingGuestClaimRoute();
+    expect(pending?.sourceGeneration).toBe(guest.guestGeneration);
+    await expect(outbox.claim(
+      GUEST_ATTEMPT_OWNER,
+      'new-user',
+      pending?.sourceGeneration,
+    )).resolves.toBe(1);
     expect(await outbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
     expect(await outbox.list('new-user')).toEqual([attempt, secondGuestAttempt]);
     expect(await outbox.count('other-user')).toBe(1);
-    await expect(outbox.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(0);
+    await expect(outbox.claim(
+      GUEST_ATTEMPT_OWNER,
+      'new-user',
+      pending?.sourceGeneration,
+    )).resolves.toBe(0);
   });
 
   it('persists a guest-claim marker and lets only its named account finish it', async () => {
@@ -105,6 +138,88 @@ describe('AttemptOutbox', () => {
     expect(await first.pendingGuestClaim()).toBeUndefined();
   });
 
+  it('migrates a 2.1 guest claim but quarantines issuer-less account rows', async () => {
+    const storage = new MemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    const guest = await outbox.captureGuestOwner();
+    const attempt = {
+      clientAttemptId: 'legacy-account-attempt',
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-08-07T08:00:00.000Z',
+    };
+    await outbox.enqueue('raw-user', attempt);
+    await outbox.beginGuestClaim('raw-user');
+
+    await outbox.migrateLegacyAccountIdentity('raw-user', 'account-v1-scoped-user');
+
+    expect(await outbox.pendingGuestClaimRoute()).toEqual({
+      sourceGeneration: guest.guestGeneration,
+      destinationUserId: 'account-v1-scoped-user',
+    });
+    expect(await outbox.count('raw-user')).toBe(0);
+    expect(await outbox.count('account-v1-scoped-user')).toBe(0);
+    expect(await outbox.list(AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER)).toEqual([attempt]);
+
+    // A lost response or restart repeats the migration without duplicating
+    // rows or changing the already-reserved guest generation.
+    await new AttemptOutbox(storage).migrateLegacyAccountIdentity(
+      'raw-user',
+      'account-v1-scoped-user',
+    );
+    expect(await outbox.pendingGuestClaimRoute()).toEqual({
+      sourceGeneration: guest.guestGeneration,
+      destinationUserId: 'account-v1-scoped-user',
+    });
+    expect(await outbox.count('account-v1-scoped-user')).toBe(0);
+    expect(await outbox.count(AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER)).toBe(1);
+  });
+
+  it('fails closed on conflicting guest generation routes', async () => {
+    const storage = new MemoryStorage();
+    await storage.set(STORAGE.history, 'attempt-outbox-guest-claim', {
+      version: 1,
+      currentGeneration: 'fresh',
+      routes: [
+        { sourceGeneration: 'old', destinationUserId: 'account-1' },
+        { sourceGeneration: 'old', destinationUserId: 'account-2' },
+      ],
+    });
+
+    await expect(new AttemptOutbox(storage).captureGuestOwner()).rejects.toThrow('malformed');
+  });
+
+  it('fails closed when legacy ownership contradicts guest routes or migration', async () => {
+    const malformed = [
+      {
+        version: 1,
+        currentGeneration: 'fresh',
+        routes: [{ sourceGeneration: 'old', destinationUserId: 'account-1' }],
+        legacyOwner: { ownerId: GUEST_ATTEMPT_OWNER, guestGeneration: 'fresh' },
+      },
+      {
+        version: 1,
+        currentGeneration: 'fresh',
+        routes: [],
+        legacyOwner: { ownerId: '__qed2_guest_unresolved__' },
+      },
+      {
+        version: 1,
+        currentGeneration: 'fresh',
+        routes: [],
+        legacyOwner: { ownerId: GUEST_ATTEMPT_OWNER, guestGeneration: 'fresh' },
+        legacyMigration: { ownerId: '__qed2_guest_unresolved__' },
+      },
+    ];
+    for (const value of malformed) {
+      const storage = new MemoryStorage();
+      await storage.set(STORAGE.history, 'attempt-outbox-guest-claim', value);
+      await expect(new AttemptOutbox(storage).captureGuestOwner()).rejects.toThrow('malformed');
+    }
+  });
+
   it('routes a late old-generation enqueue after claim completion without claiming new guests', async () => {
     const storage = new MemoryStorage();
     const first = new AttemptOutbox(storage);
@@ -119,7 +234,11 @@ describe('AttemptOutbox', () => {
 
     await first.enqueue(oldGuest, { ...base, clientAttemptId: 'before-claim' });
     await first.beginGuestClaim('new-user');
-    await expect(first.claim(GUEST_ATTEMPT_OWNER, 'new-user')).resolves.toBe(1);
+    await expect(first.claim(
+      GUEST_ATTEMPT_OWNER,
+      'new-user',
+      oldGuest.guestGeneration,
+    )).resolves.toBe(1);
     await first.finishGuestClaim('new-user');
     expect(await first.pendingGuestClaim()).toBeUndefined();
 
@@ -147,10 +266,42 @@ describe('AttemptOutbox', () => {
     expect(await restarted.count(GUEST_ATTEMPT_OWNER)).toBe(1);
   });
 
-  it('trims a runaway backlog per account, never across accounts', async () => {
-    // The queue is one shared array. Evicting its oldest entries globally
-    // meant a shared device could throw away another account's attempts,
-    // which is the opposite of "per-account audit outbox".
+  it('claims only the marked guest generation after a crash', async () => {
+    const storage = new MemoryStorage();
+    const outbox = new AttemptOutbox(storage);
+    const base = {
+      questionId: 'q1',
+      partId: 'q1-a',
+      correct: true,
+      awardedPoints: 1,
+      gradedAt: '2026-08-07T08:00:00.000Z',
+    };
+    const oldGuest = await outbox.captureGuestOwner();
+    await outbox.enqueue(oldGuest, { ...base, clientAttemptId: 'old-guest' });
+    await outbox.beginGuestClaim('new-user');
+    const newGuest = await outbox.captureGuestOwner();
+    await outbox.enqueue(newGuest, { ...base, clientAttemptId: 'new-guest' });
+
+    const restarted = new AttemptOutbox(storage);
+    const pending = await restarted.pendingGuestClaimRoute();
+    expect(pending).toEqual({
+      sourceGeneration: oldGuest.guestGeneration,
+      destinationUserId: 'new-user',
+    });
+    await expect(restarted.claim(
+      GUEST_ATTEMPT_OWNER,
+      'new-user',
+      pending?.sourceGeneration,
+    )).resolves.toBe(1);
+    await restarted.finishGuestClaim('new-user');
+
+    expect((await restarted.list('new-user')).map((entry) => entry.clientAttemptId))
+      .toEqual(['old-guest']);
+    expect((await restarted.list(GUEST_ATTEMPT_OWNER)).map((entry) => entry.clientAttemptId))
+      .toEqual(['new-guest']);
+  });
+
+  it('never deletes unacknowledged attempts from a large offline backlog', async () => {
     const storage = new MemoryStorage();
     const outbox = new AttemptOutbox(storage);
     const base = {
@@ -162,14 +313,16 @@ describe('AttemptOutbox', () => {
     };
 
     await outbox.enqueue('u2', { ...base, clientAttemptId: 'other-1' });
-    for (let i = 0; i < 2100; i += 1) {
+    for (let i = 0; i < 2000; i += 1) {
       await outbox.enqueue('u1', { ...base, clientAttemptId: `a-${i}` });
     }
+    await outbox.enqueue('u1', { ...base, clientAttemptId: 'a-2000' });
 
-    expect(await outbox.count('u1')).toBe(2000);
-    expect(await outbox.count('u2')).toBe(1); // untouched by u1's flood
+    expect(await outbox.count('u1')).toBe(2001);
+    expect(await outbox.count('u2')).toBe(1);
     const kept = await outbox.list('u1', 5000);
-    expect(kept[0]?.clientAttemptId).toBe('a-100'); // oldest of MINE went first
+    expect(kept.map((attempt) => attempt.clientAttemptId)).toContain('a-0');
+    expect(kept.map((attempt) => attempt.clientAttemptId)).toContain('a-2000');
   }, 15_000);
 });
 
@@ -587,6 +740,23 @@ describe('AuthStore', () => {
     expect(auth.isExpiringSoon(s, new Date('2026-07-03T00:00:00.000Z'))).toBe(true); // exactly 72h
     expect(auth.isExpiringSoon(s, new Date('2026-07-07T00:00:00.000Z'))).toBe(true); // already expired
     expect(auth.isExpiringSoon(s, new Date('2026-07-01T00:00:00.000Z'), 10 * 24 * 3600 * 1000)).toBe(true);
+  });
+
+  it('fails closed on malformed persisted sessions', async () => {
+    const storage = new MemoryStorage();
+    const auth = new AuthStore(storage);
+    for (const malformed of [
+      { token: 7, expiresAt: session.expiresAt, user: session.user },
+      { token: session.token, expiresAt: 'not-a-date', user: session.user },
+      { token: session.token, expiresAt: session.expiresAt, user: {} },
+      { token: session.token, expiresAt: session.expiresAt, user: session.user, serverBaseUrl: 7 },
+    ]) {
+      await storage.set(STORAGE.auth, 'session', malformed);
+      await expect(auth.inspectSession()).resolves.toEqual({ status: 'malformed' });
+      await expect(auth.getSession()).resolves.toBeUndefined();
+    }
+    await expect(auth.setSession({ ...session, expiresAt: 'not-a-date' }))
+      .rejects.toThrow('malformed');
   });
 });
 

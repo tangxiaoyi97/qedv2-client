@@ -12,10 +12,11 @@
  * the point — it is what lets a human check the machine in two seconds
  * instead of taking its word.
  */
-import { computed } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { AI_SUGGESTION_CONFIDENCE_FLOOR } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
+import QButton from '../shared/QButton.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
 
 export interface AssessedCriterion {
@@ -45,14 +46,19 @@ const props = defineProps<{
   labels: string[];
   loading?: boolean;
   error?: string | undefined;
+  storageWarning?: string | undefined;
+  canRenew?: boolean;
   /** Server refuses to vouch for this reply — show it, tick nothing. */
   advisoryOnly?: boolean;
   model?: string | undefined;
   /** Hides the model name on the shared key — the server chose it, not you. */
   source?: string | undefined;
+  /** The learner's decision, made before this comparison is requested. */
+  studentCriteria?: boolean[];
+  studentPoints?: number;
 }>();
 
-const emit = defineEmits<{ ask: [] }>();
+const emit = defineEmits<{ ask: []; renew: [] }>();
 
 const hasResult = computed(() => (props.criteria?.length ?? 0) > 0 || props.overall != null);
 const idle = computed(() => !hasResult.value && !props.loading && !props.error);
@@ -60,20 +66,45 @@ const idle = computed(() => !hasResult.value && !props.loading && !props.error);
 const shaky = (c: AssessedCriterion): boolean =>
   c.confidence < AI_SUGGESTION_CONFIDENCE_FLOOR || (c.met && !c.quoteVerified);
 
-const metCount = computed(() => props.criteria?.filter((criterion) => criterion.met).length ?? 0);
+const differingCriteria = computed(() => (props.criteria ?? []).filter((criterion) => {
+  const own = props.studentCriteria?.[criterion.index];
+  return own === undefined || own !== criterion.met;
+}));
+const overallDiffers = computed(() =>
+  props.overall != null
+  && (props.studentPoints === undefined || props.studentPoints !== props.overall.points),
+);
+const differenceCount = computed(() =>
+  differingCriteria.value.length + (overallDiffers.value ? 1 : 0),
+);
 const overallShaky = computed(() =>
   props.overall != null &&
   (props.overall.confidence < AI_SUGGESTION_CONFIDENCE_FLOOR ||
     (props.overall.points > 0 && !props.overall.quoteVerified)),
 );
+const panelElement = ref<HTMLElement | null>(null);
+watch(
+  () => props.loading,
+  async (loading, wasLoading) => {
+    if (!loading && !wasLoading) return;
+    await nextTick();
+    panelElement.value?.focus();
+  },
+);
 </script>
 
 <template>
-  <section class="q-aia">
-    <button v-if="idle" type="button" class="q-aia__ask" @click="emit('ask')">
+  <section
+    ref="panelElement"
+    class="q-aia"
+    tabindex="-1"
+    aria-live="polite"
+    :aria-busy="loading ? 'true' : 'false'"
+  >
+    <QButton v-if="idle" variant="secondary" class="q-aia__ask" @click="emit('ask')">
       <AiBadge size="md" />
-      Vorschlag holen
-    </button>
+      KI vergleichen
+    </QButton>
 
     <div v-else-if="loading" class="q-aia__loading">
       <QSkeleton :rows="labels.length || 2" height="34px" radius="8px" gap="7px" label="KI prüft die Kriterien …" />
@@ -81,22 +112,25 @@ const overallShaky = computed(() =>
 
     <div v-else-if="error" class="q-aia__error" role="alert">
       <p class="q-aia__error-text">{{ error }}</p>
-      <button type="button" class="q-aia__retry" @click="emit('ask')">Nochmal versuchen</button>
+      <QButton v-if="canRenew" variant="secondary" @click="emit('renew')">Neu anfragen</QButton>
+      <QButton v-else variant="secondary" @click="emit('ask')">Nochmal versuchen</QButton>
+      <p v-if="canRenew" class="q-aia__billing-note">
+        Die neue Anfrage kann erneut berechnet werden.
+      </p>
     </div>
 
     <template v-else>
       <div class="q-aia__head">
         <AiBadge />
-        <span class="q-aia__head-text">{{ advisoryOnly ? 'Nur als Hinweis' : 'Vorschlag' }}</span>
-        <strong v-if="overall" class="q-aia__summary">
-          {{ overall.points }}<template v-if="maxPoints !== undefined"> / {{ maxPoints }}</template> P
+        <span class="q-aia__head-text">{{ advisoryOnly ? 'Nur als Hinweis' : 'KI-Vergleich' }}</span>
+        <strong class="q-aia__summary">
+          {{ differenceCount === 0 ? 'Keine Abweichung' : `${differenceCount} ${differenceCount === 1 ? 'Abweichung' : 'Abweichungen'}` }}
         </strong>
-        <strong v-else class="q-aia__summary">{{ metCount }} / {{ criteria?.length ?? 0 }} erfüllt</strong>
       </div>
 
       <!-- allOrNothing / tiered parts: one score, same evidence rules. -->
       <div
-        v-if="overall"
+        v-if="overall && overallDiffers"
         class="q-aia__item q-aia__overall"
         :class="{ 'q-aia__item--shaky': overallShaky }"
       >
@@ -121,7 +155,7 @@ const overallShaky = computed(() =>
 
       <ul v-else class="q-aia__list">
         <li
-          v-for="c in criteria"
+          v-for="c in differingCriteria"
           :key="c.index"
           class="q-aia__item"
           :class="{ 'q-aia__item--shaky': shaky(c) }"
@@ -146,16 +180,17 @@ const overallShaky = computed(() =>
         </li>
       </ul>
 
+      <p v-if="differenceCount === 0" class="q-aia__same">
+        Deine Einschätzung und die KI stimmen überein.
+      </p>
+
       <p class="q-aia__foot">
-        <template v-if="advisoryOnly">
-          Nichts wurde vorausgewählt · bitte selbst prüfen.
-        </template>
-        <template v-else>
-          Vorausgewählt, nicht gespeichert · bestätige mit „Bewertung übernehmen".
-        </template>
+        {{ advisoryOnly ? 'Nichts wurde vorausgewählt.' : 'Deine Bewertung bleibt unverändert.' }}
+        Bitte selbst bestätigen.
         <span v-if="model && source !== 'pool'" class="q-aia__model">{{ model }}</span>
       </p>
     </template>
+    <p v-if="storageWarning" class="q-aia__storage" role="status">{{ storageWarning }}</p>
   </section>
 </template>
 
@@ -174,7 +209,8 @@ const overallShaky = computed(() =>
   border-radius: 10px;
   background: var(--q-card);
   color: var(--q-ink);
-  font: 700 12.5px 'Public Sans', system-ui, sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
   cursor: pointer;
   transition: border-color var(--q-transition-fast), background var(--q-transition-fast);
 }
@@ -269,7 +305,8 @@ const overallShaky = computed(() =>
 .q-aia__quote-warn {
   display: inline-block;
   margin-left: 6px;
-  font: 700 9.5px 'Public Sans', system-ui, sans-serif;
+  font-size: 9.5px;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--q-err);
@@ -292,6 +329,12 @@ const overallShaky = computed(() =>
 .q-aia__overall {
   margin-bottom: 0;
 }
+.q-aia__same {
+  margin: 0;
+  color: var(--q-ok-ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
 
 .q-aia__loading {
   padding: 2px 0;
@@ -312,16 +355,16 @@ const overallShaky = computed(() =>
   font-size: 12px;
   color: var(--q-err-ink);
 }
-.q-aia__retry {
-  border: 1px solid var(--q-err-border);
-  border-radius: 8px;
-  background: var(--q-card);
-  color: var(--q-err-ink);
-  font: 700 11.5px 'Public Sans', system-ui, sans-serif;
-  padding: 7px 12px;
-  cursor: pointer;
+.q-aia__billing-note,
+.q-aia__storage {
+  margin: 0;
+  color: var(--q-warn-ink, var(--q-mut));
+  font-size: 11.5px;
+  line-height: 1.45;
 }
-
+.q-aia__storage {
+  margin-top: 8px;
+}
 .q-aia__foot {
   margin: 10px 0 0;
   font-size: 11px;

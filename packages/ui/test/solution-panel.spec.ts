@@ -25,7 +25,7 @@ describe('SolutionPanel', () => {
   it('renders the Lösung accordion open by default with all entry content', () => {
     const w = mount(SolutionPanel, { props: { solution } });
     expect(w.text()).toContain('Lösung');
-    expect(w.text()).toContain('Offizieller Lösungsweg');
+    expect(w.text()).not.toContain('Offizieller Lösungsweg');
     // body open by default
     expect(w.text()).toContain('Zutreffend:');
     // KaTeX math rendered (jsdom-safe)

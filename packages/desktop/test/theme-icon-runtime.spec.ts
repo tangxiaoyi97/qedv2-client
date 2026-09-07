@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   desktopThemeIconPath,
@@ -31,13 +31,13 @@ describe('Desktop runtime theme icon selection', () => {
   it('chooses the native artifact for each platform without accepting path input', () => {
     const root = '/opt/qed2/theme-icons';
     expect(desktopThemeIconPath(root, 'sky', 'darwin')).toBe(
-      '/opt/qed2/theme-icons/sky/icon-1024.png',
+      resolve(root, 'sky', 'icon-1024.png'),
     );
     expect(desktopThemeIconPath(root, 'raspberry', 'win32')).toBe(
-      '/opt/qed2/theme-icons/raspberry/icon.ico',
+      resolve(root, 'raspberry', 'icon.ico'),
     );
     expect(desktopThemeIconPath(root, 'violette', 'linux')).toBe(
-      '/opt/qed2/theme-icons/violette/icon-512.png',
+      resolve(root, 'violette', 'icon-512.png'),
     );
   });
 

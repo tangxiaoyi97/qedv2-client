@@ -131,7 +131,7 @@ const correctNotation = computed(() => {
 
     <div v-if="!review && showPreview !== false" class="q-interval__preview">
       Ergebnis: <b class="q-interval__preview-val">{{ preview }}</b>
-      <span class="q-interval__hint">leer oder ∞ = unbeschränkt · Komma oder Punkt</span>
+      <span class="q-interval__hint">leer/∞: unbeschränkt · , oder .</span>
     </div>
 
     <div v-else-if="review" class="q-interval__review">

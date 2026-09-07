@@ -9,6 +9,7 @@ import { computed, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { groupMasteryByCategory, type GradingOrUnseen } from '@qed2/core-logic';
 import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
+import { ChevronRight } from 'lucide-vue-next';
 import { useActivityStore } from '../stores/activity.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -48,12 +49,11 @@ const weakest = computed(() =>
 
 const heroText = computed(() => {
   const due = progress.dueCount;
-  const newPart =
-    weakest.value.length > 0
-      ? `neue Aufgaben aus schwächeren Themen (${weakest.value.join(', ')})`
-      : 'neue Aufgaben zum Einstieg';
-  if (due === 0) return `Keine fälligen Wiederholungen — Zeit für ${newPart}.`;
-  return `${due === 1 ? '1 fällige Wiederholung' : `${due} fällige Wiederholungen`} + ${newPart}.`;
+  const next = weakest.value.length > 0
+    ? `Neue Aufgaben · ${weakest.value.join(' · ')}`
+    : 'Neue Aufgaben zum Einstieg';
+  if (due === 0) return next;
+  return `${due} fällig · ${next}`;
 });
 
 /** Relative day for the „Zuletzt" rows — text, never color/icon-only. */
@@ -106,17 +106,16 @@ function openCategoryFilter(code: string): void {
     <div class="home__header">
       <div>
         <h1 class="home__greeting">{{ greeting }} 👋</h1>
-        <div class="home__date">{{ dateLine }} · Bereit für heute?</div>
+        <div class="home__date">{{ dateLine }}</div>
       </div>
     </div>
 
     <div class="home__hero">
       <div class="home__hero-body">
-        <div class="home__hero-label">Empfohlen für heute</div>
-        <div class="home__hero-title">Programm starten</div>
+        <div class="home__hero-label">Empfohlen</div>
         <div class="home__hero-text">{{ heroText }}</div>
       </div>
-      <button type="button" class="home__hero-cta" @click="go('/practice')">Programm starten →</button>
+      <button type="button" class="home__hero-cta" @click="go('/practice')">Starten →</button>
     </div>
 
     <div class="home__cards">
@@ -137,7 +136,7 @@ function openCategoryFilter(code: string): void {
       >
         <div class="home__card-head">
           <div class="home__card-label">Bewertung</div>
-          <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
+          <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div v-if="categoryMastery.length > 0" class="home__mastery">
           <button
@@ -151,7 +150,7 @@ function openCategoryFilter(code: string): void {
             <MasteryBar :code="c.code" :mastery="c.mastery" />
           </button>
         </div>
-        <div v-else class="home__empty-note">Noch keine Daten — starte dein erstes Programm.</div>
+        <div v-else class="home__empty-note">Noch keine Daten.</div>
       </div>
 
       <div
@@ -163,7 +162,7 @@ function openCategoryFilter(code: string): void {
       >
         <div class="home__card-head">
           <div class="home__card-label">Zuletzt</div>
-          <RouterLink to="/history" class="home__card-link">Details →</RouterLink>
+          <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div v-if="recent.length > 0" class="home__recent">
           <div v-for="r in recent" :key="r.partId" class="home__recent-row">
@@ -184,7 +183,7 @@ function openCategoryFilter(code: string): void {
       >
         <div class="home__card-head">
           <div class="home__card-label">Aktivität</div>
-          <RouterLink to="/history" class="home__card-link">Details →</RouterLink>
+          <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div
           v-if="activityStore.cloudIncompleteMessage"
@@ -211,21 +210,19 @@ function openCategoryFilter(code: string): void {
       >
         <div class="home__card-head">
           <div class="home__card-label">Bewertung nach Status</div>
-          <RouterLink to="/progress" class="home__card-link">Details →</RouterLink>
+          <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />
       </div>
     </div>
 
     <div v-if="!hasProgress" class="home__intro">
-      Willkommen bei QED2 — SRDP-Mathematik mit intelligenter Wiederholung. Starte oben ein Programm
-      oder stöbere in den <RouterLink to="/questions">Aufgaben</RouterLink>.
+      Starte ein Programm oder wähle <RouterLink to="/questions">Aufgaben</RouterLink>.
     </div>
 
     <div v-if="!auth.isLoggedIn" class="home__guest">
-      Anmelden sichert deinen Fortschritt geräteübergreifend —
-      <button type="button" class="home__guest-link" @click="ui.openAuthModal()">jetzt anmelden</button>.
-      Üben geht auch ohne.
+      Konto-Sync:
+      <button type="button" class="home__guest-link" @click="ui.openAuthModal()">Anmelden</button>
     </div>
   </div>
 </template>
@@ -272,13 +269,6 @@ function openCategoryFilter(code: string): void {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   margin-bottom: 7px;
-}
-.home__hero-title {
-  color: #fff;
-  font-weight: 800;
-  font-size: 22px;
-  letter-spacing: -0.01em;
-  margin-bottom: 6px;
 }
 .home__hero-text {
   color: var(--q-cta-card-text);
@@ -363,16 +353,10 @@ function openCategoryFilter(code: string): void {
   margin-bottom: 10px;
 }
 .home__card-link {
-  font-size: 11.5px;
-  font-weight: 600;
+  width: 16px;
+  height: 16px;
   color: var(--q-accent-strong);
-  text-decoration: none;
-  white-space: nowrap;
-}
-@media (hover: hover) and (pointer: fine) {
-  .home__card-link:hover {
-    text-decoration: underline;
-  }
+  flex: none;
 }
 .home__big {
   display: flex;

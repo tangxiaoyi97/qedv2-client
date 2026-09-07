@@ -6,6 +6,7 @@
  * — and because building the payload is pure logic worth testing without a
  * browser (see projection.ts).
  */
+import type { CoreSourcePreference } from '../ports/index.js';
 import type { Verdict } from '../grading/types.js';
 
 export type AiProviderId = 'openai' | 'gemini';
@@ -33,11 +34,41 @@ export interface AiQuestionContext {
    * to keep a vision-less model from silently pre-filling a grade.
    */
   hasFigures?: boolean;
+  /** Official solution material contains a figure the text-only model cannot inspect. */
+  solutionHasFigures?: boolean;
   submitted: string;
   officialSolution?: string;
+  /** Structured official material for 2.3 tasks; legacy servers ignore it. */
+  solution?: {
+    result?: string;
+    steps?: Array<{ id?: string; text: string }>;
+    alternatives?: string[];
+  };
   gradingNote?: string;
   maxPoints: number;
 }
+
+export type AiAttemptPhase = 'first' | 'correction';
+
+export interface AiRequestIdentity {
+  clientRequestId: string;
+  interactionId: string;
+  taskVersion: string;
+  contentSource?: CoreSourcePreference;
+  contentId?: string;
+  attemptPhase?: AiAttemptPhase;
+}
+
+/** Hint/diagnosis never run without immutable content and attempt provenance. */
+export type AiLearningRequestIdentity = AiRequestContext & Required<Pick<
+  AiRequestContext,
+  'contentSource' | 'contentId' | 'attemptPhase'
+>>;
+
+/** Renderer supplies the persisted interaction; the store derives the paid request id. */
+export type AiRequestContext = Omit<AiRequestIdentity, 'clientRequestId'> & {
+  clientRequestId?: string;
+};
 
 /**
  * Per-user prompt preferences, sent with every request.
@@ -58,21 +89,133 @@ export interface AiPromptOptions {
   preferPool?: boolean;
 }
 
-/** `answer` = why mine is wrong. `walkthrough` = how the question is done. */
-export type AiExplainMode = 'answer' | 'walkthrough';
+/** Legacy modes remain readable; 2.3 uses progressive hints and diagnosis. */
+export type AiExplainMode = 'answer' | 'walkthrough' | 'hint' | 'diagnosis';
 
-export interface AiExplainRequest extends AiQuestionContext, AiPromptOptions {
-  mode?: AiExplainMode;
+export type AiLegacyExplainRequest = AiQuestionContext & AiPromptOptions & Partial<AiRequestIdentity> & {
+  mode?: 'answer' | 'walkthrough';
   verdict: Verdict;
   awardedPoints: number;
+};
+
+export type AiHintRequest = AiQuestionContext & AiPromptOptions & AiLearningRequestIdentity & {
+  mode: 'hint';
+  hintLevel: 1 | 2 | 3;
+  solutionHasFigures: boolean;
+};
+
+export type AiDiagnosisRequest = AiQuestionContext & AiPromptOptions & AiLearningRequestIdentity & {
+  mode: 'diagnosis';
+  solutionHasFigures: boolean;
+  verdict: Verdict;
+  awardedPoints: number;
+};
+
+export type AiExplainRequest = AiLegacyExplainRequest | AiHintRequest | AiDiagnosisRequest;
+
+export type AiDiagnosisCode =
+  | 'concept'
+  | 'setup'
+  | 'algebra'
+  | 'arithmetic'
+  | 'condition'
+  | 'notation-unit'
+  | 'incomplete'
+  | 'careless'
+  | 'unknown';
+
+export interface AiHintResult {
+  level: 1 | 2 | 3;
+  markdown: string;
+  nextAction: string;
+  advisoryOnly: true;
 }
 
-export interface AiExplainResponse {
-  markdown: string;
-  mode?: AiExplainMode;
+export interface AiDiagnosisResult {
+  errorCode: AiDiagnosisCode;
+  evidence: string;
+  reason: string;
+  correctionPrompt: string;
+  confidence: number;
+  advisoryOnly: true;
+  evidenceVerified: boolean;
+}
+
+interface AiResponseBase {
   model: string;
   promptVersion: string;
   source: AiSource;
+}
+
+interface AiReceiptMetadata {
+  taskVersion: string;
+  clientRequestId: string;
+  interactionId: string;
+  accounting: 'settled' | 'pending';
+}
+
+export interface AiLegacyExplainResponse extends AiResponseBase, Partial<AiReceiptMetadata> {
+  markdown: string;
+  mode?: 'answer' | 'walkthrough';
+}
+
+export interface AiHintResponse extends AiResponseBase, AiReceiptMetadata {
+  markdown: string;
+  mode: 'hint';
+  hint: AiHintResult;
+}
+
+export interface AiDiagnosisResponse extends AiResponseBase, AiReceiptMetadata {
+  markdown: string;
+  mode: 'diagnosis';
+  diagnosis: AiDiagnosisResult;
+}
+
+export type AiExplainResponse =
+  | AiLegacyExplainResponse
+  | AiHintResponse
+  | AiDiagnosisResponse;
+
+type CachedAiResult<T> = T extends unknown
+  ? Omit<T, 'clientRequestId' | 'interactionId' | 'accounting'> & { cached: true }
+  : never;
+
+/** Receipt ids are request-local and are never replayed from content cache. */
+export type AiCachedExplainResponse = CachedAiResult<AiExplainResponse>;
+export type AiExplainResult = AiExplainResponse | AiCachedExplainResponse;
+
+/**
+ * Account-scoped pointer to paid content in AiCache. It carries no answer
+ * text and is safe to keep in a local practice-session snapshot so an offline
+ * reload can find content already paid for without making another request.
+ */
+export interface AiExplainCacheLocator {
+  version: 1;
+  cacheKey: string;
+  mode: 'hint' | 'diagnosis';
+  hintLevel?: 1 | 2 | 3;
+  partId: string;
+  attemptPhase: AiAttemptPhase;
+  taskVersion: string;
+  promptVersion: string;
+  source: AiSource;
+  savedAt: string;
+}
+
+/** Opaque account-scoped pointer to an already paid self-assessment comparison. */
+export interface AiAssessCacheLocator {
+  version: 1;
+  cacheKey: string;
+  /** Digest of the complete paid provider input, excluding correlation ids. */
+  requestDigest: string;
+  partId: string;
+  attemptPhase: AiAttemptPhase;
+  contentSource: CoreSourcePreference;
+  contentId: string;
+  taskVersion: string;
+  promptVersion: string;
+  source: AiSource;
+  savedAt: string;
 }
 
 export interface AiRubricCriterion {
@@ -88,7 +231,7 @@ export interface AiRubricCriterion {
  * tiered parts have nothing to decompose, so they send the point values the
  * part allows and get one decision back.
  */
-export interface AiAssessRequest extends AiQuestionContext, AiPromptOptions {
+export interface AiAssessRequest extends AiQuestionContext, AiPromptOptions, Partial<AiRequestIdentity> {
   criteria?: AiRubricCriterion[];
   scoreOptions?: number[];
   /** The part's rubric prose — guidance even when it is not scored criteria. */
@@ -127,16 +270,45 @@ export interface AiAssessResponse {
   advisoryOnly: boolean;
   model: string;
   promptVersion: string;
+  taskVersion?: string;
+  clientRequestId?: string;
+  interactionId?: string;
+  accounting?: 'settled' | 'pending';
   source: AiSource;
+}
+
+export type AiCachedAssessResponse = CachedAiResult<AiAssessResponse>;
+export type AiAssessResult = AiAssessResponse | AiCachedAssessResponse;
+
+export interface AiCredentialTestRequest extends AiRequestIdentity {
+  /** Capability tests must never fall back to the shared pool. */
+  preferPool: false;
+}
+
+export interface AiCredentialTestResponse {
+  ok: true;
+  provider: AiProviderId;
+  model: string;
+  source: 'byo';
+  taskVersion: string;
+  clientRequestId: string;
+  interactionId: string;
+  accounting: 'settled' | 'pending';
 }
 
 /** `GET /info` capability block. Absent ⇒ this server has no AI at all. */
 export interface AiCapabilities {
   explain: boolean;
   assess: boolean;
+  walkthrough?: boolean;
+  hint?: boolean;
+  diagnosis?: boolean;
+  credentialTest?: boolean;
   promptVersion: string;
   providers: AiProviderId[];
   poolAvailable: boolean;
+  taskVersions?: Partial<Record<AiExplainMode | 'assess' | 'capabilityTest', string>>;
+  idempotencyWindowDays?: number;
 }
 
 /** `GET /me/ai/status` — what THIS user can currently do. */
@@ -147,6 +319,8 @@ export interface AiStatus {
     model?: string;
     last4?: string;
     lastUsedAt?: string;
+    /** Opaque, non-secret credential revision used to invalidate paid test receipts. */
+    credentialRevision?: string;
   };
   pool: {
     eligible: boolean;
@@ -157,7 +331,7 @@ export interface AiStatus {
     periodEndsAt?: string;
   };
   active: AiSource | 'none';
-  features: { explain: boolean; assess: boolean };
+  features: { explain: boolean; assess: boolean; hint?: boolean; diagnosis?: boolean };
   /** Sources this entitlement permits the user to select. Absent on early RC servers. */
   allowedSources?: AiSource[];
 }

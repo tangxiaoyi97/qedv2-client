@@ -438,6 +438,7 @@ export class CoreSupervisor extends EventEmitter {
       PORT: String(port),
       BANK_PATH: this.runtime.bankDirectory,
       BANK_STRICT: 'true',
+      BANK_INTEGRITY_PROFILE: this.runtime.source === 'bundled' ? 'production' : 'relaxed',
       REVISION_VAULT_PATH: resolve(this.runtime.bankDirectory, 'revisions'),
       REVISION_VAULT_REQUIRED: this.runtime.source === 'bundled' ? 'true' : 'false',
       REQUEST_LOG: 'false',
@@ -454,6 +455,9 @@ export class CoreSupervisor extends EventEmitter {
       BANK_BRANCH: 'pastpapers',
       ...(this.runtime.manifest?.core.commit
         ? { QED_BUILD_COMMIT: this.runtime.manifest.core.commit }
+        : {}),
+      ...(this.runtime.source === 'bundled' && this.runtime.manifest?.bank.rootSha256
+        ? { BANK_ROOT_SHA256: this.runtime.manifest.bank.rootSha256 }
         : {}),
     };
     let child: ManagedCoreProcess;
@@ -707,6 +711,7 @@ export class CoreSupervisor extends EventEmitter {
       typeof bank !== 'object' ||
       Array.isArray(bank) ||
       (bank as Record<string, unknown>).commit !== manifest.bank.commit ||
+      (bank as Record<string, unknown>).rootSha256 !== manifest.bank.rootSha256 ||
       !schemas ||
       typeof schemas !== 'object' ||
       Array.isArray(schemas)

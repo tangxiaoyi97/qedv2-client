@@ -6,8 +6,15 @@ import PracticeBottomBar from '../src/practice/PracticeBottomBar.vue';
 
 const reviewed = (verdict: 'correct' | 'partial' | 'incorrect'): PartPlayerState => ({
   phase: 'reviewed',
+  attemptPhase: 'first',
   canSubmit: false,
   result: {
+    verdict,
+    correct: verdict === 'correct',
+    awardedPoints: verdict === 'correct' ? 1 : 0,
+    maxPoints: 1,
+  },
+  firstResult: {
     verdict,
     correct: verdict === 'correct',
     awardedPoints: verdict === 'correct' ? 1 : 0,
@@ -22,8 +29,10 @@ const reviewed = (verdict: 'correct' | 'partial' | 'incorrect'): PartPlayerState
 
 const answering: PartPlayerState = {
   phase: 'answering',
+  attemptPhase: 'first',
   canSubmit: false,
   result: null,
+  firstResult: null,
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
@@ -33,8 +42,10 @@ const answering: PartPlayerState = {
 
 const selfAssessing: PartPlayerState = {
   phase: 'self-assessing',
+  attemptPhase: 'first',
   canSubmit: false,
   result: null,
+  firstResult: null,
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
@@ -110,9 +121,9 @@ describe('PracticeBottomBar', () => {
 
   it('keeps the running score in the bar, where the sheet cannot hide it', () => {
     const { host, unmount } = mountBar(selfAssessing, { solutionDetent: 'collapsed' });
-    const row = host.querySelector('.practice-bar__row')?.textContent ?? '';
-    expect(row).toContain('Deine Punkte');
-    expect(row).toContain('– / 1');
+    expect(host.querySelector('.practice-bar__preview-value')?.textContent).toBe('– / 1');
+    expect(host.querySelector('.practice-bar__visually-hidden')?.textContent).toBe('Deine Punkte: ');
+    expect(host.querySelector('.practice-bar__preview-main')?.getAttribute('aria-label')).toBeNull();
     unmount();
   });
 
@@ -156,5 +167,16 @@ describe('PracticeBottomBar', () => {
     const after = mountBar(reviewed('correct'));
     expect(after.host.querySelector('.q-ssheet__handle')).not.toBeNull();
     after.unmount();
+  });
+
+  it('locks manual grading while the parent is committing the answer', () => {
+    const { host, unmount } = mountBar(reviewed('incorrect'), {
+      gradingDisabled: true,
+    });
+    const trigger = host.querySelector<HTMLButtonElement>('.q-grading-menu button');
+    expect(trigger?.disabled).toBe(true);
+    trigger?.click();
+    expect(host.querySelector('.q-grading-menu__popover')).toBeNull();
+    unmount();
   });
 });

@@ -50,7 +50,7 @@ const titleId = `settings-card-${useId()}`;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 16px 20px;
+  padding: 14px 18px;
 }
 
 .q-settings-card__heading {
@@ -90,16 +90,18 @@ const titleId = `settings-card-${useId()}`;
 }
 
 .q-settings-card__footer {
-  padding: 0 20px 16px;
+  padding: 0 18px 14px;
 }
 
 @media (max-width: 520px) {
   .q-settings-card__header {
-    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px 14px;
   }
 
-  .q-settings-card__action {
-    width: 100%;
+  .q-settings-card__footer {
+    padding: 0 14px 12px;
   }
 }
+
 </style>

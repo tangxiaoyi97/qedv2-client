@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ClientConfig } from '@qed2/core-logic';
 import {
@@ -80,7 +81,14 @@ const runtime: RuntimeDescriptor = {
     formatVersion: 3,
     createdAt: '2026-08-07T00:00:00.000Z',
     core: { version: '2.0.0', commit: 'core-commit', entry: 'dist/main.js' },
-    bank: { commit: 'bank-commit', schemaVersions: [2, 3] },
+    bank: {
+      commit: 'bank-commit',
+      manifest: 'bank/manifest.v2.json',
+      manifestFormatVersion: 2,
+      wireContractVersion: 1,
+      rootSha256: 'b'.repeat(64),
+      schemaVersions: [2, 3],
+    },
     revisions: {
       catalog: 'bank/revisions/revision-catalog.v1.json',
       formatVersion: 1,
@@ -155,7 +163,10 @@ function healthyFetch(input: string | URL | Request): Promise<Response> {
         version: runtime.manifest?.core.version,
         commit: runtime.manifest?.core.commit,
         schemaVersionSupported: { min: 2, max: 3 },
-        bank: { commit: runtime.manifest?.bank.commit },
+        bank: {
+          commit: runtime.manifest?.bank.commit,
+          rootSha256: runtime.manifest?.bank.rootSha256,
+        },
       }),
     );
   }
@@ -213,7 +224,9 @@ describe('CoreSupervisor', () => {
         PORT: '43123',
         BANK_PATH: runtime.bankDirectory,
         BANK_STRICT: 'true',
-        REVISION_VAULT_PATH: '/runtime/bank/revisions',
+        BANK_INTEGRITY_PROFILE: 'production',
+        BANK_ROOT_SHA256: 'b'.repeat(64),
+        REVISION_VAULT_PATH: resolve(runtime.bankDirectory, 'revisions'),
         REVISION_VAULT_REQUIRED: 'true',
         REQUEST_LOG: 'false',
         CORE_SOURCE_REPO: 'https://github.com/tangxiaoyi97/qedv2-core',
@@ -514,6 +527,39 @@ describe('CoreSupervisor', () => {
 
     await expect(configuring).resolves.toEqual({ baseUrl: config.coreBaseUrl, source: 'remote' });
     expect(launcher.launches).toHaveLength(1);
+    expect(launcher.launches[0]?.process.killCalls).toBe(1);
+    expect(supervisor.getStatus()).toMatchObject({
+      phase: 'degraded',
+      error: { code: 'CORE_START_FAILED' },
+    });
+  });
+
+  it('rejects a bundled Core that loads a bank with a different Manifest v2 root', async () => {
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request) => {
+        if (String(input).endsWith('/health')) return Promise.resolve(Response.json({ status: 'ok' }));
+        return Promise.resolve(
+          Response.json({
+            service: 'qed2-core',
+            version: runtime.manifest?.core.version,
+            commit: runtime.manifest?.core.commit,
+            schemaVersionSupported: { min: 2, max: 3 },
+            bank: {
+              commit: runtime.manifest?.bank.commit,
+              rootSha256: 'f'.repeat(64),
+            },
+          }),
+        );
+      }),
+    );
+
+    const configuring = supervisor.configure(config);
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    await expect(configuring).resolves.toEqual({ baseUrl: config.coreBaseUrl, source: 'remote' });
     expect(launcher.launches[0]?.process.killCalls).toBe(1);
     expect(supervisor.getStatus()).toMatchObject({
       phase: 'degraded',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
-import { nextTick } from 'vue';
+import { nextTick, ref } from 'vue';
 import type {
   GradeResult,
   Grading,
@@ -10,7 +10,7 @@ import type {
   Submission,
 } from '@qed2/core-logic';
 import PartPlayer from '../src/practice/PartPlayer.vue';
-import type { PartPlayerState } from '../src/practice/part-player-types.js';
+import type { PartPlayerDraft, PartPlayerState } from '../src/practice/part-player-types.js';
 import fixture from '../../core-logic/test/fixtures/sample-questions.json';
 
 const questions = (fixture as unknown as { questions: Question[] }).questions;
@@ -33,6 +33,7 @@ type Exposed = {
   setSelfAssessmentScore: (points: number) => void;
   setSelfAssessmentGrading: (grading: Grading) => void;
   setSelfAssessment: (value: SelfAssessment) => void;
+  startCorrection: () => void;
 };
 
 function exposed(wrapper: ReturnType<typeof mount>): Exposed {
@@ -142,6 +143,97 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(wrapper.emitted('graded')).toHaveLength(1);
   });
 
+  it('does not pair another window\'s result with an unknown empty submission', async () => {
+    const wrapper = mount(PartPlayer, {
+      props: { part: choicePart, chromeless: true, command: null },
+    });
+    await wrapper.setProps({
+      command: {
+        id: 1,
+        type: 'restore-review',
+        result: { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
+        submissionUnavailable: true,
+      },
+    });
+
+    expect(wrapper.find('.q-part__control').exists()).toBe(false);
+    expect(wrapper.get('[role="status"]').text()).toContain('anderen Fenster');
+    expect(states(wrapper).at(-1)!.phase).toBe('reviewed');
+  });
+
+  it('does not pair a restored correct result with an intentionally discarded answer', () => {
+    const wrapper = mount(PartPlayer, {
+      props: {
+        part: choicePart,
+        chromeless: true,
+        restoredFirstResult: { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
+        restoredSubmissionUnavailable: true,
+      },
+    });
+
+    expect(wrapper.find('.q-part__control').exists()).toBe(false);
+    expect(wrapper.get('[role="status"]').text()).toContain('anderen Fenster');
+    expect(states(wrapper).at(-1)!.phase).toBe('reviewed');
+  });
+
+  it('restores and emits a local first-answer draft', async () => {
+    const wrapper = mount(PartPlayer, {
+      props: {
+        part: openPart,
+        chromeless: true,
+        restoredAnswerDraft: { kind: 'open', text: 'Zwischengespeichert', selfAssessment: {} },
+      },
+    });
+
+    expect(wrapper.get('textarea').element.value).toBe('Zwischengespeichert');
+    await wrapper.get('textarea').setValue('Weitergeschrieben');
+    await nextTick();
+    expect(wrapper.emitted('answerDraft')?.at(-1)?.[0]).toMatchObject({
+      kind: 'open',
+      text: 'Weitergeschrieben',
+    });
+  });
+
+  it('does not turn restored or edited drafts into a reactive save echo', async () => {
+    const parentRevision = ref(0);
+    let saves = 0;
+    const wrapper = mount(PartPlayer, {
+      props: {
+        part: openPart,
+        chromeless: true,
+        restoredFirstResult: {
+          verdict: 'incorrect',
+          correct: false,
+          awardedPoints: 0,
+          maxPoints: 1,
+        },
+        restoredCorrectionDraft: {
+          kind: 'open',
+          text: 'Alter Entwurf',
+          selfAssessment: {},
+        },
+        onCorrectionDraft: async () => {
+          saves += 1;
+          const observedRevision = parentRevision.value;
+          await Promise.resolve();
+          parentRevision.value = observedRevision + 1;
+        },
+      },
+    });
+
+    await nextTick();
+    expect(saves).toBe(0);
+    await wrapper.get('textarea').setValue('Nur diese Änderung speichern');
+    await Promise.resolve();
+    await nextTick();
+    await Promise.resolve();
+    await nextTick();
+
+    expect(saves).toBe(1);
+    expect(parentRevision.value).toBe(1);
+    expect(wrapper.emitted('correctionDraft')).toHaveLength(1);
+  });
+
   it('exposes interval previews to the shell instead of rendering them in chromeless mode', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: intervalPart, chromeless: true },
@@ -151,7 +243,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(states(wrapper).at(-1)!.answerPreview).toEqual({
       label: 'Ergebnis',
       value: '( −∞ ; ∞ )',
-      hint: 'leer oder ∞ = unbeschränkt · Komma oder Punkt',
+      hint: 'leer/∞: unbeschränkt · , oder .',
     });
 
     const inputs = wrapper.findAll('input.q-interval__input');
@@ -167,6 +259,8 @@ describe('PartPlayer (chromeless shell contract)', () => {
     const wrapper = mount(PartPlayer, {
       props: { part: openPart, label: 'Teil a', chromeless: true },
     });
+    const answer = wrapper.find('textarea');
+    await answer.setValue('Mein eigener Lösungsweg');
 
     // open submissions are always complete ("answered on paper" allowed)
     expect(states(wrapper)[0]!.canSubmit).toBe(true);
@@ -179,6 +273,10 @@ describe('PartPlayer (chromeless shell contract)', () => {
     const selfState = states(wrapper).at(-1)!;
     expect(selfState.phase).toBe('self-assessing');
     expect(selfState.result).toBeNull();
+    expect(wrapper.find('.q-answer-control').attributes('inert')).toBeDefined();
+    await answer.setValue('Nach dem Öffnen der Lösung geändert');
+    await nextTick();
+    expect(states(wrapper).at(-1)!.submittedText).toBe('Mein eigener Lösungsweg');
 
     // The shell owns self-assessment controls in chromeless mode.
     expect(wrapper.find('.q-selfassess').exists()).toBe(false);
@@ -231,6 +329,111 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(self?.assessment.criteriaMet).toEqual([true, false]);
     expect(self?.selectedPoints).toBe(1);
     expect(self?.grading).toBe('meh');
+  });
+
+  it('emits one first attempt and one correction without grading twice', async () => {
+    const wrapper = mount(PartPlayer, {
+      props: { part: choicePart, chromeless: true },
+    });
+    const options = wrapper.findAll('button.q-choice__opt');
+    await options[0]!.trigger('click');
+    await options[2]!.trigger('click');
+    exposed(wrapper).submit();
+    await nextTick();
+    expect(wrapper.emitted('graded')).toHaveLength(1);
+    expect((wrapper.emitted('graded')![0]![0] as GradedPayload).result.verdict).toBe('incorrect');
+
+    exposed(wrapper).startCorrection();
+    await nextTick();
+    expect(states(wrapper).at(-1)).toMatchObject({
+      phase: 'answering',
+      attemptPhase: 'correction',
+      firstResult: { verdict: 'incorrect' },
+    });
+    await options[0]!.trigger('click');
+    await options[2]!.trigger('click');
+    await options[1]!.trigger('click');
+    await options[3]!.trigger('click');
+    exposed(wrapper).submit();
+    await nextTick();
+
+    expect(wrapper.emitted('graded')).toHaveLength(1);
+    expect(wrapper.emitted('corrected')).toHaveLength(1);
+    expect((wrapper.emitted('corrected')![0]![0] as GradedPayload).result.verdict).toBe('correct');
+    expect(states(wrapper).at(-1)).toMatchObject({
+      phase: 'reviewed',
+      attemptPhase: 'correction',
+      result: { verdict: 'correct' },
+      firstResult: { verdict: 'incorrect' },
+    });
+
+    exposed(wrapper).startCorrection();
+    expect(states(wrapper).at(-1)?.phase).toBe('reviewed');
+  });
+
+  it('restores a reviewed first result without emitting a second grade', async () => {
+    const restored: GradeResult = {
+      verdict: 'incorrect',
+      correct: false,
+      awardedPoints: 0,
+      maxPoints: 1,
+    };
+    const wrapper = mount(PartPlayer, {
+      props: {
+        part: choicePart,
+        chromeless: true,
+        restoredFirstResult: restored,
+      },
+    });
+
+    expect(states(wrapper).at(-1)).toMatchObject({
+      phase: 'reviewed',
+      attemptPhase: 'first',
+      result: { verdict: 'incorrect' },
+      firstResult: { verdict: 'incorrect' },
+    });
+    expect(wrapper.emitted('graded')).toBeUndefined();
+
+    exposed(wrapper).startCorrection();
+    await nextTick();
+    expect(states(wrapper).at(-1)).toMatchObject({
+      phase: 'answering',
+      attemptPhase: 'correction',
+      firstResult: { verdict: 'incorrect' },
+    });
+  });
+
+  it('restores an uncommitted self-assessment draft without grading or losing the answer', async () => {
+    const draft: PartPlayerDraft = {
+      submission: { kind: 'open', text: 'Mein eigener Ansatz', selfAssessment: {} },
+      assessment: { criteriaMet: [true], awardedPoints: 1, overall: 'full' },
+      selectedPoints: 1,
+      grading: 'careless',
+      indeterminate: false,
+      indeterminateMax: 1,
+    };
+    const wrapper = mount(PartPlayer, {
+      props: { part: openPart, chromeless: true, restoredDraft: draft },
+    });
+
+    expect(states(wrapper).at(-1)).toMatchObject({
+      phase: 'self-assessing',
+      submittedText: 'Mein eigener Ansatz',
+      selfAssessment: {
+        selectedPoints: 1,
+        grading: 'careless',
+        assessment: { criteriaMet: [true] },
+      },
+    });
+    expect(wrapper.emitted('graded')).toBeUndefined();
+    expect(wrapper.emitted('draft')).toBeUndefined();
+
+    exposed(wrapper).confirmSelfAssessment();
+    await nextTick();
+    expect((wrapper.emitted('graded')?.[0]?.[0] as GradedPayload).submission).toMatchObject({
+      kind: 'open',
+      text: 'Mein eigener Ansatz',
+    });
   });
 });
 

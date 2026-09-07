@@ -34,15 +34,68 @@ const revisionCatalog = JSON.stringify({
   },
 });
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, item]) => [key, canonicalize(item)]),
+    );
+  }
+  return value;
+}
+
+const questionContent = JSON.stringify({ id: 'example', schemaVersion: 2 });
+const assetContent = 'not-a-real-png-but-integrity-addressed';
+const schemaContent = 'export interface Question {}\n';
+const bankManifestWithoutRoot = {
+  formatVersion: 2,
+  wireContractVersion: 1,
+  bank: {
+    commit: BANK_COMMIT,
+    schema: { path: 'schema/question.ts', sha256: digest(Buffer.from(schemaContent)) },
+    immutableAssetBaseUrl: `/content/banks/${BANK_COMMIT}/assets`,
+  },
+  questions: {
+    example: {
+      path: 'content/example.json',
+      rawSha256: digest(Buffer.from(questionContent)),
+      wireSha256: 'c'.repeat(64),
+      assets: [],
+    },
+  },
+  assets: {
+    'example.png': {
+      path: 'assets/example.png',
+      bytes: Buffer.byteLength(assetContent),
+      mimeType: 'image/png',
+      sha256: digest(Buffer.from(assetContent)),
+    },
+  },
+};
+const bankRootSha256 = digest(Buffer.from(JSON.stringify(canonicalize({
+  wireContractVersion: bankManifestWithoutRoot.wireContractVersion,
+  schema: bankManifestWithoutRoot.bank.schema,
+  questions: bankManifestWithoutRoot.questions,
+  assets: bankManifestWithoutRoot.assets,
+}))));
+const bankManifest = JSON.stringify({
+  ...bankManifestWithoutRoot,
+  bank: { ...bankManifestWithoutRoot.bank, rootSha256: bankRootSha256 },
+});
+
 const fixtureFiles: Record<string, string> = {
   'core/package.json': JSON.stringify({ name: 'qed2-core', version: '1.9.0' }),
   'core/pnpm-lock.yaml': 'lockfileVersion: 9.0\n',
   'core/dist/main.js': 'console.log("core")\n',
   'core/dist/build-info.json': JSON.stringify({ version: '1.9.0', commit: CORE_COMMIT }),
   'core/node_modules/example/index.js': 'export const example = true\n',
-  'bank/content/example.json': JSON.stringify({ id: 'example', schemaVersion: 2 }),
-  'bank/assets/example.txt': 'asset\n',
-  'bank/schema/question.ts': 'export interface Question {}\n',
+  'bank/content/example.json': questionContent,
+  'bank/assets/example.png': assetContent,
+  'bank/schema/question.ts': schemaContent,
+  'bank/manifest.v2.json': bankManifest,
   'bank/revisions/revision-catalog.v1.json': revisionCatalog,
   [`bank/revisions/objects/${revisionObjectSha.slice(0, 2)}/${revisionObjectSha.slice(2)}`]:
     revisionObjectContent,
@@ -77,7 +130,14 @@ async function createFixture(options: { schemaVersions?: number[] } = {}): Promi
     formatVersion: 3,
     createdAt: '2026-08-07T00:00:00.000Z',
     core: { version: '1.9.0', commit: CORE_COMMIT, entry: 'dist/main.js' },
-    bank: { commit: BANK_COMMIT, schemaVersions: options.schemaVersions ?? [2] },
+    bank: {
+      commit: BANK_COMMIT,
+      manifest: 'bank/manifest.v2.json',
+      manifestFormatVersion: 2,
+      wireContractVersion: 1,
+      rootSha256: bankRootSha256,
+      schemaVersions: options.schemaVersions ?? [2],
+    },
     revisions: {
       catalog: 'bank/revisions/revision-catalog.v1.json',
       formatVersion: 1,
@@ -141,7 +201,7 @@ describe('bundled runtime integrity', () => {
 
   it('detects both missing and unmanifested files in protected trees', async () => {
     const missing = await createFixture();
-    await rm(resolve(missing.runtimeRoot, 'bank/assets/example.txt'));
+    await rm(resolve(missing.runtimeRoot, 'bank/assets/example.png'));
     await expect(verifyRuntimeIntegrity(missing.descriptor, 'full')).rejects.toThrow(
       'inventory mismatch',
     );
@@ -241,11 +301,51 @@ describe('bundled runtime integrity', () => {
     ).rejects.toThrow('build provenance');
   });
 
+  it('rejects a protected Bank Manifest v2 whose canonical root was forged', async () => {
+    const fixture = await createFixture();
+    const forged = JSON.parse(bankManifest) as Record<string, unknown>;
+    (forged.bank as Record<string, unknown>).rootSha256 = 'f'.repeat(64);
+    const bytes = Buffer.from(JSON.stringify(forged));
+    await writeFile(resolve(fixture.runtimeRoot, 'bank/manifest.v2.json'), bytes);
+    const record = fixture.manifest.files.find((file) => file.path === 'bank/manifest.v2.json');
+    if (!record) throw new Error('Fixture has no Bank Manifest v2 inventory record');
+    record.size = bytes.byteLength;
+    record.sha256 = digest(bytes);
+    fixture.manifest.bank.rootSha256 = 'f'.repeat(64);
+
+    await expect(verifyRuntimeIntegrity(fixture.descriptor, 'light')).rejects.toThrow(
+      'canonical inventory',
+    );
+  });
+
+  it('rejects runtime manifests that omit the attested Bank Manifest v2 root', async () => {
+    const fixture = await createFixture();
+    const incomplete = structuredClone(fixture.manifest) as unknown as Record<string, unknown>;
+    delete (incomplete.bank as Record<string, unknown>).rootSha256;
+    await writeFile(fixture.manifestPath, JSON.stringify(incomplete));
+
+    await expect(readRuntimeManifest(fixture.manifestPath)).rejects.toThrow(
+      'Bank Manifest v2 metadata',
+    );
+  });
+
   it('cross-checks every bank content schema during a full verification', async () => {
     const fixture = await createFixture({ schemaVersions: [3] });
 
     await expect(verifyRuntimeIntegrity(fixture.descriptor, 'full')).rejects.toThrow(
       'schema versions',
+    );
+  });
+
+  it('accepts schema v4 metadata but rejects an unknown future schema', async () => {
+    const supported = await createFixture({ schemaVersions: [2, 3, 4] });
+    await expect(readRuntimeManifest(supported.manifestPath)).resolves.toMatchObject({
+      bank: { schemaVersions: [2, 3, 4] },
+    });
+
+    const future = await createFixture({ schemaVersions: [5] });
+    await expect(readRuntimeManifest(future.manifestPath)).rejects.toThrow(
+      'unsupported or non-canonical schema versions',
     );
   });
 

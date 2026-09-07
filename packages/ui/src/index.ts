@@ -27,7 +27,7 @@ export { default as GradingDot } from './shared/GradingDot.vue';
 export { default as GradingCapsule } from './shared/GradingCapsule.vue';
 export { default as GradingMenu } from './shared/GradingMenu.vue';
 export { default as GradingPicker } from './shared/GradingPicker.vue';
-export { default as AiExplainPanel } from './practice/AiExplainPanel.vue';
+export { default as AiLearningPanel } from './practice/AiLearningPanel.vue';
 export { default as AiAssessPanel } from './practice/AiAssessPanel.vue';
 export { default as StarButton } from './shared/StarButton.vue';
 export { onRadioGroupKeydown } from './shared/radio-group.js';
@@ -63,7 +63,7 @@ export { default as SolutionPanel } from './practice/SolutionPanel.vue';
 export { default as SolutionSheet } from './practice/SolutionSheet.vue';
 export type { SheetDetent, SheetVerdict } from './practice/SolutionSheet.vue';
 export { default as PartPlayer } from './practice/PartPlayer.vue';
-export type { PartPlayerCommand, PartPlayerState } from './practice/part-player-types.js';
+export type { PartPlayerCommand, PartPlayerDraft, PartPlayerState } from './practice/part-player-types.js';
 export {
   SELF_ASSESSMENT_GRADING_OPTIONS,
   formatScore,

@@ -2,6 +2,22 @@ import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
 
 const workflowUrl = new URL('../../../.github/workflows/desktop-release.yml', import.meta.url)
+const ciWorkflowUrl = new URL('../../../.github/workflows/desktop-ci.yml', import.meta.url)
+
+function namedStep(workflow, name) {
+  const normalized = workflow.replace(/\r\n?/gu, '\n')
+  const marker = `      - name: ${name}`
+  const start = normalized.indexOf(marker)
+  if (start < 0) throw new Error(`Missing workflow step: ${name}`)
+  const next = normalized.indexOf('\n      - ', start + marker.length)
+  return normalized.slice(start, next < 0 ? undefined : next)
+}
+
+function expectBashFailFast(workflow, name) {
+  const step = namedStep(workflow, name)
+  expect(step).toContain('\n        shell: bash')
+  expect(step).toContain('\n        run: |\n          set -euo pipefail')
+}
 
 describe('desktop release workflow', () => {
   it('uses explicit REST endpoints for the checkout-free draft lifecycle', async () => {
@@ -19,5 +35,23 @@ describe('desktop release workflow', () => {
     expect(publishWorkflow).toContain('The verified draft asset identities changed before publication.')
     expect(publishWorkflow).toContain('gh api "repos/$GITHUB_REPOSITORY/releases/latest"')
     expect(publishWorkflow).not.toContain('releases/tags/$RELEASE_TAG')
+  })
+
+  it('fails fast for every multi-command Windows verification step', async () => {
+    const ciWorkflow = await readFile(ciWorkflowUrl, 'utf8')
+    expectBashFailFast(ciWorkflow, 'Verify complete client workspace')
+    expectBashFailFast(ciWorkflow, 'Verify bundled Core')
+    expectBashFailFast(
+      ciWorkflow.replace(/\r?\n/gu, '\r\n'),
+      'Verify complete client workspace',
+    )
+
+    const releaseWorkflow = await readFile(workflowUrl, 'utf8')
+    const windowsJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf('\n  windows:'),
+      releaseWorkflow.indexOf('\n  linux:'),
+    )
+    expectBashFailFast(windowsJob, 'Install dependencies')
+    expectBashFailFast(windowsJob, 'Prepare runtime and build')
   })
 })

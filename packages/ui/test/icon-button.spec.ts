@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import QIconButton from '../src/shared/QIconButton.vue';
 import leaderboardDrawerSource from '../src/leaderboard/LeaderboardDetailDrawer.vue?raw';
-import aiExplainSource from '../src/practice/AiExplainPanel.vue?raw';
+import aiLearningSource from '../src/practice/AiLearningPanel.vue?raw';
 import sessionDrawerSource from '../src/practice/PracticeSessionDrawer.vue?raw';
 import filterDialogSource from '../src/question/FilterDialog.vue?raw';
 import figureViewerSource from '../src/shared/FigureViewer.vue?raw';
@@ -72,7 +72,7 @@ describe('QIconButton', () => {
   it('is the single icon-close implementation used by shared panels, drawers and viewers', () => {
     for (const source of [
       leaderboardDrawerSource,
-      aiExplainSource,
+      aiLearningSource,
       sessionDrawerSource,
       filterDialogSource,
       figureViewerSource,

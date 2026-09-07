@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** Shared Web/PWA/Desktop AI settings. */
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { KeyRound, Languages, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next';
 import { QButton, QChip, QNotice } from '@qed2/ui';
 import { useAiStore } from '../../stores/ai.js';
@@ -17,6 +17,10 @@ const PROVIDERS: { id: 'openai' | 'gemini'; label: string }[] = [
 ];
 
 const provider = ref<'openai' | 'gemini'>('openai');
+const availableProviders = computed(() => {
+  const allowed = new Set(ai.capabilities?.providers ?? []);
+  return PROVIDERS.filter((item) => allowed.has(item.id));
+});
 const apiKey = ref('');
 const model = ref('');
 const credentialEditorOpen = ref(false);
@@ -25,10 +29,14 @@ const savingCredential = ref(false);
 const credentialError = ref<string | null>(null);
 const credentialSaved = ref(false);
 const confirmingRemoval = ref(false);
+const testingCredential = ref(false);
+const credentialTestResult = ref<string | null>(null);
+const credentialTestError = ref<string | null>(null);
+const credentialRenewRequestId = ref<string | null>(null);
 
 const preferencesOpen = ref(false);
 const language = ref(app.config.aiLanguage ?? '');
-const customInstructions = ref(app.config.aiCustomInstructions ?? '');
+const customInstructions = ref(ai.customInstructions ?? '');
 const savingPreferences = ref(false);
 const preferencesSaved = ref(false);
 const preferencesError = ref<string | null>(null);
@@ -38,6 +46,16 @@ const clearing = ref(false);
 const cacheCleared = ref(false);
 const maintenanceError = ref<string | null>(null);
 const refreshingStatus = ref(false);
+const sourceError = ref<string | null>(null);
+
+watch(availableProviders, (providers) => {
+  if (providers.some((item) => item.id === provider.value)) return;
+  const first = providers[0];
+  if (first) provider.value = first.id;
+}, { immediate: true });
+watch(() => ai.customInstructions, (value) => {
+  if (!preferencesOpen.value) customInstructions.value = value;
+});
 
 const status = computed(() => ai.status);
 const configured = computed(() => status.value?.byo.configured === true);
@@ -45,6 +63,7 @@ const pool = computed(() => status.value?.pool);
 const showCredentialEditor = computed(
   () =>
     ai.byoOffered &&
+    availableProviders.value.length > 0 &&
     (credentialEditorOpen.value ||
       (ai.mode === 'byo' &&
         !!status.value &&
@@ -61,20 +80,20 @@ const sourceUnavailable = computed(
 type ReadinessTone = 'accent' | 'neutral' | 'warn';
 
 const readiness = computed<{ label: string; tone: ReadinessTone }>(() => {
-  if (ai.statusError) return { label: 'Status nicht verfügbar', tone: 'warn' };
-  if (!status.value) return { label: 'Wird geladen', tone: 'neutral' };
+  if (ai.statusError) return { label: 'Status fehlt', tone: 'warn' };
+  if (!status.value) return { label: 'Lädt', tone: 'neutral' };
   if (!status.value.features.explain && !status.value.features.assess) {
     return { label: 'Nicht verfügbar', tone: 'warn' };
   }
   if (ai.mode === 'pool') {
     return ai.poolOffered
-      ? { label: 'Einsatzbereit', tone: 'accent' }
+      ? { label: 'Bereit', tone: 'accent' }
       : { label: 'Quelle wählen', tone: 'warn' };
   }
   if (!ai.byoOffered) return { label: 'Nicht verfügbar', tone: 'warn' };
   return configured.value
-    ? { label: 'Einsatzbereit', tone: 'accent' }
-    : { label: 'Einrichtung nötig', tone: 'warn' };
+    ? { label: 'Bereit', tone: 'accent' }
+    : { label: 'Einrichten', tone: 'warn' };
 });
 
 function providerLabel(value: string | undefined): string {
@@ -95,7 +114,7 @@ const featureLabel = computed(() => {
 const credentialSummary = computed(() => {
   if (!configured.value) return 'Nicht eingerichtet';
   const route = status.value?.byo;
-  const parts = [providerLabel(route?.provider)];
+  const parts = ['Verschlüsselt', providerLabel(route?.provider)];
   if (route?.model) parts.push(route.model);
   if (route?.last4) parts.push(`•••• ${route.last4}`);
   return parts.join(' · ');
@@ -131,10 +150,15 @@ function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
-function selectMode(next: 'pool' | 'byo'): void {
+async function selectMode(next: 'pool' | 'byo'): Promise<void> {
   credentialSaved.value = false;
   confirmingRemoval.value = false;
-  ai.setMode(next);
+  sourceError.value = null;
+  try {
+    await ai.setMode(next);
+  } catch (error) {
+    sourceError.value = messageOf(error, 'Die KI-Quelle konnte nicht gespeichert werden.');
+  }
 }
 
 function toggleCredentialEditor(): void {
@@ -145,7 +169,10 @@ function toggleCredentialEditor(): void {
   } else {
     credentialEditorOpen.value = true;
     credentialEditorDismissed.value = false;
-    provider.value = status.value?.byo.provider === 'gemini' ? 'gemini' : 'openai';
+    const configuredProvider = status.value?.byo.provider;
+    provider.value = availableProviders.value.some((item) => item.id === configuredProvider)
+      ? configuredProvider as 'openai' | 'gemini'
+      : availableProviders.value[0]?.id ?? 'openai';
     model.value = status.value?.byo.model ?? '';
   }
   credentialError.value = null;
@@ -170,7 +197,11 @@ async function retryStatus(): Promise<void> {
 }
 
 async function saveCredential(): Promise<void> {
-  if (!apiKey.value.trim() || savingCredential.value) return;
+  if (
+    !apiKey.value.trim()
+    || savingCredential.value
+    || !availableProviders.value.some((item) => item.id === provider.value)
+  ) return;
   savingCredential.value = true;
   credentialError.value = null;
   credentialSaved.value = false;
@@ -208,6 +239,36 @@ async function removeCredential(): Promise<void> {
   }
 }
 
+async function testCredential(options: { newRequest?: boolean } = {}): Promise<void> {
+  if (testingCredential.value) return;
+  testingCredential.value = true;
+  credentialTestResult.value = null;
+  credentialTestError.value = null;
+  if (!options.newRequest) credentialRenewRequestId.value = null;
+  try {
+    const response = await ai.testCredential(options.newRequest
+      ? {
+          newRequest: true,
+          expectedClientRequestId: credentialRenewRequestId.value ?? undefined,
+        }
+      : {});
+    credentialTestResult.value = `Verbunden · ${providerLabel(response.provider)} · ${response.model}`;
+    credentialRenewRequestId.value = null;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'AI_REQUEST_ALREADY_COMPLETED') {
+      credentialRenewRequestId.value = (error as { credentialRequestId?: string }).credentialRequestId ?? null;
+    }
+    credentialTestError.value = code === 'AI_REQUEST_ALREADY_COMPLETED'
+      ? 'Der Test wurde ausgeführt, aber die Antwort ging verloren. Er wird nicht automatisch wiederholt.'
+      : code === 'AI_REQUEST_IN_PROGRESS'
+        ? 'Der Verbindungstest läuft noch.'
+        : messageOf(error, 'Die Verbindung konnte nicht bestätigt werden.');
+  } finally {
+    testingCredential.value = false;
+  }
+}
+
 function markPreferencesDirty(): void {
   preferencesSaved.value = false;
   preferencesError.value = null;
@@ -219,10 +280,12 @@ async function savePreferences(): Promise<void> {
   preferencesSaved.value = false;
   preferencesError.value = null;
   try {
-    await app.updateConfig({
-      aiLanguage: language.value.trim().slice(0, 80),
-      aiCustomInstructions: customInstructions.value.trim().slice(0, 600),
-    });
+    await Promise.all([
+      app.updateConfig({ aiLanguage: language.value.trim().slice(0, 80) }),
+      ai.savePromptPreferences({
+        customInstructions: customInstructions.value.trim().slice(0, 600),
+      }),
+    ]);
     preferencesSaved.value = true;
   } catch (error) {
     preferencesError.value = messageOf(error, 'Der Antwortstil konnte nicht gespeichert werden.');
@@ -316,12 +379,16 @@ async function clearCache(): Promise<void> {
         </SettingsRow>
 
         <QNotice v-if="sourceUnavailable" class="ai-settings__notice">
-          Das Server-Kontingent ist derzeit nicht verfügbar.
+          Server-Kontingent nicht verfügbar.
           <template #action>
             <QButton variant="secondary" @click="selectMode('byo')">
               Eigenen Schlüssel verwenden
             </QButton>
           </template>
+        </QNotice>
+
+        <QNotice v-if="sourceError" class="ai-settings__notice" tone="error">
+          {{ sourceError }}
         </QNotice>
 
         <SettingsRow v-if="pool?.eligible" label="Kontingent">
@@ -330,10 +397,10 @@ async function clearCache(): Promise<void> {
 
         <SettingsRow v-if="ai.byoOffered || configured" label="API-Schlüssel">
           <template #description>{{ credentialSummary }}</template>
-          <template v-if="configured" #status>
+          <template v-if="configured && !ai.byoOffered" #status>
             <span class="ai-settings__secure">
               <ShieldCheck :size="14" aria-hidden="true" />
-              {{ ai.byoOffered ? 'Verschlüsselt gespeichert' : 'Gespeichert · Zugriff nicht freigeschaltet' }}
+              Gespeichert · nicht verfügbar
             </span>
           </template>
           <div
@@ -375,6 +442,28 @@ async function clearCache(): Promise<void> {
           </QButton>
         </SettingsRow>
 
+        <SettingsRow v-if="ai.canTestCredential && ai.mode === 'byo'" label="Verbindung">
+          <template v-if="credentialTestResult" #description>
+            <span role="status">{{ credentialTestResult }}</span>
+          </template>
+          <QButton variant="secondary" :disabled="testingCredential" @click="testCredential()">
+            {{ testingCredential ? 'Wird getestet …' : 'Verbindung testen' }}
+          </QButton>
+        </SettingsRow>
+
+        <QNotice v-if="credentialTestError" class="ai-settings__notice" tone="error">
+          {{ credentialTestError }}
+          <template v-if="credentialRenewRequestId" #action>
+            <QButton
+              variant="secondary"
+              :disabled="testingCredential"
+              @click="testCredential({ newRequest: true })"
+            >
+              Neu testen (kann erneut kosten)
+            </QButton>
+          </template>
+        </QNotice>
+
         <form
           v-if="showCredentialEditor"
           id="ai-credential-editor"
@@ -385,7 +474,7 @@ async function clearCache(): Promise<void> {
           <SettingsRow label="Anbieter">
             <template #default="{ labelId }">
               <select v-model="provider" class="ai-settings__input" :aria-labelledby="labelId">
-                <option v-for="item in PROVIDERS" :key="item.id" :value="item.id">
+                <option v-for="item in availableProviders" :key="item.id" :value="item.id">
                   {{ item.label }}
                 </option>
               </select>
@@ -535,7 +624,7 @@ async function clearCache(): Promise<void> {
           </div>
         </form>
 
-        <SettingsRow label="Datenschutz" description="Nur auf deinen Klick">
+        <SettingsRow label="Datenschutz">
           <QButton
             variant="secondary"
             :aria-expanded="privacyOpen"
@@ -551,13 +640,13 @@ async function clearCache(): Promise<void> {
 
         <div v-if="privacyOpen" id="ai-privacy-details" class="ai-settings__privacy">
           <p>
-            <strong>Übertragen an {{ privacyRecipient }}:</strong>
-            Aufgabe, Musterlösung und deine Antwort.
+            <strong>Nur nach deinem Klick:</strong>
+            Aufgabe, Musterlösung und deine Antwort gehen an {{ privacyRecipient }}.
           </p>
           <p><strong>Nicht übertragen:</strong> Konto, Lernfortschritt und Statistiken.</p>
         </div>
 
-        <SettingsRow label="KI-Cache" description="Antworten auf diesem Gerät">
+        <SettingsRow label="KI-Cache">
           <template v-if="cacheCleared" #status>
             <span class="ai-settings__saved" role="status">Geleert.</span>
           </template>
@@ -772,6 +861,16 @@ async function clearCache(): Promise<void> {
   .ai-settings__segments,
   .ai-settings__input {
     width: 100%;
+  }
+
+  .ai-settings__editor :deep(.q-settings-row--inline) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .ai-settings__editor :deep(.q-settings-row__control) {
+    width: 100%;
+    justify-self: stretch;
   }
 
   .ai-settings__editor-actions,
