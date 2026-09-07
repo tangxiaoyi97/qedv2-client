@@ -14,6 +14,13 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.3.1 — 2026-09-08
+
+### zuverlässigere inhalte
+
+- **grafiken:** starke prüfsummen sind im browser wieder lesbar
+- **desktop:** lokaler Core und Web verwenden denselben geprüften stand
+
 ## 2.3.0 — 2026-08-24
 
 ### besser lernen
