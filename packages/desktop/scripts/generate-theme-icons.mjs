@@ -4,9 +4,10 @@
  * PNGs are used by macOS Dock and BrowserWindow integrations; ICO bundles use
  * PNG frames so Windows packaging never depends on a native converter.
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import {
   encodePng,
   ICON_BACKGROUND,
@@ -29,6 +30,233 @@ export const NATIVE_ICON_INSET_RATIO = 100 / 1024;
 export const NATIVE_ICON_SQUIRCLE_EXPONENT = 5;
 const NATIVE_SUPERSAMPLING = 3;
 const nativeGeometryCache = new Map();
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PNG_BYTES_PER_PIXEL = 4;
+const PNG_FILE_SYSTEM = Object.freeze({ renameSync, rmSync, writeFileSync });
+let pngTemporarySequence = 0;
+
+const PNG_CRC_TABLE = new Uint32Array(256);
+for (let index = 0; index < PNG_CRC_TABLE.length; index += 1) {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  }
+  PNG_CRC_TABLE[index] = value >>> 0;
+}
+
+function pngCrc32(...buffers) {
+  let crc = 0xffffffff;
+  for (const buffer of buffers) {
+    for (const byte of buffer) crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngError(label, message) {
+  return new Error(`${label}: ${message}`);
+}
+
+function paethPredictor(left, up, upperLeft) {
+  const prediction = left + up - upperLeft;
+  const leftDistance = Math.abs(prediction - left);
+  const upDistance = Math.abs(prediction - up);
+  const upperLeftDistance = Math.abs(prediction - upperLeft);
+  if (leftDistance <= upDistance && leftDistance <= upperLeftDistance) return left;
+  if (upDistance <= upperLeftDistance) return up;
+  return upperLeft;
+}
+
+/**
+ * Decode the strict RGBA PNG subset emitted for Desktop icons. Compression
+ * bytes and scanline filters are deliberately excluded from the result: Node
+ * releases may bundle different zlib versions while rendering identical
+ * pixels. CRCs and the complete PNG structure are still verified so a damaged
+ * file is never mistaken for a semantic match.
+ */
+export function decodeRgbaPng(bytes, expectedSize, label = 'PNG') {
+  if (!Buffer.isBuffer(bytes)) throw pngError(label, 'contents must be a Buffer');
+  if (!Number.isSafeInteger(expectedSize) || expectedSize <= 0) {
+    throw pngError(label, 'expected size must be a positive integer');
+  }
+  if (bytes.length < PNG_SIGNATURE.length || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw pngError(label, 'signature is invalid');
+  }
+
+  let offset = PNG_SIGNATURE.length;
+  let width;
+  let height;
+  let sawHeader = false;
+  let sawImageData = false;
+  let sawEnd = false;
+  const imageData = [];
+
+  while (offset < bytes.length) {
+    if (bytes.length - offset < 12) throw pngError(label, 'contains a truncated chunk header');
+    const length = bytes.readUInt32BE(offset);
+    const typeStart = offset + 4;
+    const dataStart = typeStart + 4;
+    const dataEnd = dataStart + length;
+    const chunkEnd = dataEnd + 4;
+    if (!Number.isSafeInteger(dataEnd) || chunkEnd > bytes.length) {
+      throw pngError(label, 'contains a truncated chunk payload');
+    }
+    const typeBytes = bytes.subarray(typeStart, dataStart);
+    if (![...typeBytes].every((byte) =>
+      (byte >= 0x41 && byte <= 0x5a) || (byte >= 0x61 && byte <= 0x7a))) {
+      throw pngError(label, 'contains an invalid chunk type');
+    }
+    // PNG reserves bit 5 of the third type byte. Accepting a lowercase byte
+    // here would make a future chunk definition ambiguous to this decoder.
+    if ((typeBytes[2] & 0x20) !== 0) throw pngError(label, 'contains a chunk with an invalid reserved bit');
+    const type = typeBytes.toString('ascii');
+    const data = bytes.subarray(dataStart, dataEnd);
+    const expectedCrc = bytes.readUInt32BE(dataEnd);
+    if (pngCrc32(typeBytes, data) !== expectedCrc) {
+      throw pngError(label, `${type} chunk checksum is invalid`);
+    }
+    offset = chunkEnd;
+
+    if (!sawHeader && type !== 'IHDR') throw pngError(label, 'IHDR must be the first chunk');
+    if (type === 'IHDR') {
+      if (sawHeader) throw pngError(label, 'contains more than one IHDR chunk');
+      if (data.length !== 13) throw pngError(label, 'IHDR has an invalid length');
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      if (width !== expectedSize || height !== expectedSize) {
+        throw pngError(label, `dimensions are ${width}x${height}, expected ${expectedSize}x${expectedSize}`);
+      }
+      if (
+        data[8] !== 8 ||
+        data[9] !== 6 ||
+        data[10] !== 0 ||
+        data[11] !== 0 ||
+        data[12] !== 0
+      ) {
+        throw pngError(label, 'must be non-interlaced 8-bit RGBA');
+      }
+      sawHeader = true;
+      continue;
+    }
+    if (type === 'IDAT') {
+      sawImageData = true;
+      imageData.push(data);
+      continue;
+    }
+    if (type === 'IEND') {
+      if (data.length !== 0) throw pngError(label, 'IEND must be empty');
+      if (!sawImageData) throw pngError(label, 'contains no IDAT data');
+      if (offset !== bytes.length) throw pngError(label, 'contains bytes after IEND');
+      sawEnd = true;
+      break;
+    }
+    // Color-management and animation ancillary chunks can change rendering
+    // semantics without changing the stored RGBA samples. The generator emits
+    // only IHDR + consecutive IDAT + IEND, so rebuild anything outside that
+    // exact, auditable subset instead of guessing whether it is equivalent.
+    throw pngError(label, `contains unsupported chunk ${type}`);
+  }
+
+  if (!sawEnd) throw pngError(label, 'contains no IEND chunk');
+  const rowBytes = width * PNG_BYTES_PER_PIXEL;
+  const inflatedSize = (rowBytes + 1) * height;
+  if (!Number.isSafeInteger(inflatedSize)) throw pngError(label, 'decoded size is unsafe');
+
+  const compressed = Buffer.concat(imageData);
+  let inflation;
+  try {
+    inflation = inflateSync(compressed, { maxOutputLength: inflatedSize, info: true });
+  } catch (error) {
+    throw new Error(`${label}: IDAT data cannot be decoded`, { cause: error });
+  }
+  const filtered = inflation.buffer;
+  if (inflation.engine.bytesWritten !== compressed.length) {
+    throw pngError(label, 'IDAT data contains trailing compressed input');
+  }
+  if (filtered.length !== inflatedSize) {
+    throw pngError(label, `decoded byte length is ${filtered.length}, expected ${inflatedSize}`);
+  }
+
+  const pixels = Buffer.alloc(rowBytes * height);
+  for (let y = 0; y < height; y += 1) {
+    const filteredRow = y * (rowBytes + 1);
+    const filter = filtered[filteredRow];
+    if (filter > 4) throw pngError(label, `scanline ${y} uses unsupported filter ${filter}`);
+    const pixelRow = y * rowBytes;
+    const previousRow = pixelRow - rowBytes;
+    for (let x = 0; x < rowBytes; x += 1) {
+      const encoded = filtered[filteredRow + 1 + x];
+      const left = x >= PNG_BYTES_PER_PIXEL ? pixels[pixelRow + x - PNG_BYTES_PER_PIXEL] : 0;
+      const up = y > 0 ? pixels[previousRow + x] : 0;
+      const upperLeft = y > 0 && x >= PNG_BYTES_PER_PIXEL
+        ? pixels[previousRow + x - PNG_BYTES_PER_PIXEL]
+        : 0;
+      const predictor = filter === 0
+        ? 0
+        : filter === 1
+          ? left
+          : filter === 2
+            ? up
+            : filter === 3
+              ? Math.floor((left + up) / 2)
+              : paethPredictor(left, up, upperLeft);
+      pixels[pixelRow + x] = (encoded + predictor) & 0xff;
+    }
+  }
+  return pixels;
+}
+
+function writeGeneratedPng(path, bytes, label, reason, logger, fileSystem) {
+  const temporaryPath = `${path}.${process.pid}.${pngTemporarySequence += 1}.tmp`;
+  try {
+    fileSystem.writeFileSync(temporaryPath, bytes, { flag: 'wx' });
+    fileSystem.renameSync(temporaryPath, path);
+  } catch (error) {
+    try {
+      fileSystem.rmSync(temporaryPath, { force: true });
+    } catch (cleanupError) {
+      throw new Error(`Could not write ${label} or clean its temporary file (${reason})`, {
+        cause: new AggregateError([error, cleanupError]),
+      });
+    }
+    throw new Error(`Could not write ${label} (${reason})`, { cause: error });
+  }
+  logger?.log?.(`${label} written (${reason})`);
+}
+
+/** Keep the repository's PNG bytes when only the zlib representation differs. */
+export function writePngIfPixelsChanged(
+  path,
+  generatedBytes,
+  size,
+  { label = path, logger = console, fileSystem = PNG_FILE_SYSTEM } = {},
+) {
+  const generatedPixels = decodeRgbaPng(generatedBytes, size, `generated ${label}`);
+  let existingBytes;
+  try {
+    existingBytes = readFileSync(path);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      throw new Error(`Could not read existing ${label}`, { cause: error });
+    }
+    writeGeneratedPng(path, generatedBytes, label, 'missing PNG rebuilt', logger, fileSystem);
+    return { written: true, reason: 'missing' };
+  }
+
+  let existingPixels;
+  try {
+    existingPixels = decodeRgbaPng(existingBytes, size, `existing ${label}`);
+  } catch (error) {
+    writeGeneratedPng(path, generatedBytes, label, `invalid PNG rebuilt: ${error.message}`, logger, fileSystem);
+    return { written: true, reason: 'invalid-existing' };
+  }
+  if (existingPixels.equals(generatedPixels)) {
+    logger?.log?.(`${label} kept (decoded RGBA pixels unchanged)`);
+    return { written: false, reason: 'pixels-unchanged' };
+  }
+
+  writeGeneratedPng(path, generatedBytes, label, 'decoded RGBA pixels changed', logger, fileSystem);
+  return { written: true, reason: 'pixels-changed' };
+}
 
 function nativeIconGeometry(size) {
   const cached = nativeGeometryCache.get(size);
@@ -182,8 +410,8 @@ export function generateThemeIcons({ outDir = DEFAULT_OUT, logger = console } = 
     const iconSet = renderThemeIconSet(accent);
     for (const [size, bytes] of iconSet.pngs) {
       const filename = `icon-${size}.png`;
-      writeFileSync(join(themeOut, filename), bytes);
-      logger?.log?.(`${theme}/${filename} written`);
+      const label = `${theme}/${filename}`;
+      writePngIfPixelsChanged(join(themeOut, filename), bytes, size, { label, logger });
     }
     writeFileSync(join(themeOut, 'icon.ico'), iconSet.ico);
     logger?.log?.(`${theme}/icon.ico written`);
