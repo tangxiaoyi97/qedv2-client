@@ -9,13 +9,10 @@ import type { SelfAssessmentUiState } from './self-assessment.js';
 
 export interface PartPlayerState {
   phase: 'answering' | 'self-assessing' | 'reviewed';
-  attemptPhase: 'first' | 'correction';
   /** Enough input to allow Überprüfen (answering phase only). */
   canSubmit: boolean;
   /** Final result once reviewed. */
   result: GradeResult | null;
-  /** Immutable first result while a correction is edited/reviewed. */
-  firstResult: GradeResult | null;
   /** Expression fell back to self-assessment (CAS indeterminate). */
   indeterminate: boolean;
   /** Part is not answerable at all (no answer data). */
@@ -48,7 +45,6 @@ export interface PartPlayerDraft {
 export type PartPlayerCommand =
   | { id: number; type: 'submit' }
   | { id: number; type: 'confirm-self-assessment' }
-  | { id: number; type: 'start-correction' }
   | {
       id: number;
       type: 'restore-review';

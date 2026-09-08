@@ -2,7 +2,7 @@
 import { useI18n } from '../i18n.js';
 
 import { computed } from 'vue';
-import { Lightbulb, RotateCcw } from 'lucide-vue-next';
+import { Lightbulb } from 'lucide-vue-next';
 import {
   VERDICT_LABELS,
   type Grading,
@@ -42,9 +42,8 @@ const props = defineProps<{
   gradingDisabled?: boolean;
   primaryLabel: string;
   primaryDisabled: boolean;
-  /** One low-interruption entry for hints, diagnosis and correction. */
+  /** One low-interruption entry for hints and explanations. */
   learningAvailable?: boolean;
-  learningKind?: 'help' | 'correction';
   /** Official material stays hidden until a self-assessment draft is durable. */
   solutionReady?: boolean;
 }>();
@@ -167,14 +166,11 @@ const emit = defineEmits<{
           class="practice-bar__learning-toggle"
           :class="{ 'practice-bar__learning-toggle--on': solutionDetent !== 'collapsed' }"
           :aria-expanded="solutionDetent !== 'collapsed'"
-          :aria-label="learningKind === 'correction'
-            ? t(solutionDetent === 'collapsed' ? 'Korrektur öffnen' : 'Korrektur schließen')
-            : t(solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen')"
+          :aria-label="t(solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen')"
           @click="emit('learningToggle')"
         >
-          <RotateCcw v-if="learningKind === 'correction'" :size="17" aria-hidden="true" />
-          <Lightbulb v-else :size="17" aria-hidden="true" />
-          <span>{{ t(learningKind === 'correction' ? 'Korrektur' : 'Lernhilfe') }}</span>
+          <Lightbulb :size="17" aria-hidden="true" />
+          <span>{{ t('Lernhilfe') }}</span>
         </button>
         <!-- Hidden on narrow screens: the sheet's grab handle is the control
              there, so this button never has to fight the primary action for

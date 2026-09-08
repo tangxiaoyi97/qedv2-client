@@ -47,8 +47,8 @@ const question: Question = {
 function state(verdict?: 'correct' | 'incorrect'): PartPlayerState {
   const result = verdict ? { verdict, correct: verdict === 'correct', maxPoints: 1, awardedPoints: verdict === 'correct' ? 1 : 0 } : null;
   return {
-    phase: verdict ? 'reviewed' : 'answering', attemptPhase: 'first', canSubmit: false,
-    result, firstResult: result, indeterminate: false, unplayable: false,
+    phase: verdict ? 'reviewed' : 'answering', canSubmit: false,
+    result, indeterminate: false, unplayable: false,
     answerPreview: null, submittedText: verdict ? 'x = 3' : '', selfAssessment: null,
   };
 }
@@ -56,7 +56,7 @@ async function settle() {
   for (let i = 0; i < 8; i += 1) { await Promise.resolve(); await nextTick(); }
 }
 let unmount: (() => void) | undefined;
-async function mountPractice(status = ready, options: { enabled?: boolean; loggedIn?: boolean; cached?: boolean } = {}) {
+async function mountPractice(status = ready, options: { enabled?: boolean; loggedIn?: boolean; cached?: boolean; legacyCorrectionCache?: boolean } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const app = useAppStore();
@@ -86,7 +86,10 @@ async function mountPractice(status = ready, options: { enabled?: boolean; logge
     items: [{
       questionId: 'q1', partId: 'q1-a', reason: 'manual',
       learningInteractionId: '11111111-1111-4111-8111-111111111111',
-      ...(options.cached ? { cachedAiHint: { cacheKey: 'cached', partId: 'q1-a', mode: 'hint' } as AiExplainCacheLocator } : {}),
+      ...(options.cached ? { cachedAiHint: {
+        cacheKey: 'cached', partId: 'q1-a', mode: 'hint',
+        attemptPhase: options.legacyCorrectionCache ? 'correction' : 'first',
+      } as AiExplainCacheLocator } : {}),
     }],
   });
   const ai = useAiStore();
@@ -147,7 +150,7 @@ describe('practice AI entries', () => {
     expect(router.currentRoute.value.path).toBe('/practice');
   });
 
-  it('hides a cached AI hint after global disable but retains a clean, non-AI correction action', async () => {
+  it('hides cached AI help after global disable without leaving an empty correction entry', async () => {
     const { host, app, ai } = await mountPractice(ready, { cached: true });
     host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')?.click();
     await settle();
@@ -159,13 +162,61 @@ describe('practice AI entries', () => {
     expect(host.textContent).not.toContain('Gespeicherte KI-Antwort');
     player.emit!(state('incorrect'));
     await settle();
-    expect(host.querySelector('.practice-bar__learning-toggle')?.textContent).toContain('Korrektur');
-    expect(host.querySelector('.q-learning h3')?.textContent).toBe('Korrektur');
-    expect(host.querySelector('.q-learning')?.textContent).not.toContain('KI');
+    expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
+    expect(host.querySelector('.q-learning')).toBeNull();
+    expect(host.textContent).not.toContain('Korrektur');
     expect(host.querySelector('.q-learning__loading, .q-learning__storage, .q-aibadge')).toBeNull();
     player.emit!(state('correct'));
     await settle();
     expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
+  });
+
+  it('retains authorized diagnosis as an explanation of the original answer, without a correction action', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canDiagnose).toBe(true));
+    const explain = vi.spyOn(ai, 'explain').mockResolvedValue({
+      mode: 'diagnosis', markdown: 'Prüfe die Umformung.',
+      diagnosis: {
+        errorCode: 'algebra', reason: 'Das Vorzeichen stimmt nicht.',
+        correctionPrompt: 'Achte auf das Vorzeichen.', advisoryOnly: true,
+        evidence: '', evidenceVerified: false, confidence: 0.8,
+      },
+      model: 'test-model', promptVersion: 'v2', taskVersion: 'diagnosis.v1', source: 'pool', cached: true,
+    });
+    player.emit!(state('incorrect'));
+    await settle();
+    expect(host.querySelector('.practice-bar__learning-toggle')?.textContent).toContain('Lernhilfe');
+    const ask = [...host.querySelectorAll<HTMLButtonElement>('.q-learning__actions button')]
+      .find((entry) => entry.textContent?.includes('Fehler ansehen'));
+    expect(ask).toBeDefined();
+    ask!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'diagnosis', submitted: 'x = 3',
+      identity: expect.objectContaining({ attemptPhase: 'first', contentId: 'a'.repeat(40) }),
+    }), expect.any(AbortSignal), {});
+    await vi.waitFor(() => expect(host.textContent).toContain('Das Vorzeichen stimmt nicht.'));
+    expect(host.textContent).not.toMatch(/Korrektur|korrigieren/);
+    expect([...host.querySelectorAll<HTMLButtonElement>('.practice-bar button')]
+      .some((button) => button.textContent?.includes('Weiter'))).toBe(true);
+  });
+
+  it('keeps legacy correction cache data intact without replaying it into the normal answer flow', async () => {
+    const { host, ai } = await mountPractice(ready, { cached: true, legacyCorrectionCache: true });
+    await settle();
+    expect(ai.replayExplain).not.toHaveBeenCalled();
+    expect(usePracticeStore().items[0]?.cachedAiHint?.attemptPhase).toBe('correction');
+    expect(host.textContent).not.toContain('Gespeicherte KI-Antwort');
+    expect(host.textContent).not.toMatch(/Korrektur|korrigieren/);
+  });
+
+  it('has no empty explanation entry when the saved original answer is unavailable', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canDiagnose).toBe(true));
+    player.emit!({ ...state('incorrect'), submittedText: '' });
+    await settle();
+    expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
+    expect(host.querySelector('.q-learning')).toBeNull();
   });
 
   it('opens the precise setup section without changing the practice or choosing a payer', async () => {

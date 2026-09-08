@@ -6,6 +6,7 @@ import {
   DEFAULT_CONFIG,
   GUEST_ATTEMPT_OWNER,
   STORAGE,
+  learningEventStorageKey,
   questionContentHash,
   type AtomicStoragePort,
   type AiExplainCacheLocator,
@@ -13,13 +14,13 @@ import {
   type Question,
   type CoreRuntimePort,
   type ShellPort,
+  type LearningEvent,
 } from '@qed2/core-logic';
 import {
   archiveStore,
   attemptOutbox,
   authStore as authStorage,
   historyLog,
-  learningEventStore,
   localProfileStore,
   questionCache,
   storage,
@@ -30,6 +31,7 @@ import {
   practiceSessionStorageKey,
   usePracticeStore,
   type SessionItem,
+  type GradedRecord,
 } from '../src/stores/practice.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useProgressStore } from '../src/stores/progress.js';
@@ -771,7 +773,7 @@ describe('practice session persistence', () => {
     expect(practice.current?.part.id).toBe('q2-a');
   });
 
-  it('restores a reviewed wrong first attempt with the same one-time correction identity', async () => {
+  it('restores the original wrong result without exposing correction writers or duplicating progress', async () => {
     const first = await freshStores();
     await first.practice.startQuestions(['q1', 'q2']);
     const current = first.practice.current!;
@@ -797,13 +799,15 @@ describe('practice session persistence', () => {
       result: { verdict: 'incorrect' },
     });
     expect(restored.practice.currentReview?.correctionOutcome).toBeUndefined();
-    await restored.practice.recordCorrection(
-      firstRecord!.clientAttemptId,
-      'q1-a',
-      { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
-    );
+    expect('recordCorrection' in restored.practice).toBe(false);
+    expect('saveCorrectionDraft' in restored.practice).toBe(false);
+    expect(restored.practice.summary).not.toHaveProperty('corrections');
+    await restored.practice.completeReviewAndNext();
     expect(restored.practice.graded).toHaveLength(1);
-    expect(restored.practice.currentReview?.correctionOutcome).toBe('correct');
+    expect(restored.practice.graded[0]?.result.verdict).toBe('incorrect');
+    expect(restored.practice.graded[0]?.correctionOutcome).toBeUndefined();
+    expect(restored.practice.graded[0]?.correctionClosedAt).toBeUndefined();
+    expect(restored.practice.current?.part.id).toBe('q2-a');
     expect((await archiveStore.load()).content.perPart).toHaveLength(1);
     expect(await historyLog.count()).toBe(1);
   });
@@ -863,7 +867,7 @@ describe('practice session persistence', () => {
     expect(await historyLog.count()).toBe(1);
   });
 
-  it('restores a local correction draft and removes it after the one correction', async () => {
+  it('preserves a legacy correction draft without replacing the original answer or reopening editing', async () => {
     const first = await freshStores();
     await first.practice.startQuestions(['q1', 'q2']);
     const record = await first.practice.recordGraded({
@@ -871,21 +875,11 @@ describe('practice session persistence', () => {
       submission: { kind: 'choice', selected: [1] },
       result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
     });
-    await expect(first.practice.saveCorrectionDraft(
-      record!.clientAttemptId,
-      'q1-a',
-      { kind: 'choice', selected: [0] },
-    )).resolves.toBe(true);
-    const sessionAddress = { collection: STORAGE.app, key: activeSessionKey() } as const;
-    const [beforeDuplicate] = await atomicStorage.readBatch([sessionAddress]);
-    await expect(first.practice.saveCorrectionDraft(
-      record!.clientAttemptId,
-      'q1-a',
-      { kind: 'choice', selected: [0] },
-    )).resolves.toBe(true);
-    const [afterDuplicate] = await atomicStorage.readBatch([sessionAddress]);
-    expect(afterDuplicate?.revision).toBe(beforeDuplicate?.revision);
-    await first.practice.finishSession();
+    const key = activeSessionKey();
+    const snapshot = (await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, key))!;
+    const legacyDraft = { submission: { kind: 'choice' as const, selected: [0] }, savedAt: new Date().toISOString() };
+    snapshot.graded[0]!.correctionDraft = legacyDraft;
+    await storage.set(STORAGE.app, key, snapshot);
 
     const restored = await freshStores();
     await expect(restored.practice.restoreSession()).resolves.toBe(true);
@@ -893,15 +887,157 @@ describe('practice session persistence', () => {
       kind: 'choice',
       selected: [0],
     });
-    await restored.practice.recordCorrection(
-      record!.clientAttemptId,
-      'q1-a',
-      { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
-    );
-    expect(restored.practice.currentReview?.correctionDraft).toBeUndefined();
-    expect(JSON.stringify(await storage.get(STORAGE.app, activeSessionKey()))).not.toContain(
-      'correctionDraft',
-    );
+    expect(restored.practice.currentReview).toMatchObject({
+      clientAttemptId: record!.clientAttemptId,
+      result: { verdict: 'incorrect' },
+      pendingSubmission: { kind: 'choice', selected: [1] },
+    });
+    await restored.practice.completeReviewAndNext();
+    await restored.practice.finishSession();
+    const durable = await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, key);
+    expect(durable?.graded[0]?.correctionDraft).toEqual(legacyDraft);
+    expect(durable?.graded[0]?.pendingSubmission).toBeUndefined();
+    expect(durable?.graded[0]?.reviewClosedAt).toBeDefined();
+    expect(durable?.graded[0]?.correctionClosedAt).toBeUndefined();
+    expect(await historyLog.count()).toBe(1);
+    expect((await archiveStore.load()).content.perPart[0]?.fsrs.reps).toBe(1);
+  });
+
+  it('does not resurrect a closed result review or its answer from another window', async () => {
+    const firstPinia = createPinia();
+    setActivePinia(firstPinia);
+    await useProgressStore().init();
+    const first = usePracticeStore();
+    await first.startQuestions(['q1', 'q2']);
+    await first.recordGraded({
+      part: first.current!.part,
+      submission: { kind: 'choice', selected: [1] },
+      result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
+    });
+    const secondPinia = createPinia();
+    setActivePinia(secondPinia);
+    await useProgressStore().init();
+    const second = usePracticeStore();
+    await second.restoreSession();
+    expect(second.currentReview?.pendingSubmission).toBeDefined();
+
+    setActivePinia(firstPinia);
+    await first.closeCurrentReview();
+    setActivePinia(secondPinia);
+    await second.finishSession();
+    const durable = await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, activeSessionKey());
+    expect(durable?.graded[0]?.pendingSubmission).toBeUndefined();
+    expect(durable?.graded[0]?.reviewClosedAt).toBeDefined();
+    expect(durable?.graded[0]?.correctionClosedAt).toBeUndefined();
+
+    const restored = await freshStores();
+    await restored.practice.restoreSession();
+    expect(restored.practice.current?.part.id).toBe('q2-a');
+    expect(restored.practice.graded).toHaveLength(1);
+    expect(await historyLog.count()).toBe(1);
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+    expect((await archiveStore.load()).content.perPart[0]?.fsrs.reps).toBe(1);
+  });
+
+  it.each(['before-write', 'after-write'] as const)('handles review close failure %s without assuming an old grade proves the close', async (failure) => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.recordGraded({
+      part: practice.current!.part,
+      submission: { kind: 'choice', selected: [1] },
+      result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
+    });
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementationOnce(async (request) => {
+      if (failure === 'after-write') await commit(request);
+      throw new Error('local write interrupted');
+    });
+    if (failure === 'before-write') {
+      await expect(practice.completeReviewAndNext()).rejects.toThrow('local write interrupted');
+      expect(practice.current?.part.id).toBe('q1-a');
+      expect(practice.currentReview?.pendingSubmission).toBeDefined();
+      expect(practice.currentReview?.reviewClosedAt).toBeUndefined();
+    } else {
+      await expect(practice.completeReviewAndNext()).resolves.toBeUndefined();
+      expect(practice.current?.part.id).toBe('q2-a');
+      expect(practice.graded[0]?.pendingSubmission).toBeUndefined();
+      expect(practice.graded[0]?.reviewClosedAt).toBeDefined();
+    }
+    await practice.finishSession();
+    const durable = await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, activeSessionKey());
+    expect(Boolean(durable?.graded[0]?.reviewClosedAt)).toBe(failure === 'after-write');
+    expect(await historyLog.count()).toBe(1);
+    expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(1);
+  });
+
+  it('uses the merged closed-review marker when another window closes during restoration', async () => {
+    const firstPinia = createPinia();
+    setActivePinia(firstPinia);
+    await useProgressStore().init();
+    const first = usePracticeStore();
+    await first.startQuestions(['q1', 'q2']);
+    await first.recordGraded({
+      part: first.current!.part,
+      submission: { kind: 'choice', selected: [1] },
+      result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
+    });
+    const secondPinia = createPinia();
+    setActivePinia(secondPinia);
+    await useProgressStore().init();
+    const second = usePracticeStore();
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    let markPaused!: () => void;
+    const paused = new Promise<void>((resolve) => { markPaused = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let held = false;
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      if (!held && request.mutations.some((mutation) =>
+        mutation.collection === STORAGE.app && mutation.operation === 'set'
+        && mutation.key === activeSessionKey())) {
+        held = true;
+        markPaused();
+        await gate;
+      }
+      return commit(request);
+    });
+    const restoring = second.restoreSession();
+    await paused;
+    setActivePinia(firstPinia);
+    await first.closeCurrentReview();
+    setActivePinia(secondPinia);
+    release();
+    await expect(restoring).resolves.toBe(true);
+    expect(second.current?.part.id).toBe('q2-a');
+    expect(second.graded[0]?.reviewClosedAt).toBeDefined();
+    expect(second.graded[0]?.pendingSubmission).toBeUndefined();
+    expect(await historyLog.count()).toBe(1);
+  });
+
+  it('preserves legacy correction outcomes and timestamps on session restoration', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await practice.recordGraded({
+      part: practice.current!.part,
+      submission: { kind: 'choice', selected: [1] },
+      result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
+    });
+    const key = activeSessionKey();
+    const snapshot = (await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, key))!;
+    const legacy = {
+      ...snapshot.graded[0]!,
+      correctionOutcome: 'correct' as const,
+      correctedAt: new Date().toISOString(),
+      correctionDraft: { submission: { kind: 'choice' as const, selected: [0] }, savedAt: new Date().toISOString() },
+    };
+    snapshot.graded[0] = legacy;
+    await storage.set(STORAGE.app, key, snapshot);
+    const restored = await freshStores();
+    await restored.practice.restoreSession();
+    expect(restored.practice.currentReview).toEqual(legacy);
+    expect(restored.practice.summary.points).toBe(0);
+    expect(restored.practice.summary).not.toHaveProperty('corrections');
+    expect((await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, key))?.graded[0]).toEqual(legacy);
   });
 
   it('keeps a pre-answer grading as a declaration until the answer consumes it atomically', async () => {
@@ -957,7 +1093,7 @@ describe('practice session persistence', () => {
     expect((await archiveStore.load()).content.perPart[0]?.fsrs.reps).toBe(1);
   });
 
-  it('reconciles a correction committed just before the session snapshot crashed', async () => {
+  it('retains legacy correction evidence without using it to change the first result or navigation', async () => {
     const first = await freshStores();
     await first.practice.startQuestions(['q1', 'q2']);
     const current = first.practice.current!;
@@ -971,19 +1107,21 @@ describe('practice session persistence', () => {
         maxPoints: 1,
       },
     });
-    await learningEventStore.recordCorrection(
-      localProfileStore.current(),
-      record!.clientAttemptId,
-      'correct',
-    );
+    const key = learningEventStorageKey(localProfileStore.current());
+    const document = (await storage.get<{ rows: Array<{ event: LearningEvent }> }>(STORAGE.learning, key))!;
+    document.rows[0]!.event.correctionOutcome = 'correct';
+    await storage.set(STORAGE.learning, key, document);
+    const before = await atomicStorage.readBatch([{ collection: STORAGE.learning, key }]);
 
     const restored = await freshStores();
     await expect(restored.practice.restoreSession()).resolves.toBe(true);
-    expect(restored.practice.current?.part.id).toBe('q2-a');
+    expect(restored.practice.current?.part.id).toBe('q1-a');
     expect(restored.practice.graded[0]).toMatchObject({
       clientAttemptId: record?.clientAttemptId,
-      correctionOutcome: 'correct',
+      result: { verdict: 'incorrect' },
     });
+    expect(restored.practice.graded[0]?.correctionOutcome).toBeUndefined();
+    expect(await atomicStorage.readBatch([{ collection: STORAGE.learning, key }])).toEqual(before);
   });
 
   it('removes the durable snapshot only when a session is deliberately aborted', async () => {

@@ -10,13 +10,14 @@ export type LearningOutcome = 'incorrect' | 'partial' | 'correct';
 export type LearningHintLevel = 1 | 2 | 3;
 
 /**
- * Local-only, deliberately minimal evidence for corrective recommendations.
+ * Local-only, deliberately minimal evidence for learning recommendations.
  * It must never grow fields containing the learner's answer or an AI transcript.
  */
 export interface LearningEvent {
   version: 1;
   partId: string;
   outcome: LearningOutcome;
+  /** Historical field retained for saved data and recommendation compatibility. */
   correctionOutcome?: LearningOutcome;
   hintLevel?: LearningHintLevel;
   errorCode?: AiDiagnosisCode;
@@ -256,30 +257,6 @@ export class LearningEventStore {
       const rows = sortedRows([...current.rows, { eventId, event: expected }])
         .slice(0, MAX_LEARNING_EVENTS_PER_PROFILE);
       return { document: { version: 1, rows }, value: undefined };
-    });
-  }
-
-  async recordCorrection(
-    profileId: LocalProfileId,
-    eventId: string,
-    correctionOutcome: LearningOutcome,
-  ): Promise<LearningEvent> {
-    validateEventId(eventId);
-    if (!isOutcome(correctionOutcome)) throw new TypeError('Invalid correction outcome');
-    return this.mutate(profileId, (current) => {
-      const index = current.rows.findIndex((row) => row.eventId === eventId);
-      if (index < 0) throw new Error('First attempt learning event is missing');
-      const previous = current.rows[index]!.event;
-      if (previous.correctionOutcome && previous.correctionOutcome !== correctionOutcome) {
-        throw new Error('A correction outcome is already recorded');
-      }
-      if (previous.correctionOutcome === correctionOutcome) {
-        return { document: current, value: previous };
-      }
-      const event = { ...previous, correctionOutcome };
-      const rows = current.rows.map((row, rowIndex) =>
-        rowIndex === index ? { ...row, event } : row);
-      return { document: { version: 1, rows }, value: event };
     });
   }
 
