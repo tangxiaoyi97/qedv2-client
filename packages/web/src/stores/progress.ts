@@ -145,6 +145,7 @@ export const useProgressStore = defineStore('progress', () => {
   let cloudRecoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let cloudRecoveryAttempt = 0;
   let cloudRecoveryGeneration = 0;
+  let pendingLoginReconciliation: AccountArchiveContext | undefined;
   const CLOUD_RECOVERY_DELAYS = [5_000, 15_000, 45_000, 120_000, 300_000] as const;
 
   interface AccountArchiveContext {
@@ -175,9 +176,22 @@ export const useProgressStore = defineStore('progress', () => {
    * Clearing a timeout alone is insufficient: its detached async body may be
    * between awaits while another window logs in a different account.
    */
-  function cancelCloudRecovery(): void {
+  function pauseCloudRecovery(): void {
     cloudRecoveryGeneration += 1;
     resetCloudRecovery();
+  }
+
+  function cancelCloudRecovery(): void {
+    pauseCloudRecovery();
+    pendingLoginReconciliation = undefined;
+  }
+
+  /** Resume only after the same durable auth identity has been republished. */
+  function resumeCloudRecovery(): void {
+    if ((pendingLoginReconciliation && isCurrentAccountArchiveContext(pendingLoginReconciliation))
+      || syncStatus.value.state === 'offline'
+      || syncStatus.value.state === 'syncing'
+      || attemptUploadStatus.value.state === 'pending') scheduleCloudRecovery();
   }
 
   function captureCloudRecoveryContext(): CloudRecoveryContext | undefined {
@@ -220,7 +234,11 @@ export const useProgressStore = defineStore('progress', () => {
         }
         await flushAttemptOutbox(context);
         if (!isCurrentCloudRecoveryContext(context)) return;
-        if (
+        if (pendingLoginReconciliation && isCurrentAccountArchiveContext(pendingLoginReconciliation)) {
+          await enqueueArchiveMutation(async () => {
+            if (isCurrentCloudRecoveryContext(context)) await reconcileOnLoginUnlocked(context);
+          });
+        } else if (
           archiveChoicePendingPick
           && archiveChoiceContext
           && isCurrentAccountArchiveContext(archiveChoiceContext)
@@ -233,7 +251,8 @@ export const useProgressStore = defineStore('progress', () => {
         }
         if (!isCurrentCloudRecoveryContext(context)) return;
         const retryAttempt = attemptUploadByOwner.value[context.ownerId]?.state === 'pending';
-        const retrySync = syncStatus.value.state === 'offline';
+        const retrySync = syncStatus.value.state === 'offline'
+          || (!!pendingLoginReconciliation && syncStatus.value.state === 'idle');
         if (retryAttempt || retrySync) scheduleCloudRecovery();
         else resetCloudRecovery();
       })();
@@ -614,10 +633,14 @@ export const useProgressStore = defineStore('progress', () => {
     await enqueueArchiveMutation(loadLatestArchive);
   }
 
-  async function activateUserProfile(userId: string): Promise<void> {
+  async function activateUserProfile(userId: string, preserveSyncState = false): Promise<void> {
     await enqueueArchiveMutation(() => runStorageMutation(storage, async () => {
       await localProfileStore.activateUser(userId);
       archive.value = await archiveStore.load();
+      if (preserveSyncState) {
+        historyVersion.value += 1;
+        return;
+      }
       conflict.value = undefined;
       conflictArchiveBase = undefined;
       conflictContext = undefined;
@@ -666,10 +689,10 @@ export const useProgressStore = defineStore('progress', () => {
   }
 
   /** Resume only an invite marker naming this exact account. */
-  async function activateProfileForAuth(userId: string): Promise<void> {
+  async function activateProfileForAuth(userId: string, preserveSyncState = false): Promise<void> {
     const pending = await attemptOutbox.pendingGuestClaim();
     if (pending === userId) await claimGuestProfile(userId);
-    else await activateUserProfile(userId);
+    else await activateUserProfile(userId, preserveSyncState);
   }
 
   function setAttemptUploadStatus(
@@ -1194,12 +1217,26 @@ export const useProgressStore = defineStore('progress', () => {
       scheduleCloudRecovery();
       return 'offline';
     }
+    // Connectivity events and ordinary auto-sync use this path too. After a
+    // failed login read they must complete reconciliation, not upload before
+    // the learner has chosen between two different archives.
+    if (pendingLoginReconciliation) {
+      await reconcileOnLoginUnlocked(context);
+      if (!isCurrent()) return 'blocked';
+      if (syncStatus.value.state === 'error') return 'error';
+      if (pendingLoginReconciliation) return 'offline';
+    }
     const client = clientForContext(context);
     syncStatus.value = { state: 'syncing' };
     try {
       const recovered = await recoverPendingMutations(context);
       if (recovered === 'conflict' || recovered === 'blocked') return recovered;
       if (recovered === 'recovered') return 'synced';
+      // A retry/manual upload must not make the user's pending archive choice.
+      if (archiveChoice.value || conflict.value) {
+        syncStatus.value = { state: conflict.value ? 'conflict' : 'idle', at: new Date() };
+        return 'blocked';
+      }
       // Another renderer may grade while this renderer is awaiting the
       // server. Snapshot and commit are tiny lock sections; the network is
       // deliberately outside the lock. A changed snapshot retries against
@@ -1276,6 +1313,15 @@ export const useProgressStore = defineStore('progress', () => {
     return enqueueArchiveMutation(() => runSyncRound(opts));
   }
 
+  /** Explicit sync covers both progress and answer history, under one account epoch. */
+  async function syncCloudNow(): Promise<SyncRunResult> {
+    const context = captureCloudRecoveryContext();
+    if (!context) return useAuthStore().isLoggedIn ? 'blocked' : 'guest';
+    await flushAttemptOutbox(context);
+    if (!isCurrentCloudRecoveryContext(context)) return 'blocked';
+    return enqueueArchiveMutation(() => runSyncRound({ quiet: false }, context));
+  }
+
   function syncNowForRecovery(context: CloudRecoveryContext): Promise<SyncRunResult> {
     return enqueueArchiveMutation(() => runSyncRound({ quiet: true }, context));
   }
@@ -1305,12 +1351,14 @@ export const useProgressStore = defineStore('progress', () => {
   ): Promise<void> {
     const context = expectedContext ?? captureAccountArchiveContext();
     if (!context || !isCurrentAccountArchiveContext(context)) return;
+    pendingLoginReconciliation = context;
     const client = clientForContext(context);
     syncStatus.value = { state: 'syncing' };
     try {
       const recovered = await recoverPendingMutations(context);
       if (recovered) {
         if (recovered === 'recovered') {
+          pendingLoginReconciliation = undefined;
           syncStatus.value = { state: 'synced', at: new Date() };
         }
         return;
@@ -1327,6 +1375,7 @@ export const useProgressStore = defineStore('progress', () => {
           case 'in-sync':
             if (!(await commitArchiveIfUnchanged(local, assessment.archive, context))) continue;
             if (!isCurrentAccountArchiveContext(context)) return;
+            pendingLoginReconciliation = undefined;
             syncStatus.value = { state: 'synced', at: new Date() };
             return;
           case 'upload-local': {
@@ -1353,6 +1402,7 @@ export const useProgressStore = defineStore('progress', () => {
               conflictContext = context;
               syncStatus.value = { state: 'conflict', at: new Date() };
               await completeJournal(context, journal);
+              pendingLoginReconciliation = undefined;
               return;
             }
             if (!(await commitArchiveIfUnchanged(local, next, context))) {
@@ -1361,6 +1411,7 @@ export const useProgressStore = defineStore('progress', () => {
             }
             await completeJournal(context, journal);
             if (!isCurrentAccountArchiveContext(context)) return;
+            pendingLoginReconciliation = undefined;
             syncStatus.value = { state: 'synced', at: new Date() };
             return;
           }
@@ -1374,6 +1425,7 @@ export const useProgressStore = defineStore('progress', () => {
             };
             archiveChoiceBase = local;
             archiveChoiceContext = context;
+            pendingLoginReconciliation = undefined;
             syncStatus.value = { state: 'idle' };
             return;
         }
@@ -1383,12 +1435,18 @@ export const useProgressStore = defineStore('progress', () => {
         message: 'Lokaler Fortschritt wurde parallel aktualisiert; der Kontoabgleich wird später wiederholt.',
         at: new Date(),
       };
+      scheduleCloudRecovery();
     } catch (e) {
       if (!isCurrentAccountArchiveContext(context)) return;
+      const retryable = isTransientCloudError(e);
       syncStatus.value =
-        e instanceof NetworkError
+        retryable
           ? { state: 'offline', at: new Date() }
           : { state: 'error', message: e instanceof Error ? e.message : String(e), at: new Date() };
+      if (retryable) {
+        pendingLoginReconciliation = context;
+        scheduleCloudRecovery();
+      }
     }
   }
 
@@ -1614,12 +1672,15 @@ export const useProgressStore = defineStore('progress', () => {
     claimGuestAttempts,
     flushAttemptOutbox,
     scheduleCloudRecovery,
+    pauseCloudRecovery,
+    resumeCloudRecovery,
     cancelCloudRecovery,
     applyGrade,
     setGrading,
     setStarred,
     toUserState,
     syncNow,
+    syncCloudNow,
     syncBeforeRecommendation,
     resolveConflict,
     dismissConflict,

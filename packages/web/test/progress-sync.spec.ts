@@ -16,6 +16,7 @@ import {
 } from '@qed2/core-logic';
 import {
   archiveStore,
+  authStore as authStorage,
   attemptOutbox,
   localProfileStore,
   storage,
@@ -473,6 +474,196 @@ describe('progress sync orchestration', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(await attemptOutbox.count(OWNER_U1)).toBe(0);
     expect(progress.attemptUploadStatus).toEqual({ state: 'idle', pendingCount: 0 });
+  });
+
+  it('manual sync retries answer history as well as the progress archive', async () => {
+    const progress = await setup();
+    await progress.stageAttempt({
+      clientAttemptId: 'manual-upload', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    const paths: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      paths.push(path);
+      if (path === '/me/attempts') return json({ recorded: 1 });
+      return json({ result: 'fast-forward', archiveVersion: 1, checksum: archiveChecksum(EMPTY.content) });
+    }));
+    await expect(progress.syncCloudNow()).resolves.toBe('synced');
+    expect(paths).toEqual(['/me/attempts', '/me/sync']);
+    expect(await attemptOutbox.count(OWNER_U1)).toBe(0);
+  });
+
+  it('retains pending history when archive upload succeeds but the attempt endpoint is down', async () => {
+    const progress = await setup();
+    await progress.stageAttempt({
+      clientAttemptId: 'partial-upload', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me/attempts')) return new Response('', { status: 503 });
+      return json({ result: 'fast-forward', archiveVersion: 1, checksum: archiveChecksum(EMPTY.content) });
+    }));
+    try {
+      await progress.syncCloudNow();
+      expect(progress.syncStatus.state).toBe('synced');
+      expect(progress.attemptUploadStatus).toMatchObject({ state: 'pending', pendingCount: 1 });
+      expect(await attemptOutbox.count(OWNER_U1)).toBe(1);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('manual sync cannot switch to another account halfway through the upload', async () => {
+    const progress = await setup();
+    await progress.stageAttempt({
+      clientAttemptId: 'manual-owner', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    const fetchMock = vi.fn(async () => {
+      useAuthStore().session = {
+        token: 'second-token', expiresAt: '2099-01-01T00:00:00.000Z',
+        user: { id: 'u2', username: 'second' }, serverBaseUrl: SERVER,
+      };
+      return json({ recorded: 1 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(progress.syncCloudNow()).resolves.toBe('blocked');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(await attemptOutbox.count(OWNER_U1)).toBe(1);
+  });
+
+  it('retries failed login reconciliation automatically, preserving the archive choice', async () => {
+    const progress = await setup();
+    await archiveStore.save(EVOLVED_F1);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('', { status: 503 }))
+      .mockResolvedValue(json({
+        archiveVersion: 2, checksum: archiveChecksum(EVOLVED_F2.content),
+        ...EVOLVED_F2.content,
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      await progress.reconcileOnLogin();
+      expect(progress.syncStatus.state).toBe('offline');
+      // Fire the actual recovery callback early; preserve its account epoch.
+      const retryIndex = timers.mock.calls.findIndex((call) => call[1] === 5_000);
+      expect(retryIndex).toBeGreaterThanOrEqual(0);
+      globalThis.clearTimeout(timers.mock.results[retryIndex]!.value);
+      (timers.mock.calls[retryIndex]![0] as () => void)();
+      await vi.waitFor(() => expect(progress.archiveChoice).toBeDefined());
+      expect(progress.archiveChoice).toBeDefined();
+      await expect(progress.syncCloudNow()).resolves.toBe('blocked');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(progress.syncStatus.state).toBe('idle');
+      expect(await archiveStore.load()).toEqual(EVOLVED_F1);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('a connectivity sync first finishes a failed login read instead of bypassing archive choice', async () => {
+    const progress = await setup();
+    await archiveStore.save(EVOLVED_F1);
+    const paths: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      paths.push(new URL(String(input)).pathname);
+      if (paths.length === 1) return new Response('', { status: 503 });
+      return json({ archiveVersion: 2, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content });
+    }));
+    try {
+      await progress.reconcileOnLogin();
+      await expect(progress.syncNow({ quiet: true })).resolves.toBe('blocked');
+      expect(progress.archiveChoice).toBeDefined();
+      expect(paths).toEqual(['/me/state', '/me/state']);
+      expect(await archiveStore.load()).toEqual(EVOLVED_F1);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('same-account focus refresh preserves pending reconciliation and an open archive choice', async () => {
+    const progress = await setup();
+    const auth = useAuthStore();
+    await authStorage.setSession(auth.session!);
+    await archiveStore.save(EVOLVED_F1);
+    const paths: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      paths.push(new URL(String(input)).pathname);
+      if (paths.length === 1) return new Response('', { status: 503 });
+      return json({ archiveVersion: 2, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content });
+    }));
+    try {
+      await progress.reconcileOnLogin();
+      await auth.refreshFromStorage();
+      await expect(progress.syncCloudNow()).resolves.toBe('blocked');
+      expect(progress.archiveChoice).toBeDefined();
+      await auth.refreshFromStorage();
+      expect(progress.archiveChoice).toBeDefined();
+      await expect(progress.syncCloudNow()).resolves.toBe('blocked');
+      expect(paths).toEqual(['/me/state', '/me/state']);
+      expect(await archiveStore.load()).toEqual(EVOLVED_F1);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('an interrupted local archive read cannot forget the required login reconciliation', async () => {
+    const progress = await setup();
+    await archiveStore.save(EVOLVED_F1);
+    const load = vi.spyOn(ArchiveStore.prototype, 'load').mockRejectedValueOnce(new Error('IDB interrupted'));
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => json({
+      archiveVersion: 2, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await progress.reconcileOnLogin();
+    expect(progress.syncStatus.state).toBe('error');
+    expect(fetchMock).not.toHaveBeenCalled();
+    load.mockRestore();
+    await expect(progress.syncCloudNow()).resolves.toBe('blocked');
+    expect(progress.archiveChoice).toBeDefined();
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/me/state');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(await archiveStore.load()).toEqual(EVOLVED_F1);
+  });
+
+  it('same-account focus resumes an interrupted manual upload with the same receipt', async () => {
+    const progress = await setup();
+    const auth = useAuthStore();
+    await authStorage.setSession(auth.session!);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const ids: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/me/state')) return json({
+        archiveVersion: 1, checksum: archiveChecksum(EMPTY.content), ...EMPTY.content,
+      });
+      ids.push(JSON.parse(String(init?.body)).clientMutationId);
+      if (ids.length === 1) await gate;
+      return json({ result: 'fast-forward', archiveVersion: 1, checksum: archiveChecksum(EMPTY.content) });
+    }));
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      const upload = progress.syncCloudNow();
+      await vi.waitFor(() => expect(ids).toHaveLength(1));
+      const refresh = auth.refreshFromStorage();
+      release();
+      await upload;
+      await refresh;
+      const retryIndex = timers.mock.calls.findIndex(call => call[1] === 5_000);
+      expect(retryIndex).toBeGreaterThanOrEqual(0);
+      globalThis.clearTimeout(timers.mock.results[retryIndex]!.value);
+      (timers.mock.calls[retryIndex]![0] as () => void)();
+      await vi.waitFor(() => expect(progress.syncStatus.state).toBe('synced'));
+      expect(ids).toEqual([ids[0], ids[0]]);
+      expect(progress.archive.baseVersion).toBe(1);
+    } finally {
+      release();
+      progress.cancelCloudRecovery();
+    }
   });
 
   it('uploads a valid later attempt while preserving an older corrupt v2 row for export', async () => {

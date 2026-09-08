@@ -508,7 +508,6 @@ const learningLoading = ref(false);
 const learningError = ref<string | null>(null);
 const learningResponse = ref<AiExplainResult | null>(null);
 const authoredHint = ref<RichText | null>(null);
-const learningUsesAi = ref(false);
 const learningPanel = ref<{ focus: () => void } | null>(null);
 let learningInvoker: HTMLElement | null = null;
 const pendingHintLevel = ref<1 | 2 | 3 | null>(null);
@@ -532,26 +531,50 @@ const learningStage = computed<'hint' | 'diagnosis' | 'correction'>(() => {
   if (playerState.value.attemptPhase === 'correction' || correctionOutcome.value) return 'correction';
   return firstResult.value ? 'diagnosis' : 'hint';
 });
+const learningFeatureEnabled = computed(() => {
+  const feature = learningStage.value === 'hint' ? 'hint' : 'diagnosis';
+  return ai.available && ai.capabilities?.[feature] === true
+    && ai.status?.features[feature] !== false;
+});
+watch(learningFeatureEnabled, (enabled) => {
+  if (enabled) return;
+  learningController?.abort();
+  learningController = undefined;
+  learningLoading.value = false;
+  learningError.value = null;
+  learningRenewGeneration.value = null;
+});
+const visibleLearningResponse = computed(() => learningFeatureEnabled.value ? learningResponse.value : null);
+const learningNeedsSetup = computed(() => aiLearningAllowed.value && ai.needsSourceSetup
+  && (learningStage.value === 'hint'
+    ? ai.hintOffered
+    : learningStage.value === 'diagnosis' && firstNeedsCorrection.value
+      && Boolean(playerState.value.submittedText.trim()) && ai.diagnosisOffered));
+const learningIsAi = computed(() => learningFeatureEnabled.value && !authoredHint.value
+  && (Boolean(visibleLearningResponse.value) || learningNeedsSetup.value
+    || (aiLearningAllowed.value && (learningStage.value === 'hint' ? ai.canHint : ai.canDiagnose))));
 const learningAvailable = computed(() => {
   if (commitBusy.value || commitError.value) return false;
   if (playerState.value.phase === 'self-assessing') return false;
-  if (learningResponse.value) return true;
+  if (visibleLearningResponse.value) return true;
   if (learningStage.value === 'hint' && authoredHint.value) return true;
   if (learningStage.value === 'hint') {
-    return bankHints.value.length > 0 || (aiLearningAllowed.value && ai.canHint);
+    return bankHints.value.length > 0 || (aiLearningAllowed.value && ai.canHint) || learningNeedsSetup.value;
   }
   return firstNeedsCorrection.value;
 });
 const learningMarkdown = computed(() =>
-  (learningResponse.value?.mode === 'hint' ? learningResponse.value.hint.markdown : undefined)
-    ?? learningResponse.value?.markdown,
+  (visibleLearningResponse.value?.mode === 'hint' ? visibleLearningResponse.value.hint.markdown : undefined)
+    ?? visibleLearningResponse.value?.markdown,
 );
 const learningNextAction = computed(() =>
-  (learningResponse.value?.mode === 'hint' ? learningResponse.value.hint.nextAction : undefined)
+  (visibleLearningResponse.value?.mode === 'hint' ? visibleLearningResponse.value.hint.nextAction : undefined)
     ?? (hintLevel.value > 0 ? t('Versuche jetzt den nächsten eigenen Schritt.') : undefined),
 );
 const canRequestHint = computed(() =>
-  hintLevel.value < 3
+  learningStage.value === 'hint'
+  && playerState.value.phase === 'answering'
+  && hintLevel.value < 3
   && (bankHints.value.some((hint) => hint.level > hintLevel.value)
     || (aiLearningAllowed.value && ai.canHint)),
 );
@@ -574,7 +597,7 @@ function requestIdentity(
 
 async function requestHint(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
   const part = current.value;
-  if (!part || learningLoading.value || hintLevel.value >= 3) return;
+  if (!part || learningLoading.value || !canRequestHint.value) return;
   const nextAuthored = [...bankHints.value]
     .sort((left, right) => left.level - right.level)
     .find((hint) => hint.level > hintLevel.value);
@@ -588,7 +611,6 @@ async function requestHint(options: { newRequest?: boolean; expectedGeneration?:
     pendingHintLevel.value = null;
     authoredHint.value = bankHint.content;
     learningResponse.value = null;
-    learningUsesAi.value = false;
     hintLevel.value = level;
     pendingHintLevel.value = null;
     await practice.recordHintLevel(part.part.id, level).catch(() => undefined);
@@ -618,6 +640,7 @@ async function requestDiagnosis(options: { newRequest?: boolean; expectedGenerat
     !part
     || !result
     || !firstNeedsCorrection.value
+    || learningStage.value !== 'diagnosis'
     || learningLoading.value
     || !playerState.value.submittedText.trim()
   ) return;
@@ -647,7 +670,6 @@ async function runLearningRequest(input: {
   learningController?.abort();
   learningController = controller;
   learningLoading.value = true;
-  learningUsesAi.value = true;
   learningError.value = null;
   learningRenewGeneration.value = null;
   authoredHint.value = null;
@@ -749,6 +771,13 @@ function closeLockedSession(): void {
   void router.replace('/');
 }
 
+async function openAiSettings(): Promise<void> {
+  if (!ai.needsSourceSetup) return;
+  // The route-leave guard first commits this answer draft. Setup never changes
+  // the practice identity, saved answer or the chosen payer by itself.
+  await router.push('/settings#ai-settings');
+}
+
 /* --- AI assistance for self-assessment ------------------------------------
  * A suggestion, never a commit. The user still presses „Bewertung übernehmen".
  */
@@ -765,7 +794,11 @@ const showAssist = computed(
     && current.value != null
     && practice.sessionIdentityDurable
     && selfAssessmentDraftDurable.value
-    && (assistResult.value != null || ai.canAssess(current.value.part, current.value.question)),
+    && ai.available
+    && ai.capabilities?.assess === true
+    && ai.status?.features.assess !== false
+    && (assistResult.value != null || ai.canAssess(current.value.part, current.value.question)
+      || (ai.needsSourceSetup && ai.assessmentOffered(current.value.part, current.value.question))),
 );
 
 const rubricLabels = computed(() => {
@@ -798,7 +831,6 @@ watch(
     assistRenewGeneration.value = null;
     learningResponse.value = null;
     authoredHint.value = null;
-    learningUsesAi.value = false;
     pendingHintLevel.value = null;
     learningError.value = null;
     learningLoading.value = false;
@@ -919,7 +951,6 @@ watch(learningStage, (stage, previousStage) => {
   const mode = learningResponse.value?.mode;
   if ((mode === 'hint' && stage !== 'hint') || (mode === 'diagnosis' && stage === 'hint')) {
     learningResponse.value = null;
-    learningUsesAi.value = false;
   }
 });
 watch(
@@ -947,7 +978,6 @@ watch(
       || auth.session?.user.id !== userId
     ) return;
     learningResponse.value = cached;
-    learningUsesAi.value = true;
     if (cached.mode === 'hint') {
       hintLevel.value = Math.max(hintLevel.value, cached.hint.level) as 1 | 2 | 3;
     }
@@ -958,7 +988,9 @@ watch(
 async function askForAssessment(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
   const part = current.value;
   const self = playerState.value.selfAssessment;
-  if (!part || !self || assistLoading.value) return;
+  if (!part || !self || assistLoading.value
+    || playerState.value.phase !== 'self-assessing'
+    || !ai.canAssess(part.part, part.question)) return;
   const partId = part.part.id;
   const userId = auth.session?.user.id;
   if (self.selectedPoints == null || self.grading == null) return;
@@ -1875,6 +1907,7 @@ const currentCompetencyCodes = computed(() =>
           :primary-label="t(primaryLabel)"
           :primary-disabled="primaryDisabled"
           :learning-available="learningAvailable"
+          :learning-kind="learningStage !== 'hint' && !learningIsAi ? 'correction' : 'help'"
           :solution-ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
           @assessment-update="onSelfAssessmentUpdate"
           @self-grading-select="onSelfGradingSelect"
@@ -1882,9 +1915,7 @@ const currentCompetencyCodes = computed(() =>
           @primary="primaryAction"
           @learning-toggle="toggleLearning"
         >
-          <!-- Offered only for a wrong or half-right answer, and only once the
-               account can actually pay for it (see aiStore.canExplain). -->
-          <!-- Only for parts the bank marked grader:'ai' with a rubric. -->
+          <!-- AI comparison is self-first, feature-gated and bank-authorized. -->
           <template v-if="showAssist" #assist>
             <AiAssessPanel
               :criteria="assist.criteria"
@@ -1898,10 +1929,12 @@ const currentCompetencyCodes = computed(() =>
               :advisory-only="assist.advisoryOnly"
               :model="assist.model"
               :source="assist.source"
+              :needs-setup="!assistResult && ai.needsSourceSetup"
               :student-criteria="playerState.selfAssessment?.assessment.criteriaMet"
               :student-points="playerState.selfAssessment?.selectedPoints ?? undefined"
               @ask="askForAssessment"
               @renew="renewAssessment"
+              @setup="openAiSettings"
             />
           </template>
 
@@ -1919,22 +1952,24 @@ const currentCompetencyCodes = computed(() =>
               :markdown="learningMarkdown"
               :authored-hint="authoredHint ?? undefined"
               :next-action="learningNextAction"
-              :diagnosis="learningResponse?.mode === 'diagnosis' ? learningResponse.diagnosis : undefined"
+              :diagnosis="visibleLearningResponse?.mode === 'diagnosis' ? visibleLearningResponse.diagnosis : undefined"
               :correction-outcome="correctionOutcome ?? undefined"
-              :loading="learningLoading"
-              :error="learningError ? t(learningError) : undefined"
-              :storage-warning="ai.cacheWarning ? t(ai.cacheWarning) : undefined"
-              :can-renew="learningRenewGeneration != null"
-              :ai-generated="learningUsesAi"
+              :loading="learningFeatureEnabled && learningLoading"
+              :error="learningFeatureEnabled && learningError ? t(learningError) : undefined"
+              :storage-warning="learningIsAi && ai.cacheWarning ? t(ai.cacheWarning) : undefined"
+              :can-renew="learningFeatureEnabled && learningRenewGeneration != null"
+              :ai-generated="learningIsAi"
+              :needs-setup="learningNeedsSetup && !visibleLearningResponse"
               :can-request-hint="canRequestHint"
-              :can-request-diagnosis="learningStage === 'diagnosis' && firstNeedsCorrection && !learningResponse && aiLearningAllowed && ai.canDiagnose && Boolean(playerState.submittedText.trim())"
+              :can-request-diagnosis="learningStage === 'diagnosis' && firstNeedsCorrection && !visibleLearningResponse && aiLearningAllowed && ai.canDiagnose && Boolean(playerState.submittedText.trim())"
               :can-correct="firstNeedsCorrection && playerState.attemptPhase === 'first'"
-              :model="learningResponse?.model"
-              :source="learningResponse?.source"
+              :model="visibleLearningResponse?.model"
+              :source="visibleLearningResponse?.source"
               @request-hint="requestHint"
               @request-diagnosis="requestDiagnosis"
               @renew="renewLearning"
               @correct="startCorrection"
+              @setup="openAiSettings"
               @dismiss="dismissLearning"
             />
           </template>

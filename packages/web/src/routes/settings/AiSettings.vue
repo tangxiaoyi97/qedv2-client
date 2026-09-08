@@ -326,7 +326,7 @@ async function clearCache(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="ai.available" class="ai-settings settings__section">
+  <div v-if="ai.available" id="ai-settings" class="ai-settings settings__section" tabindex="-1">
     <SettingsCard :title="t('KI-Erklärungen')">
       <template #action>
         <span role="status" aria-live="polite">
@@ -358,11 +358,11 @@ async function clearCache(): Promise<void> {
           </span>
         </SettingsRow>
 
-        <SettingsRow v-if="showSourceChooser" :label="t('Quelle')">
+        <SettingsRow v-if="showSourceChooser" class="ai-settings__source-row" :label="t('Quelle')">
           <template #default="{ labelId }">
-            <div class="ai-settings__segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="savingSource">
+            <div class="ai-settings__segments q-settings-segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="savingSource">
               <label
-                class="ai-settings__segment"
+                class="ai-settings__segment q-settings-segment"
                 :class="{ 'ai-settings__segment--on': sourceChoice === 'byo' }"
               >
                 <input
@@ -376,7 +376,7 @@ async function clearCache(): Promise<void> {
                 <span>{{ t('Eigener Schlüssel') }}</span>
               </label>
               <label
-                class="ai-settings__segment"
+                class="ai-settings__segment q-settings-segment"
                 :class="{ 'ai-settings__segment--on': sourceChoice === 'pool' }"
               >
                 <input
@@ -489,7 +489,7 @@ async function clearCache(): Promise<void> {
         >
           <SettingsRow :label="t('Anbieter')">
             <template #default="{ labelId }">
-              <select v-model="provider" class="ai-settings__input" :aria-labelledby="labelId" :disabled="savingCredential">
+              <select v-model="provider" class="ai-settings__input q-settings-field" :aria-labelledby="labelId" :disabled="savingCredential">
                 <option v-for="item in availableProviders" :key="item.id" :value="item.id">
                   {{ item.label }}
                 </option>
@@ -503,7 +503,7 @@ async function clearCache(): Promise<void> {
                 id="ai-key"
                 v-model="apiKey"
                 type="password"
-                class="ai-settings__input"
+                class="ai-settings__input q-settings-field"
                 maxlength="512"
                 autocomplete="off"
                 autocapitalize="off"
@@ -523,7 +523,7 @@ async function clearCache(): Promise<void> {
                 v-model="model"
                 type="text"
                 maxlength="200"
-                class="ai-settings__input"
+                class="ai-settings__input q-settings-field"
                 spellcheck="false"
                 :placeholder="t('Standardmodell')"
                 :disabled="savingCredential"
@@ -605,7 +605,7 @@ async function clearCache(): Promise<void> {
                 v-model="language"
                 type="text"
                 maxlength="80"
-                class="ai-settings__input"
+                class="ai-settings__input q-settings-field"
                 :placeholder="t('Deutsch')"
                 :disabled="savingPreferences"
                 :aria-labelledby="labelId"
@@ -620,7 +620,7 @@ async function clearCache(): Promise<void> {
                 v-model="customInstructions"
                 maxlength="600"
                 rows="3"
-                class="ai-settings__input ai-settings__textarea"
+                class="ai-settings__input ai-settings__textarea q-settings-field"
                 :placeholder="t('Kurz und mit einem Beispiel erklären.')"
                 :aria-labelledby="labelId"
                 aria-describedby="ai-instructions-count"
@@ -698,21 +698,19 @@ async function clearCache(): Promise<void> {
   overflow-wrap: anywhere;
 }
 
-.ai-settings__notice {
-  margin: 0 18px 14px;
-}
+.ai-settings__notice { margin: var(--q-settings-block) var(--q-settings-inset); }
 
 .ai-settings__value,
 .ai-settings__secure,
 .ai-settings__button-content {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--q-space-2);
 }
 
 .ai-settings__value {
   color: var(--q-ink-2);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -720,52 +718,18 @@ async function clearCache(): Promise<void> {
 .ai-settings__secure,
 .ai-settings__saved {
   color: var(--q-ok-ink);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   font-weight: 700;
 }
 
 .ai-settings__segments {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  min-height: var(--q-control-height);
-  overflow: hidden;
-  border: 1px solid var(--q-border-2);
-  border-radius: 9px;
-  background: var(--q-card);
-}
-
-.ai-settings__segment {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--q-control-height);
-  box-sizing: border-box;
-  padding: 8px 16px;
-  background: transparent;
-  color: var(--q-mut-2);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.35;
-  text-align: center;
-}
-
-.ai-settings__segment + .ai-settings__segment {
-  border-left: 1px solid var(--q-border-2);
 }
 
 .ai-settings__segment--on {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
-}
-
-.ai-settings__segment:focus-within,
-.ai-settings__input:focus-visible {
-  position: relative;
-  outline: 2px solid var(--q-accent);
-  outline-offset: 2px;
 }
 
 .ai-settings__choice-input {
@@ -778,16 +742,20 @@ async function clearCache(): Promise<void> {
   white-space: nowrap;
 }
 
+.ai-settings__editor :deep(.q-settings-row--inline) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+.ai-settings__editor :deep(.q-settings-row__control) {
+  width: 100%;
+  justify-self: stretch;
+}
+
 .ai-settings__editor {
   border-top: 1px solid var(--q-border-soft);
   border-bottom: 1px solid var(--q-border-soft);
   background: var(--q-panel);
 }
 
-.ai-settings__editor :deep(.q-settings-row) {
-  padding-top: 12px;
-  padding-bottom: 12px;
-}
 
 .ai-settings__editor :deep(.q-settings-row--stacked .q-settings-row__control) {
   flex-direction: column;
@@ -795,38 +763,15 @@ async function clearCache(): Promise<void> {
   gap: 0;
 }
 
-.ai-settings__input {
-  width: min(360px, 100%);
-  min-height: var(--q-control-height);
-  box-sizing: border-box;
-  padding: 0 12px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 9px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font-family: inherit;
-  font-size: 16px;
-  font-weight: 400;
-}
+.ai-settings__input { width: 100%; }
 
-.ai-settings__input::placeholder {
-  color: var(--q-hint);
-}
 
-.ai-settings__textarea {
-  width: 100%;
-  min-height: 88px;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  line-height: 1.5;
-  resize: vertical;
-}
 
 .ai-settings__count {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--q-space-1);
   color: var(--q-faint);
-  font: 500 11px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   text-align: right;
 }
 
@@ -834,9 +779,9 @@ async function clearCache(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   min-height: var(--q-control-height);
-  padding: 12px 18px 14px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
   flex-wrap: wrap;
 }
 
@@ -848,20 +793,20 @@ async function clearCache(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   color: var(--q-err-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   flex-wrap: wrap;
 }
 
 .ai-settings__privacy {
-  padding: 12px 18px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
   border-top: 1px solid var(--q-border-soft);
   border-bottom: 1px solid var(--q-border-soft);
   background: var(--q-panel);
   color: var(--q-mut);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   line-height: 1.55;
 }
 
@@ -870,7 +815,7 @@ async function clearCache(): Promise<void> {
 }
 
 .ai-settings__privacy p + p {
-  margin-top: 4px;
+  margin-top: var(--q-space-1);
 }
 
 .ai-settings__privacy strong {
@@ -885,9 +830,18 @@ async function clearCache(): Promise<void> {
 }
 
 @media (max-width: 520px) {
-  .ai-settings__notice {
-    margin-right: 14px;
-    margin-left: 14px;
+  .ai-settings :deep(.ai-settings__source-row) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .ai-settings__source-row :deep(.q-settings-row__control) {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .ai-settings__segments {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   }
 
   .ai-settings__value {
@@ -911,9 +865,7 @@ async function clearCache(): Promise<void> {
 
   .ai-settings__editor-actions,
   .ai-settings__confirm {
-    gap: 8px;
-    padding-right: 14px;
-    padding-left: 14px;
+    gap: var(--q-space-2);
   }
 
   .ai-settings__saved {

@@ -70,7 +70,9 @@ const mocks = vi.hoisted(() => ({
     clear: vi.fn(),
   },
   progressStore: {
-    syncStatus: { state: 'idle' as const },
+    syncStatus: { state: 'idle' } as SyncStatus,
+    attemptUploadStatus: { state: 'idle', pendingCount: 0 } as AttemptUploadStatus,
+    syncCloudNow: vi.fn(async () => undefined),
     syncNow: vi.fn(async () => undefined),
     refresh: vi.fn(async () => undefined),
     claimGuestAttempts: vi.fn(async () => 0),
@@ -136,6 +138,7 @@ vi.mock('../src/routes/settings/AiSettings.vue', () => ({
 }));
 
 import SettingsView from '../src/routes/SettingsView.vue';
+import type { SyncStatus, AttemptUploadStatus } from '../src/stores/progress.js';
 
 let mounted: { app: App; host: HTMLElement } | undefined;
 
@@ -189,6 +192,9 @@ describe('local recovery settings', () => {
     progressStore.claimGuestAttempts.mockClear();
     progressStore.flushAttemptOutbox.mockClear();
     progressStore.syncNow.mockClear();
+    progressStore.syncCloudNow.mockReset();
+    progressStore.syncStatus = { state: 'idle' };
+    progressStore.attemptUploadStatus = { state: 'idle', pendingCount: 0 };
     progressStore.refresh.mockClear();
     pendingGuestClaimRoute.mockReset();
     pendingGuestClaimRoute.mockResolvedValue(undefined);
@@ -217,6 +223,42 @@ describe('local recovery settings', () => {
 
     expect(host.textContent).not.toContain('Lokale Daten');
     expect(inventory).toHaveBeenCalledWith(ACCOUNT_PROFILE);
+  });
+
+  it('does not claim full sync while answer history is still pending', async () => {
+    progressStore.syncStatus = { state: 'synced', at: new Date() };
+    progressStore.attemptUploadStatus = { state: 'pending', pendingCount: 2 };
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(progressStore.syncCloudNow).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain('2 Antworten warten auf Upload.');
+    expect(host.textContent).not.toContain('✓ Synchronisiert');
+  });
+
+  it('surfaces history authentication failures even when archive sync succeeded', async () => {
+    progressStore.syncStatus = { state: 'synced' };
+    progressStore.attemptUploadStatus = {
+      state: 'error', pendingCount: 1,
+      message: 'Der Antwortverlauf wartet auf eine erneute Anmeldung.',
+    };
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(host.textContent).toContain('Der Antwortverlauf wartet auf eine erneute Anmeldung.');
+    expect(host.textContent).not.toContain('✓ Synchronisiert');
+  });
+
+  it('reports local upload failures and permits retry instead of leaving a spinner', async () => {
+    progressStore.syncCloudNow.mockRejectedValueOnce(new Error('storage temporarily unavailable'));
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(host.textContent).toContain('Synchronisierung fehlgeschlagen. Erneut versuchen.');
+    expect(button('Synchronisieren').disabled).toBe(false);
   });
 
   it('offers English and updates the appearance labels live', async () => {

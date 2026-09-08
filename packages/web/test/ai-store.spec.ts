@@ -296,6 +296,122 @@ describe('AI store release guards', () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    { name: 'authorized pool without a personal key', policy: ['pool'], eligible: true, ownKey: false, active: 'pool', ready: true, setup: false },
+    { name: 'new BYO-only account', policy: ['byo'], eligible: false, ownKey: false, active: 'none', ready: false, setup: true },
+    { name: 'BYO-only account with a key', policy: ['byo'], eligible: false, ownKey: true, active: 'byo', ready: true, setup: false },
+    { name: 'exhausted POOL-only account', policy: ['pool'], eligible: false, ownKey: true, active: 'none', ready: false, setup: false },
+    { name: 'BOTH account uses authorized pool before key setup', policy: ['byo', 'pool'], eligible: true, ownKey: false, active: 'pool', ready: true, setup: false },
+  ] as const)('separates readiness from setup: $name', async (entry) => {
+    const { ai } = setup(status({
+      allowedSources: [...entry.policy],
+      active: entry.active,
+      byo: { configured: entry.ownKey },
+      pool: { eligible: entry.eligible, provider: 'openai', model: 'gpt-pool' },
+    }));
+    await vi.waitFor(() => expect(ai.profilePreferencesReady && ai.status !== null).toBe(true));
+    expect(ai.hintOffered).toBe(true);
+    expect(ai.diagnosisOffered).toBe(true);
+    expect(ai.assessmentOffered(part, question)).toBe(true);
+    expect(ai.canHint).toBe(entry.ready);
+    expect(ai.canDiagnose).toBe(entry.ready);
+    expect(ai.canAssess(part, question)).toBe(entry.ready);
+    expect(ai.needsSourceSetup).toBe(entry.setup);
+    if (entry.ready && !entry.ownKey) {
+      await ai.explain(explainInput);
+      const paid = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/me/ai-explain'));
+      expect(JSON.parse(String(paid?.[1]?.body)).preferPool).toBe(true);
+    }
+  });
+
+  it('permits an explicitly selected usable BYO route even when the default active route is none', async () => {
+    const { ai } = setup(status({ active: 'none', pool: { eligible: false } }));
+    await vi.waitFor(() => expect(ai.profilePreferencesReady && ai.status !== null).toBe(true));
+    await ai.setMode('pool');
+    expect(ai.canExplain).toBe(false);
+    expect(ai.needsSourceSetup).toBe(true);
+    expect(ai.needsCredentialSetup).toBe(false);
+    await ai.setMode('byo');
+    expect(ai.status?.active).toBe('none');
+    expect(ai.canExplain).toBe(true);
+    expect(ai.canAssess(part, question)).toBe(true);
+    await ai.explain(explainInput);
+    const paid = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/me/ai-explain'));
+    expect(JSON.parse(String(paid?.[1]?.body)).preferPool).toBe(false);
+  });
+
+  it('hides every AI capability for guests and globally disabled servers, even with cached ready status', async () => {
+    const { ai, app, auth } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    const enabled = app.serverInfo!;
+    app.serverInfo = { ...enabled, ai: undefined };
+    ai.status = status();
+    expect(ai.available).toBe(false);
+    expect(ai.canHint).toBe(false);
+    expect(ai.canDiagnose).toBe(false);
+    expect(ai.canExplain).toBe(false);
+    expect(ai.canAssess(part, question)).toBe(false);
+    expect(ai.needsSourceSetup).toBe(false);
+    expect(ai.byoOffered).toBe(false);
+    await expect(ai.explain(explainInput)).rejects.toThrow('nicht verfügbar');
+    await expect(ai.assess(paidAssessInput)).rejects.toThrow('nicht verfügbar');
+    app.serverInfo = enabled;
+    auth.session = undefined;
+    ai.status = status();
+    expect(ai.available).toBe(false);
+    expect(ai.poolOffered).toBe(false);
+    expect(ai.needsSourceSetup).toBe(false);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => /ai-explain|ai-grade/u.test(String(url)))).toHaveLength(0);
+  });
+
+  it('does not expose hint or diagnosis setup when only assessment is enabled', async () => {
+    const { ai, app } = setup(status({ active: 'none', byo: { configured: false }, allowedSources: ['byo'] }));
+    await vi.waitFor(() => expect(ai.needsSourceSetup).toBe(true));
+    app.serverInfo = { ...app.serverInfo!, ai: { ...capabilities, explain: false, hint: false, diagnosis: false } };
+    await vi.waitFor(() => expect(ai.status !== null).toBe(true));
+    expect(ai.hintOffered).toBe(false);
+    expect(ai.diagnosisOffered).toBe(false);
+    expect(ai.assessmentOffered(part, question)).toBe(true);
+  });
+
+  it('lets a fresh all-disabled user status veto stale enabled public capabilities', async () => {
+    const { ai, app } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    const info = app.serverInfo;
+    const disabled = status({ features: { explain: false, assess: false, hint: false, diagnosis: false } });
+    vi.mocked(fetch).mockResolvedValueOnce(json(disabled));
+    await ai.refreshStatus();
+    expect(app.serverInfo).toBe(info);
+    expect(ai.status).toEqual(disabled);
+    expect(ai.available).toBe(false);
+    expect(ai.canExplain).toBe(false);
+    expect(ai.canHint).toBe(false);
+    expect(ai.canDiagnose).toBe(false);
+    expect(ai.canAssess(part, question)).toBe(false);
+    expect(ai.needsSourceSetup).toBe(false);
+    expect(ai.poolOffered).toBe(false);
+    expect(ai.byoOffered).toBe(false);
+    await expect(ai.explain(explainInput)).rejects.toThrow('nicht verfügbar');
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => /ai-explain|ai-grade/u.test(String(url)))).toHaveLength(0);
+  });
+
+  it('rechecks a feature disabled during durable request preparation before sending content', async () => {
+    const { ai, app } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const read = vi.spyOn(aiRequestGenerationJournal, 'current').mockImplementationOnce(async () => {
+      await gate;
+      return { version: 2, generation: 0, clientRequestId: '11111111-1111-4111-8111-111111111111' };
+    });
+    const pending = ai.explain(paidHintInput);
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    app.serverInfo = { ...app.serverInfo!, ai: undefined };
+    release();
+    await expect(pending).rejects.toThrow();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'))).toHaveLength(0);
+  });
+
   it('honours feature flags and forbids a stored BYO key under a POOL-only entitlement', async () => {
     const poolOnly = status({
       pool: {

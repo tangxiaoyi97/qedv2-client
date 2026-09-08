@@ -1,5 +1,6 @@
 /** Explicit translations for navigation and learning screens; bank content stays original. */
 export const webEn: Record<string, string> = {
+  'Diese KI-Funktion ist nicht verfügbar.': 'This AI feature is unavailable.',
   'Abbrechen': 'Cancel',
   'Aktive Tage': 'Active days',
   'Aktivität': 'Activity',

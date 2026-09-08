@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useId } from 'vue';
+import './settings-layout.css';
 
 defineProps<{
   title?: string;
@@ -16,7 +17,7 @@ const titleId = `settings-card-${useId()}`;
 </script>
 
 <template>
-  <section class="q-settings-card" :aria-labelledby="title ? titleId : undefined">
+  <section class="q-settings-card q-settings-panel" :aria-labelledby="title ? titleId : undefined">
     <header v-if="title || $slots.action" class="q-settings-card__header">
       <div v-if="title" class="q-settings-card__heading">
         <h2 :id="titleId" class="q-settings-card__title">{{ title }}</h2>
@@ -42,15 +43,15 @@ const titleId = `settings-card-${useId()}`;
   overflow: hidden;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
 }
 
 .q-settings-card__header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
+  gap: var(--q-space-3);
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 
 .q-settings-card__heading {
@@ -60,23 +61,23 @@ const titleId = `settings-card-${useId()}`;
 .q-settings-card__title {
   margin: 0;
   color: var(--q-ink);
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 .q-settings-card__description {
-  margin: 2px 0 0;
+  margin: var(--q-space-1) 0 0;
   color: var(--q-mut-2);
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-size: var(--q-font-small);
+  line-height: 1.5;
 }
 
 .q-settings-card__action,
 .q-settings-card__footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   flex-wrap: wrap;
 }
 
@@ -90,18 +91,7 @@ const titleId = `settings-card-${useId()}`;
 }
 
 .q-settings-card__footer {
-  padding: 0 18px 14px;
-}
-
-@media (max-width: 520px) {
-  .q-settings-card__header {
-    gap: 10px;
-    padding: 12px 14px;
-  }
-
-  .q-settings-card__footer {
-    padding: 0 14px 12px;
-  }
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 
 </style>

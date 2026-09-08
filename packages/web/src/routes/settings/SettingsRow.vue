@@ -53,9 +53,9 @@ const labelId = `settings-row-${useId()}`;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: var(--q-space-3);
   min-width: 0;
-  padding: 14px 18px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 
 .q-settings-row--stacked {
@@ -69,9 +69,10 @@ const labelId = `settings-row-${useId()}`;
 
 .q-settings-row__label {
   color: var(--q-ink);
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .q-settings-row--danger .q-settings-row__label {
@@ -80,14 +81,22 @@ const labelId = `settings-row-${useId()}`;
 
 .q-settings-row__description {
   max-width: 340px;
-  margin-top: 2px;
+  margin-top: var(--q-space-1);
   color: var(--q-mut-2);
-  font-size: 11.5px;
-  line-height: 1.45;
+  font-size: var(--q-font-small);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 
 .q-settings-row__status {
-  margin-top: 8px;
+  margin-top: var(--q-space-2);
+}
+
+/* Conditional slot content may be only a Vue comment. Do not reserve a
+   status margin until there is actually a message to display. */
+.q-settings-row__status:empty,
+.q-settings-row__description:empty {
+  display: none;
 }
 
 .q-settings-row__control {
@@ -97,7 +106,7 @@ const labelId = `settings-row-${useId()}`;
   min-width: 0;
   max-width: 100%;
   align-items: center;
-  gap: 8px;
+  gap: var(--q-space-2);
 }
 
 .q-settings-row__control :deep(.q-btn) {
@@ -109,21 +118,4 @@ const labelId = `settings-row-${useId()}`;
   width: 100%;
 }
 
-@media (max-width: 520px) {
-  .q-settings-row {
-    gap: 10px;
-    padding: 12px 14px;
-  }
-}
-
-@media (max-width: 360px) {
-  .q-settings-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-
-  .q-settings-row__control {
-    justify-self: stretch;
-  }
-}
 </style>

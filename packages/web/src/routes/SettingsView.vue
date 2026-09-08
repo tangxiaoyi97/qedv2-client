@@ -407,15 +407,17 @@ function formatBuildTime(iso: string): string {
 /* manual archive upload (supplement §9) */
 const uploading = ref(false);
 const uploadTried = ref(false);
+const uploadError = ref('');
 
 async function uploadNow(): Promise<void> {
   if (uploading.value) return;
   uploading.value = true;
   uploadTried.value = true;
+  uploadError.value = '';
   try {
-    await progress.syncNow({ quiet: false });
+    await progress.syncCloudNow();
   } catch {
-    // syncStatus already reflects the failure; the line below shows it.
+    uploadError.value = t('Synchronisierung fehlgeschlagen. Erneut versuchen.');
   } finally {
     uploading.value = false;
   }
@@ -423,16 +425,24 @@ async function uploadNow(): Promise<void> {
 
 const uploadStatus = computed(() => {
   if (!uploadTried.value) return '';
+  if (uploading.value) return t('Wird synchronisiert …');
+  if (uploadError.value) return uploadError.value;
+  if (progress.archiveChoice) return t('Bitte Archiv auswählen.');
   const s = progress.syncStatus;
   switch (s.state) {
     case 'syncing':
       return t('⟳ Wird hochgeladen …');
     case 'synced':
+      if (progress.attemptUploadStatus.pendingCount > 0) {
+        return progress.attemptUploadStatus.state === 'error'
+          ? t(progress.attemptUploadStatus.message ?? 'Antwortverlauf nicht synchronisiert.')
+          : t('{count} Antworten warten auf Upload.', { count: progress.attemptUploadStatus.pendingCount });
+      }
       return t('✓ Synchronisiert {time}', { time: s.at ? formatDate(s.at, { hour: '2-digit', minute: '2-digit' }) : '' }).trim();
     case 'conflict':
       return t('⚠ Konflikt — der Dialog öffnet sich');
     case 'offline':
-      return t('Offline — bitte später erneut versuchen.');
+      return t('Lokal gespeichert · Upload wird wiederholt.');
     case 'error':
       return t('Fehler: {message}', { message: s.message ? t(s.message) : t('unbekannt') });
     default:
@@ -468,19 +478,19 @@ async function openChangelog(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings q-page">
+  <div class="settings q-page q-settings-panel">
     <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
     <SettingsCard>
-      <SettingsRow :label="t('Aussehen')">
+      <SettingsRow class="settings__appearance-row" :label="t('Aussehen')">
         <template #status>
           <span v-if="themeError" class="settings__url-error" role="alert">{{ themeError }}</span>
         </template>
         <template #default="{ labelId }">
-          <div class="settings__segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="themeSaving">
+          <div class="settings__segments q-settings-segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="themeSaving">
             <label
               v-for="theme in THEMES"
               :key="theme.value"
-              class="settings__segment"
+              class="settings__segment q-settings-segment"
               :class="{ 'settings__segment--on': themeChoice === theme.value }"
             >
               <input
@@ -540,7 +550,7 @@ async function openChangelog(): Promise<void> {
         <template #default="{ labelId }">
           <span class="settings__select-wrap">
             <select
-              class="settings__select"
+              class="settings__select q-settings-field"
               :aria-labelledby="labelId"
               :value="ui.locale"
               @change="onLocaleChange"
@@ -582,8 +592,8 @@ async function openChangelog(): Promise<void> {
           <template #status>
             <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
           </template>
-          <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
-            {{ uploading ? t('Lädt hoch …') : t('Hochladen') }}
+          <QButton variant="secondary" :loading="uploading" @click="uploadNow">
+            {{ t('Synchronisieren') }}
           </QButton>
         </SettingsRow>
         <SettingsRow :label="t('Abmelden')" tone="danger">
@@ -640,11 +650,11 @@ async function openChangelog(): Promise<void> {
       <div class="settings__adv">
         <label class="settings__field">
           <span class="settings__label">{{ t('Inhalts-Server (core)') }}</span>
-          <input v-model="form.coreBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input" spellcheck="false" :disabled="saving" @input="saved = false" />
+          <input v-model="form.coreBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input q-settings-field" spellcheck="false" :disabled="saving" @input="saved = false" />
         </label>
         <label class="settings__field">
           <span class="settings__label">{{ t('Nutzer-Server (sync)') }}</span>
-          <input v-model="form.serverBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input" spellcheck="false" :disabled="saving" @input="saved = false" />
+          <input v-model="form.serverBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input q-settings-field" spellcheck="false" :disabled="saving" @input="saved = false" />
         </label>
         <div v-if="urlError" class="settings__url-error" role="alert">{{ urlError }}</div>
         <div class="settings__adv-actions">
@@ -665,7 +675,7 @@ async function openChangelog(): Promise<void> {
           :aria-label="versionDetailTitle"
           @click.self="versionDetail = null"
         >
-          <div ref="detailCard" class="vdetail__card">
+          <div ref="detailCard" class="vdetail__card q-settings-panel">
             <div class="vdetail__head">
               <div class="vdetail__title">{{ versionDetailTitle }}</div>
               <QIconButton :aria-label="t('Schließen')" data-autofocus @click="versionDetail = null" />
@@ -694,7 +704,7 @@ async function openChangelog(): Promise<void> {
           aria-labelledby="recovery-title"
           @click.self="closeRecovery"
         >
-          <div ref="recoveryCard" class="recovery__card">
+          <div ref="recoveryCard" class="recovery__card q-settings-panel">
             <header class="recovery__head">
               <h2 id="recovery-title" class="recovery__title">{{ t('Lokale Daten') }}</h2>
               <QIconButton :aria-label="t('Schließen')" data-autofocus @click="closeRecovery" />
@@ -824,45 +834,19 @@ async function openChangelog(): Promise<void> {
   max-width: 640px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--q-space-4);
 }
 /* Only the bottom gap differs from .q-page-title. */
 .settings__title {
-  margin-bottom: 4px;
+  margin-bottom: var(--q-space-1);
 }
 .settings__url-error {
-  font-size: 12.5px;
+  font-size: var(--q-font-small);
   color: var(--q-err-ink);
   background: var(--q-err-bg);
   border: 1px solid var(--q-err-border);
-  border-radius: 8px;
-  padding: 9px 12px;
-}
-.settings__segments {
-  display: flex;
-  max-width: 100%;
-  border: 1px solid var(--q-btn-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.settings__segment {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--q-control-height);
-  padding: 9px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--q-mut-2);
-  background: var(--q-card);
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-.settings__segment + .settings__segment {
-  border-left: 1px solid var(--q-btn-border);
+  border-radius: var(--q-radius-control);
+  padding: var(--q-space-3);
 }
 .settings__segment--on {
   background: var(--q-accent-strong);
@@ -888,12 +872,12 @@ async function openChangelog(): Promise<void> {
   flex: none;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--q-space-3);
   width: 100%;
 }
 @media (max-width: 480px) {
   .settings__themes {
-    gap: 6px;
+    gap: var(--q-space-2);
   }
   .settings .settings__theme-preview {
     height: 28px;
@@ -910,10 +894,10 @@ async function openChangelog(): Promise<void> {
   flex-direction: column;
   min-height: var(--q-control-height);
   min-width: 0;
-  gap: 6px;
-  padding: 6px;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1);
   border: 1.5px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
   cursor: pointer;
   font-family: inherit;
@@ -941,8 +925,8 @@ async function openChangelog(): Promise<void> {
   box-sizing: border-box;
   display: flex;
   width: 100%;
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: var(--q-radius-control);
+  padding: var(--q-space-2);
   aspect-ratio: 16 / 10;
   background: var(--q-page);
 }
@@ -951,9 +935,9 @@ async function openChangelog(): Promise<void> {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--q-space-1);
   border-radius: 6px;
-  padding: 8px;
+  padding: var(--q-space-2);
   background: var(--q-card);
   box-shadow: var(--q-shadow-card);
 }
@@ -986,7 +970,12 @@ async function openChangelog(): Promise<void> {
   opacity: 0.85;
 }
 .settings__theme-name {
-  font-size: 11.5px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-mut);
   text-align: center;
@@ -1001,19 +990,9 @@ async function openChangelog(): Promise<void> {
   display: inline-flex;
 }
 .settings__select {
-  max-width: 100%;
-  min-height: var(--q-control-height);
-  padding: 8px var(--q-control-chevron-padding-end) 8px 13px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
+  width: auto;
+  padding-right: var(--q-control-chevron-padding-end);
   appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
 }
 .settings__select:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -1025,79 +1004,45 @@ async function openChangelog(): Promise<void> {
   top: 50%;
   transform: translateY(-50%);
   color: var(--q-mut);
-  font-size: 16px;
+  font-size: var(--q-font-input);
   pointer-events: none;
 }
 .settings__adv {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-}
-.settings__group-note {
-  font-size: 11px;
-  color: var(--q-faint);
-  line-height: 1.5;
-  padding-top: 4px;
-  border-top: 1px dashed var(--q-border);
-}
-.settings__warn {
-  padding: 9px 12px;
-  background: var(--q-part-bg);
-  border: 1px solid var(--q-part-border);
-  border-radius: 8px;
-  font-size: 11.5px;
-  color: var(--q-part-ink);
-  line-height: 1.5;
+  gap: var(--q-space-3);
 }
 .settings__field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--q-space-1);
 }
 .settings__label {
-  font-size: 11.5px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   color: var(--q-mut);
-}
-.settings__input {
-  min-width: 0;
-  min-height: var(--q-control-height);
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  padding: 9px 11px;
-  font: 500 16px ui-monospace, Menlo, monospace; /* ≥16px: no iOS focus-zoom */
-  color: var(--q-ink);
-  background: var(--q-panel);
-}
-.settings__input:focus {
-  outline: none;
-  border: 2px solid var(--q-accent);
-  padding: 8px 10px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
-  background: var(--q-card);
+  line-height: 1.4;
 }
 .settings__adv-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   flex-wrap: wrap;
-  margin-top: 6px;
+  margin-top: var(--q-space-2);
 }
 .settings__vlist {
   display: flex;
   flex-direction: column;
-  margin: 0 18px 14px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
-  overflow: hidden;
+  margin: 0;
+  border-top: 1px solid var(--q-border-soft);
 }
 .settings__vrow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--q-space-3);
   min-height: var(--q-control-height);
-  padding: 11px 13px;
-  background: var(--q-panel);
+  padding: var(--q-settings-block) var(--q-settings-inset);
+  background: var(--q-card);
   border: none;
   width: 100%;
   text-align: left;
@@ -1120,13 +1065,13 @@ async function openChangelog(): Promise<void> {
 .settings__vname {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
 }
 .settings__vchev {
   flex: none;
   color: var(--q-faint);
-  font-size: 16px;
+  font-size: var(--q-font-input);
   line-height: 1;
 }
 .settings__vver {
@@ -1134,7 +1079,7 @@ async function openChangelog(): Promise<void> {
   text-align: right;
 }
 .settings__vver b {
-  font: 700 12.5px ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
 /* ---- Versionen detail modal ---- */
@@ -1144,31 +1089,31 @@ async function openChangelog(): Promise<void> {
   max-height: 82vh;
   overflow-y: auto;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
 }
 .vdetail__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 16px 16px 10px 20px;
+  gap: var(--q-space-3);
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 .vdetail__title {
-  font-size: 15px;
+  font-size: var(--q-font-ui);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .vdetail__list {
   margin: 0;
-  padding: 0 20px 18px;
+  padding: 0 var(--q-settings-inset) var(--q-settings-block);
   display: flex;
   flex-direction: column;
 }
 .vdetail__row {
   display: flex;
-  gap: 14px;
-  padding: 7px 0;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) 0;
   border-top: 1px solid var(--q-border-soft);
 }
 .vdetail__row:first-child {
@@ -1177,13 +1122,13 @@ async function openChangelog(): Promise<void> {
 .vdetail__dt {
   flex: none;
   width: 128px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   padding-top: 1px;
 }
 .vdetail__dd {
   margin: 0;
-  font: 500 12.5px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   color: var(--q-ink);
   word-break: break-all;
   min-width: 0;
@@ -1194,19 +1139,19 @@ async function openChangelog(): Promise<void> {
 @media (max-width: 480px) {
   .vdetail__row {
     flex-direction: column;
-    gap: 2px;
+    gap: var(--q-space-1);
   }
   .vdetail__dt {
     width: auto;
   }
 }
 .settings__sync-status {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
-  padding: 10px 14px;
+  padding: var(--q-space-3);
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 8px;
+  border-radius: var(--q-radius-control);
 }
 
 /* ---- Explicit local recovery ---- */
@@ -1217,60 +1162,60 @@ async function openChangelog(): Promise<void> {
   overflow-y: auto;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
 }
 .recovery__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 14px 6px 18px;
+  gap: var(--q-space-3);
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 .recovery__title {
   margin: 0;
   color: var(--q-ink);
-  font-size: 15px;
+  font-size: var(--q-font-ui);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .recovery__intro {
   margin: 0;
-  padding: 0 18px 12px;
+  padding: 0 var(--q-settings-inset) var(--q-settings-block);
   color: var(--q-mut-2);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .recovery__list {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0 18px;
+  padding: 0 var(--q-settings-inset);
   list-style: none;
 }
 .recovery__item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--q-space-3);
   min-width: 0;
-  padding: 12px 0;
+  padding: var(--q-space-3) 0;
   border-top: 1px solid var(--q-border-soft);
 }
 .recovery__item-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 2px;
+  gap: var(--q-space-1);
 }
 .recovery__item-copy strong {
   color: var(--q-ink);
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: var(--q-font-ui);
+  line-height: 1.4;
 }
 .recovery__item-copy span,
 .recovery__export-only {
   color: var(--q-mut-2);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   line-height: 1.4;
 }
 .recovery__export-only {
@@ -1281,29 +1226,29 @@ async function openChangelog(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px;
+  gap: var(--q-space-3);
+  padding: var(--q-space-3);
   color: var(--q-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
 }
 .recovery__confirm-actions,
 .recovery__footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   flex-wrap: wrap;
 }
 .recovery__error {
-  margin: 10px 18px 0;
+  margin: var(--q-settings-block) var(--q-settings-inset) 0;
   color: var(--q-err-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .recovery__footer {
-  padding: 14px 18px 18px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 @media (max-width: 360px) {
   .recovery__item,
@@ -1323,5 +1268,10 @@ async function openChangelog(): Promise<void> {
   .recovery__footer > :deep(button) {
     flex: 1 1 auto;
   }
+}
+@media (max-width: 420px) {
+  .settings__appearance-row { grid-template-columns: minmax(0, 1fr); }
+  .settings__appearance-row :deep(.q-settings-row__control) { justify-self: stretch; }
+  .settings__segments { width: 100%; }
 }
 </style>

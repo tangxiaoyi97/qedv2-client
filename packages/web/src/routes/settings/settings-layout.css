@@ -1,0 +1,104 @@
+/* Shared geometry for settings cards, native tools and their editors. */
+.q-settings-panel {
+  --q-settings-inset: var(--q-space-4);
+  --q-settings-block: var(--q-space-3);
+}
+
+.q-settings-panel .q-btn {
+  min-width: 100px;
+  min-height: var(--q-control-height);
+  padding: var(--q-space-2) var(--q-space-4);
+  border-radius: var(--q-radius-control);
+  font-size: var(--q-font-ui);
+  line-height: 1.4;
+}
+
+.q-settings-panel .q-collapse {
+  border-radius: var(--q-radius-card);
+}
+
+.q-settings-panel .q-collapse__head,
+.q-settings-panel .q-collapse__body {
+  padding: var(--q-settings-block) var(--q-settings-inset);
+}
+
+.q-settings-panel .q-collapse__head {
+  min-height: var(--q-control-height);
+  gap: var(--q-space-3);
+  line-height: 1.4;
+}
+
+.q-settings-panel .q-collapse__title {
+  font-size: var(--q-font-ui);
+  line-height: 1.4;
+}
+
+.q-settings-field {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  height: var(--q-control-height);
+  min-height: var(--q-control-height);
+  padding: 0 var(--q-space-3);
+  border: 1px solid var(--q-border-3);
+  border-radius: var(--q-radius-control);
+  background: var(--q-card);
+  color: var(--q-ink);
+  font-family: inherit;
+  font-size: var(--q-font-input);
+  font-weight: 400;
+  line-height: 1.4;
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+
+.q-settings-field::placeholder { color: var(--q-mut-2); opacity: 1; }
+.q-settings-field:focus-visible {
+  border-color: var(--q-accent);
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
+}
+.q-settings-field:disabled { opacity: 0.55; cursor: not-allowed; }
+
+textarea.q-settings-field {
+  height: auto;
+  min-height: calc(var(--q-control-height) * 2);
+  padding-block: var(--q-space-3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.q-settings-segments {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--q-control-height);
+  overflow: hidden;
+  outline: 1px solid var(--q-border-3);
+  outline-offset: -1px;
+  border-radius: var(--q-radius-control);
+  background: var(--q-card);
+}
+
+.q-settings-segment {
+  position: relative;
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: var(--q-control-height);
+  box-sizing: border-box;
+  padding: var(--q-space-2) var(--q-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--q-mut-2);
+  cursor: pointer;
+  font: 600 var(--q-font-ui)/1.4 'Public Sans', system-ui, sans-serif;
+  text-align: center;
+  transition: background-color var(--q-transition-fast), color var(--q-transition-fast);
+}
+
+.q-settings-segment + .q-settings-segment { border-left: 1px solid var(--q-border-3); }
+.q-settings-segment:focus-within { z-index: 1; outline: 2px solid var(--q-accent); outline-offset: -2px; }
+.q-settings-segment:has(input:disabled) { cursor: wait; }

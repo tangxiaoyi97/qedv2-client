@@ -24,6 +24,10 @@
 - **eingabe:** nächste lücke per enter, keine symbolleiste
 - **desktop:** lokal & remote direkt wechseln
 - **laden:** ruhige übergänge, sichere wiederholung
+- **optionen:** gleiche abstände, schrift & buttonhöhen
+- **sync:** fortschritt & verlauf gemeinsam, weiter nach unterbrechungen
+- **grafiken:** manifest-prüfung & kurze netzwerk-wiederholung
+- **ki:** serverfreigabe, passende einstiege & key-setup
 
 ## 2.3.1 — 2026-09-08
 

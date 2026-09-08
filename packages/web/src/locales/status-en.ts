@@ -43,6 +43,7 @@ export const statusEn: Record<string, string> = {
   'Eine Aufgabengrafik überschreitet das sichere Größenlimit.': 'Figure exceeds the size limit.',
   'Eine Aufgabengrafik hat eine unerwartete Größe geliefert.': 'Figure size does not match.',
   'Eine Aufgabengrafik hat keine starke Prüfsumme geliefert.': 'Figure integrity could not be verified.',
+  'Grafik konnte nicht geladen werden. Bitte erneut versuchen.': 'Could not load the figure. Try again.',
   'Die angekündigte Prüfsumme einer Aufgabengrafik ist ungültig.': 'Figure checksum is invalid.',
   'Eine Aufgabengrafik wurde unvollständig übertragen.': 'Figure download incomplete. Try again.',
   'Eine Aufgabengrafik hat eine falsche Längenangabe geliefert.': 'Figure size does not match.',

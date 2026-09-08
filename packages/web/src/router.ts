@@ -47,7 +47,10 @@ export function legacyDesktopSettingsRedirect(query: LocationQuery): true | Rout
 export const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   // New pages open at the top; back/forward restores where the user was.
-  scrollBehavior(_to, _from, savedPosition) {
+  scrollBehavior(to, _from, savedPosition) {
+    if (!savedPosition && to.path === '/settings' && to.hash === '#ai-settings') {
+      return { el: '#ai-settings', top: 20 };
+    }
     return savedPosition ?? { top: 0 };
   },
   routes: [

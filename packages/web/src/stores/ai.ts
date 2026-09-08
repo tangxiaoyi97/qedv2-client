@@ -252,6 +252,7 @@ export const useAiStore = defineStore('ai', () => {
   const status = ref<AiStatus | null>(null);
   const statusError = ref<string | null>(null);
   let statusRequest = 0;
+  let statusOwner: string | undefined;
 
   /**
    * Answers already fetched.
@@ -312,11 +313,9 @@ export const useAiStore = defineStore('ai', () => {
    */
   const canUsePaidSource = computed(
     () =>
-      auth.isLoggedIn &&
-      activeProfileMatchesAuth.value &&
+      available.value &&
       profilePreferencesReady.value &&
       status.value !== null &&
-      status.value.active !== 'none' &&
       selectedSourceReady.value,
   );
   const paidProtocolReady = computed(() =>
@@ -324,28 +323,28 @@ export const useAiStore = defineStore('ai', () => {
     && (capabilities.value?.idempotencyWindowDays ?? 0) > 0,
   );
 
-  const canExplain = computed(
-    () => canUsePaidSource.value
+  /** Capability and entitlement readiness are separate: setup is an action,
+   * never a pretend paid feature or permission inferred from a shared key. */
+  function featureOffered(feature: 'answer' | 'walkthrough' | 'hint' | 'diagnosis' | 'assess'): boolean {
+    // Both legacy answer and walkthrough are controlled by Server's one
+    // explanation flag; their advertised task versions remain independent.
+    const flag = feature === 'answer' || feature === 'walkthrough' ? 'explain' : feature;
+    return available.value
       && paidProtocolReady.value
-      && capabilities.value?.explain === true
-      && Boolean(capabilities.value.taskVersions?.answer)
-      && status.value?.features.explain === true,
-  );
+      && capabilities.value?.[flag] === true
+      && status.value?.features[flag] === true
+      && Boolean(capabilities.value.taskVersions?.[feature]);
+  }
+  const hintOffered = computed(() => featureOffered('hint'));
+  const diagnosisOffered = computed(() => featureOffered('diagnosis'));
+  const canExplain = computed(() => canUsePaidSource.value && featureOffered('answer'));
 
   const canHint = computed(
-    () => canUsePaidSource.value
-      && paidProtocolReady.value
-      && capabilities.value?.hint === true
-      && status.value?.features.hint === true
-      && Boolean(capabilities.value.taskVersions?.hint),
+    () => canUsePaidSource.value && hintOffered.value,
   );
 
   const canDiagnose = computed(
-    () => canUsePaidSource.value
-      && paidProtocolReady.value
-      && capabilities.value?.diagnosis === true
-      && status.value?.features.diagnosis === true
-      && Boolean(capabilities.value.taskVersions?.diagnosis),
+    () => canUsePaidSource.value && diagnosisOffered.value,
   );
   const canTestCredential = computed(() =>
     auth.isLoggedIn
@@ -359,7 +358,7 @@ export const useAiStore = defineStore('ai', () => {
 
   /** Nothing works until one of the two modes is actually usable. */
   const configured = computed(
-    () => poolOffered.value || status.value?.byo.configured === true,
+    () => poolOffered.value || (byoOffered.value && status.value?.byo.configured === true),
   );
 
   /**
@@ -378,7 +377,14 @@ export const useAiStore = defineStore('ai', () => {
       (capabilities.value.explain
         || capabilities.value.assess
         || capabilities.value.hint === true
-        || capabilities.value.diagnosis === true),
+        || capabilities.value.diagnosis === true)
+      // A fresh authenticated status can veto stale public /info flags.
+      // Until status arrives, Settings may still show its loading state.
+      && (status.value === null
+        || status.value.features.explain
+        || status.value.features.assess
+        || status.value.features.hint === true
+        || status.value.features.diagnosis === true),
   );
 
   const poolOnlyServer = computed(() => capabilities.value?.poolAvailable === true);
@@ -390,20 +396,16 @@ export const useAiStore = defineStore('ai', () => {
    * question, so the content decides which rubrics are good enough to judge
    * against. The client never overrides that.
    */
-  function canAssess(part: QuestionPart, question?: Question): boolean {
+  function assessmentOffered(part: QuestionPart, question?: Question): boolean {
     return (
-      auth.isLoggedIn &&
-      activeProfileMatchesAuth.value &&
-      paidProtocolReady.value &&
-      capabilities.value?.assess === true &&
-      Boolean(capabilities.value.taskVersions?.assess) &&
-      status.value !== null &&
-      status.value.features.assess === true &&
-      status.value.active !== 'none' &&
-      selectedSourceReady.value &&
+      featureOffered('assess') &&
       isAiGradable(part) &&
       (!question || !hasFigures(question, part))
     );
+  }
+
+  function canAssess(part: QuestionPart, question?: Question): boolean {
+    return canUsePaidSource.value && assessmentOffered(part, question);
   }
 
   /** Text-only learning calls never cross an official-solution figure. */
@@ -462,6 +464,12 @@ export const useAiStore = defineStore('ai', () => {
 
   async function refreshStatus(): Promise<void> {
     const request = ++statusRequest;
+    const owner = JSON.stringify([app.config.serverBaseUrl, auth.session?.user.id, auth.session?.token]);
+    if (statusOwner !== owner) {
+      statusOwner = owner;
+      status.value = null;
+      statusError.value = null;
+    }
     if (!auth.isLoggedIn || capabilities.value === null) {
       status.value = null;
       statusError.value = null;
@@ -623,7 +631,7 @@ export const useAiStore = defineStore('ai', () => {
     () => {
       void refreshStatus();
     },
-    { immediate: true },
+    { immediate: true, flush: 'sync' },
   );
 
   /** Never let one account/server identity see another identity's memory map. */
@@ -654,6 +662,7 @@ export const useAiStore = defineStore('ai', () => {
    * has actually granted it.
    */
   const sourceAllowed = (source: 'pool' | 'byo'): boolean => {
+    if (!available.value || !status.value) return false;
     const explicit = status.value?.allowedSources;
     // Early RC servers did not expose entitlement policy. Preserve their UI
     // behaviour, while every stable v2 server supplies the authoritative list.
@@ -663,7 +672,8 @@ export const useAiStore = defineStore('ai', () => {
 
   const poolAllowed = computed(() => sourceAllowed('pool'));
   const poolOffered = computed(
-    () => poolAllowed.value && status.value?.pool.eligible === true,
+    () => poolAllowed.value && capabilities.value?.poolAvailable === true
+      && status.value?.pool.eligible === true,
   );
   const byoOffered = computed(() => sourceAllowed('byo'));
 
@@ -709,6 +719,14 @@ export const useAiStore = defineStore('ai', () => {
       : byoOffered.value && status.value?.byo.configured === true,
   );
 
+  const needsSourceSetup = computed(() => available.value
+    && paidProtocolReady.value
+    && profilePreferencesReady.value
+    && byoOffered.value
+    && !selectedSourceReady.value);
+  const needsCredentialSetup = computed(() => needsSourceSetup.value
+    && status.value?.byo.configured !== true);
+
   const promptPrefs = computed(() => ({
     preferPool: preferPool.value,
     ...(app.config.aiLanguage ? { language: app.config.aiLanguage } : {}),
@@ -719,7 +737,7 @@ export const useAiStore = defineStore('ai', () => {
 
   function capturePaidOperation(): PaidOperationContext {
     const authContext = captureAuthenticatedOperation();
-    if (!profilePreferencesReady.value || !selectedSourceReady.value) {
+    if (!canUsePaidSource.value || !paidProtocolReady.value) {
       throw new Error('Die gewählte KI-Quelle ist noch nicht bereit.');
     }
     const source = mode.value;
@@ -823,8 +841,11 @@ export const useAiStore = defineStore('ai', () => {
     signal?: AbortSignal,
     options: PaidAiRequestOptions = {},
   ): Promise<AiExplainResult> {
-    const context = capturePaidOperation();
     const mode = input.mode ?? 'answer';
+    if (!featureOffered(mode)) {
+      throw new Error('Diese KI-Funktion ist nicht verfügbar.');
+    }
+    const context = capturePaidOperation();
     const stable = await withStableRequestId(buildExplainRequest({
       ...input,
       mode,
@@ -871,6 +892,9 @@ export const useAiStore = defineStore('ai', () => {
 
     let answer;
     try {
+      if (!featureOffered(mode) || !canUsePaidSource.value) {
+        throw new Error('Diese KI-Funktion ist nicht verfügbar.');
+      }
       // The immutable client carries the token captured before any generation
       // journal/cache await. Never send A's answer using B's live session.
       answer = await context.client.aiExplain(
@@ -1003,6 +1027,9 @@ export const useAiStore = defineStore('ai', () => {
     options: PaidAiRequestOptions = {},
   ): Promise<AiAssessResult | null> {
     if (!buildAssessRequest({ ...input, options: {} })) return null;
+    if (!canAssess(input.part, input.question)) {
+      throw new Error('Diese KI-Funktion ist nicht verfügbar.');
+    }
     const context = capturePaidOperation();
     const projected = buildAssessRequest({ ...input, options: context.promptPrefs });
     if (!projected) return null;
@@ -1043,6 +1070,9 @@ export const useAiStore = defineStore('ai', () => {
     assertPaidOperationCurrent(context);
     let answer;
     try {
+      if (!canAssess(input.part, input.question)) {
+        throw new Error('Diese KI-Funktion ist nicht verfügbar.');
+      }
       answer = await context.client.aiAssess(
         request,
         signal,
@@ -1167,6 +1197,11 @@ export const useAiStore = defineStore('ai', () => {
     canExplain,
     canHint,
     canDiagnose,
+    hintOffered,
+    diagnosisOffered,
+    assessmentOffered,
+    needsSourceSetup,
+    needsCredentialSetup,
     canTestCredential,
     configured,
     poolOnlyServer,

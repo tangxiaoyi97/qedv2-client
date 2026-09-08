@@ -33,6 +33,14 @@ describe('AiAssessPanel', () => {
     expect(wrapper.emitted('ask')).toHaveLength(1);
   });
 
+  it('sends an unconfigured user to setup without making a paid grading request', async () => {
+    const wrapper = mount(AiAssessPanel, { props: { labels: LABELS, needsSetup: true } });
+    expect(wrapper.text()).toBe('KI einrichten');
+    await wrapper.get('.q-aia__ask').trigger('click');
+    expect(wrapper.emitted('setup')).toHaveLength(1);
+    expect(wrapper.emitted('ask')).toBeUndefined();
+  });
+
   it('shows the criterion text, the quote and the confidence', () => {
     const wrapper = mount(AiAssessPanel, {
       props: { labels: LABELS, criteria: [crit()], model: 'gpt-5-mini' },

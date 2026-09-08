@@ -223,7 +223,7 @@ export const useAuthStore = defineStore('auth', () => {
     const previous = session.value;
     // Invalidate immediately, before the asynchronous storage read. A timer
     // whose callback has already begun is fenced by its generation.
-    useProgressStore().cancelCloudRecovery();
+    useProgressStore().pauseCloudRecovery();
     // Read-only refresh: it cannot create a broadcast loop. Serialize reads
     // so an older candidate can never publish after a newer one.
     const reload = async () => {
@@ -236,12 +236,17 @@ export const useAuthStore = defineStore('auth', () => {
         ? { ...stored, serverBaseUrl: candidateIssuer! }
         : undefined;
       const progress = useProgressStore();
+      const sameIdentity = Boolean(candidate && previous
+        && candidate.user.id === previous.user.id
+        && candidate.token === previous.token
+        && issuerOf(candidate) === issuerOf(previous));
       // Publish the new token only after its isolated profile is ready. If
       // storage/profile activation fails, the previous auth epoch remains.
       if (!transitionIsCurrent(generation)) return;
       try {
+        if (!sameIdentity) progress.cancelCloudRecovery();
         if (candidate) {
-          await progress.activateProfileForAuth(localAccountId(candidate));
+          await progress.activateProfileForAuth(localAccountId(candidate), sameIdentity);
           await recoverInviteOwnership(candidate);
         } else await progress.activateGuestProfile();
       } catch (error) {
@@ -253,6 +258,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (!transitionIsCurrent(generation)) return;
       session.value = candidate;
       finishTransition(generation);
+      if (sameIdentity) progress.resumeCloudRecovery();
     };
     const run = externalSessionTail.then(reload, reload);
     const guarded = run.catch(async (error) => {

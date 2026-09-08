@@ -1,4 +1,11 @@
 export const settingsEn: Record<string, string> = {
+  "Synchronisieren": "Sync",
+  'Synchronisierung fehlgeschlagen. Erneut versuchen.': 'Sync failed. Try again.',
+  'Wird synchronisiert …': 'Syncing …',
+  'Bitte Archiv auswählen.': 'Choose an archive to continue.',
+  'Antwortverlauf nicht synchronisiert.': 'Answer history not synced.',
+  '{count} Antworten warten auf Upload.': '{count} answers waiting to upload.',
+  'Lokal gespeichert · Upload wird wiederholt.': 'Saved locally · Upload will retry.',
   "Lokaler Entwicklungsbuild – Desktop-Aktualisierungen sind deaktiviert.": "Development build — Desktop updates disabled.",
   "Lokaler Test-Build – Desktop-Aktualisierungen sind nur in regulär installierten Release-Builds verfügbar.": "Test build — updates are available in installed releases.",
   "Der vorherige lokale Core konnte nicht sicher beendet werden. QED2 startet keinen zweiten lokalen Prozess.": "The previous local Core could not stop safely. QED2 will not start a second instance.",

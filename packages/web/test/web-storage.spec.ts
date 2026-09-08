@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { IDBVersionChangeEvent } from 'fake-indexeddb';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE } from '@qed2/core-logic';
 import { WebStorage } from '../src/platform/web-storage.js';
@@ -29,6 +30,7 @@ class FakeBroadcastChannel {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   FakeBroadcastChannel.channels.clear();
   FakeBroadcastChannel.messages.length = 0;
@@ -38,6 +40,29 @@ describe('WebStorage (IndexedDB StoragePort adapter)', () => {
   // One shared instance — deleteDatabase would deadlock on the open
   // connection; tests stay independent through distinct keys instead.
   const storage = new WebStorage();
+
+  it('reopens after a transient database open failure without reloading the page', async () => {
+    const peer = new WebStorage();
+    vi.spyOn(indexedDB, 'open').mockImplementationOnce(() => {
+      throw new DOMException('temporarily unavailable', 'UnknownError');
+    });
+    await expect(peer.get(STORAGE.app, 'reopen-after-failure')).rejects.toThrow('temporarily unavailable');
+    await peer.set(STORAGE.app, 'reopen-after-failure', 'preserved');
+    expect(await peer.get(STORAGE.app, 'reopen-after-failure')).toBe('preserved');
+  });
+
+  it.each(['versionchange', 'close'])('reopens after a browser %s event and retains data', async (eventName) => {
+    const peer = new WebStorage();
+    const openSpy = vi.spyOn(indexedDB, 'open');
+    await peer.set(STORAGE.app, `reopen-${eventName}`, 'preserved');
+    const db = openSpy.mock.results[0]!.value.result as IDBDatabase;
+    // IDB close events accompany an already closed connection. Dispatching
+    // versionchange exercises our handler, which must itself close it.
+    if (eventName === 'close') db.close();
+    db.dispatchEvent(new IDBVersionChangeEvent(eventName));
+    expect(await peer.get(STORAGE.app, `reopen-${eventName}`)).toBe('preserved');
+    expect(openSpy).toHaveBeenCalledTimes(2);
+  });
 
   it('round-trips primitives and objects', async () => {
     await storage.set(STORAGE.app, 'k1', 'value');

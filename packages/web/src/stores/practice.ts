@@ -77,6 +77,10 @@ const SESSION_STORAGE_VERSION = 6;
 const SESSION_PROFILE_KEY_VERSION = 1;
 const MAX_PINNED_ASSET_BYTES = 128 * 1024 * 1024;
 const MAX_SINGLE_ASSET_BYTES = 32 * 1024 * 1024;
+const ASSET_REQUEST_TIMEOUT_MS = 12_000;
+const ASSET_RETRY_DELAY_MS = 350;
+const MAX_ASSET_RETRY_DELAY_MS = 2_000;
+const RETRYABLE_ASSET_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 /**
  * Where a session came from. „Programm üben" in the navigation means the
@@ -769,10 +773,16 @@ async function readBoundedAsset(
   }
   const etag = response.headers.get('etag');
   const etagMatch = /^"([0-9a-f]{64})"$/u.exec(etag ?? '');
-  if (!etagMatch) {
+  // The validated v2 manifest already authenticates this exact revision's
+  // bytes independently of transport headers. A proxy may hide or weaken an
+  // ETag without changing the PNG; that must not discard a stronger proof.
+  // Legacy revision manifests contain no asset hashes and still require a
+  // strong ETag. Neither path ever admits bytes without a SHA-256 match.
+  const expectedHash = expected?.sha256 ?? etagMatch?.[1];
+  if (!expectedHash) {
     throw new ContentIntegrityError('Eine Aufgabengrafik hat keine starke Prüfsumme geliefert.');
   }
-  if (expected && etagMatch[1] !== expected.sha256) {
+  if (expected && etagMatch && etagMatch[1] !== expected.sha256) {
     throw new ContentIntegrityError('Die angekündigte Prüfsumme einer Aufgabengrafik ist ungültig.');
   }
 
@@ -820,10 +830,57 @@ async function readBoundedAsset(
   const actualHash = [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
-  if (actualHash !== etagMatch[1]) {
+  if (actualHash !== expectedHash) {
     throw new ContentIntegrityError('Die Prüfsumme einer Aufgabengrafik ist ungültig.');
   }
   return new Blob([verifiedBytes.buffer], { type: 'image/png' });
+}
+
+/** Retry only interrupted transport; a contradictory content proof is final. */
+async function fetchVerifiedAsset(
+  url: string,
+  remainingBytes: number,
+  expected?: ManifestAssetV2,
+): Promise<Blob> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const deadline = globalThis.setTimeout(() => controller.abort(), ASSET_REQUEST_TIMEOUT_MS);
+    let retryDelayMs = ASSET_RETRY_DELAY_MS;
+    try {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        credentials: 'omit',
+        signal: controller.signal,
+      });
+      if (!response.ok && RETRYABLE_ASSET_STATUSES.has(response.status) && attempt === 0) {
+        const retryAfter = response.headers.get('retry-after');
+        if (retryAfter) {
+          const seconds = /^\d+(?:\.\d+)?$/u.test(retryAfter) ? Number(retryAfter) : undefined;
+          const waitMs = seconds !== undefined ? seconds * 1_000 : Date.parse(retryAfter) - Date.now();
+          // Never hammer a throttled Core, or hold the loading screen for an
+          // unbounded Retry-After. A later explicit retry remains available.
+          if (!Number.isFinite(waitMs) || waitMs > MAX_ASSET_RETRY_DELAY_MS) {
+            throw new ContentIntegrityError(t('Eine Aufgabengrafik konnte nicht geladen werden ({status}).', { status: response.status }));
+          }
+          retryDelayMs = Math.max(retryDelayMs, waitMs);
+        }
+        throw new Error(`Temporary figure response: ${response.status}`);
+      }
+      return await readBoundedAsset(response, remainingBytes, expected);
+    } catch (cause) {
+      if (cause instanceof ContentIntegrityError) throw cause;
+      if (attempt > 0 || globalThis.navigator?.onLine === false) {
+        throw new Error(t('Grafik konnte nicht geladen werden. Bitte erneut versuchen.'), { cause });
+      }
+    } finally {
+      globalThis.clearTimeout(deadline);
+      // Also cancel a rejected/unused response body rather than leaving it
+      // downloading after a metadata failure or before the bounded retry.
+      controller.abort();
+    }
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, retryDelayMs));
+  }
+  throw new Error(t('Grafik konnte nicht geladen werden. Bitte erneut versuchen.'));
 }
 
 export const usePracticeStore = defineStore('practice', () => {
@@ -937,12 +994,8 @@ export const usePracticeStore = defineStore('practice', () => {
       const url = mode === 'current' && manifest.formatVersion === 2
         ? client.assetUrl(path, revision)
         : client.revisionAssetUrl(path, revision);
-      const response = await fetch(url, {
-        cache: 'no-store',
-        credentials: 'omit',
-      });
-      const blob = await readBoundedAsset(
-        response,
+      const blob = await fetchVerifiedAsset(
+        url,
         MAX_PINNED_ASSET_BYTES - total,
         expected,
       );

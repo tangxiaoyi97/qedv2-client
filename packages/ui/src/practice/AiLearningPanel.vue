@@ -2,7 +2,7 @@
 import { useI18n } from '../i18n.js';
 
 import { computed, ref, useId } from 'vue';
-import { ArrowRight, Check, Lightbulb, RotateCcw } from 'lucide-vue-next';
+import { ArrowRight, Check, KeyRound, Lightbulb, RotateCcw } from 'lucide-vue-next';
 import type { AiDiagnosisCode, AiDiagnosisResult, RichText } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import MarkdownView from '../shared/MarkdownView.vue';
@@ -29,6 +29,7 @@ const props = defineProps<{
   canRequestHint?: boolean;
   canRequestDiagnosis?: boolean;
   canCorrect?: boolean;
+  needsSetup?: boolean;
   model?: string;
   source?: string;
 }>();
@@ -39,13 +40,15 @@ const emit = defineEmits<{
   renew: [];
   correct: [];
   dismiss: [];
+  setup: [];
 }>();
 
 const titleId = 'q-learning-title-' + useId();
 const hasContent = computed(() => Boolean(
   props.authoredHint?.length || props.markdown?.trim() || props.diagnosis || props.correctionOutcome,
 ));
-const panelTitle = computed(() => t(props.aiGenerated ? 'KI-Hilfe' : 'Hinweis'));
+const panelTitle = computed(() => t(props.aiGenerated
+  ? 'KI-Hilfe' : props.stage === 'hint' ? 'Hinweis' : 'Korrektur'));
 
 const DIAGNOSIS_LABELS: Record<AiDiagnosisCode, string> = {
   concept: 'Begriff verwechselt',
@@ -82,7 +85,8 @@ defineExpose({
     :aria-busy="loading ? 'true' : 'false'"
   >
     <div class="q-learning__head">
-      <Lightbulb :size="18" aria-hidden="true" />
+      <RotateCcw v-if="stage !== 'hint' && !aiGenerated" :size="18" aria-hidden="true" />
+      <Lightbulb v-else :size="18" aria-hidden="true" />
       <h3 :id="titleId">{{ panelTitle }}</h3>
       <AiBadge v-if="aiGenerated && hasContent" size="sm" />
       <QIconButton :aria-label="t('{title} schließen', { title: panelTitle })" @click="emit('dismiss')" />
@@ -94,17 +98,21 @@ defineExpose({
 
     <div v-else-if="error" class="q-learning__error" role="alert">
       <p>{{ error }}</p>
-      <QButton v-if="canRenew" variant="secondary" @click="emit('renew')">
+      <QButton v-if="needsSetup" variant="secondary" @click="emit('setup')">
+        <KeyRound :size="16" aria-hidden="true" />
+        {{ t('KI einrichten') }}
+      </QButton>
+      <QButton v-else-if="canRenew" variant="secondary" @click="emit('renew')">
         {{ t('Neu anfragen') }}
       </QButton>
       <QButton
-        v-else
+        v-else-if="stage === 'hint' ? canRequestHint : canRequestDiagnosis"
         variant="secondary"
         @click="stage === 'hint' ? emit('requestHint') : emit('requestDiagnosis')"
       >
         {{ t('Erneut versuchen') }}
       </QButton>
-      <p v-if="canRenew" class="q-learning__billing-note">
+      <p v-if="canRenew && !needsSetup" class="q-learning__billing-note">
         {{ t('Die neue Anfrage kann erneut berechnet werden.') }}
       </p>
     </div>
@@ -166,6 +174,10 @@ defineExpose({
       </p>
 
       <div class="q-learning__actions">
+        <QButton v-if="needsSetup" variant="secondary" @click="emit('setup')">
+          <KeyRound :size="16" aria-hidden="true" />
+          {{ t('KI einrichten') }}
+        </QButton>
         <QButton
           v-if="stage === 'hint' && canRequestHint"
           variant="secondary"

@@ -15,6 +15,7 @@ import { useI18n } from '../i18n.js';
  * instead of taking its word.
  */
 import { computed, nextTick, ref, watch } from 'vue';
+import { KeyRound } from 'lucide-vue-next';
 import { AI_SUGGESTION_CONFIDENCE_FLOOR } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
@@ -52,6 +53,7 @@ const props = defineProps<{
   error?: string | undefined;
   storageWarning?: string | undefined;
   canRenew?: boolean;
+  needsSetup?: boolean;
   /** Server refuses to vouch for this reply — show it, tick nothing. */
   advisoryOnly?: boolean;
   model?: string | undefined;
@@ -62,7 +64,7 @@ const props = defineProps<{
   studentPoints?: number;
 }>();
 
-const emit = defineEmits<{ ask: []; renew: [] }>();
+const emit = defineEmits<{ ask: []; renew: []; setup: [] }>();
 
 const hasResult = computed(() => (props.criteria?.length ?? 0) > 0 || props.overall != null);
 const idle = computed(() => !hasResult.value && !props.loading && !props.error);
@@ -109,7 +111,11 @@ watch(
     aria-live="polite"
     :aria-busy="loading ? 'true' : 'false'"
   >
-    <QButton v-if="idle" variant="secondary" class="q-aia__ask" @click="emit('ask')">
+    <QButton v-if="needsSetup" variant="secondary" class="q-aia__ask" @click="emit('setup')">
+      <KeyRound :size="16" aria-hidden="true" />
+      {{ t('KI einrichten') }}
+    </QButton>
+    <QButton v-else-if="idle" variant="secondary" class="q-aia__ask" @click="emit('ask')">
       <AiBadge size="md" />
       {{ t('KI vergleichen') }}
     </QButton>

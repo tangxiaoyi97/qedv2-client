@@ -101,7 +101,7 @@ function transactionFailure(transaction: IDBTransaction, fallback: string): Erro
   return transaction.error ?? new Error(fallback);
 }
 
-function openDb(): Promise<IDBDatabase> {
+function openDb(invalidate: () => void): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     let settled = false;
@@ -118,7 +118,13 @@ function openDb(): Promise<IDBDatabase> {
         return;
       }
       settled = true;
-      request.result.onversionchange = () => request.result.close();
+      request.result.onversionchange = () => {
+        invalidate();
+        request.result.close();
+      };
+      // Browsers can close a connection after storage/process interruption.
+      // Reopen on the next operation; never replay an ambiguous write here.
+      request.result.onclose = invalidate;
       resolve(request.result);
     };
     request.onerror = () => {
@@ -183,7 +189,16 @@ export class WebStorage implements StoragePort {
   }
 
   private ready(): Promise<IDBDatabase> {
-    this.db ??= openDb();
+    if (!this.db) {
+      const invalidate = () => {
+        if (this.db === opening) this.db = undefined;
+      };
+      const opening = openDb(invalidate).catch((error: unknown) => {
+        invalidate();
+        throw error;
+      });
+      this.db = opening;
+    }
     return this.db;
   }
 
