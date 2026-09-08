@@ -16,8 +16,10 @@ import {
   deterministicAiRequestId,
   GUEST_ATTEMPT_OWNER,
   hasAtomicStorage,
+  historyEventRowKey,
   isGrading,
   isLocalProfileId,
+  parseStoredHistoryEvent,
   questionContentHash,
   STORAGE,
   submittedText as projectSubmittedText,
@@ -39,6 +41,7 @@ import type {
   Submission,
   QueuedAttempt,
   LearningHintLevel,
+  LearningEvent,
   AiDiagnosisCode,
   AiExplainCacheLocator,
   AiAssessCacheLocator,
@@ -2509,6 +2512,70 @@ export const usePracticeStore = defineStore('practice', () => {
     return graded.value.find((candidate) => candidate.clientAttemptId === record.clientAttemptId);
   }
 
+  /** Repair only the requested attempt, never replay grading or historical rows. */
+  async function recoverLearningEvent(
+    profileId: LocalProfileId,
+    record: GradedRecord,
+    snapshot?: PersistedPracticeSession,
+  ): Promise<LearningEvent | undefined> {
+    if (sessionOwner?.localProfileId !== profileId || !activeProfileCanAccessSession()) {
+      throw new Error('Dieses Programm gehört zu einem anderen lokalen Profil.');
+    }
+    const existing = await learningEventStore.event(profileId, record.clientAttemptId);
+    if (existing) return existing;
+    const saved = snapshot ?? (sessionStorageKey
+      ? await storage.get<unknown>(STORAGE.app, sessionStorageKey)
+      : undefined);
+    if (!isPersistedPracticeSession(saved)
+      || !hasExactContentProvenance(saved)
+      || saved.owner?.localProfileId !== profileId) return undefined;
+    const savedRecord = saved.graded.find((candidate) => candidate.clientAttemptId === record.clientAttemptId
+        && candidate.partId === record.partId
+        && candidate.questionId === record.questionId
+        && candidate.gradedAt === record.gradedAt
+        && candidate.result.verdict === record.result.verdict);
+    if (!savedRecord) return undefined;
+    const historyValue = await storage.get<unknown>(
+      STORAGE.history,
+      historyEventRowKey(record.clientAttemptId, profileId),
+    );
+    if (historyValue === undefined) return undefined;
+    const history = parseStoredHistoryEvent(historyValue);
+    // A legacy session can be explicitly reopened against today's bank. Its
+    // rewritten snapshot alone cannot prove the original attempt's revision.
+    if (history.profileId !== profileId
+      || history.entry.clientAttemptId !== record.clientAttemptId
+      || history.entry.partId !== record.partId
+      || history.entry.questionId !== record.questionId
+      || history.entry.gradedAt !== record.gradedAt
+      || history.entry.verdict !== record.result.verdict
+      || history.entry.contentSource !== saved.contentSource
+      || history.entry.contentId !== saved.contentId) return undefined;
+    const event: LearningEvent = {
+      version: 1,
+      partId: record.partId,
+      outcome: record.result.verdict,
+      ...(savedRecord.hintLevel ? { hintLevel: savedRecord.hintLevel } : {}),
+      contentId: saved.contentId,
+      at: record.gradedAt,
+    };
+    if (sessionOwner?.localProfileId !== profileId || !activeProfileCanAccessSession()) {
+      throw new Error('Dieses Programm gehört zu einem anderen lokalen Profil.');
+    }
+    try {
+      await learningEventStore.recordFirst(profileId, record.clientAttemptId, event);
+    } catch (cause) {
+      // Another window may have inserted and enriched this same first event
+      // between our read and CAS. Preserve that evidence rather than replace it.
+      const durable = await learningEventStore.event(profileId, record.clientAttemptId);
+      if (!durable || durable.partId !== event.partId || durable.outcome !== event.outcome
+        || durable.at !== event.at || durable.hintLevel !== event.hintLevel
+        || durable.contentId !== event.contentId) throw cause;
+      return durable;
+    }
+    return learningEventStore.event(profileId, record.clientAttemptId);
+  }
+
   /** A correction is learning evidence, not another spaced-repetition event. */
   async function recordCorrection(
     clientAttemptId: string,
@@ -2558,6 +2625,7 @@ export const usePracticeStore = defineStore('practice', () => {
     // Recommendation evidence is optional telemetry. A failure never rolls
     // back or hides the already durable correction.
     try {
+      await recoverLearningEvent(profileId, durable, committed);
       await learningEventStore.recordCorrection(profileId, record.clientAttemptId, result.verdict);
     } catch {
       warning.value = 'Die Korrektur-Empfehlung konnte lokal nicht aktualisiert werden.';
@@ -2606,6 +2674,7 @@ export const usePracticeStore = defineStore('practice', () => {
     const profileId = sessionOwner?.localProfileId;
     if (!record || !profileId) return;
     try {
+      await recoverLearningEvent(profileId, record);
       await learningEventStore.recordDiagnosis(profileId, record.clientAttemptId, errorCode);
     } catch {
       warning.value = 'Die Fehlerdiagnose konnte lokal nicht gespeichert werden.';
@@ -3108,17 +3177,22 @@ export const usePracticeStore = defineStore('practice', () => {
         seenGraded.add(record.partId);
         return true;
       });
-      // recordCorrection deliberately commits the minimal learning evidence
-      // before the session snapshot. If the renderer dies between those two
-      // writes, recover the exact attempt here so a reload cannot offer or
-      // record a second correction.
+      // Older clients could commit learning evidence before the session. Keep
+      // recovering that correction, and repair a missing first event only for
+      // the current unresolved review; never repopulate evicted history.
       const learningProfile = sessionOwner?.localProfileId;
       if (learningProfile) {
         restoredGraded = await Promise.all(restoredGraded.map(async (record) => {
           if (record.correctionOutcome) return record;
-          const evidence = await learningEventStore
-            .event(learningProfile, record.clientAttemptId)
-            .catch(() => undefined);
+          let evidence: LearningEvent | undefined;
+          try {
+            evidence = record.partId === snapshot.items[snapshot.index]?.partId
+              && correctionStillOpen(record)
+              ? await recoverLearningEvent(learningProfile, record, snapshot)
+              : await learningEventStore.event(learningProfile, record.clientAttemptId);
+          } catch {
+            warning.value = 'Die Korrektur-Empfehlung konnte lokal nicht gespeichert werden.';
+          }
           return evidence?.correctionOutcome
             ? cloneGradedRecord({ ...record, correctionOutcome: evidence.correctionOutcome })
             : record;

@@ -29,6 +29,7 @@
 - **grafiken:** manifest-prüfung & kurze netzwerk-wiederholung
 - **ki:** serverfreigabe, passende einstiege & key-setup
 - **auswahl:** genau die gewählten aufgaben, sichere übergabe mit grafiken
+- **speicher:** alte browserdaten behalten, korrekturen wieder speichern
 
 ## 2.3.1 — 2026-09-08
 
