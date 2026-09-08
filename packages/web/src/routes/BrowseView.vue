@@ -14,17 +14,18 @@ let fetchedContentId: string | undefined;
 </script>
 
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /** Aufgaben browse — client-side multi-select filtering (supplement §4). */
 import { computed, nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useRoute, useRouter, type LocationQueryRaw, type LocationQueryValue } from 'vue-router';
-import { Cloud, HardDrive, LoaderCircle, ShieldCheck, WifiOff } from 'lucide-vue-next';
+import { Cloud, HardDrive, LoaderCircle, ShieldCheck, WifiOff, SlidersHorizontal } from 'lucide-vue-next';
 import {
   CATEGORY_ORDER as VALID_CATEGORIES,
   EXAM_PARTS as VALID_TEILS,
   GRADINGS as VALID_GRADINGS,
   TERMS as VALID_TERMS,
   competencyCategory,
-  formatScore,
   GRADING_LABELS as GRADING_FILTER_LABELS,
   TEIL_LABELS,
   TERM_LABELS,
@@ -36,6 +37,7 @@ import {
   GradingDot,
   HighlightSnippet,
   QButton,
+  QIconButton,
   QChip,
   QNotice,
   QSkeleton,
@@ -50,6 +52,7 @@ import { useProgressStore } from '../stores/progress.js';
 import { ports } from '../services.js';
 import { shortCommit } from '../version-info.js';
 
+const { t, formatNumber } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const app = useAppStore();
@@ -70,6 +73,8 @@ const filter = ref<FilterState>(emptyFilterState());
 const dialogOpen = ref(false);
 const sourceSwitching = ref(false);
 const sourceError = ref<string | undefined>();
+const practiceStarting = ref(false);
+const practiceStartError = ref<string | undefined>();
 let syncingFromRoute = false;
 let loadSequence = 0;
 
@@ -80,16 +85,16 @@ const selectedSourceReady = computed(
 );
 const activeRevisionText = computed(() =>
   app.coreInfo?.bank.commit
-    ? `Bank ${shortCommit(app.coreInfo.bank.commit)}`
-    : 'Revision wird geprüft',
+    ? t('Bank {revision}', { revision: shortCommit(app.coreInfo.bank.commit) })
+    : t('Revision wird geprüft'),
 );
 const sourceStatusText = computed(() => {
   if (sourcePreference.value === 'local') {
     return selectedSourceReady.value
       ? activeRevisionText.value
-      : `Remote-Ersatz · ${activeRevisionText.value}`;
+      : t('Remote-Ersatz · {revision}', { revision: activeRevisionText.value });
   }
-  return app.online ? activeRevisionText.value : `Offline · ${activeRevisionText.value}`;
+  return app.online ? activeRevisionText.value : t('Offline · {revision}', { revision: activeRevisionText.value });
 });
 
 async function load(force = false): Promise<void> {
@@ -148,7 +153,8 @@ async function load(force = false): Promise<void> {
 }
 
 async function selectSource(source: CoreSourcePreference): Promise<void> {
-  if (!desktopSourceSelector || sourceSwitching.value || source === sourcePreference.value) return;
+  if (!desktopSourceSelector || sourceSwitching.value || practiceStarting.value) return;
+  if (source === sourcePreference.value && selectedSourceReady.value) return;
   sourceSwitching.value = true;
   sourceError.value = undefined;
   ++loadSequence;
@@ -160,6 +166,16 @@ async function selectSource(source: CoreSourcePreference): Promise<void> {
   } finally {
     sourceSwitching.value = false;
   }
+}
+
+function sourceKeydown(event: KeyboardEvent): void {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  if (sourceSwitching.value || practiceStarting.value) return;
+  const source = event.key === 'Home' || event.key === 'ArrowLeft' ? 'local' : 'remote';
+  const group = event.currentTarget as HTMLElement;
+  group.querySelector<HTMLButtonElement>(`[data-source="${source}"]`)?.focus();
+  void selectSource(source);
 }
 
 function queryStrings(value: LocationQueryValue | LocationQueryValue[] | undefined): string[] {
@@ -349,17 +365,17 @@ function hitExcluded(id: string): boolean {
 
 function loadedContentIdentity(): { source: CoreSourcePreference; contentId: string } | undefined {
   if (!fetchedSource || !fetchedContentId) {
-    sourceError.value = 'Die genaue Aufgabenbank-Version fehlt. Bitte lade die Aufgabenliste erneut.';
+    practiceStartError.value = 'Die genaue Aufgabenbank-Version fehlt. Bitte lade die Aufgabenliste erneut.';
     return undefined;
   }
   return { source: fetchedSource, contentId: fetchedContentId };
 }
 
 async function openHit(id: string): Promise<void> {
+  if (practiceStarting.value || sourceSwitching.value) return;
   const identity = loadedContentIdentity();
   if (!identity) return;
-  await practice.startPrepared([id], identity.source, identity.contentId);
-  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+  await startPrepared([id], identity);
 }
 
 function partGrading(partId: string): GradingOrUnseen {
@@ -382,8 +398,8 @@ function gradingGroups(parts: QuestionSummary['parts']): { grading: GradingOrUns
 
 function gradingSummary(parts: QuestionSummary['parts']): string {
   const groups = gradingGroups(parts);
-  if (groups.length === 0) return 'Bewertung nicht verfügbar';
-  return groups.map(({ grading, count }) => `${count} ${GRADING_FILTER_LABELS[grading]}`).join(' · ');
+  if (groups.length === 0) return t('Bewertung nicht verfügbar');
+  return groups.map(({ grading, count }) => `${count} ${t(GRADING_FILTER_LABELS[grading])}`).join(' · ');
 }
 
 /**
@@ -460,7 +476,11 @@ onMounted(() => {
   );
 });
 
-onBeforeUnmount(() => rowObserver?.disconnect());
+onBeforeUnmount(() => {
+  ++loadSequence;
+  ++searchSeq;
+  rowObserver?.disconnect();
+});
 
 const filterCount = computed(() => activeFilterCount(filter.value));
 
@@ -566,6 +586,7 @@ const playableIds = computed(() => filtered.value.filter((q) => q.playable).map(
 const selectedIds = ref<Set<string>>(new Set());
 
 async function practiceAll(): Promise<void> {
+  if (practiceStarting.value || sourceSwitching.value) return;
   const targets = selectedIds.value.size > 0 ? Array.from(selectedIds.value) : playableIds.value;
   if (targets.length === 0) return;
   const identity = loadedContentIdentity();
@@ -574,15 +595,27 @@ async function practiceAll(): Promise<void> {
   // seeded here and `prepared` tells /practice to mount onto it. The marker
   // is what separates "the set I just picked" from "a set left over from
   // earlier" — without it the practice view had to guess from store phase.
-  await practice.startPrepared(targets, identity.source, identity.contentId);
-  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+  await startPrepared(targets, identity);
 }
 
 async function practiceSingle(id: string): Promise<void> {
+  if (practiceStarting.value || sourceSwitching.value) return;
   const identity = loadedContentIdentity();
   if (!identity) return;
-  await practice.startPrepared([id], identity.source, identity.contentId);
-  await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+  await startPrepared([id], identity);
+}
+
+async function startPrepared(ids: string[], identity: { source: CoreSourcePreference; contentId: string }): Promise<void> {
+  practiceStarting.value = true;
+  practiceStartError.value = undefined;
+  try {
+    await practice.startPrepared(ids, identity.source, identity.contentId);
+    await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
+  } catch {
+    practiceStartError.value = 'Übung konnte nicht gestartet werden. Bitte erneut versuchen.';
+  } finally {
+    practiceStarting.value = false;
+  }
 }
 
 function toggleSelection(q: QuestionSummary): void {
@@ -602,48 +635,54 @@ function firstCode(q: QuestionSummary): string | undefined {
   <div class="browse q-page">
     <div class="browse__sticky-header">
       <div class="browse__head">
-        <h1 class="browse__title q-page-title">Aufgaben</h1>
-        <QButton :disabled="playableIds.length === 0" @click="practiceAll">Auswahl üben →</QButton>
+        <h1 class="browse__title q-page-title">{{ t('Aufgaben') }}</h1>
+        <QButton :disabled="playableIds.length === 0 || sourceSwitching" :loading="practiceStarting" @click="practiceAll">
+          {{ selectedIds.size > 0 ? t('Üben ({count})', { count: selectedIds.size }) : t('Üben →') }}
+        </QButton>
       </div>
 
       <section v-if="desktopSourceSelector" class="browse__sources" aria-labelledby="browse-source-title">
         <div class="browse__source-copy">
-          <div id="browse-source-title" class="browse__source-title">Aufgabenquelle</div>
+          <div id="browse-source-title" class="browse__source-title">{{ t('Aufgabenquelle') }}</div>
           <div class="browse__source-status" aria-live="polite">
             <LoaderCircle v-if="sourceSwitching" :size="15" class="browse__source-spin" aria-hidden="true" />
             <WifiOff v-else-if="sourcePreference === 'remote' && !app.online" :size="15" aria-hidden="true" />
             <ShieldCheck v-else :size="15" aria-hidden="true" />
-            <span>{{ sourceStatusText }}</span>
+            <span>{{ t(sourceStatusText) }}</span>
           </div>
         </div>
-        <div class="browse__source-options" role="radiogroup" aria-label="Aufgabenquelle wählen">
+        <div class="browse__source-options" role="radiogroup" :aria-label="t('Aufgabenquelle wählen')" :aria-busy="sourceSwitching" @keydown="sourceKeydown">
           <button
             type="button"
             role="radio"
+            data-source="local"
             class="browse__source-option browse__source-option--local"
             :class="{ 'browse__source-option--selected': sourcePreference === 'local' }"
             :aria-checked="sourcePreference === 'local'"
-            :disabled="sourceSwitching"
+            :tabindex="sourcePreference === 'local' ? 0 : -1"
+            :disabled="sourceSwitching || practiceStarting"
             @click="selectSource('local')"
           >
             <HardDrive :size="18" aria-hidden="true" />
-            <strong>Lokal</strong>
+            <strong>{{ t('Lokal') }}</strong>
           </button>
           <button
             type="button"
             role="radio"
+            data-source="remote"
             class="browse__source-option browse__source-option--remote"
             :class="{ 'browse__source-option--selected': sourcePreference === 'remote' }"
             :aria-checked="sourcePreference === 'remote'"
-            :disabled="sourceSwitching"
+            :tabindex="sourcePreference === 'remote' ? 0 : -1"
+            :disabled="sourceSwitching || practiceStarting"
             @click="selectSource('remote')"
           >
             <Cloud :size="18" aria-hidden="true" />
-            <strong>Remote-Core</strong>
+            <strong>{{ t('Remote') }}</strong>
           </button>
         </div>
         <QNotice v-if="sourceError" tone="error" class="browse__source-error">
-          Quelle konnte nicht gewechselt werden: {{ sourceError }}
+          {{ t('Quelle konnte nicht gewechselt werden:') }} {{ t(sourceError) }}
         </QNotice>
       </section>
 
@@ -651,39 +690,30 @@ function firstCode(q: QuestionSummary): string | undefined {
         <SearchBox
           v-model="searchQuery"
           class="browse__search"
-          placeholder="Aufgaben suchen"
+          :placeholder="t('Aufgaben suchen')"
           :busy="searchBusy"
           @search="runSearch"
         />
-        <button
-          type="button"
+        <QIconButton
           class="browse__filterbtn"
           :class="{ 'browse__filterbtn--on': filterCount > 0 || dialogOpen }"
           :aria-expanded="dialogOpen ? 'true' : 'false'"
-          aria-label="Filter öffnen"
-          title="Filter"
+          :aria-label="t('Filter öffnen')"
+          :title="t('Filter')"
           @click="dialogOpen = true"
         >
-          <svg class="browse__funnel" width="16" height="16" viewBox="0 0 12 12" aria-hidden="true">
-            <path
-              d="M1 1.5h10L7.5 6v4L4.5 8.5V6L1 1.5Z"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.4"
-              stroke-linejoin="round"
-            />
-          </svg>
+          <SlidersHorizontal :size="18" aria-hidden="true" />
           <span v-if="filterCount > 0" class="browse__badge">{{ filterCount }}</span>
-        </button>
+        </QIconButton>
       </div>
 
       <div v-if="!searchMode && filterCount > 0" class="browse__filterbar">
         <span v-for="chip in activeChips" :key="chip.key" class="browse__active">
-          {{ chip.label }}
+          {{ t(chip.label) }}
           <button
             type="button"
             class="browse__active-x"
-            :aria-label="`Filter ${chip.label} entfernen`"
+            :aria-label="t('Filter {label} entfernen', { label: t(chip.label) })"
             @click="chip.remove()"
           >
             ✕
@@ -691,29 +721,32 @@ function firstCode(q: QuestionSummary): string | undefined {
         </span>
 
         <button type="button" class="browse__reset" @click="resetFilters">
-          Zurücksetzen
+          {{ t('Zurücksetzen') }}
         </button>
       </div>
     </div>
 
+    <QNotice v-if="practiceStartError" tone="error" role="alert">{{ t(practiceStartError) }}</QNotice>
+
     <!-- search mode: an independent view; clearing returns to browse -->
     <template v-if="searchMode">
       <div class="browse__meta">
-        <span v-if="searchBusy">Suche …</span>
-        <span v-else-if="searchResult">{{ searchResult.total }} Treffer für „{{ searchResult.query }}“</span>
-        <span v-if="filterCount > 0" class="browse__meta-note">Filter pausiert</span>
+        <span v-if="searchBusy">{{ t('Suche …') }}</span>
+        <span v-else-if="searchResult">{{ t('{count} Treffer für „{query}“', { count: searchResult.total, query: searchResult.query }) }}</span>
+        <span v-if="filterCount > 0" class="browse__meta-note">{{ t('Filter pausiert') }}</span>
       </div>
       <QNotice v-if="searchError" tone="error">
-        Suche fehlgeschlagen: {{ searchError }}
+        {{ t('Suche fehlgeschlagen:') }} {{ t(searchError) }}
         <template #action>
           <QButton variant="secondary" @click="runSearch(searchQuery.trim())">
-            Erneut versuchen
+            {{ t('Erneut versuchen') }}
           </QButton>
         </template>
       </QNotice>
       <QNotice v-else-if="searchResult && searchResult.items.length === 0 && !searchBusy">
-        Keine Treffer.
+        {{ t('Keine Treffer.') }}
       </QNotice>
+      <QSkeleton v-else-if="!searchResult" :rows="4" height="52px" :label="t('Suche …')" />
       <div v-else-if="searchResult" class="browse__list">
         <button
           v-for="hit in searchResult.items"
@@ -721,6 +754,7 @@ function firstCode(q: QuestionSummary): string | undefined {
           type="button"
           class="browse__row browse__hit"
           :class="{ 'browse__row--excluded': hitExcluded(hit.id) }"
+          :disabled="practiceStarting"
           @click="openHit(hit.id)"
         >
           <span
@@ -741,11 +775,11 @@ function firstCode(q: QuestionSummary): string | undefined {
           <span class="browse__hit-main">
             <span class="browse__hit-title">
               {{ hit.title }}
-              <span v-if="hitStarred(hit.id)" class="browse__star" title="Gemerkt">★</span>
-              <span v-if="hitExcluded(hit.id)" class="browse__excl" title="Ausgeschlossen">⊗</span>
+              <span v-if="hitStarred(hit.id)" class="browse__star" :title="t('Gemerkt')">★</span>
+              <span v-if="hitExcluded(hit.id)" class="browse__excl" :title="t('Ausgeschlossen')">⊗</span>
             </span>
             <span class="browse__hit-source">
-              {{ hit.source.year }} · {{ TERM_LABELS[hit.source.term] }} · {{ TEIL_LABELS[hit.source.part] }} · Nr. {{ hit.source.nr }}
+              {{ hit.source.year }} · {{ t(TERM_LABELS[hit.source.term]) }} · {{ t(TEIL_LABELS[hit.source.part]) }} {{ t('· Nr.') }} {{ hit.source.nr }}
             </span>
             <HighlightSnippet
               v-if="hit.highlights[0]"
@@ -758,16 +792,16 @@ function firstCode(q: QuestionSummary): string | undefined {
     </template>
 
     <div v-if="!searchMode" class="browse__meta">
-      <span v-if="!loading">{{ filtered.length }} Aufgaben</span>
-      <span v-else>Lade …</span>
+      <span v-if="!loading">{{ t('{count} Aufgaben', { count: filtered.length }) }}</span>
+      <span v-else>{{ t('Lade …') }}</span>
     </div>
 
     <div class="browse__stage q-crossfade">
     <transition name="q-crossfade">
     <QNotice v-if="!searchMode && error" key="error" tone="error">
-      Aufgabenliste konnte nicht geladen werden: {{ error }}
+      {{ t('Aufgabenliste konnte nicht geladen werden:') }} {{ t(error) }}
       <template #action>
-        <QButton variant="secondary" @click="load(true)">Erneut versuchen</QButton>
+        <QButton variant="secondary" @click="load(true)">{{ t('Erneut versuchen') }}</QButton>
       </template>
     </QNotice>
 
@@ -776,11 +810,11 @@ function firstCode(q: QuestionSummary): string | undefined {
       key="loading"
       :rows="6"
       height="44px"
-      label="Aufgaben werden geladen …"
+      :label="t('Aufgaben werden geladen …')"
     />
 
     <QNotice v-else-if="!searchMode && filtered.length === 0" key="empty">
-      Keine Aufgaben für diese Filter.
+      {{ t('Keine Aufgaben für diese Filter.') }}
     </QNotice>
 
     <div v-else-if="!searchMode" key="list" class="browse__list">
@@ -795,6 +829,7 @@ function firstCode(q: QuestionSummary): string | undefined {
           'browse__row--selected': selectedIds.has(q.id)
         }"
         :disabled="!q.playable"
+        :aria-pressed="selectedIds.has(q.id)"
         @click="toggleSelection(q)"
         @dblclick="q.playable && practiceSingle(q.id)"
       >
@@ -814,23 +849,23 @@ function firstCode(q: QuestionSummary): string | undefined {
         <span
           v-if="rowInfo(q).allExcluded"
           class="browse__excl"
-          title="Ausgeschlossen"
-          aria-label="Ausgeschlossen"
+          :title="t('Ausgeschlossen')"
+          :aria-label="t('Ausgeschlossen')"
           >⊗</span
         >
         <span class="browse__qtitle">{{ q.title }}</span>
-        <span v-if="rowInfo(q).starred" class="browse__star" title="Gemerkt" aria-label="Gemerkt">★</span>
+        <span v-if="rowInfo(q).starred" class="browse__star" :title="t('Gemerkt')" :aria-label="t('Gemerkt')">★</span>
 
-        <span v-if="!q.playable" class="browse__state browse__state--na">Nicht verfügbar</span>
+        <span v-if="!q.playable" class="browse__state browse__state--na">{{ t('Nicht verfügbar') }}</span>
         <template v-else-if="rowInfo(q).practiced">
           <span v-if="rowInfo(q).due" class="browse__due">
-            <span class="browse__due-dot" aria-hidden="true" />Fällig
+            <span class="browse__due-dot" aria-hidden="true" />{{ t('Fällig') }}
           </span>
           <span class="browse__points">
-            {{ formatScore(rowInfo(q).awarded) }}/{{ formatScore(q.totalPoints) }} P
+            {{ formatNumber(rowInfo(q).awarded) }}/{{ formatNumber(q.totalPoints) }} {{ t('P') }}
           </span>
         </template>
-        <span v-else class="browse__state browse__state--new">Neu</span>
+        <span v-else class="browse__state browse__state--new">{{ t('Neu') }}</span>
 
       </button>
       <div
@@ -839,7 +874,7 @@ function firstCode(q: QuestionSummary): string | undefined {
         class="browse__more"
         role="status"
       >
-        Weitere {{ filtered.length - windowed.length }} Aufgaben …
+        {{ t('Weitere {count} Aufgaben …', { count: filtered.length - windowed.length }) }}
       </div>
     </div>
 
@@ -869,8 +904,8 @@ function firstCode(q: QuestionSummary): string | undefined {
   top: env(safe-area-inset-top);
   z-index: 10;
   background: var(--q-page);
-  margin: -26px -20px 10px;
-  padding: 26px 20px 10px;
+  margin: calc(-1 * var(--q-space-6)) 0 10px;
+  padding: var(--q-space-6) 0 10px;
   border-bottom: 1px solid var(--q-border-soft);
 }
 .browse__head {
@@ -881,12 +916,15 @@ function firstCode(q: QuestionSummary): string | undefined {
   margin-bottom: 16px;
   flex-wrap: wrap;
 }
+@media (max-width: 520px) {
+  .browse__sticky-header { margin-top: -18px; padding-top: 18px; }
+}
 .browse__sources {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(300px, 1.25fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px 16px;
   margin: 0 0 14px;
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid var(--q-border-soft);
   border-radius: 14px;
   background: var(--q-card);
@@ -897,7 +935,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__source-title {
   color: var(--q-ink);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 760;
   letter-spacing: -0.01em;
 }
@@ -907,13 +945,18 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 6px;
   margin-top: 4px;
   color: var(--q-mut-2);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   line-height: 1.35;
 }
+.browse__source-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .browse__source-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  gap: 4px;
+  padding: 3px;
+  background: var(--q-panel-2);
+  border: 1px solid var(--q-border);
+  border-radius: 12px;
 }
 .browse__source-option {
   min-height: var(--q-control-height);
@@ -921,9 +964,9 @@ function firstCode(q: QuestionSummary): string | undefined {
   align-items: center;
   gap: 9px;
   padding: 7px 10px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 11px;
-  background: var(--q-page);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   color: var(--q-mut-2);
   font: inherit;
   text-align: left;
@@ -932,7 +975,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__source-option strong {
   color: inherit;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   line-height: 1.2;
 }
 .browse__source-option--selected {
@@ -963,8 +1006,15 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 @keyframes browse-source-spin { to { transform: rotate(360deg); } }
 @media (max-width: 680px) {
-  .browse__sources { grid-template-columns: 1fr; }
+  .browse__sources { gap: 8px; }
+  .browse__source-option { justify-content: center; padding-inline: 8px; gap: 6px; }
+  .browse__source-status { font-size: var(--q-font-small); }
   .browse__source-error { grid-column: auto; }
+}
+@media (max-width: 380px) {
+  .browse__sources { grid-template-columns: 1fr; }
+  .browse__source-copy { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .browse__source-status { margin: 0; }
 }
 .browse__searchrow {
   display: flex;
@@ -1029,7 +1079,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__star {
   color: var(--q-part);
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   flex: none;
   line-height: 1;
 }
@@ -1045,14 +1095,14 @@ function firstCode(q: QuestionSummary): string | undefined {
   text-align: left;
 }
 .browse__hit-title {
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
   display: flex;
   align-items: center;
   gap: 7px;
 }
 .browse__hit-source {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
 }
 .browse__hit-snippet {
@@ -1082,7 +1132,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   border: 1px solid var(--q-accent);
   background: var(--q-accent-bg);
   color: var(--q-ink);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1109,7 +1159,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__reset {
   border: none;
   background: none;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   cursor: pointer;
   padding: 6px 8px;
@@ -1122,13 +1172,13 @@ function firstCode(q: QuestionSummary): string | undefined {
   }
 }
 .browse__meta {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   padding: 4px 2px 10px;
 }
 .browse__meta-note {
   color: var(--q-faint);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
 }
 .browse__list {
   display: flex;
@@ -1203,18 +1253,18 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__nr {
   font-weight: 700;
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   min-width: 26px;
   flex: none;
 }
 .browse__excl {
   color: var(--q-neutral);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
   flex: none;
 }
 .browse__qtitle {
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut);
   flex: 1;
   min-width: 0;
@@ -1225,7 +1275,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 .browse__points {
   font-family: ui-monospace, Menlo, monospace;
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   flex: none;
   margin-left: auto;
 }
@@ -1233,7 +1283,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-accent-strong);
   flex: none;
@@ -1250,7 +1300,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   flex: none;
 }
 .browse__state {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   flex: none;
   margin-left: auto;
 }
@@ -1268,7 +1318,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   padding: 14px;
   text-align: center;
   color: var(--q-mut-2);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 @media (max-width: 640px) {
   /* A phone is a scanning surface: keep every catalogue entry on one
@@ -1284,13 +1334,13 @@ function firstCode(q: QuestionSummary): string | undefined {
     gap: 3px;
   }
   .browse__row:not(.browse__hit) .browse__qtitle {
-    font-size: 13px;
+    font-size: var(--q-font-ui);
     font-weight: 600;
     color: var(--q-ink);
   }
   .browse__row:not(.browse__hit) .browse__nr {
     min-width: 0;
-    font-size: 11.5px;
+    font-size: var(--q-font-small);
     color: var(--q-mut);
   }
   .browse__row:not(.browse__hit) .browse__chip {
@@ -1298,10 +1348,10 @@ function firstCode(q: QuestionSummary): string | undefined {
     font-size: 10.75px;
   }
   .browse__row:not(.browse__hit) .browse__excl {
-    font-size: 11.5px;
+    font-size: var(--q-font-small);
   }
   .browse__row:not(.browse__hit) .browse__points {
-    font-size: 11.5px;
+    font-size: var(--q-font-small);
     color: var(--q-mut);
   }
 }

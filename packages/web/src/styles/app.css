@@ -35,6 +35,23 @@ textarea {
   color: inherit;
 }
 
+/* Keep forms inside narrow PWA sheets and prevent iOS focus zoom. */
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea { min-width: 0; max-width: 100%; }
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea { font-size: var(--q-font-input); }
+}
+button { touch-action: manipulation; }
+svg { flex-shrink: 0; }
+
+/* Native windows may be considerably narrower than the main workspace. */
+[data-platform='desktop'] :is(.q-page, .q-settings-row, .q-settings-row__control) {
+  min-width: 0;
+}
+
 a {
   color: var(--q-accent-strong);
 }

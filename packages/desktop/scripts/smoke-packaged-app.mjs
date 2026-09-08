@@ -747,10 +747,10 @@ export async function runSmoke(argv = process.argv.slice(2)) {
     await waitFor(
       'the bundled local Core',
       async () => {
-        const value = await mainClient.evaluate(`({
-          phase: document.querySelector('.desktop-settings__state')?.dataset.phase,
+        const value = await mainClient.evaluate(`(async () => ({
+          phase: (await globalThis.__QED2_PLATFORM_PORTS__.coreRuntime.getStatus()).phase,
           runtimeSection: Boolean(document.querySelector('#runtime-title')),
-        })`)
+        }))()`)
         return value.phase === 'ready' && value.runtimeSection ? value : undefined
       },
       deadline,

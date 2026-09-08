@@ -9,6 +9,8 @@
  * still open — so a skipped part stays visibly unfinished.
  */
 import { computed } from 'vue';
+import { useI18n } from '../i18n.js';
+const { t } = useI18n();
 
 export type ProgressSegment = 'correct' | 'partial' | 'incorrect' | 'current' | 'open';
 
@@ -72,7 +74,7 @@ const summary = computed(() => {
     if (segment === 'current' || segment === 'open') counts.open += 1;
     else counts[segment] += 1;
   }
-  return `${counts.correct} richtig, ${counts.partial} teilweise, ${counts.incorrect} falsch, ${counts.open} offen`;
+  return t('{correct} richtig, {partial} teilweise, {incorrect} falsch, {open} offen', counts);
 });
 </script>
 
@@ -81,7 +83,7 @@ const summary = computed(() => {
     class="q-sprogress"
     :class="{ 'q-sprogress--dense': dense }"
     role="img"
-    :aria-label="segments.length > 0 ? `Fortschritt: ${summary}` : 'Fortschritt'"
+    :aria-label="segments.length > 0 ? t('Fortschritt: {summary}', { summary }) : t('Fortschritt')"
   >
     <span
       v-for="(segment, i) in segments"
@@ -116,8 +118,7 @@ const summary = computed(() => {
   background: transparent;
   /* The radius and the seam are part of the reveal: a streak closing up as
    * the answer lands should ease, not snap. */
-  transition: background var(--q-transition-normal), border-radius var(--q-transition-normal),
-    margin-left var(--q-transition-normal);
+  transition: background-color var(--q-transition-fast);
 }
 
 /* A streak is drawn as one block. Segments keep their own widths — the bar

@@ -69,7 +69,7 @@ const labelId = `settings-row-${useId()}`;
 
 .q-settings-row__label {
   color: var(--q-ink);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
 }
@@ -95,6 +95,13 @@ const labelId = `settings-row-${useId()}`;
   justify-self: end;
   justify-content: flex-end;
   min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.q-settings-row__control :deep(.q-btn) {
+  min-width: 100px;
 }
 
 .q-settings-row--stacked .q-settings-row__control {
@@ -106,6 +113,17 @@ const labelId = `settings-row-${useId()}`;
   .q-settings-row {
     gap: 10px;
     padding: 12px 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .q-settings-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .q-settings-row__control {
+    justify-self: stretch;
   }
 }
 </style>

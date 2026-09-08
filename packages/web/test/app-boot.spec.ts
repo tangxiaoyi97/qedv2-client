@@ -75,9 +75,8 @@ describe('web shell boot (guest, offline)', () => {
     const ui = useUiStore();
     ui.openAuthModal('login');
     await nextTick();
-    expect(document.body.querySelector('.authm__scope')?.textContent).toBe(
-      'Lokal üben · mit Konto synchronisieren',
-    );
+    expect(document.body.querySelector('.authm__scope')).toBeNull();
+    expect(document.body.querySelector('.authm__card')?.textContent).toContain('Benutzername');
     ui.closeAuthModal();
 
     app.unmount();
@@ -133,7 +132,7 @@ describe('web shell boot (guest, offline)', () => {
       await nextTick();
       expect(
         [...host.querySelectorAll('.app__nav-item--active')].map((item) => item.textContent?.trim()),
-      ).toEqual(['Desktop & Knoten']);
+      ).toEqual(['Desktop']);
     } finally {
       app.unmount();
       host.remove();

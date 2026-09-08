@@ -27,6 +27,7 @@ export interface DesktopIpcOptions {
   openDesktopWindow(target: DesktopWindowTarget): void;
   applyThemePreference(preference: unknown): void;
   applyAccentPreference?(preference: unknown): void;
+  applyLocalePreference?(preference: unknown): void;
 }
 
 const RECOVERY_ACTIONS = new Set<CoreRecoveryAction>(['retry', 'use-remote', 'repair']);
@@ -234,6 +235,9 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     const validCollection = validateText(collection, 'collection', 64);
     const validKey = validateText(key, 'key', 512);
     options.storage.set(validCollection, validKey, value);
+    if (validCollection === STORAGE.config && validKey === 'locale') {
+      try { options.applyLocalePreference?.(value); } catch { /* Native menus are best-effort. */ }
+    }
     if (validCollection === STORAGE.config && validKey === 'theme') {
       options.applyThemePreference(value);
     }
@@ -255,6 +259,9 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     const validCollection = validateText(collection, 'collection', 64);
     const validKey = validateText(key, 'key', 512);
     options.storage.delete(validCollection, validKey);
+    if (validCollection === STORAGE.config && validKey === 'locale') {
+      try { options.applyLocalePreference?.('de'); } catch { /* Preserve durable deletion. */ }
+    }
     if (validCollection === STORAGE.config && validKey === 'theme') {
       options.applyThemePreference('system');
     }
@@ -278,6 +285,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     const validCollection = validateText(collection, 'collection', 64);
     options.storage.clear(validCollection);
     if (validCollection === STORAGE.config) {
+      try { options.applyLocalePreference?.('de'); } catch { /* Preserve durable reset. */ }
       options.applyThemePreference('system');
       try {
         options.applyAccentPreference?.('weed');
@@ -295,6 +303,10 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     const result = options.storage.commitBatch(request);
     if (!result.committed) return result;
     for (const mutation of request.mutations) {
+      if (mutation.collection === STORAGE.config && mutation.key === 'locale') {
+        try { options.applyLocalePreference?.(mutation.operation === 'set' ? mutation.value : 'de'); }
+        catch { /* Broadcast the committed preference even if native chrome is unavailable. */ }
+      }
       if (mutation.collection === STORAGE.config && mutation.key === 'theme') {
         options.applyThemePreference(mutation.operation === 'set' ? mutation.value : 'system');
       }

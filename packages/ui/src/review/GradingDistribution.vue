@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Distribution of mastery grading states (supplement §5): one compact donut
  * chart + clickable legend with GradingDot, German label and count per state.
@@ -12,6 +14,8 @@
 import { computed, ref } from 'vue';
 import type { Grading, GradingOrUnseen } from '@qed2/core-logic';
 import GradingDot, { GRADING_LABELS } from '../shared/GradingDot.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   counts: Record<Grading, number>;
@@ -36,11 +40,11 @@ interface Row {
 const rows = computed<Row[]>(() => {
   const out: Row[] = ORDER.map((state) => ({
     state,
-    label: GRADING_LABELS[state],
+    label: t(GRADING_LABELS[state]),
     count: props.counts[state] ?? 0,
   }));
   if (props.unseen !== undefined) {
-    out.push({ state: 'unseen', label: GRADING_LABELS.unseen, count: props.unseen });
+    out.push({ state: 'unseen', label: t(GRADING_LABELS.unseen), count: props.unseen });
   }
   return out;
 });
@@ -84,7 +88,7 @@ function clearActiveState(state: GradingOrUnseen): void {
     }"
   >
     <div class="q-dist__chart-wrap">
-      <svg class="q-dist__chart" viewBox="0 0 100 100" role="img" aria-label="Bewertung nach Status">
+      <svg class="q-dist__chart" viewBox="0 0 100 100" role="img" :aria-label="t('Bewertung nach Status')">
         <circle class="q-dist__track" cx="50" cy="50" :r="RADIUS" />
         <circle
           v-for="seg in segments"
@@ -117,11 +121,11 @@ function clearActiveState(state: GradingOrUnseen): void {
         />
       </svg>
       <div v-if="total === 0" class="q-dist__center q-dist__center--empty">
-        <span class="q-dist__total-label">Noch keine Daten</span>
+        <span class="q-dist__total-label">{{ t('Noch keine Daten') }}</span>
       </div>
       <div v-else class="q-dist__center">
         <span class="q-dist__total">{{ total }}</span>
-        <span class="q-dist__total-label">Teile</span>
+        <span class="q-dist__total-label">{{ t('Teile') }}</span>
       </div>
     </div>
     <ul class="q-dist__legend">

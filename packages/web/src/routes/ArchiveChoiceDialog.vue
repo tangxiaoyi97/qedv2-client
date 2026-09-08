@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, formatDate } = useI18n();
+
 /**
  * Login-time archive choice (upgrade doc §2.3) — both sides hold different
  * data; the user picks once. Merge is the recommended default (keeps both
@@ -15,13 +18,13 @@ const progress = useProgressStore();
 
 const pick = ref<'merge' | 'server' | 'local'>('merge');
 const pending = ref(false);
+const applyError = ref('');
 
 const choice = computed(() => progress.archiveChoice);
 
 const card = ref<HTMLElement | null>(null);
 useModalA11y(card, computed(() => choice.value != null), onEscape);
 
-const stampFmt = new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeStyle: 'short' });
 
 function summaryLines(side: 'server' | 'local'): { label: string; value: string }[] {
   const s = choice.value?.[side];
@@ -30,7 +33,7 @@ function summaryLines(side: 'server' | 'local'): { label: string; value: string 
     { label: 'Bearbeitete Teile', value: String(s.parts) },
     { label: 'Kompetenzen', value: String(s.competencies) },
   ];
-  if (s.lastUpdated) lines.push({ label: 'Zuletzt geändert', value: stampFmt.format(new Date(s.lastUpdated)) });
+  if (s.lastUpdated) lines.push({ label: 'Zuletzt geändert', value: formatDate(new Date(s.lastUpdated), { dateStyle: 'medium', timeStyle: 'short' }) });
   if (s.avgMastery !== undefined) lines.push({ label: 'Ø Bewertung', value: `${Math.round(s.avgMastery * 100)} %` });
   return lines;
 }
@@ -48,11 +51,25 @@ const OPTIONS = [
 async function apply(): Promise<void> {
   if (pending.value) return;
   pending.value = true;
+  applyError.value = '';
   try {
     await progress.resolveArchiveChoice(pick.value);
+  } catch {
+    applyError.value = 'Spielstand konnte nicht übernommen werden. Bitte erneut versuchen.';
   } finally {
     pending.value = false;
   }
+}
+
+function onChoiceKeydown(event: KeyboardEvent): void {
+  const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+  if (!direction && !['Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  if (pending.value) return;
+  const index = OPTIONS.findIndex(option => option.value === pick.value);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? OPTIONS.length - 1 : (index + direction + OPTIONS.length) % OPTIONS.length;
+  pick.value = OPTIONS[next]!.value;
+  (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
 }
 
 function onEscape(): void {
@@ -68,33 +85,33 @@ function onEscape(): void {
       class="achoice q-modal-scrim q-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      aria-label="Spielstand wählen"
+      :aria-label="t('Spielstand wählen')"
     >
       <div ref="card" class="achoice__card">
         <div class="achoice__head">
           <span class="achoice__icon" aria-hidden="true">⇄</span>
-          <div class="achoice__title">Zwei Spielstände gefunden</div>
+          <div class="achoice__title">{{ t('Zwei Spielstände gefunden') }}</div>
         </div>
         <p class="achoice__text">
-          Konto und Gerät enthalten unterschiedliche Stände.
+          {{ t('Konto und Gerät enthalten unterschiedliche Stände.') }}
         </p>
 
         <div class="achoice__sides">
           <div class="achoice__side">
-            <div class="achoice__side-head"><span aria-hidden="true">☁️</span><b>Cloud (Konto)</b></div>
-            <div v-for="line in summaryLines('server')" :key="line.label" class="achoice__line">
-              <span>{{ line.label }}</span><b>{{ line.value }}</b>
+            <div class="achoice__side-head"><span aria-hidden="true">☁️</span><b>{{ t('Cloud (Konto)') }}</b></div>
+            <div v-for="line in summaryLines('server')" :key="t(line.label)" class="achoice__line">
+              <span>{{ t(line.label) }}</span><b>{{ line.value }}</b>
             </div>
           </div>
           <div class="achoice__side">
-            <div class="achoice__side-head"><span aria-hidden="true">💻</span><b>Dieses Gerät</b></div>
-            <div v-for="line in summaryLines('local')" :key="line.label" class="achoice__line">
-              <span>{{ line.label }}</span><b>{{ line.value }}</b>
+            <div class="achoice__side-head"><span aria-hidden="true">💻</span><b>{{ t('Dieses Gerät') }}</b></div>
+            <div v-for="line in summaryLines('local')" :key="t(line.label)" class="achoice__line">
+              <span>{{ t(line.label) }}</span><b>{{ line.value }}</b>
             </div>
           </div>
         </div>
 
-        <div class="achoice__options" role="radiogroup" aria-label="Vorgehen wählen">
+        <div class="achoice__options" role="radiogroup" :aria-label="t('Vorgehen wählen')" @keydown="onChoiceKeydown">
           <button
             v-for="o in OPTIONS"
             :key="o.value"
@@ -103,23 +120,26 @@ function onEscape(): void {
             :class="{ 'achoice__option--on': pick === o.value }"
             role="radio"
             :aria-checked="pick === o.value"
+            :tabindex="pick === o.value ? 0 : -1"
+            :disabled="pending"
             @click="pick = o.value"
           >
             <span class="achoice__radio" :class="{ 'achoice__radio--on': pick === o.value }" aria-hidden="true" />
             <span class="achoice__option-body">
               <span class="achoice__option-title">
-                {{ o.title }}
+                {{ t(o.title) }}
               </span>
-              <span class="achoice__option-hint">{{ o.hint }}</span>
+              <span class="achoice__option-hint">{{ t(o.hint) }}</span>
             </span>
           </button>
         </div>
 
+        <p v-if="applyError" role="alert">{{ t(applyError) }}</p>
         <div class="achoice__footer">
           <QButton variant="secondary" :disabled="pending" @click="progress.dismissArchiveChoice()">
-            Später entscheiden
+            {{ t('Später entscheiden') }}
           </QButton>
-          <QButton :disabled="pending" @click="apply">{{ pending ? 'Übernehme …' : 'Weiter' }}</QButton>
+          <QButton :disabled="pending" @click="apply">{{ pending ? t('Übernehme …') : t('Weiter') }}</QButton>
         </div>
       </div>
       </div>
@@ -170,7 +190,7 @@ function onEscape(): void {
   letter-spacing: -0.01em;
 }
 .achoice__text {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   line-height: 1.55;
   color: var(--q-mut);
   margin: 0 0 14px;
@@ -190,14 +210,14 @@ function onEscape(): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   margin-bottom: 9px;
 }
 .achoice__line {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
   padding: 2px 0;
 }
@@ -219,7 +239,7 @@ function onEscape(): void {
   color: var(--q-ink);
   text-align: left;
   width: 100%;
-  transition: all var(--q-transition-fast);
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
 }
 @media (hover: hover) and (pointer: fine) {
   .achoice__option:not(.achoice__option--on):hover {
@@ -260,7 +280,7 @@ function onEscape(): void {
   min-width: 0;
 }
 .achoice__option-title {
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -268,7 +288,7 @@ function onEscape(): void {
   flex-wrap: wrap;
 }
 .achoice__option-hint {
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   line-height: 1.45;
 }

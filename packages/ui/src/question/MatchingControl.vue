@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * matching control — assignment via <select> PLUS desktop drag & drop.
  *
@@ -27,6 +29,8 @@ import ChevronDown from '../shared/ChevronDown.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import { onRadioGroupKeydown } from '../shared/radio-group.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   answer: MatchingAnswer;
@@ -75,13 +79,13 @@ function groupLabel(group: { label?: RichText; leftIndices: number[] }, groupIdx
   const leftLabels = group.leftIndices
     .map((leftIdx) => richTextToPlain(props.answer.left[leftIdx] ?? []))
     .filter(Boolean);
-  return leftLabels.join(', ') || `Gruppe ${groupIdx + 1}`;
+  return leftLabels.join(', ') || t('Gruppe {index}', { index: groupIdx + 1 });
 }
 
 const groupedRightOptions = computed<MatchGroup[]>(() => {
   const all = props.answer.right.map((item, idx) => ({ item, idx }));
   if (!hasCandidateGroups.value) {
-    return [{ key: 'all', label: 'Optionen', leftIndices: props.answer.left.map((_, idx) => idx), items: all }];
+    return [{ key: 'all', label: t('Optionen'), leftIndices: props.answer.left.map((_, idx) => idx), items: all }];
   }
   return props.answer.candidateGroups!.map((group, groupIdx) => {
     const leftIndices = group.leftIndices.filter((idx) => idx >= 0 && idx < props.answer.left.length);
@@ -211,10 +215,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
               :class="{ 'q-match__select--assigned': chosen(i) !== null }"
               :value="chosen(i) === null ? '' : String(chosen(i))"
               :disabled="review"
-              :aria-label="`Zuordnung für „${richTextToPlain(leftItem)}“`"
+              :aria-label="t('Zuordnung für „{text}“', { text: richTextToPlain(leftItem) })"
               @change="onSelect(i, $event)"
             >
-              <option value="">zuordnen …</option>
+              <option value="">{{ t('zuordnen …') }}</option>
               <option
                 v-for="(rightItem, j) in answer.right"
                 :key="j"
@@ -230,7 +234,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
         <!-- grouped ("Lückentext") mode: the gap IS a single-choice question —
              option cards like ChoiceControl, feedback in place, no pool. -->
-        <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="`Optionen für ${richTextToPlain(leftItem)}`" @keydown="onRadioGroupKeydown">
+        <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="t('Optionen für {text}', { text: richTextToPlain(leftItem) })" @keydown="onRadioGroupKeydown">
           <button
             v-for="option in optionsForLeft(i)"
             :key="option.idx"
@@ -275,7 +279,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
               :class="`q-match__oc-label--${gapOptionState(i, option.idx)}`"
             >
               <!-- verdict only; picked vs. missed is already in the row style -->
-              {{ gapOptionState(i, option.idx) === 'err' ? 'Falsch' : 'Richtig' }}
+              {{ t(gapOptionState(i, option.idx) === 'err' ? 'Falsch' : 'Richtig') }}
             </span>
             <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
           </button>
@@ -295,12 +299,12 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
           </div>
           <template v-else-if="marks[i] && !marks[i]!.correct">
             <div v-if="chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--user">
-              <span class="q-match__cmp-tag">Gewählt</span>
+              <span class="q-match__cmp-tag">{{ t('Gewählt') }}</span>
               <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
               <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
             </div>
             <div v-if="expectedRight.has(i)" class="q-match__cmp-line q-match__cmp-line--ok">
-              <span class="q-match__cmp-tag q-match__cmp-tag--ok">Richtig</span>
+              <span class="q-match__cmp-tag q-match__cmp-tag--ok">{{ t('Richtig') }}</span>
               <span class="q-match__cmp-letter">{{ letter(expectedRight.get(i)!) }}</span>
               <RichTextView :nodes="answer.right[expectedRight.get(i)!]" inline-only />
             </div>
@@ -312,9 +316,9 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
     <!-- options pool (classic mode only — grouped mode's options live inline) -->
     <div v-if="!review && !groupedOptionMode" class="q-match__pool">
       <div class="q-match__pool-title">
-        Optionen
-        <span class="q-match__pool-hint q-match__pool-hint--fine">Ziehen / auswählen</span>
-        <span class="q-match__pool-hint q-match__pool-hint--coarse">Auswählen</span>
+        {{ t('Optionen') }}
+        <span class="q-match__pool-hint q-match__pool-hint--fine">{{ t('Ziehen / auswählen') }}</span>
+        <span class="q-match__pool-hint q-match__pool-hint--coarse">{{ t('Auswählen') }}</span>
       </div>
       <div class="q-match__pool-items">
         <div

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Official-solution drawer that expands UPWARD from the practice bottom bar,
  * composed into the sticky footer above the action row.
@@ -22,6 +24,8 @@ import {
   resolveSheetRelease,
   type SheetDetent,
 } from './sheet-detents.js';
+
+const { t } = useI18n();
 
 export type SheetVerdict = 'correct' | 'partial' | 'incorrect';
 export type { SheetDetent };
@@ -72,8 +76,8 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
  * the cue is not colour-only for anyone who cannot see it.
  */
 const handleLabel = computed(() => {
-  const subject = showsSolution.value ? 'Lösung' : 'Lernhilfe';
-  const action = props.detent === 'collapsed' ? `${subject} anzeigen` : `${subject} einklappen`;
+  const subject = t(showsSolution.value ? 'Lösung' : 'Lernhilfe');
+  const action = t(props.detent === 'collapsed' ? '{subject} anzeigen' : '{subject} einklappen', { subject });
   return props.verdictLabel ? `${props.verdictLabel} — ${action}` : action;
 });
 
@@ -399,7 +403,7 @@ async function collapseFromKeyboard(): Promise<void> {
       :aria-hidden="detent === 'collapsed'"
       :inert="detent === 'collapsed' ? true : undefined"
       :tabindex="detent === 'collapsed' ? -1 : 0"
-      :aria-label="!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg'"
+      :aria-label="t(!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg')"
       @keydown.esc.prevent.stop="collapseFromKeyboard"
     >
     <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
@@ -418,15 +422,15 @@ async function collapseFromKeyboard(): Promise<void> {
 
       <div v-if="showsSolution" class="q-ssheet__head">
         <span class="q-ssheet__tick" aria-hidden="true"></span>
-        <h3 class="q-ssheet__title">Offizieller Lösungsweg</h3>
+        <h3 class="q-ssheet__title">{{ t('Offizieller Lösungsweg') }}</h3>
       </div>
       <p v-if="showsSolution && entries.length === 0" class="q-ssheet__empty">
-        Keine offizielle Lösung verfügbar.
+        {{ t('Keine offizielle Lösung verfügbar.') }}
       </p>
       <template v-else-if="showsSolution">
         <template v-for="(entry, i) in entries" :key="i">
           <div v-if="i > 0" class="q-ssheet__divider" role="separator">
-            <span class="q-ssheet__divider-label">Alternative</span>
+            <span class="q-ssheet__divider-label">{{ t('Alternative') }}</span>
           </div>
           <div class="q-ssheet__entry">
             <!-- Half-open stops at this block's bottom: the answer is
@@ -445,7 +449,7 @@ async function collapseFromKeyboard(): Promise<void> {
                 :key="`${entry.id ?? i}-alternative-${ai}`"
                 class="q-ssheet__short-alternative"
               >
-                <span>Alternative</span>
+                <span>{{ t('Alternative') }}</span>
                 <RichTextView :nodes="alternative" />
               </div>
               <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
@@ -464,7 +468,7 @@ async function collapseFromKeyboard(): Promise<void> {
                 :key="`${entry.id ?? i}-alternative-${ai}`"
                 class="q-ssheet__short-alternative"
               >
-                <span>Alternative</span>
+                <span>{{ t('Alternative') }}</span>
                 <RichTextView :nodes="alternative" />
               </div>
               <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-ssheet__figure">
@@ -476,7 +480,7 @@ async function collapseFromKeyboard(): Promise<void> {
               :ref="i === 0 ? (el) => (noteBlock = el as HTMLElement) : undefined"
               class="q-ssheet__note"
             >
-              <span class="q-ssheet__note-label">Beurteilungshinweis</span>
+              <span class="q-ssheet__note-label">{{ t('Beurteilungshinweis') }}</span>
               <span class="q-ssheet__note-text">{{ entry.note }}</span>
             </div>
           </div>
@@ -591,13 +595,15 @@ async function collapseFromKeyboard(): Promise<void> {
   }
 }
 .q-ssheet__grip {
+  --q-grip-x: 1;
+  --q-grip-y: 1;
   display: block;
   width: 40px;
   height: 4px;
   margin: 0 auto;
   border-radius: 2px;
-  transition: background 0.3s ease, width 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.05),
-    height 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.05);
+  transform: scale(var(--q-grip-x), var(--q-grip-y));
+  transition: background-color var(--q-transition-fast), transform var(--q-transition-normal);
 }
 /*
  * Solid colours, never alpha. Both of these used to be washed-out versions of
@@ -619,8 +625,8 @@ async function collapseFromKeyboard(): Promise<void> {
 .q-ssheet__grip--correct,
 .q-ssheet__grip--partial,
 .q-ssheet__grip--incorrect {
-  width: 56px;
-  height: 5px;
+  --q-grip-x: 1.4;
+  --q-grip-y: 1.25;
   border-radius: 3px;
 }
 .q-ssheet__grip--correct {
@@ -634,16 +640,18 @@ async function collapseFromKeyboard(): Promise<void> {
 }
 /* Hover only recolours the neutral grip; a verdict colour must not be
  * overwritten by pointing at it. */
-.q-ssheet__handle:hover .q-ssheet__grip--neutral,
 .q-ssheet__handle:focus-visible .q-ssheet__grip--neutral {
   background: var(--q-mut-2);
 }
-.q-ssheet__handle:hover .q-ssheet__grip,
 .q-ssheet__handle:focus-visible .q-ssheet__grip {
-  width: 64px;
+  --q-grip-x: 1.6;
+}
+@media (hover: hover) and (pointer: fine) {
+  .q-ssheet__handle:hover .q-ssheet__grip--neutral { background: var(--q-mut-2); }
+  .q-ssheet__handle:hover .q-ssheet__grip { --q-grip-x: 1.6; }
 }
 .q-ssheet__handle:active .q-ssheet__grip {
-  transform: scaleX(1.08);
+  --q-grip-x: 1.72;
 }
 
 .q-ssheet__verdict {

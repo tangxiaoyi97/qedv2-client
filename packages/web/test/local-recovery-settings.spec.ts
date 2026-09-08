@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, type App } from 'vue';
+import { setUiLocale } from '@qed2/ui';
 import {
   accountStorageIdentity,
   userLocalProfileId,
@@ -176,6 +177,8 @@ function emptyInventory(): LocalRecoveryInventory {
 
 describe('local recovery settings', () => {
   beforeEach(() => {
+    appStore.setTheme.mockReset();
+    appStore.setAccentTheme.mockReset();
     inventory.mockReset();
     inventory.mockResolvedValue(emptyInventory());
     assign.mockClear();
@@ -202,6 +205,7 @@ describe('local recovery settings', () => {
   });
 
   afterEach(() => {
+    setUiLocale('de');
     mounted?.app.unmount();
     mounted = undefined;
     document.body.innerHTML = '';
@@ -213,6 +217,42 @@ describe('local recovery settings', () => {
 
     expect(host.textContent).not.toContain('Lokale Daten');
     expect(inventory).toHaveBeenCalledWith(ACCOUNT_PROFILE);
+  });
+
+  it('offers English and updates the appearance labels live', async () => {
+    const host = mountSettings();
+    setUiLocale('en');
+    await nextTick();
+    expect(host.querySelector('h1')?.textContent).toBe('Settings');
+    expect(host.textContent).toContain('Appearance');
+    expect(host.textContent).toContain('Light');
+    expect(host.textContent).toContain('Dark');
+    const language = host.querySelector<HTMLSelectElement>('.settings__select')!;
+    expect(language.querySelector<HTMLOptionElement>('option[value="en"]')?.disabled).toBe(false);
+    language.value = 'en';
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(uiStore.setLocale).toHaveBeenCalledWith('en');
+    setUiLocale('de');
+    await nextTick();
+    expect(host.textContent).toContain('Aussehen');
+    expect(host.textContent).toContain('Dunkel');
+  });
+
+  it('keeps the durable appearance selection when saving fails', async () => {
+    let reject!: (error: Error) => void;
+    appStore.setTheme.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const host = mountSettings();
+    const light = host.querySelector<HTMLInputElement>('input[name="settings-appearance"][value="light"]')!;
+    const dark = host.querySelector<HTMLInputElement>('input[name="settings-appearance"][value="dark"]')!;
+    dark.click();
+    await nextTick();
+    expect(dark.disabled).toBe(true);
+    reject(new Error('storage unavailable'));
+    await settle();
+    expect(dark.disabled).toBe(false);
+    expect(light.checked).toBe(true);
+    expect(dark.checked).toBe(false);
+    expect(host.textContent).toContain('Aussehen konnte nicht gespeichert werden.');
   });
 
   it('claims unassigned guest data only after the explicit confirmation', async () => {

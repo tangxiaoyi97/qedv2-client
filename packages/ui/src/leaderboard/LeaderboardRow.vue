@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import { ChevronRight, Trophy } from 'lucide-vue-next';
 import type { LeaderboardItem, LeaderboardPeriod } from '@qed2/core-logic';
+
+const { t, formatNumber } = useI18n();
 
 const props = defineProps<{
   item: LeaderboardItem;
@@ -8,7 +12,6 @@ const props = defineProps<{
 }>();
 defineEmits<{ open: [profileId: string] }>();
 
-const numberFormat = new Intl.NumberFormat('de-AT');
 
 function periodCount(): number {
   return props.period === 'today' ? props.item.todayPracticed : props.item.weekPracticed;
@@ -23,7 +26,7 @@ function periodCount(): number {
       'leader-row--me': item.isMe,
       'leader-row--podium': item.rank <= 3,
     }"
-    :aria-label="`${item.nickname}, Rang ${item.rank}, Details öffnen`"
+    :aria-label="t('{name}, Rang {rank}, Details öffnen', { name: item.nickname, rank: item.rank })"
     @click="$emit('open', item.profileId)"
   >
     <span class="leader-row__top">
@@ -34,7 +37,7 @@ function periodCount(): number {
 
       <span class="leader-row__identity">
         <span class="leader-row__nickname">{{ item.nickname }}</span>
-        <span v-if="item.isMe" class="leader-row__you">Du</span>
+        <span v-if="item.isMe" class="leader-row__you">{{ t('Du') }}</span>
       </span>
 
       <ChevronRight class="leader-row__chevron leader-row__chevron--mobile" aria-hidden="true" />
@@ -42,16 +45,16 @@ function periodCount(): number {
 
     <span class="leader-row__stats">
       <span class="leader-row__stat leader-row__stat--primary">
-        <span class="leader-row__mobile-label">Aktuell</span>
-        <strong>{{ numberFormat.format(periodCount()) }}</strong>
+        <span class="leader-row__mobile-label">{{ t('Aktuell') }}</span>
+        <strong>{{ formatNumber(periodCount()) }}</strong>
       </span>
       <span class="leader-row__stat">
-        <span class="leader-row__mobile-label">Gesamt</span>
-        <strong>{{ numberFormat.format(item.totalPracticed) }}</strong>
+        <span class="leader-row__mobile-label">{{ t('Gesamt') }}</span>
+        <strong>{{ formatNumber(item.totalPracticed) }}</strong>
       </span>
       <span class="leader-row__stat leader-row__stat--score">
-        <span class="leader-row__mobile-label">Punkte</span>
-        <strong>{{ numberFormat.format(item.totalScore) }}</strong>
+        <span class="leader-row__mobile-label">{{ t('Punkte') }}</span>
+        <strong>{{ formatNumber(item.totalScore) }}</strong>
       </span>
     </span>
 

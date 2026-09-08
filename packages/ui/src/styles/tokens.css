@@ -85,6 +85,20 @@ body.q-modal-open {
 
 /* Layout, transitions and animations are not theme customization. */
 :root {
+  --q-font-body: 14px;
+  --q-font-ui: 14px;
+  --q-font-small: 12px;
+  --q-font-input: 16px;
+  --q-font-title: 22px;
+  --q-radius-control: 10px;
+  --q-radius-card: 14px;
+  --q-radius-dialog: 18px;
+  --q-space-1: 4px;
+  --q-space-2: 8px;
+  --q-space-3: 12px;
+  --q-space-4: 16px;
+  --q-space-5: 20px;
+  --q-space-6: 24px;
   --q-sidebar-width: 240px;
   --q-control-height: 44px;
   --q-icon-control-size: 44px;
@@ -92,13 +106,78 @@ body.q-modal-open {
   --q-control-chevron-size: 16px;
   --q-control-chevron-inset: 12px;
   --q-control-chevron-padding-end: 36px;
-  --q-transition-fast: 0.15s ease-out;
-  --q-transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  --q-transition-spring: 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --q-transition-fast: 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-normal: 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-spring: 0.28s cubic-bezier(0.25, 1, 0.5, 1);
   /* Header row and data row live in different files; editing one without the
    * other silently misaligns the table, so the track list is stated once. */
   --q-leaderboard-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
 }
+
+/* One field contract for settings, search and answer inputs. */
+.q-input,
+.q-select {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: var(--q-control-height);
+  max-width: 100%;
+  border: 1px solid var(--q-border-3);
+  border-radius: var(--q-radius-control);
+  padding: 10px 12px;
+  background: var(--q-card);
+  color: var(--q-ink);
+  font: 500 var(--q-font-input)/1.4 'Public Sans', system-ui, sans-serif;
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+.q-input::placeholder { color: var(--q-mut-2); opacity: 1; }
+.q-input, .q-select { caret-color: var(--q-accent); scroll-margin-block: 96px; }
+.q-input:focus-visible,
+.q-select:focus-visible { border-color: var(--q-accent); }
+.q-input:disabled,
+.q-select:disabled { opacity: 0.55; cursor: not-allowed; }
+.q-input[aria-invalid='true'] { border-color: var(--q-err); }
+.q-segmented {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-control);
+  background: var(--q-panel);
+}
+.q-segmented > button {
+  min-width: 0;
+  min-height: var(--q-control-height);
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: calc(var(--q-radius-control) - 3px);
+  padding: 8px 12px;
+  font: 600 var(--q-font-ui)/1.3 'Public Sans', system-ui, sans-serif;
+  color: var(--q-mut);
+  background: transparent;
+  cursor: pointer;
+  transition: color var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+.q-segmented > button[aria-checked='true'],
+.q-segmented > button[aria-pressed='true'] {
+  color: var(--q-on-accent);
+  background: var(--q-accent-strong);
+}
+.q-segmented > button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* A theme change is immediate; animating every themed surface creates a flash. */
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after { transition: none !important; }
+:root[data-input-modality='keyboard'] :is(.q-btn, .q-icon-btn):active { transform: none; }
+:root[data-input-modality='keyboard'] :is(.q-crossfade-enter-active, .q-crossfade-leave-active) {
+  transition: none;
+  transform: none;
+}
+:root[data-page-hidden] *,
+:root[data-page-hidden] *::before,
+:root[data-page-hidden] *::after { animation-play-state: paused !important; }
 
 /* ------------------------------------------------------------------ *
  * State cross-fade.
@@ -139,16 +218,15 @@ body.q-modal-open {
   width: 100%;
 }
 .q-crossfade-enter-active {
-  transition: opacity 0.22s ease-out, transform 0.22s ease-out;
+  transition: opacity var(--q-transition-fast);
 }
 .q-crossfade-leave-active {
-  transition: opacity 0.16s ease-in;
+  transition: opacity 0.1s ease-out;
   /* The outgoing copy is scenery: it must not eat taps on its way out. */
   pointer-events: none;
 }
 .q-crossfade-enter-from {
   opacity: 0;
-  transform: translateY(5px);
 }
 .q-crossfade-leave-to {
   opacity: 0;
@@ -196,13 +274,18 @@ body.q-modal-open {
  * ------------------------------------------------------------------ */
 .q-page {
   margin: 0 auto;
-  padding: 26px 20px 40px;
+  min-width: 0;
+  padding: var(--q-space-6) var(--q-space-5) 40px;
 }
 .q-page-title {
   margin: 0;
   font-weight: 800;
-  font-size: 22px;
+  font-size: var(--q-font-title);
   letter-spacing: -0.01em;
+}
+@media (max-width: 520px) {
+  .q-page { padding: 18px 12px 24px; }
+  .q-page-title { line-height: 1.2; }
 }
 
 /* ------------------------------------------------------------------ *

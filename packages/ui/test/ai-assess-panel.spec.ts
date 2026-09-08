@@ -81,8 +81,8 @@ describe('AiAssessPanel', () => {
 
   it('keeps the student decision authoritative', () => {
     const wrapper = mount(AiAssessPanel, { props: { labels: LABELS, criteria: [crit()] } });
-    expect(wrapper.get('.q-aia__foot').text()).toContain('bleibt unverändert');
     expect(wrapper.get('.q-aia__foot').text()).toContain('selbst bestätigen');
+    expect(wrapper.emitted()).toEqual({});
   });
 
   it('explains itself when the server refused to vouch for the reply', () => {
@@ -90,7 +90,8 @@ describe('AiAssessPanel', () => {
       props: { labels: LABELS, criteria: [crit()], advisoryOnly: true },
     });
     expect(wrapper.get('.q-aia__head-text').text()).toContain('Nur als Hinweis');
-    expect(wrapper.get('.q-aia__foot').text()).toContain('Nichts wurde vorausgewählt');
+    expect(wrapper.get('.q-aia__foot').text()).toBe('Bitte selbst bestätigen.');
+    expect(wrapper.emitted()).toEqual({});
   });
 
   it('always identifies itself as a machine', () => {

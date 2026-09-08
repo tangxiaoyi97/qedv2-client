@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * numeric control — one text input per blank (prototype 2b).
+ * Numeric control — one native text input per blank.
  *
  * Inputs are type="text" with the DEFAULT (full) keyboard: mobile numeric
  * keypads lack the minus sign and math symbols entirely (iOS "decimal" has
@@ -12,11 +12,16 @@
  *
  * Review (result set): read-only; per blank ok/err from result.breakdown
  * (ref = blank.id); on error the expected value + tolerance is shown,
- * de-AT formatted: "Richtig: 4,5 cm (±0,1)".
+ * formatted in the selected UI language.
  */
 import { computed, useId } from 'vue';
 import type { BreakdownItem, GradeResult, NumericAnswer } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
+import { useI18n } from '../i18n.js';
+import { onMathInputKeydown } from './math-input.js';
+
+const { t, formatNumber } = useI18n();
+
 
 const props = defineProps<{
   answer: NumericAnswer;
@@ -35,13 +40,14 @@ function inputId(blankId: string): string {
 }
 
 function onInput(blankId: string, ev: Event): void {
+  if (review.value || (ev as InputEvent).isComposing) return;
   const value = (ev.target as HTMLInputElement).value;
   emit('update:modelValue', { ...props.modelValue, [blankId]: value });
 }
 
 /** German decimal comma formatting for expected values / tolerances. */
 function fmt(n: number): string {
-  return n.toLocaleString('de-AT', { maximumFractionDigits: 10 });
+  return formatNumber(n, { maximumFractionDigits: 10 });
 }
 
 const marks = computed<Map<string, BreakdownItem>>(() => {
@@ -56,28 +62,32 @@ function markOf(blankId: string): BreakdownItem | undefined {
 </script>
 
 <template>
-  <div class="q-numeric">
-    <div v-for="blank in answer.blanks" :key="blank.id" class="q-numeric__blank">
+  <div class="q-numeric" data-answer-fields>
+    <div v-for="(blank, index) in answer.blanks" :key="blank.id" class="q-numeric__blank">
       <div class="q-numeric__row">
         <label v-if="multiple" class="q-numeric__label" :for="inputId(blank.id)">
           {{ blank.id }} =
         </label>
         <input
           :id="inputId(blank.id)"
-          class="q-numeric__input"
+          class="q-numeric__input q-input"
           :class="{
             'q-numeric__input--ok': markOf(blank.id)?.correct === true,
             'q-numeric__input--err': markOf(blank.id)?.correct === false,
           }"
           type="text"
           inputmode="text"
-          enterkeyhint="done"
+          :enterkeyhint="index < answer.blanks.length - 1 ? 'next' : 'done'"
           autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
           spellcheck="false"
           :value="modelValue[blank.id] ?? ''"
-          :disabled="review"
-          :aria-label="multiple ? undefined : 'Antwort (Zahl)'"
+          :readonly="review"
+          :aria-label="multiple ? undefined : t('Antwort (Zahl)')"
           @input="onInput(blank.id, $event)"
+          @compositionend="onInput(blank.id, $event)"
+          @keydown="onMathInputKeydown"
         />
         <span v-if="blank.unit" class="q-numeric__unit">{{ blank.unit }}</span>
         <template v-if="markOf(blank.id)">
@@ -86,17 +96,16 @@ function markOf(blankId: string): BreakdownItem | undefined {
             class="q-numeric__verdict q-reveal"
             :class="markOf(blank.id)!.correct ? 'q-numeric__verdict--ok' : 'q-numeric__verdict--err'"
           >
-            {{ markOf(blank.id)!.correct ? 'Richtig' : 'Falsch' }}
+            {{ t(markOf(blank.id)!.correct ? 'Richtig' : 'Falsch') }}
           </span>
         </template>
       </div>
 
       <div v-if="markOf(blank.id)?.correct === false" class="q-numeric__expected">
-        Richtig: {{ fmt(blank.value) }}{{ blank.unit ? ` ${blank.unit}` : '' }} (±{{ fmt(blank.tol) }})
+        {{ t('Richtig') }}: {{ fmt(blank.value) }}{{ blank.unit ? ` ${blank.unit}` : '' }} (±{{ fmt(blank.tol) }})
       </div>
     </div>
 
-    <div v-if="!review" class="q-numeric__hint">Komma oder Punkt</div>
   </div>
 </template>
 
@@ -110,7 +119,8 @@ function markOf(blankId: string): BreakdownItem | undefined {
 .q-numeric__row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .q-numeric__label {
@@ -123,32 +133,14 @@ function markOf(blankId: string): BreakdownItem | undefined {
 
 .q-numeric__input {
   flex: 1;
-  min-width: 64px;
-  padding: 10px 12px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 9px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font: 500 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
-  box-sizing: border-box;
-  /* The result landing is the one moment worth easing into. */
-  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
-}
-.q-numeric__input:focus {
-  outline: 2px solid var(--q-accent);
-  outline-offset: -1px;
-  border-color: var(--q-accent);
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
-}
-.q-numeric__input:disabled {
-  opacity: 0.9;
+  min-width: 96px;
 }
 .q-numeric__input--ok {
-  border: 1.5px solid var(--q-ok);
+  border-color: var(--q-ok);
   background: var(--q-ok-bg);
 }
 .q-numeric__input--err {
-  border: 1.5px solid var(--q-err);
+  border-color: var(--q-err);
   background: var(--q-err-bg);
 }
 
@@ -187,9 +179,4 @@ function markOf(blankId: string): BreakdownItem | undefined {
   overflow-wrap: break-word;
 }
 
-.q-numeric__hint {
-  margin-top: 4px;
-  font: 500 11px ui-monospace, Menlo, monospace;
-  color: var(--q-hint);
-}
 </style>

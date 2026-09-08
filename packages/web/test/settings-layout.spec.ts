@@ -12,8 +12,8 @@ describe('settings appearance layout', () => {
   it('uses one reusable control-panel grid for labels and right-aligned actions', () => {
     expect(settingsSource).toContain("import SettingsCard from './settings/SettingsCard.vue';");
     expect(settingsSource).toContain("import SettingsRow from './settings/SettingsRow.vue';");
-    expect(settingsSource).toContain('<SettingsRow label="Aussehen">');
-    expect(settingsSource).toContain('<SettingsRow label="Farbschema" layout="stacked">');
+    expect(settingsSource).toContain('<SettingsRow :label="t(\'Aussehen\')">');
+    expect(settingsSource).toContain('<SettingsRow :label="t(\'Farbschema\')" layout="stacked">');
     expect(settingsRowSource).toContain('grid-template-columns: minmax(0, 1fr) auto;');
     expect(settingsRowSource).toContain('justify-self: end;');
     expect(settingsRowSource).toContain('@media (max-width: 520px)');
@@ -26,9 +26,7 @@ describe('settings appearance layout', () => {
     expect(settingsSource).toContain(
       'grid-template-columns: repeat(4, minmax(0, 1fr));',
     );
-    expect(settingsSource).toContain(
-      'grid-template-columns: repeat(2, minmax(0, 1fr));',
-    );
+    expect(settingsSource).toContain('height: 28px;');
     expect(settingsSource).toContain('min-height: var(--q-control-height);');
     expect(settingsSource).toContain(':aria-labelledby="labelId"');
     expect(settingsSource).toContain('.settings__segment:focus-within');
@@ -43,7 +41,7 @@ describe('settings appearance layout', () => {
     expect(settingsSource).not.toContain('Ruhige Flächen, abgestimmte Akzent- und Statusfarben');
     expect(settingsSource).not.toContain("ui.t('settingsLanguageHint')");
     expect(settingsSource).not.toContain('Manuelle Synchronisierung außerhalb des Auto-Syncs');
-    expect(settingsSource).toContain('label="Archiv"');
+    expect(settingsSource).toContain(':label="t(\'Archiv\')"');
     expect(settingsSource).toContain("'Hochladen'");
     expect(settingsSource).not.toContain('Lokaler Fortschritt bleibt erhalten');
     expect(settingsSource).not.toContain('Als Gast unterwegs —');
@@ -53,14 +51,14 @@ describe('settings appearance layout', () => {
 
   it('shows isolated local data only when present and requires explicit recovery', () => {
     expect(settingsSource).toContain('v-if="(recoveryInventory?.totalCount ?? 0) > 0"');
-    expect(settingsSource).toContain('label="Lokale Daten"');
+    expect(settingsSource).toContain(':label="t(\'Lokale Daten\')"');
     expect(settingsSource).toContain('Nicht automatisch zugeordnet.');
     expect(settingsSource).toContain('v-if="profile.assignment.safe');
     expect(settingsSource).toContain('Diesem Profil zuordnen?');
     expect(settingsSource).toContain('Nur Export');
     expect(settingsSource).toContain("candidate.kind === 'unclaimed-guest'");
     expect(settingsSource).toContain('progress.claimGuestAttempts');
-    expect(settingsSource).toContain("? 'Besucherdaten'");
+    expect(settingsSource).toContain("? t('Besucherdaten')");
     expect(settingsSource).toContain('aria-labelledby="recovery-title"');
     expect(settingsSource).toContain('width: min(440px, calc(100vw - 24px));');
     expect(settingsSource).toContain('@media (max-width: 360px)');
@@ -87,8 +85,8 @@ describe('AI settings information hierarchy', () => {
   it('uses shared rows and keeps editors and privacy details collapsed', () => {
     expect(aiSettingsSource).toContain("import SettingsCard from './SettingsCard.vue';");
     expect(aiSettingsSource).toContain("import SettingsRow from './SettingsRow.vue';");
-    expect(aiSettingsSource).toContain('<SettingsCard title="KI-Erklärungen">');
-    expect(aiSettingsSource).toContain('<SettingsRow v-if="ai.byoOffered || configured" label="API-Schlüssel">');
+    expect(aiSettingsSource).toContain('<SettingsCard :title="t(\'KI-Erklärungen\')">');
+    expect(aiSettingsSource).toContain('<SettingsRow v-if="ai.byoOffered || configured" :label="t(\'API-Schlüssel\')">');
     expect(aiSettingsSource).toContain('aria-controls="ai-credential-editor"');
     expect(aiSettingsSource).toContain('aria-controls="ai-preferences-editor"');
     expect(aiSettingsSource).toContain('aria-controls="ai-privacy-details"');
@@ -99,7 +97,7 @@ describe('AI settings information hierarchy', () => {
   });
 
   it('renders the source selector only when both sources are usable', () => {
-    expect(aiSettingsSource).toContain('v-if="showSourceChooser" label="Quelle"');
+    expect(aiSettingsSource).toContain('v-if="showSourceChooser" :label="t(\'Quelle\')"');
     expect(aiSettingsSource).toContain('ai.poolOffered && ai.byoOffered');
     expect(aiSettingsSource).toContain('role="radiogroup" :aria-labelledby="labelId"');
     expect(aiSettingsSource).toContain('type="radio"');

@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import SessionItemList from './SessionItemList.vue';
 import type { SessionItem } from './SessionItemList.vue';
+
+const { t } = useI18n();
 
 defineProps<{
   items: readonly SessionItem[];
@@ -12,9 +16,9 @@ const emit = defineEmits<{ jump: [index: number] }>();
 </script>
 
 <template>
-  <aside class="practice-rail" aria-label="Programmübersicht">
+  <aside class="practice-rail" :aria-label="t('Programmübersicht')">
     <div class="practice-rail__head">
-      <span class="practice-rail__title">Programm</span>
+      <span class="practice-rail__title">{{ t('Programm') }}</span>
       <span class="practice-rail__count">{{ gradedCount }}/{{ total }}</span>
     </div>
     <SessionItemList :items="items" dense @jump="emit('jump', $event)" />

@@ -60,7 +60,7 @@ const titleId = `settings-card-${useId()}`;
 .q-settings-card__title {
   margin: 0;
   color: var(--q-ink);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.35;
 }

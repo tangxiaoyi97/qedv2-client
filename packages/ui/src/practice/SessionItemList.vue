@@ -14,6 +14,7 @@ export interface SessionItem {
 </script>
 
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * The programme list, shared by the desktop rail and the mobile drawer.
  *
@@ -24,6 +25,8 @@ export interface SessionItem {
  */
 import { VERDICT_LABELS } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
+
+const { t } = useI18n();
 
 const STATE_LABELS: Record<SessionItem['state'], string> = {
   ...VERDICT_LABELS,
@@ -45,8 +48,8 @@ const isAnswered = (state: SessionItem['state']): boolean =>
   state === 'correct' || state === 'partial' || state === 'incorrect';
 
 function title(item: SessionItem): string {
-  if (item.state === 'current') return 'Aktuelle Aufgabe';
-  return item.jumpable ? 'Zu dieser Aufgabe springen' : 'Bereits beantwortet';
+  if (item.state === 'current') return t('Aktuelle Aufgabe');
+  return t(item.jumpable ? 'Zu dieser Aufgabe springen' : 'Bereits beantwortet');
 }
 </script>
 
@@ -62,7 +65,7 @@ function title(item: SessionItem): string {
         }"
         :disabled="!item.jumpable && item.state !== 'current'"
         :title="title(item)"
-        :aria-label="`${item.index + 1}. ${item.title}${item.partLabel ? ` · ${item.partLabel}` : ''}: ${STATE_LABELS[item.state]}`"
+        :aria-label="`${item.index + 1}. ${item.title}${item.partLabel ? ` · ${item.partLabel}` : ''}: ${t(STATE_LABELS[item.state])}`"
         @click="item.jumpable && emit('jump', item.index)"
       >
         <span class="q-sitems__icon" aria-hidden="true">

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, reactive, type App } from 'vue';
 import AiSettings from '../src/routes/settings/AiSettings.vue';
 import aiSettingsSource from '../src/routes/settings/AiSettings.vue?raw';
+import { setUiLocale } from '@qed2/ui';
 
 interface TestAiStatus {
   byo: {
@@ -165,10 +166,51 @@ describe('AI settings view', () => {
   });
 
   afterEach(() => {
+    setUiLocale('de');
     mounted?.app.unmount();
     mounted = undefined;
     document.body.innerHTML = '';
     vi.restoreAllMocks();
+  });
+
+  it('switches settings labels and forms live without translating saved user instructions', async () => {
+    aiStore.customInstructions = 'Bitte meine eigenen Hinweise behalten.';
+    const host = mountSettings();
+    setUiLocale('en');
+    await nextTick();
+
+    expect(host.querySelector('h2')?.textContent).toBe('AI explanations');
+    expect(host.textContent).toContain('Own key');
+    expect(host.textContent).toContain('Ready');
+    expect(host.textContent).not.toContain('API-Schlüssel');
+    buttonWithText(host, 'Edit').click();
+    await nextTick();
+    expect(host.querySelector('form[aria-label="AI response style"]')).not.toBeNull();
+    expect(getElement<HTMLTextAreaElement>(host, '#ai-instructions').value).toBe('Bitte meine eigenen Hinweise behalten.');
+    expect(getElement<HTMLInputElement>(host, '#ai-language').value).toBe('Deutsch');
+
+    setUiLocale('de');
+    await nextTick();
+    expect(host.querySelector('h2')?.textContent).toBe('KI-Erklärungen');
+    expect(host.querySelector('form[aria-label="Antwortstil der KI"]')).not.toBeNull();
+  });
+
+  it('locks the AI source while saving and surfaces a failed change', async () => {
+    let reject!: (reason: Error) => void;
+    aiStore.setMode = vi.fn(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const host = mountSettings();
+    const pool = getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="pool"]');
+    pool.click();
+    await nextTick();
+    expect(pool.disabled).toBe(true);
+    expect(getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="byo"]').disabled).toBe(true);
+    reject(new Error('Die KI-Quelle konnte nicht gespeichert werden.'));
+    await settle();
+    expect(pool.disabled).toBe(false);
+    expect(pool.checked).toBe(false);
+    expect(getElement<HTMLInputElement>(host, 'input[name="ai-source"][value="byo"]').checked).toBe(true);
+    expect(host.textContent).toContain('Die KI-Quelle konnte nicht gespeichert werden.');
+    expect(aiStore.mode).toBe('byo');
   });
 
   it('shows a compact readiness summary and an exclusive source control only when both sources work', async () => {
@@ -180,6 +222,8 @@ describe('AI settings view', () => {
     expect(host.textContent).toContain('Bereit');
     expect(host.textContent).toContain('Erklären · Bewerten');
     expect(host.textContent).toContain('OpenAI · gpt-test · •••• 1234');
+    expect(host.textContent).not.toContain('Kontingent');
+    expect(host.textContent).not.toMatch(/1\s000 Token/);
 
     const sourceControl = getElement(host, '[role="radiogroup"][aria-labelledby]');
     const labelledBy = sourceControl.getAttribute('aria-labelledby');
@@ -199,6 +243,7 @@ describe('AI settings view', () => {
 
     expect(aiStore.setMode).toHaveBeenCalledWith('pool');
     expect(serverPool.checked).toBe(true);
+    expect(host.textContent).toContain('Kontingent');
     expect(host.textContent).toMatch(/1\s000 Token/);
   });
 

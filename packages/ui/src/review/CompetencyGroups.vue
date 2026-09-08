@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Mastery grouped by Grundkompetenz category (prototype 3c): one card per
  * AG / FA / AN / WS group, header with mean-mastery aggregate, rows of
@@ -7,6 +9,8 @@
 import { computed } from 'vue';
 import { competencyCategory, masteryLevel } from '@qed2/core-logic';
 import MasteryBar from './MasteryBar.vue';
+
+const { t } = useI18n();
 
 export interface CompetencyGroupEntry {
   code: string;
@@ -45,11 +49,11 @@ const groups = computed(() => {
     const level = masteryLevel(mean);
     return {
       cat,
-      name: CATEGORY_NAMES[cat] ?? cat,
+      name: t(CATEGORY_NAMES[cat] ?? cat),
       rows,
       percent: Math.round(Math.min(1, Math.max(0, mean)) * 100),
       level,
-      levelLabel: LEVEL_LABELS[level],
+      levelLabel: t(LEVEL_LABELS[level]),
     };
   });
 });
@@ -59,7 +63,7 @@ const groups = computed(() => {
   <div class="q-cgroups">
     <section v-for="group in groups" :key="group.cat" class="q-cgroups__card">
       <header class="q-cgroups__head">
-        <span class="q-cgroups__cat">{{ group.cat === 'other' ? 'Sonstige' : group.cat }}</span>
+        <span class="q-cgroups__cat">{{ group.cat === 'other' ? t('Sonstige') : group.cat }}</span>
         <span class="q-cgroups__name">{{ group.name }}</span>
         <span class="q-cgroups__agg" :class="`q-cgroups__agg--${group.level}`">
           {{ group.levelLabel }} · {{ group.percent }} %
@@ -71,9 +75,9 @@ const groups = computed(() => {
           <span
             class="q-cgroups__due"
             :class="{ 'q-cgroups__due--on': entry.due }"
-            :title="entry.due ? 'fällig' : undefined"
+            :title="entry.due ? t('fällig') : undefined"
           >
-            <span v-if="entry.due" class="q-visually-hidden">fällig</span>
+            <span v-if="entry.due" class="q-visually-hidden">{{ t('fällig') }}</span>
           </span>
         </div>
       </div>

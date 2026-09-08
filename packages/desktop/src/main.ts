@@ -60,6 +60,8 @@ app.enableSandbox();
 if (process.platform === 'win32') app.setAppUserModelId('studio.barcarolle.qed2');
 
 let windows: WindowManager | undefined;
+let nativeLocale: 'de' | 'en' = 'de';
+const nativeText = (de: string, en: string): string => nativeLocale === 'en' ? en : de;
 let shuttingDown = false;
 let fatalMainProcess: ((kind: string, error: unknown) => void) | undefined;
 
@@ -119,12 +121,10 @@ function installRendererRecovery(
       await logger.flush();
       const { response } = await dialog.showMessageBox(window, {
         type: 'error',
-        title: `${APP_NAME} – Fensterwiederherstellung`,
-        message: 'Dieses Fenster konnte nicht stabil dargestellt werden.',
-        detail:
-          'Der Darstellungsprozess ist innerhalb einer Minute wiederholt ausgefallen. ' +
-          'Der lokale Core und Ihre Daten laufen getrennt weiter.',
-        buttons: ['Fenster neu laden', 'Protokoll anzeigen und neu laden', 'Fenster schließen'],
+        title: `${APP_NAME} – ${nativeText('Fensterwiederherstellung', 'Window recovery')}`,
+        message: nativeText('Dieses Fenster ist wiederholt ausgefallen.', 'This window has crashed repeatedly.'),
+        detail: nativeText('Lokaler Core und gespeicherte Daten bleiben erhalten.', 'Your local Core and saved work are unaffected.'),
+        buttons: [nativeText('Neu laden', 'Reload'), nativeText('Protokoll & neu laden', 'Show log & reload'), nativeText('Schließen', 'Close')],
         defaultId: 0,
         cancelId: 2,
         noLink: true,
@@ -283,8 +283,8 @@ function installMainCrashRecovery(logger: DesktopLogger): (kind: string, error: 
     if (!shouldRestart) {
       try {
         dialog.showErrorBox(
-          `${APP_NAME} konnte nicht stabil gestartet werden`,
-          'Der automatische Neustart wurde nach drei Fehlern angehalten. Öffnen Sie QED2 erneut; die lokalen Daten bleiben erhalten.',
+          nativeText(`${APP_NAME} konnte nicht gestartet werden`, `${APP_NAME} could not start`),
+          nativeText('Neustart nach drei Fehlern angehalten. Öffne QED2 erneut; deine Daten bleiben erhalten.', 'Restart paused after three failures. Open QED2 again; your saved work is safe.'),
         );
       } catch (dialogError) {
         logger.error('Could not present the main-process crash-loop dialog', dialogError);
@@ -413,6 +413,7 @@ async function bootstrap(): Promise<void> {
     },
   );
   const storage = storageResult.storage;
+  nativeLocale = storage.get('config', 'locale') === 'en' ? 'en' : 'de';
   if (storageResult.quarantinedPaths.length > 0) {
     logger.warn('QED2 started with a clean database after preserving damaged local data', {
       quarantinedPaths: storageResult.quarantinedPaths,
@@ -572,6 +573,7 @@ async function bootstrap(): Promise<void> {
     selfUpdateAvailable: updates.isSelfUpdateAvailable(),
     manualAppInstall: selfUpdateAvailability.reason === 'unsigned-manual',
     appName: APP_NAME,
+    locale: nativeLocale,
     windowIcon: () => currentWindowIcon,
     backgroundColor: currentDesktopBackground,
     restoreWindowState: (kind) => storage.get('desktop-window', kind),
@@ -579,6 +581,21 @@ async function bootstrap(): Promise<void> {
     onError: (error, context) => logger.error('Window operation failed', { context, error }),
   });
 
+  const applyLocalePreference = (preference: unknown): void => {
+    nativeLocale = preference === 'en' ? 'en' : 'de';
+    windows?.setLocale(nativeLocale);
+    installApplicationMenu({
+      appName: APP_NAME,
+      locale: nativeLocale,
+      openPracticeWindow: () => windows?.openPracticeWindow(),
+      openUpdateCenterWindow: () => windows?.openUpdateCenterWindow(),
+      openNodeDiagnosticsWindow: () => windows?.openNodeDiagnosticsWindow(),
+      openLogs: () => {
+        void logger.flush().then(() => shell.showItemInFolder(logger.filePath));
+      },
+      dispatch: (command, target) => windows?.dispatchShellCommand(command, target),
+    });
+  };
   const desktopIpc = installDesktopIpc({
     renderer: rendererAddress,
     storage,
@@ -590,19 +607,9 @@ async function bootstrap(): Promise<void> {
     },
     applyThemePreference,
     applyAccentPreference,
+    applyLocalePreference,
   });
-  installApplicationMenu({
-    appName: APP_NAME,
-    openPracticeWindow: () => windows?.openPracticeWindow(),
-    openUpdateCenterWindow: () => windows?.openUpdateCenterWindow(),
-    openNodeDiagnosticsWindow: () => windows?.openNodeDiagnosticsWindow(),
-    openLogs: () => {
-      void logger.flush().then(() => shell.showItemInFolder(logger.filePath));
-    },
-    dispatch: (command, target) => {
-      windows?.dispatchShellCommand(command, target);
-    },
-  });
+  applyLocalePreference(storage.get('config', 'locale'));
 
   windows.openMainWindow();
   // Local is the first-launch default. A persisted Remote choice deliberately
@@ -707,7 +714,7 @@ if (hasInstanceLock) {
       fatalMainProcess('bootstrap rejection', error);
       return;
     }
-    dialog.showErrorBox(`${APP_NAME} konnte nicht gestartet werden`, error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox(nativeText(`${APP_NAME} konnte nicht gestartet werden`, `${APP_NAME} could not start`), error instanceof Error ? error.message : String(error));
     app.exit(1);
   });
 }

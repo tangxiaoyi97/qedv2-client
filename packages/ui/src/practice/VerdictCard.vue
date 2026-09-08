@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Verdict card — the ONE authoritative grade feedback, rendered in the
  * content flow directly below the answer control (the verdict belongs to
@@ -12,8 +14,11 @@
  * get it instantly via the global media query).
  */
 import { computed } from 'vue';
-import { VERDICT_LABELS, formatScoreRatio, type GradeResult } from '@qed2/core-logic';
+import { VERDICT_LABELS, type GradeResult } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
+import { formatUiScoreRatio as formatScoreRatio } from '../shared/format-score.js';
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -40,7 +45,7 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
   <div class="q-verdict" :class="`q-verdict--${verdict}`" role="status">
     <StateIcon class="q-verdict__icon" :state="verdict" :size="30" />
     <div class="q-verdict__main">
-      <div class="q-verdict__label">{{ VERDICT_LABELS[verdict] }}</div>
+      <div class="q-verdict__label">{{ t(VERDICT_LABELS[verdict]) }}</div>
       <div v-if="note" class="q-verdict__note">{{ note }}</div>
     </div>
     <div class="q-verdict__side">
@@ -51,7 +56,7 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
         class="q-verdict__solution"
         @click="emit('viewSolution')"
       >
-        Lösung ↓
+        {{ t('Lösung ↓') }}
       </button>
     </div>
   </div>

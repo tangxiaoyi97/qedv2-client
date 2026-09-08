@@ -40,6 +40,8 @@ export function activeFilterCount(f: FilterState): number {
 </script>
 
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Filter modal for the Aufgaben list — every dimension is multi-select
  * (toggle chips). The parent owns the data and computes `resultCount`
@@ -60,6 +62,8 @@ import GradingDot from '../shared/GradingDot.vue';
 import QButton from '../shared/QButton.vue';
 import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
+
+const { t } = useI18n();
 
 
 const props = withDefaults(
@@ -134,21 +138,21 @@ function onBackdropClick(ev: MouseEvent): void {
   if (ev.target === ev.currentTarget) emit('close');
 }
 
-const countText = computed(() => `${props.resultCount} Treffer`);
+const countText = computed(() => t('{count} Treffer', { count: props.resultCount }));
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="fdlg q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Filter" @click="onBackdropClick">
+    <div class="fdlg q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" :aria-label="t('Filter')" @click="onBackdropClick">
       <div ref="card" class="fdlg__card">
         <div class="fdlg__head">
-          <h2 class="fdlg__title">Filter</h2>
-          <QIconButton aria-label="Schließen" data-autofocus @click="emit('close')" />
+          <h2 class="fdlg__title">{{ t('Filter') }}</h2>
+          <QIconButton :aria-label="t('Schließen')" data-autofocus @click="emit('close')" />
         </div>
 
         <div class="fdlg__body">
           <section class="fdlg__section">
-            <div class="fdlg__label">Jahr</div>
+            <div class="fdlg__label">{{ t('Jahr') }}</div>
             <div class="fdlg__chips">
               <button
                 v-for="y in YEARS"
@@ -166,43 +170,43 @@ const countText = computed(() => `${props.resultCount} Treffer`);
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Termin</div>
+            <div class="fdlg__label">{{ t('Termin') }}</div>
             <div class="fdlg__chips">
               <button
-                v-for="t in TERMS"
-                :key="t"
+                v-for="term in TERMS"
+                :key="term"
                 type="button"
                 class="fdlg__chip"
-                :class="{ 'fdlg__chip--on': modelValue.terms.includes(t) }"
-                :aria-pressed="modelValue.terms.includes(t) ? 'true' : 'false'"
-                @click="toggleTerm(t)"
+                :class="{ 'fdlg__chip--on': modelValue.terms.includes(term) }"
+                :aria-pressed="modelValue.terms.includes(term) ? 'true' : 'false'"
+                @click="toggleTerm(term)"
               >
-                <span v-if="modelValue.terms.includes(t)" class="fdlg__tick" aria-hidden="true">✓</span>
-                {{ TERM_LABELS[t] }}
+                <span v-if="modelValue.terms.includes(term)" class="fdlg__tick" aria-hidden="true">✓</span>
+                {{ t(TERM_LABELS[term]) }}
               </button>
             </div>
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Teil</div>
+            <div class="fdlg__label">{{ t('Teil') }}</div>
             <div class="fdlg__chips">
               <button
-                v-for="t in TEILS"
-                :key="t"
+                v-for="part in TEILS"
+                :key="part"
                 type="button"
                 class="fdlg__chip"
-                :class="{ 'fdlg__chip--on': modelValue.teils.includes(t) }"
-                :aria-pressed="modelValue.teils.includes(t) ? 'true' : 'false'"
-                @click="toggleTeil(t)"
+                :class="{ 'fdlg__chip--on': modelValue.teils.includes(part) }"
+                :aria-pressed="modelValue.teils.includes(part) ? 'true' : 'false'"
+                @click="toggleTeil(part)"
               >
-                <span v-if="modelValue.teils.includes(t)" class="fdlg__tick" aria-hidden="true">✓</span>
-                {{ TEIL_LABELS[t] }}
+                <span v-if="modelValue.teils.includes(part)" class="fdlg__tick" aria-hidden="true">✓</span>
+                {{ t(TEIL_LABELS[part]) }}
               </button>
             </div>
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Kompetenz</div>
+            <div class="fdlg__label">{{ t('Kompetenz') }}</div>
             <div class="fdlg__chips">
               <button
                 v-for="c in CATEGORIES"
@@ -220,7 +224,7 @@ const countText = computed(() => `${props.resultCount} Treffer`);
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Bewertung</div>
+            <div class="fdlg__label">{{ t('Bewertung') }}</div>
             <div class="fdlg__chips">
               <button
                 v-for="g in GRADINGS"
@@ -233,13 +237,13 @@ const countText = computed(() => `${props.resultCount} Treffer`);
               >
                 <span v-if="modelValue.gradings.includes(g)" class="fdlg__tick" aria-hidden="true">✓</span>
                 <GradingDot :grading="g" :size="12" />
-                {{ GRADING_FILTER_LABELS[g] }}
+                {{ t(GRADING_FILTER_LABELS[g]) }}
               </button>
             </div>
           </section>
 
           <section v-if="formats && formats.length > 0" class="fdlg__section">
-            <div class="fdlg__label">Aufgabenformat</div>
+            <div class="fdlg__label">{{ t('Aufgabenformat') }}</div>
             <div class="fdlg__chips">
               <button
                 v-for="f in formats"
@@ -257,7 +261,7 @@ const countText = computed(() => `${props.resultCount} Treffer`);
           </section>
 
           <section class="fdlg__section">
-            <div class="fdlg__label">Merkliste</div>
+            <div class="fdlg__label">{{ t('Merkliste') }}</div>
             <div class="fdlg__chips">
               <button
                 type="button"
@@ -267,7 +271,7 @@ const countText = computed(() => `${props.resultCount} Treffer`);
                 @click="toggleStarred"
               >
                 <span v-if="modelValue.starredOnly" class="fdlg__tick" aria-hidden="true">✓</span>
-                Markiert ★
+                {{ t('Markiert ★') }}
               </button>
             </div>
           </section>
@@ -275,10 +279,10 @@ const countText = computed(() => `${props.resultCount} Treffer`);
 
         <div class="fdlg__footer">
           <span class="fdlg__count" role="status" :aria-label="countText" aria-live="polite">
-            {{ resultCount }} Treffer
+            {{ resultCount }} {{ t('Treffer') }}
           </span>
-          <QButton variant="ghost" @click="reset">Leeren</QButton>
-          <QButton @click="emit('close')">Anzeigen</QButton>
+          <QButton variant="ghost" @click="reset">{{ t('Leeren') }}</QButton>
+          <QButton @click="emit('close')">{{ t('Anzeigen') }}</QButton>
         </div>
       </div>
     </div>

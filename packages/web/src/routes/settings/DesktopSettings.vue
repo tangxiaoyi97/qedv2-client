@@ -10,7 +10,10 @@ import {
   type UpdateSnapshot,
   type UpdateTargetState,
 } from '@qed2/core-logic';
-import { QButton } from '@qed2/ui';
+import { QButton, QNotice, CollapsePanel } from '@qed2/ui';
+import { Cloud, HardDrive, LoaderCircle } from 'lucide-vue-next';
+import { useI18n } from '../../i18n.js';
+import SettingsCard from './SettingsCard.vue';
 import { ports } from '../../services.js';
 import { useAppStore } from '../../stores/app.js';
 import { shortCommit } from '../../version-info.js';
@@ -43,6 +46,7 @@ const props = defineProps<{
 }>();
 const route = useRoute();
 const app = useAppStore();
+const { t, formatNumber } = useI18n();
 const root = ref<HTMLElement | null>(null);
 const toolHeading = ref<HTMLElement | null>(null);
 const busyAction = ref<
@@ -52,6 +56,7 @@ const problem = ref('');
 const snapshotProblem = ref('');
 const notice = ref('');
 const updateSnapshot = ref<UpdateSnapshot>();
+const snapshotLoading = ref(false);
 const openingWindow = ref<DesktopWindowTarget | null>(null);
 let stopUpdateSubscription: (() => void) | undefined;
 
@@ -66,26 +71,32 @@ const isToolWindow = computed(() => activePanel.value !== 'overview');
 const showRuntime = computed(() => activePanel.value !== 'updates');
 const showUpdates = computed(() => activePanel.value !== 'node');
 const title = computed(() => {
-  if (activePanel.value === 'updates') return 'Aktualisierungen';
-  if (activePanel.value === 'node') return 'Lokaler Knoten';
+  if (activePanel.value === 'updates') return t('Aktualisierungen');
+  if (activePanel.value === 'node') return t('Lokaler Knoten');
   return 'Desktop';
 });
 
 const runtimePhaseLabel = computed(() => {
-  if (app.coreSourcePreference === 'remote') return 'Remote';
-  if (app.coreEndpointSource === 'remote') return 'Remote-Ersatz';
+  if (app.coreSourcePreference === 'remote') return t('Remote');
+  if (app.coreEndpointSource === 'remote') return t('Remote-Ersatz');
   switch (app.coreRuntimeStatus?.phase) {
-    case 'starting': return 'Startet';
-    case 'ready': return 'Bereit';
-    case 'recovering': return 'Wiederherstellung';
-    case 'degraded': return 'Remote-Ersatz';
-    case 'failed': return 'Fehler';
-    case 'stopped': return 'Gestoppt';
-    default: return 'Prüfung';
+    case 'starting': return t('Startet');
+    case 'ready': return t('Bereit');
+    case 'recovering': return t('Wiederherstellung');
+    case 'degraded': return t('Remote-Ersatz');
+    case 'failed': return t('Fehler');
+    case 'stopped': return t('Gestoppt');
+    default: return t('Prüfung');
   }
 });
+const sourceStatus = computed(() => {
+  if (app.coreSourcePreference === 'remote') return t('Netzwerk erforderlich');
+  if (app.coreEndpointSource === 'remote') return t('Remote-Ersatz');
+  if (app.coreRuntimeStatus?.phase === 'ready') return t('Offline bereit');
+  return t(runtimePhaseLabel.value);
+});
 
-const updateBusy = computed(() => updateSnapshot.value?.busy === true || busyAction.value !== null);
+const updateBusy = computed(() => snapshotLoading.value || updateSnapshot.value?.busy === true || busyAction.value !== null);
 const appTarget = computed(() =>
   updateSnapshot.value?.targets.find((target) => target.target === 'app'),
 );
@@ -117,30 +128,39 @@ const canRelaunch = computed(
 );
 
 function targetLabel(target: UpdateTargetState['target']): string {
-  return target === 'app' ? 'QED2 Desktop' : target === 'core' ? 'Core' : 'Aufgabenbank';
+  return target === 'app' ? 'QED2 Desktop' : target === 'core' ? 'Core' : t('Aufgabenbank');
+}
+
+function runtimeMessage(message: string): string {
+  const ready = /^Lokaler Core ist bereit \(Port (\d+); (\d+) war nicht verfügbar\)\.$/.exec(message);
+  if (ready) return t('Lokaler Core ist bereit (Port {port}; {preferred} war nicht verfügbar).', { port: ready[1]!, preferred: ready[2]! });
+  const retry = /^Lokaler Core wird wiederhergestellt \(Versuch (\d+)\/3\) …$/.exec(message);
+  if (retry) return t('Lokaler Core wird wiederhergestellt (Versuch {attempt}/3) …', { attempt: retry[1]! });
+  return t(message);
 }
 
 function updatePhaseLabel(target: UpdateTargetState): string {
   switch (target.phase) {
-    case 'checking': return 'Wird geprüft …';
-    case 'available': return target.target === 'app' ? 'Download verfügbar' : 'Neuer Stand verfügbar';
-    case 'downloading': return 'Wird heruntergeladen …';
-    case 'verifying': return 'Paket und Prüfsumme werden geprüft …';
-    case 'installing': return 'Wird installiert …';
+    case 'checking': return t('Wird geprüft …');
+    case 'available': return target.target === 'app' ? t('Download verfügbar') : t('Neuer Stand verfügbar');
+    case 'downloading': return t('Wird heruntergeladen …');
+    case 'verifying': return t('Paket und Prüfsumme werden geprüft …');
+    case 'installing': return t('Wird installiert …');
     case 'restart-required':
       return target.installMode === 'manual-package'
-        ? 'Bereit zur Installation'
-        : 'Bereit für Neustart';
-    case 'complete': return target.target === 'app' ? 'Aktuell' : 'Im Desktop-Release gebündelt';
-    case 'error': return target.error?.retryable ? 'Fehlgeschlagen · Wiederholung möglich' : 'Fehlgeschlagen';
-    default: return 'Bereit';
+        ? t('Bereit zur Installation')
+        : t('Bereit für Neustart');
+    case 'complete': return target.target === 'app' ? t('Aktuell') : t('Im Desktop-Release gebündelt');
+    case 'error': return target.error?.retryable ? t('Fehlgeschlagen · Wiederholung möglich') : t('Fehlgeschlagen');
+    default: return t('Bereit');
   }
 }
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const decimal = (value: number) => formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (bytes < 1024 * 1024) return `${decimal(bytes / 1024)} KB`;
+  return `${decimal(bytes / (1024 * 1024))} MB`;
 }
 
 function progressView(progress: OperationProgress | undefined): ProgressView | null {
@@ -154,14 +174,14 @@ function progressView(progress: OperationProgress | undefined): ProgressView | n
     const value = Math.min(progress.total, completed);
     const label = progress.unit === 'bytes'
       ? `${formatBytes(value)} / ${formatBytes(progress.total)}`
-      : `${Math.round(value)} / ${Math.round(progress.total)} Schritte`;
+      : t('{done} / {total} Schritte', { done: Math.round(value), total: Math.round(progress.total) });
     return { determinate: true, value, max: progress.total, label };
   }
   const label = progress.unit === 'bytes'
-    ? `${formatBytes(completed)} geladen`
+    ? t('{bytes} geladen', { bytes: formatBytes(completed) })
     : completed > 0
-      ? `${Math.round(completed)} abgeschlossen`
-      : 'Fortschritt wird ermittelt …';
+      ? t('{count} abgeschlossen', { count: Math.round(completed) })
+      : t('Fortschritt wird ermittelt …');
   return { determinate: false, value: 0, max: 1, label };
 }
 
@@ -180,17 +200,21 @@ function applySnapshot(snapshot: UpdateSnapshot): void {
 }
 
 async function readUpdateSnapshot(): Promise<UpdateSnapshot | undefined> {
+  if (snapshotLoading.value) return updateSnapshot.value;
   if (!ports.update.getState) {
-    snapshotProblem.value = 'Der Desktop-Updater stellt noch keinen Status bereit.';
+    snapshotProblem.value = t('Der Desktop-Updater stellt noch keinen Status bereit.');
     return undefined;
   }
+  snapshotLoading.value = true;
   try {
     const snapshot = await ports.update.getState();
     applySnapshot(snapshot);
     return snapshot;
   } catch {
-    snapshotProblem.value = 'Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.';
+    snapshotProblem.value = t('Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.');
     return undefined;
+  } finally {
+    snapshotLoading.value = false;
   }
 }
 
@@ -217,15 +241,15 @@ function updateCheckIsComplete(
 function updateCheckNotice(results: UpdateCheckResult[], snapshot: UpdateSnapshot | undefined): string {
   const available = results.filter((item) => item.updateAvailable).length;
   const found = available
-    ? `${available} Aktualisierung${available === 1 ? '' : 'en'} gefunden.`
+    ? available === 1 ? t('1 Aktualisierung gefunden.') : t('{count} Aktualisierungen gefunden.', { count: available })
     : '';
   if (!updateCheckIsComplete(results, snapshot)) {
-    return `${found}${found ? ' ' : ''}Nicht alle Komponenten konnten geprüft werden. Bitte erneut versuchen.`;
+    return [found, t('Nicht alle Komponenten konnten geprüft werden. Bitte erneut versuchen.')].filter(Boolean).join(' ');
   }
   const sharedDetail = results[0]?.detail;
   const allShareDetail =
     sharedDetail !== undefined && results.every((result) => result.detail === sharedDetail);
-  return found || (allShareDetail ? sharedDetail : 'Alle Komponenten sind aktuell.');
+  return found || (allShareDetail ? t(sharedDetail) : t('Alle Komponenten sind aktuell.'));
 }
 
 async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
@@ -238,7 +262,7 @@ async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
     await app.resolveCoreEndpoint();
     app.refreshServiceInfo();
   } catch {
-    problem.value = 'Die lokale Laufzeit konnte nicht geändert werden. Bitte erneut versuchen.';
+    problem.value = t('Die lokale Laufzeit konnte nicht geändert werden. Bitte erneut versuchen.');
   } finally {
     busyAction.value = null;
   }
@@ -246,6 +270,9 @@ async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
 
 async function selectRuntimeSource(source: CoreSourcePreference): Promise<void> {
   if (!ports.coreRuntime.selectSource || busyAction.value) return;
+  if (source === app.coreSourcePreference && (
+    source === 'remote' || (app.coreEndpointSource === 'local' && app.coreRuntimeStatus?.phase === 'ready')
+  )) return;
   busyAction.value = `source-${source}`;
   problem.value = '';
   notice.value = '';
@@ -254,8 +281,8 @@ async function selectRuntimeSource(source: CoreSourcePreference): Promise<void> 
     app.refreshServiceInfo();
   } catch {
     problem.value = source === 'local'
-      ? 'Der lokale Core konnte nicht sicher gestartet werden. Die Remote-Verbindung bleibt als Ersatz verfügbar.'
-      : 'Der Remote-Core konnte nicht ausgewählt werden. Bitte erneut versuchen.';
+      ? t('Der lokale Core konnte nicht sicher gestartet werden. Die Remote-Verbindung bleibt als Ersatz verfügbar.')
+      : t('Der Remote-Core konnte nicht ausgewählt werden. Bitte erneut versuchen.');
   } finally {
     busyAction.value = null;
   }
@@ -275,7 +302,7 @@ async function checkForUpdates(): Promise<void> {
     const snapshot = await readUpdateSnapshot();
     notice.value = updateCheckNotice(result, snapshot);
   } catch {
-    problem.value = 'Aktualisierungen konnten nicht geprüft werden. Bitte erneut versuchen.';
+    problem.value = t('Aktualisierungen konnten nicht geprüft werden. Bitte erneut versuchen.');
   } finally {
     busyAction.value = null;
   }
@@ -293,7 +320,7 @@ async function applyAppUpdate(): Promise<void> {
     const snapshot = await readUpdateSnapshot();
     const state = snapshot?.targets.find((target) => target.target === 'app');
     problem.value = state?.error?.message
-      ?? 'Die Aktualisierung konnte nicht vorbereitet werden. Der aktuelle Installationsstand bleibt unverändert.';
+      ?? t('Die Aktualisierung konnte nicht vorbereitet werden. Der aktuelle Installationsstand bleibt unverändert.');
   } finally {
     busyAction.value = null;
   }
@@ -309,9 +336,9 @@ async function relaunchToApply(): Promise<void> {
     const snapshot = await readUpdateSnapshot();
     const state = snapshot?.targets.find((target) => target.target === 'app');
     if (state?.phase === 'restart-required' && state.installMode === 'manual-package') {
-      notice.value = state.message ?? 'Das verifizierte Paket ist zur manuellen Installation bereit.';
+      notice.value = state.message ?? t('Das verifizierte Paket ist zur manuellen Installation bereit.');
     } else {
-      problem.value = 'QED2 konnte für die Installation nicht neu gestartet werden.';
+      problem.value = t('QED2 konnte für die Installation nicht neu gestartet werden.');
     }
     busyAction.value = null;
   }
@@ -324,7 +351,7 @@ async function openDesktopWindow(target: DesktopWindowTarget): Promise<void> {
   try {
     await ports.shell.openDesktopWindow(target);
   } catch {
-    problem.value = 'Das Desktop-Fenster konnte nicht geöffnet werden. Bitte erneut versuchen.';
+    problem.value = t('Das Desktop-Fenster konnte nicht geöffnet werden. Bitte erneut versuchen.');
   } finally {
     openingWindow.value = null;
   }
@@ -339,7 +366,7 @@ async function focusRequestedSection(): Promise<void> {
 onMounted(() => {
   if (!isDesktopShell) return;
   if (ports.update.onChange) stopUpdateSubscription = ports.update.onChange(applySnapshot);
-  if (showUpdates.value) void readUpdateSnapshot();
+  if (showUpdates.value && ports.update.capabilities.selfUpdate) void readUpdateSnapshot();
   void focusRequestedSection();
 });
 
@@ -350,7 +377,7 @@ watch(
     problem.value = '';
     snapshotProblem.value = '';
     notice.value = '';
-    if (showUpdates.value) void readUpdateSnapshot();
+    if (showUpdates.value && ports.update.capabilities.selfUpdate) void readUpdateSnapshot();
     void focusRequestedSection();
   },
   { flush: 'post' },
@@ -377,7 +404,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
         {{ title }}
       </h1>
       <span
-        v-if="showRuntime"
+        v-if="activePanel === 'node'"
         class="desktop-settings__state"
         :data-phase="app.coreRuntimeStatus?.phase ?? 'unknown'"
         role="status"
@@ -386,13 +413,65 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
       </span>
     </header>
 
-    <div
+    <SettingsCard v-if="showRuntime" class="desktop-settings__subsection" aria-labelledby="runtime-title">
+      <div class="desktop-settings__subhead">
+        <h2 id="runtime-title" class="desktop-settings__subheading">{{ t('Aufgabenquelle') }}</h2>
+        <span class="desktop-settings__source-status" role="status" aria-live="polite">{{ sourceStatus }}</span>
+      </div>
+      <div v-if="ports.coreRuntime.selectSource" class="desktop-settings__source" role="group" :aria-label="t('Aufgabenquelle')" :aria-busy="busyAction?.startsWith('source-') || false">
+        <QButton
+          variant="secondary"
+          class="desktop-settings__source-option"
+          data-source="local"
+          :aria-pressed="app.coreSourcePreference === 'local'"
+          :disabled="busyAction !== null"
+          @click="selectRuntimeSource('local')"
+        >
+          <LoaderCircle v-if="busyAction === 'source-local'" :size="18" class="desktop-settings__spinner" aria-hidden="true" />
+          <HardDrive v-else :size="18" aria-hidden="true" />
+          {{ busyAction === 'source-local' ? t('Startet') : t('Lokal') }}
+        </QButton>
+        <QButton
+          variant="secondary"
+          class="desktop-settings__source-option"
+          data-source="remote"
+          :aria-pressed="app.coreSourcePreference === 'remote'"
+          :disabled="busyAction !== null"
+          @click="selectRuntimeSource('remote')"
+        >
+          <LoaderCircle v-if="busyAction === 'source-remote'" :size="18" class="desktop-settings__spinner" aria-hidden="true" />
+          <Cloud v-else :size="18" aria-hidden="true" />
+          {{ busyAction === 'source-remote' ? t('Wird gewechselt …') : t('Remote') }}
+        </QButton>
+      </div>
+      <p v-if="app.coreRuntimeStatus?.error" class="desktop-settings__target-error" role="alert">
+        {{ t(app.coreRuntimeStatus.error.message) }}
+        <code>{{ app.coreRuntimeStatus.error.code }}</code>
+      </p>
+      <CollapsePanel :key="activePanel" :title="t('Laufzeitdetails')" :default-open="activePanel === 'node'">
+        <dl class="desktop-settings__facts">
+          <div><dt>Core</dt><dd>{{ app.coreInfo?.version ?? t('Wird ermittelt …') }}</dd></div>
+          <div><dt>Bank</dt><dd>{{ app.coreInfo ? t(shortCommit(app.coreInfo.bank.commit)) : t('Wird ermittelt …') }}</dd></div>
+        </dl>
+        <p v-if="app.coreRuntimeStatus?.message" class="desktop-settings__message">{{ runtimeMessage(app.coreRuntimeStatus.message) }}</p>
+        <div class="desktop-settings__actions desktop-settings__recovery">
+        <QButton v-if="ports.coreRuntime.recover" variant="secondary" :disabled="busyAction !== null" @click="recoverRuntime('retry')">
+          {{ busyAction === 'retry' ? t('Core startet …') : t('Core neu starten') }}
+        </QButton>
+        <QButton v-if="ports.coreRuntime.recover" variant="ghost" :disabled="busyAction !== null" @click="recoverRuntime('repair')">
+          {{ busyAction === 'repair' ? t('Prüfung läuft …') : t('Laufzeit prüfen') }}
+        </QButton>
+        </div>
+      </CollapsePanel>
+    </SettingsCard>
+
+    <SettingsCard
       v-if="!isToolWindow && ports.shell.openDesktopWindow"
       class="desktop-settings__subsection"
       aria-labelledby="desktop-windows-title"
     >
       <div>
-        <h2 id="desktop-windows-title" class="desktop-settings__subheading">Eigene Fenster</h2>
+        <h2 id="desktop-windows-title" class="desktop-settings__subheading">{{ t('Eigene Fenster') }}</h2>
       </div>
       <div class="desktop-settings__actions">
         <QButton
@@ -401,7 +480,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('practice')"
         >
-          {{ openingWindow === 'practice' ? 'Wird geöffnet …' : 'Übungsfenster' }}
+          {{ openingWindow === 'practice' ? t('Wird geöffnet …') : t('Übungsfenster') }}
         </QButton>
         <QButton
           variant="ghost"
@@ -409,7 +488,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('updates')"
         >
-          {{ openingWindow === 'updates' ? 'Wird geöffnet …' : 'Update-Center' }}
+          {{ openingWindow === 'updates' ? t('Wird geöffnet …') : t('Update-Center') }}
         </QButton>
         <QButton
           variant="ghost"
@@ -417,67 +496,22 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="openingWindow !== null"
           @click="openDesktopWindow('node')"
         >
-          {{ openingWindow === 'node' ? 'Wird geöffnet …' : 'Knotendiagnose' }}
+          {{ openingWindow === 'node' ? t('Wird geöffnet …') : t('Knotendiagnose') }}
         </QButton>
       </div>
-    </div>
+    </SettingsCard>
 
-    <div v-if="showRuntime" class="desktop-settings__subsection" aria-labelledby="runtime-title">
-      <h2 id="runtime-title" class="desktop-settings__subheading">
-        Lokale Laufzeit
-      </h2>
-      <dl class="desktop-settings__facts">
-        <div><dt>Quelle</dt><dd>{{ app.coreSourcePreference === 'local' ? 'Lokal' : 'Remote' }}</dd></div>
-        <div v-if="app.coreSourcePreference === 'local' && app.coreEndpointSource === 'remote'">
-          <dt>Aktiv</dt><dd>Remote-Ersatz</dd>
-        </div>
-        <div><dt>Core</dt><dd>{{ app.coreInfo?.version ?? 'Wird ermittelt …' }}</dd></div>
-        <div><dt>Bank</dt><dd>{{ app.coreInfo ? shortCommit(app.coreInfo.bank.commit) : 'Wird ermittelt …' }}</dd></div>
-      </dl>
-      <p v-if="app.coreRuntimeStatus?.message" class="desktop-settings__message">
-        {{ app.coreRuntimeStatus.message }}
-      </p>
-      <p v-if="app.coreRuntimeStatus?.error" class="desktop-settings__target-error" role="alert">
-        {{ app.coreRuntimeStatus.error.message }}
-        <code>{{ app.coreRuntimeStatus.error.code }}</code>
-      </p>
-      <div class="desktop-settings__actions">
-        <QButton
-          v-if="ports.coreRuntime.selectSource"
-          :variant="app.coreSourcePreference === 'local' ? 'primary' : 'secondary'"
-          :disabled="busyAction !== null"
-          @click="selectRuntimeSource('local')"
-        >
-          {{ busyAction === 'source-local' ? 'Lokaler Core startet …' : 'Lokale Bank verwenden' }}
-        </QButton>
-        <QButton
-          v-if="ports.coreRuntime.selectSource"
-          :variant="app.coreSourcePreference === 'remote' ? 'primary' : 'secondary'"
-          :disabled="busyAction !== null"
-          @click="selectRuntimeSource('remote')"
-        >
-          {{ busyAction === 'source-remote' ? 'Wird gewechselt …' : 'Remote-Core verwenden' }}
-        </QButton>
-        <QButton v-if="ports.coreRuntime.recover" variant="secondary" :disabled="busyAction !== null" @click="recoverRuntime('retry')">
-          {{ busyAction === 'retry' ? 'Core startet …' : 'Core neu starten' }}
-        </QButton>
-        <QButton v-if="ports.coreRuntime.recover" variant="ghost" :disabled="busyAction !== null" @click="recoverRuntime('repair')">
-          {{ busyAction === 'repair' ? 'Prüfung läuft …' : 'Laufzeit prüfen' }}
-        </QButton>
-      </div>
-    </div>
-
-    <div v-if="showUpdates" class="desktop-settings__subsection" aria-labelledby="updates-title">
+    <SettingsCard v-if="showUpdates" class="desktop-settings__subsection" aria-labelledby="updates-title">
       <div class="desktop-settings__subhead">
         <div>
           <h2 id="updates-title" class="desktop-settings__subheading">
-            Komponenten
+            {{ t('Komponenten') }}
           </h2>
           <p v-if="ports.update.capabilities.manualAppInstall" class="desktop-settings__hint">
-            Unsigniert · manuelle Installation · Core &amp; Bank enthalten
+            {{ t('Unsigniert · manuelle Installation · Core & Bank enthalten') }}
           </p>
           <p v-else class="desktop-settings__hint">
-            Geprüfte Pakete · Core &amp; Bank enthalten
+            {{ t('Geprüfte Pakete · Core & Bank enthalten') }}
           </p>
         </div>
         <QButton
@@ -485,22 +519,22 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="updateBusy || !ports.update.capabilities.selfUpdate || !ports.update.checkForUpdates"
           @click="checkForUpdates"
         >
-          {{ busyAction === 'check' ? 'Suche läuft …' : 'Nach Updates suchen' }}
+          {{ busyAction === 'check' ? t('Suche läuft …') : t('Nach Updates suchen') }}
         </QButton>
       </div>
 
       <p v-if="!ports.update.capabilities.selfUpdate" class="desktop-settings__message">
-        Diese Desktop-Laufzeit verwaltet Aktualisierungen außerhalb der App.
+        {{ t('Diese Desktop-Laufzeit verwaltet Aktualisierungen außerhalb der App.') }}
       </p>
-      <p v-else-if="!updateSnapshot" class="desktop-settings__message" role="status">
-        Aktualisierungsstatus wird geladen …
+      <p v-else-if="!updateSnapshot && !snapshotProblem" class="desktop-settings__message" role="status">
+        {{ t('Aktualisierungsstatus wird geladen …') }}
       </p>
-      <ul v-else class="desktop-settings__targets" aria-label="Aktualisierungsstatus">
+      <ul v-else class="desktop-settings__targets" :aria-label="t('Aktualisierungsstatus')">
         <li v-for="target in targetViews" :key="target.state.target" class="desktop-settings__target">
           <div class="desktop-settings__target-main">
             <strong>{{ target.label }}</strong>
             <small>
-              {{ target.state.currentVersion }}
+              {{ t(target.state.currentVersion) }}
               <template v-if="target.state.latestVersion"> → {{ target.state.latestVersion }}</template>
             </small>
           </div>
@@ -519,11 +553,11 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
               <small>{{ target.progress.label }}</small>
             </template>
           </div>
-          <p v-if="target.state.message" class="desktop-settings__target-message">
-            {{ target.state.message }}
+          <p v-if="target.state.message && target.state.target === 'app' && (target.state.phase === 'restart-required' || (target.state.phase === 'complete' && !target.state.latestVersion))" class="desktop-settings__target-message">
+            {{ t(target.state.message) }}
           </p>
           <p v-if="target.state.error" class="desktop-settings__target-error" role="alert">
-            {{ target.state.error.message }}
+            {{ t(target.state.error.message) }}
             <code>{{ target.state.error.code }}</code>
           </p>
         </li>
@@ -535,9 +569,9 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           :disabled="!canApplyAppUpdate"
           @click="applyAppUpdate"
         >
-          <template v-if="busyAction === 'apply'">Download läuft …</template>
-          <template v-else-if="appTarget?.phase === 'error'">QED2 Desktop erneut herunterladen</template>
-          <template v-else>QED2 Desktop herunterladen</template>
+          <template v-if="busyAction === 'apply'">{{ t('Download läuft …') }}</template>
+          <template v-else-if="appTarget?.phase === 'error'">{{ t('QED2 Desktop erneut herunterladen') }}</template>
+          <template v-else>{{ t('QED2 Desktop herunterladen') }}</template>
         </QButton>
         <QButton
           v-if="canRelaunch || busyAction === 'relaunch'"
@@ -546,16 +580,23 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           @click="relaunchToApply"
         >
           <template v-if="busyAction === 'relaunch'">
-            {{ appTarget?.installMode === 'manual-package' ? 'Paket wird angezeigt …' : 'QED2 startet neu …' }}
+            {{ appTarget?.installMode === 'manual-package' ? t('Paket wird angezeigt …') : t('QED2 startet neu …') }}
           </template>
           <template v-else>
-            {{ appTarget?.installMode === 'manual-package' ? 'Paket anzeigen' : 'Neu starten & installieren' }}
+            {{ appTarget?.installMode === 'manual-package' ? t('Paket anzeigen') : t('Neu starten & installieren') }}
           </template>
         </QButton>
       </div>
-    </div>
+    </SettingsCard>
 
-    <p v-if="snapshotProblem" class="desktop-settings__problem" role="alert">{{ snapshotProblem }}</p>
+    <QNotice v-if="snapshotProblem" tone="error">
+      {{ t(snapshotProblem) }}
+      <template #action>
+        <QButton variant="secondary" :disabled="snapshotLoading" :aria-busy="snapshotLoading" @click="readUpdateSnapshot">
+          {{ snapshotLoading ? t('Wird geladen …') : t('Erneut laden') }}
+        </QButton>
+      </template>
+    </QNotice>
     <p v-if="problem" class="desktop-settings__problem" role="alert">{{ problem }}</p>
     <p v-if="notice" class="desktop-settings__message" role="status">{{ notice }}</p>
   </section>
@@ -567,6 +608,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   flex-direction: column;
   gap: 16px;
   scroll-margin-top: 20px;
+  min-width: 0;
 }
 .desktop-settings__head,
 .desktop-settings__subhead {
@@ -623,11 +665,40 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   color: var(--q-err-ink);
 }
 .desktop-settings__subsection {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid var(--q-border-soft);
+  padding: 16px 18px;
+}
+.desktop-settings__subsection :deep(.q-settings-card__body) { gap: 12px; }
+.desktop-settings__source {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.desktop-settings__source-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.desktop-settings__source-option[data-source='local'][aria-pressed='true'] {
+  border-color: var(--q-ok-border);
+  background: var(--q-ok-bg);
+  color: var(--q-ok-ink);
+}
+.desktop-settings__source-option[data-source='remote'][aria-pressed='true'] {
+  border-color: var(--q-accent);
+  background: var(--q-accent-bg);
+  color: var(--q-accent-strong);
+}
+.desktop-settings__source-status {
+  font-size: 12px;
+  color: var(--q-mut);
+}
+.desktop-settings__recovery { margin-top: 12px; }
+.desktop-settings__spinner { animation: desktop-spin 1s linear infinite; }
+@keyframes desktop-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .desktop-settings__spinner { animation: none; }
 }
 .desktop-settings__subheading {
   color: var(--q-ink);
@@ -729,6 +800,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
 }
 .desktop-settings__message { color: var(--q-mut); font-size: 12px; }
 @media (max-width: 560px) {
+  .desktop-settings__subsection { padding: 12px 14px; }
   .desktop-settings__target { grid-template-columns: 1fr; }
   .desktop-settings__target-status { align-items: flex-start; text-align: left; }
   .desktop-settings__target-status progress { width: 100%; }

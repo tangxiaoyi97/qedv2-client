@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import { computed, ref, useId } from 'vue';
 import { ArrowRight, Check, Lightbulb, RotateCcw } from 'lucide-vue-next';
 import type { AiDiagnosisCode, AiDiagnosisResult, RichText } from '@qed2/core-logic';
@@ -8,6 +10,8 @@ import QButton from '../shared/QButton.vue';
 import QIconButton from '../shared/QIconButton.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
 import RichTextView from '../shared/RichTextView.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   stage: 'hint' | 'diagnosis' | 'correction';
@@ -41,7 +45,7 @@ const titleId = 'q-learning-title-' + useId();
 const hasContent = computed(() => Boolean(
   props.authoredHint?.length || props.markdown?.trim() || props.diagnosis || props.correctionOutcome,
 ));
-const panelTitle = computed(() => props.aiGenerated ? 'KI-Hilfe' : 'Hinweis');
+const panelTitle = computed(() => t(props.aiGenerated ? 'KI-Hilfe' : 'Hinweis'));
 
 const DIAGNOSIS_LABELS: Record<AiDiagnosisCode, string> = {
   concept: 'Begriff verwechselt',
@@ -56,9 +60,9 @@ const DIAGNOSIS_LABELS: Record<AiDiagnosisCode, string> = {
 };
 
 const correctionText = computed(() => {
-  if (props.correctionOutcome === 'correct') return 'Korrektur gelungen.';
-  if (props.correctionOutcome === 'partial') return 'Fast — ein Schritt fehlt noch.';
-  if (props.correctionOutcome === 'incorrect') return 'Noch nicht. Prüfe den ersten abweichenden Schritt.';
+  if (props.correctionOutcome === 'correct') return t('Korrektur gelungen.');
+  if (props.correctionOutcome === 'partial') return t('Fast — ein Schritt fehlt noch.');
+  if (props.correctionOutcome === 'incorrect') return t('Noch nicht. Prüfe den ersten abweichenden Schritt.');
   return '';
 });
 const panelElement = ref<HTMLElement | null>(null);
@@ -81,33 +85,33 @@ defineExpose({
       <Lightbulb :size="18" aria-hidden="true" />
       <h3 :id="titleId">{{ panelTitle }}</h3>
       <AiBadge v-if="aiGenerated && hasContent" size="sm" />
-      <QIconButton :aria-label="`${panelTitle} schließen`" @click="emit('dismiss')" />
+      <QIconButton :aria-label="t('{title} schließen', { title: panelTitle })" @click="emit('dismiss')" />
     </div>
 
     <div v-if="loading" class="q-learning__loading" aria-live="polite">
-      <QSkeleton :rows="3" height="16px" radius="6px" gap="9px" label="Hilfe wird vorbereitet …" />
+      <QSkeleton :rows="3" height="16px" radius="6px" gap="9px" :label="t('Hilfe wird vorbereitet …')" />
     </div>
 
     <div v-else-if="error" class="q-learning__error" role="alert">
       <p>{{ error }}</p>
       <QButton v-if="canRenew" variant="secondary" @click="emit('renew')">
-        Neu anfragen
+        {{ t('Neu anfragen') }}
       </QButton>
       <QButton
         v-else
         variant="secondary"
         @click="stage === 'hint' ? emit('requestHint') : emit('requestDiagnosis')"
       >
-        Erneut versuchen
+        {{ t('Erneut versuchen') }}
       </QButton>
       <p v-if="canRenew" class="q-learning__billing-note">
-        Die neue Anfrage kann erneut berechnet werden.
+        {{ t('Die neue Anfrage kann erneut berechnet werden.') }}
       </p>
     </div>
 
     <template v-else>
       <div v-if="stage === 'hint' && (authoredHint?.length || markdown)" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">Hinweis {{ hintLevel ?? 1 }}</span>
+        <span class="q-learning__eyebrow">{{ t('Hinweis {level}', { level: hintLevel ?? 1 }) }}</span>
         <RichTextView v-if="authoredHint?.length" :nodes="authoredHint" />
         <MarkdownView v-else-if="markdown" :source="markdown" />
         <p v-if="nextAction" class="q-learning__action">
@@ -117,7 +121,7 @@ defineExpose({
       </div>
 
       <div v-else-if="stage === 'diagnosis' && diagnosis" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">{{ DIAGNOSIS_LABELS[diagnosis.errorCode] }}</span>
+        <span class="q-learning__eyebrow">{{ t(DIAGNOSIS_LABELS[diagnosis.errorCode]) }}</span>
         <p>{{ diagnosis.reason }}</p>
         <blockquote v-if="diagnosis.evidenceVerified && diagnosis.evidence">
           {{ diagnosis.evidence }}
@@ -129,7 +133,7 @@ defineExpose({
       </div>
 
       <div v-else-if="stage === 'diagnosis' && markdown" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">Erklärung</span>
+        <span class="q-learning__eyebrow">{{ t('Erklärung') }}</span>
         <MarkdownView :source="markdown" />
       </div>
 
@@ -140,7 +144,7 @@ defineExpose({
       </div>
 
       <div v-else-if="stage === 'correction' && diagnosis" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">{{ DIAGNOSIS_LABELS[diagnosis.errorCode] }}</span>
+        <span class="q-learning__eyebrow">{{ t(DIAGNOSIS_LABELS[diagnosis.errorCode]) }}</span>
         <p>{{ diagnosis.reason }}</p>
         <p class="q-learning__action">
           <ArrowRight :size="16" aria-hidden="true" />
@@ -149,7 +153,7 @@ defineExpose({
       </div>
 
       <div v-else-if="stage === 'correction' && markdown" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">Für die Korrektur</span>
+        <span class="q-learning__eyebrow">{{ t('Für die Korrektur') }}</span>
         <MarkdownView :source="markdown" />
         <p v-if="nextAction" class="q-learning__action">
           <ArrowRight :size="16" aria-hidden="true" />
@@ -158,7 +162,7 @@ defineExpose({
       </div>
 
       <p v-else-if="stage === 'correction'" class="q-learning__correction" role="status">
-        Versuche die Aufgabe noch einmal.
+        {{ t('Versuche die Aufgabe noch einmal.') }}
       </p>
 
       <div class="q-learning__actions">
@@ -167,22 +171,22 @@ defineExpose({
           variant="secondary"
           @click="emit('requestHint')"
         >
-          {{ hasContent ? 'Nächster Hinweis' : 'Hinweis 1' }}
+          {{ t(hasContent ? 'Nächster Hinweis' : 'Hinweis 1') }}
         </QButton>
         <QButton
           v-if="stage === 'diagnosis' && canRequestDiagnosis && !diagnosis && !markdown"
           variant="secondary"
           @click="emit('requestDiagnosis')"
         >
-          Fehler ansehen
+          {{ t('Fehler ansehen') }}
         </QButton>
         <QButton v-if="stage === 'diagnosis' && canCorrect" @click="emit('correct')">
-          Jetzt korrigieren
+          {{ t('Jetzt korrigieren') }}
         </QButton>
       </div>
 
       <details v-if="aiGenerated && hasContent" class="q-learning__foot">
-        <summary>KI-Inhalt · kann Fehler enthalten</summary>
+        <summary>{{ t('KI-Inhalt · kann Fehler enthalten') }}</summary>
         <span v-if="model && source !== 'pool'">{{ model }}</span>
       </details>
     </template>

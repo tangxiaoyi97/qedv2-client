@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, formatDate, formatNumber } = useI18n();
+
 /**
  * Sync-conflict dialog (prototype 4d; contract §5.2) — calm, explanatory.
  * Summary mode picks one side for everything; the advanced mode picks per
@@ -17,6 +20,7 @@ const perEntry = ref(false);
 const summaryPick = ref<'server' | 'local'>('server');
 const entryPicks = ref<Record<string, 'server' | 'local'>>({});
 const pending = ref(false);
+const applyError = ref('');
 const rounds = ref(0);
 
 const conflict = computed(() => progress.conflict);
@@ -46,7 +50,7 @@ function sideStamp(side: 'server' | 'local'): string {
     const t = new Date(e[side].updatedAt).getTime();
     if (t > max) max = t;
   }
-  return new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(max));
+  return formatDate(new Date(max), { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 const cloudNewer = computed(() => {
@@ -58,25 +62,24 @@ const cloudNewer = computed(() => {
 });
 
 function entryTitle(e: ConflictEntry): string {
-  return isPartConflict(e) ? e.partId : `Kompetenz ${e.competencyCode}`;
+  return isPartConflict(e) ? e.partId : t('Kompetenz {code}', { code: e.competencyCode });
 }
 
 function entrySummary(e: ConflictEntry, side: 'server' | 'local'): string {
-  const stamp = new Intl.DateTimeFormat('de-AT', { dateStyle: 'short', timeStyle: 'short' }).format(
-    new Date(e[side].updatedAt),
-  );
+  const stamp = formatDate(new Date(e[side].updatedAt), { dateStyle: 'short', timeStyle: 'short' });
   if (isPartConflict(e)) {
     const entry = e[side];
-    const pts = entry.lastResult ? `${entry.lastResult.awardedPoints} P` : '—';
-    return `${stamp} · ${pts} · fällig ${new Intl.DateTimeFormat('de-AT', { dateStyle: 'short' }).format(new Date(entry.fsrs.due))}`;
+    const points = entry.lastResult ? `${formatNumber(entry.lastResult.awardedPoints)} ${t('P')}` : '—';
+    return t('{stamp} · {points} · fällig {due}', { stamp, points, due: formatDate(new Date(entry.fsrs.due), { dateStyle: 'short' }) });
   }
-  return `${stamp} · Bewertung ${Math.round(e[side].mastery * 100)} %`;
+  return t('{stamp} · Bewertung {percent} %', { stamp, percent: Math.round(e[side].mastery * 100) });
 }
 
 async function apply(): Promise<void> {
   const c = conflict.value;
   if (!c || pending.value) return;
   pending.value = true;
+  applyError.value = '';
   try {
     const choices: Record<string, 'server' | 'local'> = {};
     for (const e of c.conflicts) {
@@ -84,6 +87,8 @@ async function apply(): Promise<void> {
       choices[k] = perEntry.value ? (entryPicks.value[k] ?? 'server') : summaryPick.value;
     }
     await progress.resolveConflict(choices);
+  } catch {
+    applyError.value = 'Spielstand konnte nicht übernommen werden. Bitte erneut versuchen.';
   } finally {
     pending.value = false;
   }
@@ -96,45 +101,49 @@ function onEscape(): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="conflict" class="conflict q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" aria-label="Synchronisierungskonflikt">
+    <div v-if="conflict" class="conflict q-modal-scrim q-modal-backdrop" role="dialog" aria-modal="true" :aria-label="t('Synchronisierungskonflikt')">
       <div ref="card" class="conflict__card">
         <div class="conflict__head">
           <span class="conflict__icon" aria-hidden="true">⟳</span>
-          <div class="conflict__title">Synchronisierungskonflikt</div>
+          <div class="conflict__title">{{ t('Synchronisierungskonflikt') }}</div>
         </div>
         <p class="conflict__text">
-          Cloud und Gerät enthalten unterschiedliche Änderungen. Eine Version wird überschrieben.
+          {{ t('Cloud und Gerät enthalten unterschiedliche Änderungen. Eine Version wird überschrieben.') }}
         </p>
-        <p v-if="rounds > 0" class="conflict__renote">Erneut geändert — bitte noch einmal wählen.</p>
+        <p v-if="rounds > 0" class="conflict__renote">{{ t('Erneut geändert — bitte noch einmal wählen.') }}</p>
 
         <div v-if="!perEntry" class="conflict__sides">
           <button
             type="button"
             class="conflict__side"
             :class="{ 'conflict__side--on': summaryPick === 'server' }"
+            :aria-pressed="summaryPick === 'server'"
+            :disabled="pending"
             @click="summaryPick = 'server'"
           >
             <div class="conflict__side-head">
               <span aria-hidden="true">☁️</span>
-              <b>Cloud-Version</b>
+              <b>{{ t('Cloud-Version') }}</b>
               <span class="conflict__radio" :class="{ 'conflict__radio--on': summaryPick === 'server' }" />
             </div>
-            <div class="conflict__side-stamp">Zuletzt geändert<br /><b>{{ sideStamp('server') }}</b></div>
-            <div class="conflict__side-n">{{ conflict.conflicts.length }} Einträge betroffen</div>
+            <div class="conflict__side-stamp">{{ t('Zuletzt geändert') }}<br /><b>{{ sideStamp('server') }}</b></div>
+            <div class="conflict__side-n">{{ conflict.conflicts.length }} {{ t('Einträge betroffen') }}</div>
           </button>
           <button
             type="button"
             class="conflict__side"
             :class="{ 'conflict__side--on': summaryPick === 'local' }"
+            :aria-pressed="summaryPick === 'local'"
+            :disabled="pending"
             @click="summaryPick = 'local'"
           >
             <div class="conflict__side-head">
               <span aria-hidden="true">💻</span>
-              <b>Lokale Version</b>
+              <b>{{ t('Lokale Version') }}</b>
               <span class="conflict__radio" :class="{ 'conflict__radio--on': summaryPick === 'local' }" />
             </div>
-            <div class="conflict__side-stamp">Zuletzt geändert<br /><b>{{ sideStamp('local') }}</b></div>
-            <div class="conflict__side-n">dieses Gerät</div>
+            <div class="conflict__side-stamp">{{ t('Zuletzt geändert') }}<br /><b>{{ sideStamp('local') }}</b></div>
+            <div class="conflict__side-n">{{ t('dieses Gerät') }}</div>
           </button>
         </div>
 
@@ -152,14 +161,15 @@ function onEscape(): void {
           </div>
         </div>
 
-        <button type="button" class="conflict__toggle" @click="perEntry = !perEntry">
-          {{ perEntry ? '‹ Zurück zur einfachen Auswahl' : 'Einzeln wählen' }}
+        <button type="button" class="conflict__toggle" :disabled="pending" @click="perEntry = !perEntry">
+          {{ perEntry ? t('‹ Zurück zur einfachen Auswahl') : t('Einzeln wählen') }}
         </button>
 
+        <p v-if="applyError" role="alert">{{ t(applyError) }}</p>
         <div class="conflict__footer">
-          <span class="conflict__hint">{{ cloudNewer ? 'Cloud ist neuer' : 'Gerät ist neuer' }}</span>
-          <QButton variant="secondary" :disabled="pending" @click="progress.dismissConflict()">Später entscheiden</QButton>
-          <QButton :disabled="pending" @click="apply">{{ pending ? 'Übernehme …' : 'Auswahl übernehmen' }}</QButton>
+          <span class="conflict__hint">{{ cloudNewer ? t('Cloud ist neuer') : t('Gerät ist neuer') }}</span>
+          <QButton variant="secondary" :disabled="pending" @click="progress.dismissConflict()">{{ t('Später entscheiden') }}</QButton>
+          <QButton :disabled="pending" @click="apply">{{ pending ? t('Übernehme …') : t('Auswahl übernehmen') }}</QButton>
         </div>
       </div>
     </div>
@@ -200,13 +210,13 @@ function onEscape(): void {
   letter-spacing: -0.01em;
 }
 .conflict__text {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   line-height: 1.55;
   color: var(--q-mut);
   margin: 0 0 6px;
 }
 .conflict__renote {
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   color: var(--q-part-ink);
   background: var(--q-part-bg);
@@ -241,7 +251,7 @@ function onEscape(): void {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
 }
 .conflict__radio {
   margin-left: auto;
@@ -259,19 +269,19 @@ function onEscape(): void {
 .conflict__radio--on::after {
   content: '✓';
   color: var(--q-on-accent);
-  font-size: 11px;
+  font-size: var(--q-font-small);
   position: absolute;
   inset: 0;
   display: grid;
   place-items: center;
 }
 .conflict__side-stamp {
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   margin-bottom: 8px;
 }
 .conflict__side-n {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
 }
 .conflict__entries {
@@ -289,7 +299,7 @@ function onEscape(): void {
 }
 .conflict__entry-title {
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   margin-bottom: 7px;
   font-family: ui-monospace, Menlo, monospace;
 }
@@ -297,7 +307,7 @@ function onEscape(): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
   padding: 3px 0;
   cursor: pointer;
@@ -306,7 +316,7 @@ function onEscape(): void {
   border: none;
   background: none;
   color: var(--q-accent-strong);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   cursor: pointer;
   padding: 8px 0;
@@ -324,7 +334,7 @@ function onEscape(): void {
   flex-wrap: wrap;
 }
 .conflict__hint {
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   flex: 1;
   min-width: 140px;

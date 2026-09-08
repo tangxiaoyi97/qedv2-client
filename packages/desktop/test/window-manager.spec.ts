@@ -118,6 +118,20 @@ function createManager(options: { backgroundColor?: () => string | undefined } =
 }
 
 describe('WindowManager desktop-control windows', () => {
+  it('updates existing and new window titles when language changes', () => {
+    const { manager } = createManager();
+    const node = manager.openNodeDiagnosticsWindow() as unknown as FakeBrowserWindow;
+    manager.setLocale('en');
+    expect(node.titles.at(-1)).toBe('QED2 – Local node');
+    node.emit('page-title-updated', { preventDefault: vi.fn() }, 'QED2 Web');
+    expect(node.titles.at(-1)).toBe('QED2 – Local node');
+    const practice = manager.openPracticeWindow() as unknown as FakeBrowserWindow;
+    expect(practice.options.title).toBe('QED2 – Practice');
+    manager.setLocale('de');
+    expect(node.titles.at(-1)).toBe('QED2 – Knotendiagnose');
+    expect(practice.titles.at(-1)).toBe('QED2 – Üben');
+  });
+
   beforeEach(() => {
     electronMocks.focusedWindow = undefined;
     electronMocks.shouldUseDarkColors = false;

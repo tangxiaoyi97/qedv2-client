@@ -39,7 +39,8 @@ describe('Practice legacy provenance choice', () => {
     await nextTick();
 
     expect(host.textContent).toContain('Aufgabenversion unbekannt');
-    expect(host.textContent).toContain('nicht automatisch mit neueren Aufgaben vermischt');
+    expect(host.textContent).toContain('Die Aufgaben können sich geändert haben.');
+    expect(resume).not.toHaveBeenCalled();
     const button = [...host.querySelectorAll<HTMLButtonElement>('button')]
       .find((candidate) => candidate.textContent?.includes('Aktuelle Aufgabenbank verwenden'));
     expect(button).toBeDefined();

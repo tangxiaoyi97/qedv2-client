@@ -187,7 +187,7 @@ const mainLayout = await main.evaluate(`({
   progressLabels: [...document.querySelectorAll('#desktop progress')]
     .map((progress) => progress.getAttribute('aria-label')),
 })`);
-assert.equal(mainLayout.heading, 'Desktop & lokaler Knoten');
+assert.equal(mainLayout.heading, 'Desktop');
 assert(mainLayout.actionHeights.every((height) => height >= 44), 'Desktop controls must be at least 44px');
 assert(mainLayout.progressLabels.every(Boolean), 'Every visible progress bar needs an accessible name');
 

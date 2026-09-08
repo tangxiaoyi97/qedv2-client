@@ -1,15 +1,13 @@
 <script setup lang="ts">
-/**
- * expression control — text input + symbol toolbar + live KaTeX preview
- * (prototype 2d). Grading is CAS-based; when it reports indeterminate the
- * parent shows the self-assessment panel and this control renders the
- * canonical answer for comparison.
- */
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { expressionPreviewLatex } from '@qed2/core-logic';
 import type { ExpressionAnswer, GradeResult } from '@qed2/core-logic';
 import MathText from '../shared/MathText.vue';
 import StateIcon from '../shared/StateIcon.vue';
+import { useI18n } from '../i18n.js';
+import { onMathInputKeydown } from './math-input.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   answer: ExpressionAnswer;
@@ -17,105 +15,52 @@ const props = defineProps<{
   result?: GradeResult | null;
   indeterminate?: boolean;
 }>();
-
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
-
-const input = ref<HTMLInputElement | null>(null);
 const review = computed(() => props.result != null || props.indeterminate === true);
-
 const previewLatex = computed(() => expressionPreviewLatex(props.modelValue));
 
-const TOOLBAR: { label: string; ariaLabel: string; insert: string; cursorBack?: number }[] = [
-  { label: 'xⁿ', ariaLabel: 'Potenz einfügen', insert: '^' },
-  { label: '√', ariaLabel: 'Wurzel einfügen', insert: 'sqrt()', cursorBack: 1 },
-  { label: 'a⁄b', ariaLabel: 'Division einfügen', insert: '/' },
-  { label: 'π', ariaLabel: 'Pi einfügen', insert: 'pi' },
-  { label: '·', ariaLabel: 'Multiplikation einfügen', insert: '*' },
-  { label: '( )', ariaLabel: 'Klammern einfügen', insert: '()', cursorBack: 1 },
-];
-
-function insert(tool: (typeof TOOLBAR)[number]): void {
-  if (review.value) return;
-  const el = input.value;
-  const value = props.modelValue;
-  const start = el?.selectionStart ?? value.length;
-  const end = el?.selectionEnd ?? value.length;
-  const next = value.slice(0, start) + tool.insert + value.slice(end);
-  emit('update:modelValue', next);
-  requestAnimationFrame(() => {
-    if (!el) return;
-    const pos = start + tool.insert.length - (tool.cursorBack ?? 0);
-    el.focus();
-    el.setSelectionRange(pos, pos);
-  });
-}
-
-/* mousedown.prevent keeps the input's focus/selection for pointer users;
- * the click handler exists for keyboard activation (Enter/Space) — the flag
- * stops a real click from inserting twice. */
-let pointerInsert = false;
-function onToolMousedown(tool: (typeof TOOLBAR)[number]): void {
-  pointerInsert = true;
-  insert(tool);
-  requestAnimationFrame(() => {
-    pointerInsert = false;
-  });
-}
-function onToolClick(tool: (typeof TOOLBAR)[number]): void {
-  if (pointerInsert) return;
-  insert(tool);
+function onInput(event: Event): void {
+  if (review.value || (event as InputEvent).isComposing) return;
+  emit('update:modelValue', (event.target as HTMLInputElement).value);
 }
 </script>
 
 <template>
-  <div class="q-expr">
-    <div v-if="!review" class="q-expr__toolbar" role="toolbar" aria-label="Symbole einfügen">
-      <button
-        v-for="tool in TOOLBAR"
-        :key="tool.label"
-        type="button"
-        class="q-expr__tool"
-        :aria-label="tool.ariaLabel"
-        :title="tool.insert"
-        @mousedown.prevent="onToolMousedown(tool)"
-        @click="onToolClick(tool)"
-      >
-        {{ tool.label }}
-      </button>
-    </div>
-
+  <div class="q-expr" data-answer-fields>
     <input
-      ref="input"
-      class="q-expr__input"
+      class="q-expr__input q-input"
       :class="{
         'q-expr__input--ok': result?.verdict === 'correct',
         'q-expr__input--err': result != null && result.verdict !== 'correct',
         'q-expr__input--indet': indeterminate,
       }"
+      type="text"
+      inputmode="text"
       :value="modelValue"
       :readonly="review"
       spellcheck="false"
       autocapitalize="off"
+      autocorrect="off"
       autocomplete="off"
       enterkeyhint="done"
-      placeholder="z. B. 2*x + 3"
-      aria-label="Mathematischer Ausdruck"
-      @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
+      :placeholder="t('z. B. 2*x + 3')"
+      :aria-label="t('Mathematischer Ausdruck')"
+      @input="onInput"
+      @compositionend="onInput"
+      @keydown="onMathInputKeydown"
     />
 
-    <div v-if="!review && previewLatex" class="q-expr__preview">
-      <span class="q-expr__preview-label">Vorschau</span>
+    <div v-if="!review && previewLatex" class="q-expr__preview" :aria-label="t('Vorschau')">
       <MathText :src="previewLatex" />
     </div>
-    <div v-if="!review" class="q-expr__hint">^ · * · / · sqrt() · , oder .</div>
 
     <template v-if="review">
       <div v-if="result" class="q-expr__verdict-note">
         <StateIcon :state="result.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
-        <span>{{ result.verdict === 'correct' ? 'Richtig' : 'Falsch' }}</span>
+        <span>{{ t(result.verdict === 'correct' ? 'Richtig' : 'Falsch') }}</span>
       </div>
       <div class="q-expr__canonical">
-        <span class="q-expr__preview-label">Richtige Antwort</span>
+        <span class="q-expr__preview-label">{{ t('Richtige Antwort') }}</span>
         <MathText :src="answer.canonical" />
       </div>
     </template>
@@ -123,111 +68,23 @@ function onToolClick(tool: (typeof TOOLBAR)[number]): void {
 </template>
 
 <style scoped>
-.q-expr__toolbar {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-.q-expr__tool {
-  width: 36px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--q-border-2);
-  border-radius: 7px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font-size: 14px;
-  font-family: Georgia, serif;
-  font-style: italic;
-  cursor: pointer;
-}
-@media (hover: hover) and (pointer: fine) {
-  .q-expr__tool:hover {
-    background: var(--q-panel);
-  }
-}
-.q-expr__tool:focus-visible {
-  outline: 2px solid var(--q-accent);
-  outline-offset: 1px;
-}
-@media (pointer: coarse) {
-  .q-expr__tool {
-    width: 44px;
-    height: 44px;
-  }
-}
-.q-expr__input {
-  width: 100%;
-  border: 1px solid var(--q-border-3);
-  border-radius: 9px;
-  padding: 12px 14px;
-  font-size: 16px;
-  font-family: ui-monospace, Menlo, monospace;
-  background: var(--q-card);
-  color: var(--q-ink);
-  /* The result landing is the one moment worth easing into. */
-  transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
-}
-.q-expr__input:focus {
-  outline: none;
-  border: 2px solid var(--q-accent);
-  padding: 11px 13px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
-}
-.q-expr__input--ok {
-  border: 1.5px solid var(--q-ok);
-  background: var(--q-ok-bg);
-}
-.q-expr__input--err {
-  border: 1.5px solid var(--q-err);
-  background: var(--q-err-bg);
-}
-.q-expr__input--indet {
-  border: 1.5px solid var(--q-part-border);
-  background: var(--q-part-bg);
-}
-.q-expr__preview {
-  margin-top: 12px;
-  padding: 11px 14px;
+.q-expr__input { width: 100%; font-family: ui-monospace, Menlo, monospace; }
+.q-expr__input--ok { border-color: var(--q-ok); background: var(--q-ok-bg); }
+.q-expr__input--err { border-color: var(--q-err); background: var(--q-err-bg); }
+.q-expr__input--indet { border-color: var(--q-part-border); background: var(--q-part-bg); }
+.q-expr__preview,
+.q-expr__canonical {
+  margin-top: 8px;
+  padding: 10px 12px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-control, 10px);
   display: flex;
   align-items: center;
   gap: 12px;
   overflow-x: auto;
 }
-.q-expr__preview-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--q-faint);
-  flex: none;
-}
-.q-expr__hint {
-  margin-top: 10px;
-  font: 500 11px ui-monospace, Menlo, monospace;
-  color: var(--q-hint);
-}
-.q-expr__verdict-note {
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.q-expr__canonical {
-  margin-top: 10px;
-  padding: 12px 14px;
-  border: 1.5px dashed var(--q-ok);
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  overflow-x: auto;
-}
+.q-expr__preview-label { font-size: 12px; font-weight: 600; color: var(--q-mut); flex: none; }
+.q-expr__verdict-note { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.q-expr__canonical { border-color: var(--q-ok); border-style: dashed; background: var(--q-card); flex-wrap: wrap; }
 </style>

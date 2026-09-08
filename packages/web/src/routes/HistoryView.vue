@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, locale, formatNumber } = useI18n();
+
 /**
  * Verlauf (user feedback #4 + history upgrade doc §1):
  *
@@ -18,7 +21,6 @@ import {
   NetworkError,
   ServerClient,
   VERDICT_LABELS,
-  formatScore,
   localActivityRange,
   localDayKey,
   localDayRange,
@@ -29,6 +31,7 @@ import {
   type Verdict,
 } from '@qed2/core-logic';
 import { ActivityHeatmap, QButton, QIconButton, QSkeleton, StateIcon, useModalA11y } from '@qed2/ui';
+import { CircleHelp } from 'lucide-vue-next';
 import { historyLog, ports, questionCache } from '../services.js';
 import { useAppStore } from '../stores/app.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -403,17 +406,17 @@ async function loadActivity(): Promise<void> {
 onMounted(() => void loadActivity());
 
 /* group rows by local day for display */
-const dayFmt = new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' });
-const timeFmt = new Intl.DateTimeFormat('de-AT', { hour: '2-digit', minute: '2-digit' });
-const selectedDayFmt = new Intl.DateTimeFormat('de-AT', {
+const dayFmt = computed(() => new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'de-AT', { weekday: 'long', day: 'numeric', month: 'long' }));
+const timeFmt = computed(() => new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'de-AT', { hour: '2-digit', minute: '2-digit' }));
+const selectedDayFmt = computed(() => new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'de-AT', {
   weekday: 'long',
   day: 'numeric',
   month: 'long',
   year: 'numeric',
-});
+}));
 
 const selectedDateLabel = computed(() =>
-  selectedDate.value ? selectedDayFmt.format(parseLocalDayKey(selectedDate.value)) : '',
+  selectedDate.value ? selectedDayFmt.value.format(parseLocalDayKey(selectedDate.value)) : '',
 );
 
 function selectDate(dayKey: string): void {
@@ -434,7 +437,7 @@ const groups = computed(() => {
     const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
     let g = byDay.get(key);
     if (!g) {
-      g = { label: dayFmt.format(d), rows: [] };
+      g = { label: dayFmt.value.format(d), rows: [] };
       byDay.set(key, g);
     }
     g.rows.push(r);
@@ -447,20 +450,20 @@ const hasMore = computed(() => cloudMode.value
   : rows.value.length < total.value);
 
 function fmtPoints(r: Row): string {
-  const a = formatScore(r.awardedPoints);
-  return r.maxPoints !== undefined ? `${a}/${formatScore(r.maxPoints)} P` : `${a} P`;
+  const a = formatNumber(r.awardedPoints);
+  return r.maxPoints !== undefined ? `${a}/${formatNumber(r.maxPoints)} ${t('P')}` : `${a} ${t('P')}`;
 }
 
 function redoLabel(row: Row): string {
   const title = titles.value.get(titleKey(row)) ?? row.questionId;
-  const verdict = VERDICT_LABELS[row.verdict];
-  const time = timeFmt.format(new Date(row.gradedAt));
+  const verdict = t(VERDICT_LABELS[row.verdict]);
+  const time = timeFmt.value.format(new Date(row.gradedAt));
   const provenance = row.provenanceUnknown
-    ? ' Version unbekannt. Aktuelle Bank muss bestätigt werden.'
+    ? t('Version unbekannt. Aktuelle Bank muss bestätigt werden.')
     : hasExactProvenance(row)
-      ? ` Quelle ${row.contentSource === 'local' ? 'Lokal' : 'Remote-Core'}, Bank ${row.contentId.slice(0, 7)}.`
+      ? t('Quelle {source}, Bank {revision}.', { source: t(row.contentSource === 'local' ? 'Lokal' : 'Remote'), revision: row.contentId.slice(0, 7) })
       : '';
-  return `${verdict}: ${title}. ${fmtPoints(row)}, ${time} Uhr.${provenance} Erneut üben.`;
+  return t('{verdict}: {title}. {points}, {time}. {provenance} Erneut üben.', { verdict, title, points: fmtPoints(row), time, provenance });
 }
 
 function openRedo(row: Row): void {
@@ -498,22 +501,22 @@ function confirmLegacyRedo(): void {
 <template>
   <div class="hist q-page">
     <div class="hist__head">
-      <h1 class="hist__title q-page-title">Verlauf</h1>
+      <h1 class="hist__title q-page-title">{{ t('Verlauf') }}</h1>
       <span v-if="total > 0" class="hist__count">
-        {{ total }} {{ total === 1 ? 'Antwort' : 'Antworten' }}
+        {{ total }} {{ total === 1 ? t('Antwort') : t('Antworten') }}
       </span>
     </div>
 
     <section class="hist__section">
       <div class="hist__section-head">
-        <h2 class="hist__section-title">Aktivität</h2>
+        <h2 class="hist__section-title">{{ t('Aktivität') }}</h2>
         <button
           v-if="selectedDate"
           type="button"
           class="hist__filter-clear"
           @click="clearDateFilter"
         >
-          Alle Tage
+          {{ t('Alle Tage') }}
         </button>
       </div>
       <ActivityHeatmap
@@ -523,34 +526,34 @@ function confirmLegacyRedo(): void {
         :selected-date="selectedDate"
         @select="selectDate"
       />
-      <p v-if="activityLoading" class="hist__heatmap-note" role="status">Aktivität wird geladen …</p>
+      <p v-if="activityLoading" class="hist__heatmap-note" role="status">{{ t('Aktivität wird geladen …') }}</p>
       <p v-else-if="activityError" class="hist__heatmap-note hist__heatmap-note--error" role="alert">
-        {{ activityError }}
+        {{ t(activityError) }}
       </p>
       <div
         v-else-if="attemptHistoryMessage"
         class="hist__heatmap-note hist__heatmap-note--error"
         :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
       >
-        {{ attemptHistoryMessage }}
+        {{ t(attemptHistoryMessage) }}
         <QButton
           v-if="progress.attemptUploadStatus.state !== 'uploading'"
           variant="secondary"
           @click="retryPendingHistory"
         >
-          Erneut versuchen
+          {{ t('Erneut versuchen') }}
         </QButton>
       </div>
       <p v-if="selectedDate" class="hist__filter-status" role="status">
-        Verlauf gefiltert: {{ selectedDateLabel }}
+        {{ t('Verlauf gefiltert:') }} {{ selectedDateLabel }}
       </p>
     </section>
 
     <div class="hist__stage q-crossfade">
     <transition name="q-crossfade">
     <div v-if="error && rows.length === 0" key="error" class="hist__error">
-      {{ error }}
-      <QButton variant="secondary" @click="loadPage(true)">Erneut versuchen</QButton>
+      {{ t(error) }}
+      <QButton variant="secondary" @click="loadPage(true)">{{ t('Erneut versuchen') }}</QButton>
     </div>
 
     <QSkeleton
@@ -558,23 +561,23 @@ function confirmLegacyRedo(): void {
       key="loading"
       :rows="6"
       height="42px"
-      label="Verlauf wird geladen …"
+      :label="t('Verlauf wird geladen …')"
     />
 
     <div v-else-if="rows.length === 0" key="empty" class="hist__empty">
       <template v-if="selectedDate">
-        Keine Antworten an diesem Tag.
-        <QButton variant="secondary" @click="clearDateFilter">Alle Tage anzeigen</QButton>
+        {{ t('Keine Antworten an diesem Tag.') }}
+        <QButton variant="secondary" @click="clearDateFilter">{{ t('Alle Tage anzeigen') }}</QButton>
       </template>
       <template v-else>
-        Noch keine Antworten aufgezeichnet.
-        <RouterLink to="/practice" class="hist__cta">Programm starten →</RouterLink>
+        {{ t('Noch keine Antworten aufgezeichnet.') }}
+        <RouterLink to="/practice" class="hist__cta">{{ t('Programm starten →') }}</RouterLink>
       </template>
     </div>
 
     <div v-else key="list" class="hist__groups">
-      <section v-for="group in groups" :key="group.label" class="hist__day">
-        <h3 class="hist__day-label">{{ group.label }}</h3>
+      <section v-for="group in groups" :key="t(group.label)" class="hist__day">
+        <h3 class="hist__day-label">{{ t(group.label) }}</h3>
         <div class="hist__list">
           <button
             v-for="r in group.rows"
@@ -587,12 +590,12 @@ function confirmLegacyRedo(): void {
             <StateIcon
               :state="r.verdict === 'correct' ? 'correct' : r.verdict === 'partial' ? 'partial' : 'incorrect'"
               :size="18"
-              :label="VERDICT_LABELS[r.verdict]"
+              :label="t(VERDICT_LABELS[r.verdict])"
             />
             <span class="hist__row-copy">
               <span class="hist__row-title">{{ titles.get(titleKey(r)) ?? r.questionId }}</span>
-              <span v-if="r.provenanceUnknown" class="hist__row-provenance">
-                Version unbekannt
+              <span v-if="r.provenanceUnknown" class="hist__row-provenance" :title="t('Version unbekannt')" aria-hidden="true">
+                <CircleHelp :size="14" />
               </span>
             </span>
             <span class="hist__row-points">{{ fmtPoints(r) }}</span>
@@ -602,9 +605,9 @@ function confirmLegacyRedo(): void {
       </section>
 
       <div v-if="hasMore" class="hist__more">
-        <p v-if="error" class="hist__more-error" role="alert">{{ error }}</p>
+        <p v-if="error" class="hist__more-error" role="alert">{{ t(error) }}</p>
         <QButton variant="secondary" :disabled="loading" @click="loadPage(false)">
-          {{ loading ? 'Lade …' : error ? 'Erneut versuchen' : 'Mehr laden' }}
+          {{ loading ? t('Lade …') : error ? t('Erneut versuchen') : t('Mehr laden') }}
         </QButton>
       </div>
     </div>
@@ -621,12 +624,12 @@ function confirmLegacyRedo(): void {
         @click.self="legacyRedo = null"
       >
         <div ref="legacyRedoCard" class="hist-legacy__card">
-          <QIconButton class="hist-legacy__close" aria-label="Schließen" @click="legacyRedo = null" />
-          <h2 id="hist-legacy-title" class="hist-legacy__title">Aufgabenversion unbekannt</h2>
-          <p class="hist-legacy__text">Diese Antwort nennt keine Aufgabenbank.</p>
+          <QIconButton class="hist-legacy__close" :aria-label="t('Schließen')" @click="legacyRedo = null" />
+          <h2 id="hist-legacy-title" class="hist-legacy__title">{{ t('Aufgabenversion unbekannt') }}</h2>
+          <p class="hist-legacy__text">{{ t('Diese Antwort nennt keine Aufgabenbank.') }}</p>
           <div class="hist-legacy__actions">
-            <QButton variant="secondary" @click="legacyRedo = null">Abbrechen</QButton>
-            <QButton @click="confirmLegacyRedo">Aktuelle Bank verwenden</QButton>
+            <QButton variant="secondary" @click="legacyRedo = null">{{ t('Abbrechen') }}</QButton>
+            <QButton @click="confirmLegacyRedo">{{ t('Aktuelle Bank verwenden') }}</QButton>
           </div>
         </div>
       </div>
@@ -645,7 +648,7 @@ function confirmLegacyRedo(): void {
   margin-bottom: 16px;
 }
 .hist__count {
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut-2);
 }
 .hist__section {
@@ -656,7 +659,7 @@ function confirmLegacyRedo(): void {
   margin-bottom: 18px;
 }
 .hist__section-title {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -688,14 +691,14 @@ function confirmLegacyRedo(): void {
 .hist__filter-status {
   margin: 10px 0 0;
   color: var(--q-mut);
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 650;
 }
 .hist__day {
   margin-bottom: 14px;
 }
 .hist__day-label {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-mut);
   margin: 0 0 7px 2px;
@@ -720,19 +723,16 @@ function confirmLegacyRedo(): void {
   color: var(--q-ink);
   text-align: left;
   width: 100%;
-  transition: all var(--q-transition-fast);
+  transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
 }
 @media (hover: hover) and (pointer: fine) {
   .hist__row:hover {
     border-color: var(--q-accent);
-    background: linear-gradient(135deg, var(--q-card), var(--q-panel-2));
-    transform: translateY(-1px);
-    box-shadow: var(--q-shadow-card);
+    background: var(--q-panel-2);
   }
 }
 .hist__row:active {
   background: var(--q-panel-2);
-  transform: scale(0.99);
 }
 .hist__row:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -740,19 +740,23 @@ function confirmLegacyRedo(): void {
 }
 .hist__row-copy {
   min-width: 0;
+  max-width: 100%;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 7px;
 }
 .hist__row-title {
+  flex: 1 1 0%;
   min-width: 0;
-  font-size: 13px;
+  max-width: 100%;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hist__row-provenance {
+  display: inline-flex;
   flex: none;
   color: var(--q-mut-2);
   font-size: 9.5px;
@@ -765,20 +769,22 @@ function confirmLegacyRedo(): void {
   color: var(--q-mut);
   flex: none;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .hist__row-time {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   flex: none;
   width: 38px;
   text-align: right;
+  white-space: nowrap;
 }
 .hist__error,
 .hist__empty {
   padding: 24px;
   text-align: center;
   color: var(--q-mut-2);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   background: var(--q-panel);
   border-radius: 10px;
   display: flex;
@@ -800,12 +806,12 @@ function confirmLegacyRedo(): void {
 }
 .hist__more-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-err-ink);
 }
 .hist__heatmap-note {
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
 }
 .hist__heatmap-note--error {
@@ -836,7 +842,7 @@ function confirmLegacyRedo(): void {
 .hist-legacy__text {
   margin: 0;
   color: var(--q-mut);
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   line-height: 1.5;
 }
 .hist-legacy__actions {
@@ -873,11 +879,4 @@ function confirmLegacyRedo(): void {
   }
 }
 
-@media (max-width: 420px) {
-  .hist__row-copy {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 1px;
-  }
-}
 </style>

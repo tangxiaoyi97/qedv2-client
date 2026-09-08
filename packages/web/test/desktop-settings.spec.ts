@@ -7,9 +7,12 @@ import type { PlatformPorts, ShellPort, UpdateSnapshot } from '@qed2/core-logic'
 import DesktopSettings from '../src/routes/settings/DesktopSettings.vue';
 import desktopSettingsSource from '../src/routes/settings/DesktopSettings.vue?raw';
 import { ports } from '../src/services.js';
+import { setUiLocale } from '@qed2/ui';
+import { useAppStore } from '../src/stores/app.js';
 
 const originalUpdate = ports.update;
 const originalShell = ports.shell;
+const originalCoreRuntime = ports.coreRuntime;
 
 interface Mounted {
   host: HTMLElement;
@@ -57,8 +60,10 @@ function useDesktopPorts(
 
 describe('capability-gated desktop settings', () => {
   afterEach(() => {
+    setUiLocale('de');
     ports.update = originalUpdate;
     ports.shell = originalShell;
+    ports.coreRuntime = originalCoreRuntime;
     vi.restoreAllMocks();
     document.body.innerHTML = '';
   });
@@ -75,6 +80,68 @@ describe('capability-gated desktop settings', () => {
     expect(desktopSettingsSource).toMatch(
       /\.desktop-settings__facts\s*{[^}]*grid-template-columns:\s*repeat\(auto-fit, minmax\(130px, 1fr\)\);/s,
     );
+  });
+
+  it('shows offline readiness, locks a pending source change and preserves the selected source on failure', async () => {
+    useDesktopPorts({
+      capabilities: { selfUpdate: false },
+      getAppVersion: () => '2.3.2',
+    });
+    ports.coreRuntime = { ...originalCoreRuntime, selectSource: vi.fn() };
+    const mounted = await mountDynamic(DesktopSettings, '/settings?section=desktop');
+    const app = useAppStore();
+    app.coreEndpointSource = 'local';
+    app.coreRuntimeStatus = {
+      phase: 'ready', source: 'local', preferredSource: 'local', endpoint: 'http://127.0.0.1:1022',
+    };
+    vi.spyOn(app, 'refreshServiceInfo').mockImplementation(() => undefined);
+    let reject!: (reason: Error) => void;
+    const select = vi.spyOn(app, 'selectCoreSource').mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    await nextTick();
+
+    const local = mounted.host.querySelector<HTMLButtonElement>('[data-source="local"]')!;
+    const remote = mounted.host.querySelector<HTMLButtonElement>('[data-source="remote"]')!;
+    expect(mounted.host.textContent).toContain('Offline bereit');
+    expect(local.getAttribute('aria-pressed')).toBe('true');
+    expect(mounted.host.querySelector('.desktop-settings__facts')).toBeNull();
+    local.click();
+    expect(select).not.toHaveBeenCalled();
+    remote.click();
+    await nextTick();
+    expect(local.disabled).toBe(true);
+    expect(remote.disabled).toBe(true);
+    expect(select).toHaveBeenCalledWith('remote');
+    reject(new Error('unavailable'));
+    await settle();
+    expect(local.disabled).toBe(false);
+    expect(local.getAttribute('aria-pressed')).toBe('true');
+    expect(mounted.host.querySelector('[role="alert"]')?.textContent).toContain('Remote-Core konnte nicht ausgewählt');
+
+    setUiLocale('en');
+    await nextTick();
+    expect(local.textContent).toContain('Local');
+    expect(mounted.host.textContent).toContain('Ready offline');
+    expect(mounted.host.textContent).toContain('Runtime details');
+    mounted.unmount();
+  });
+
+  it('lets a preferred-local fallback retry Local directly', async () => {
+    useDesktopPorts({ capabilities: { selfUpdate: false }, getAppVersion: () => '2.3.2' });
+    ports.coreRuntime = { ...originalCoreRuntime, selectSource: vi.fn() };
+    const mounted = await mountDynamic(DesktopSettings, '/settings?section=desktop');
+    const app = useAppStore();
+    app.coreEndpointSource = 'remote';
+    app.coreRuntimeStatus = {
+      phase: 'degraded', source: 'remote', preferredSource: 'local', endpoint: 'https://example.test',
+    };
+    const select = vi.spyOn(app, 'selectCoreSource').mockResolvedValue(undefined);
+    vi.spyOn(app, 'refreshServiceInfo').mockImplementation(() => undefined);
+    await nextTick();
+    expect(mounted.host.textContent).toContain('Remote-Ersatz');
+    mounted.host.querySelector<HTMLButtonElement>('[data-source="local"]')!.click();
+    await settle();
+    expect(select).toHaveBeenCalledWith('local');
+    mounted.unmount();
   });
 
   it('subscribes to state, downloads the explicit app target, shows progress/error and relaunches', async () => {
@@ -134,7 +201,7 @@ describe('capability-gated desktop settings', () => {
     });
     await nextTick();
     expect(mounted.host.querySelector('progress')?.getAttribute('value')).toBe(String(5 * 1024 * 1024));
-    expect(mounted.host.textContent).toContain('5.0 MB / 10.0 MB');
+    expect(mounted.host.textContent).toContain('5,0 MB / 10,0 MB');
 
     emit({
       busy: true,
@@ -422,8 +489,8 @@ describe('capability-gated desktop settings', () => {
     );
 
     expect(mounted.host.querySelector('h1')?.textContent).toContain('Lokaler Knoten');
-    expect(mounted.host.querySelector('h2')?.textContent).toContain('Lokale Laufzeit');
-    expect(mounted.host.textContent).toContain('Lokale Laufzeit');
+    expect(mounted.host.querySelector('h2')?.textContent).toContain('Aufgabenquelle');
+    expect(mounted.host.textContent).toContain('Laufzeitdetails');
     expect(mounted.host.textContent).not.toContain('Nach Updates suchen');
     expect(getState).not.toHaveBeenCalled();
     expect(document.activeElement).toBe(mounted.host.querySelector('h1'));

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * choice control — "N aus M" multiple choice (prototype 1b/1d/5b).
  *
@@ -11,11 +13,13 @@
  * result.breakdown (ref = option index, note correct-pick|wrong-pick|missed).
  * Never color-only: StateIcon + text label per mark.
  */
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import type { BreakdownItem, ChoiceAnswer, GradeResult } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QChip from '../shared/QChip.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   answer: ChoiceAnswer;
@@ -30,10 +34,8 @@ const single = computed(() => props.answer.selectCount === 1);
 const full = computed(() => props.modelValue.length >= props.answer.selectCount);
 
 const hint = computed(() => {
-  const n = props.answer.selectCount;
   const chosen = props.modelValue.length;
-  const what = n === 1 ? 'Wähle genau 1 Antwort' : `Wähle genau ${n} Antworten`;
-  return { what, chosen: `${chosen} gewählt` };
+  return t('{count} gewählt', { count: chosen });
 });
 
 function letter(i: number): string {
@@ -75,9 +77,9 @@ const marks = computed<(Mark | null)[]>(() => {
     // Verdict only. Whether the option was picked or missed is already told
     // by the row itself — solid border + filled mark for a pick, dashed for a
     // missed one — so spelling it out again just crowds a narrow row.
-    if (note === 'correct-pick') return { state: 'correct', label: 'Richtig' };
-    if (note === 'wrong-pick') return { state: 'incorrect', label: 'Falsch' };
-    if (note === 'missed') return { state: 'missed', label: 'Richtig' };
+    if (note === 'correct-pick') return { state: 'correct', label: t('Richtig') };
+    if (note === 'wrong-pick') return { state: 'incorrect', label: t('Falsch') };
+    if (note === 'missed') return { state: 'missed', label: t('Richtig') };
     return null;
   });
 });
@@ -86,6 +88,7 @@ const marks = computed<(Mark | null)[]>(() => {
  * otherwise the click dies silently and looks like a bug. */
 const capNotice = ref(false);
 let capNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+onBeforeUnmount(() => clearTimeout(capNoticeTimer));
 function nudgeCapNotice(): void {
   capNotice.value = true;
   clearTimeout(capNoticeTimer);
@@ -120,10 +123,10 @@ function toggle(i: number): void {
 <template>
   <div class="q-choice">
     <div class="q-choice__head">
-      <QChip>{{ answer.selectCount }} aus {{ answer.options.length }}</QChip>
+      <QChip>{{ t('{count} aus {total}', { count: answer.selectCount, total: answer.options.length }) }}</QChip>
       <span v-if="!review" class="q-choice__hint" :class="{ 'q-choice__hint--nudge': capNotice }" role="status">
-        <template v-if="capNotice">Maximal {{ answer.selectCount }} — erst eine abwählen</template>
-        <template v-else>{{ hint.what }} · <b>{{ hint.chosen }}</b></template>
+        <template v-if="capNotice">{{ t('Maximal {count} — erst eine abwählen', { count: answer.selectCount }) }}</template>
+        <template v-else>{{ hint }}</template>
       </span>
     </div>
 
@@ -216,7 +219,7 @@ function toggle(i: number): void {
   background: var(--q-card);
   color: var(--q-ink);
   font: inherit;
-  font-size: 14.5px;
+  font-size: var(--q-font-ui);
   text-align: left;
   cursor: pointer;
   width: 100%;
@@ -241,7 +244,7 @@ function toggle(i: number): void {
 .q-choice__opt--ok,
 .q-choice__opt--err,
 .q-choice__opt--missed {
-  transition: border-color 0.3s ease, background 0.3s ease, padding 0.3s ease;
+  transition: border-color var(--q-transition-normal), background-color var(--q-transition-normal);
 }
 .q-choice__opt--ok {
   border: 1.5px solid var(--q-ok);

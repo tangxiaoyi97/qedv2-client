@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, locale, formatDate, formatNumber } = useI18n();
+
 /**
  * Fortschritt / Bewertung (prototype 3c, mobile 5d; supplement §5):
  * stats band, grading-state distribution, activity heatmap, per-category
@@ -61,16 +64,15 @@ const activity = computed(() => activityStore.activity);
 const selectedActivityDate = ref<string | null>(null);
 const selectedDayEntries = ref<ActivityDayEntry[]>([]);
 const selectedDayError = ref('');
+const selectedDayLoading = ref(false);
 let selectedDayGeneration = 0;
 
 function formatDayKey(key: string | null): string {
-  if (!key) return 'Kein Tag ausgewählt';
-  return new Intl.DateTimeFormat('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' }).format(
-    parseLocalDayKey(key),
-  );
+  if (!key) return t('Kein Tag ausgewählt');
+  return formatDate(parseLocalDayKey(key), { weekday: 'short', day: '2-digit', month: '2-digit' });
 }
 
-const timeFmt = new Intl.DateTimeFormat('de-AT', { hour: '2-digit', minute: '2-digit' });
+const timeFmt = computed(() => new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'de-AT', { hour: '2-digit', minute: '2-digit' }));
 
 async function selectActivityDay(day: string): Promise<void> {
   const request = ++selectedDayGeneration;
@@ -81,6 +83,8 @@ async function selectActivityDay(day: string): Promise<void> {
     auth.session?.user.id === sourceUserId;
   selectedActivityDate.value = day;
   selectedDayError.value = '';
+  selectedDayEntries.value = [];
+  selectedDayLoading.value = true;
   try {
     if (!auth.isLoggedIn) {
       const entries = await historyLog.listByLocalDay(day);
@@ -119,6 +123,8 @@ async function selectActivityDay(day: string): Promise<void> {
       selectedDayEntries.value = [];
       selectedDayError.value = 'Die Aktivität dieses Tages konnte nicht geladen werden.';
     }
+  } finally {
+    if (isCurrentRequest()) selectedDayLoading.value = false;
   }
 }
 
@@ -149,6 +155,7 @@ watch(
       selectedActivityDate.value = null;
       selectedDayEntries.value = [];
       selectedDayError.value = '';
+      selectedDayLoading.value = false;
     } else if (selectedActivityDate.value) {
       // Keep the selected-day audit trail aligned with the same history
       // invalidation that refreshes the heatmap (notably after an upload ack).
@@ -318,7 +325,7 @@ const statusRadarAxes = computed<RadarAxis[]>(() => {
   const total = Math.max(1, rows.reduce((sum, row) => sum + row.count, 0));
   return rows.map((row) => {
     const percent = Math.round((row.count / total) * 100);
-    return { label: row.label, value: row.count / total, hint: `${row.count} · ${percent} %` };
+    return { label: t(row.label), value: row.count / total, hint: `${row.count} · ${percent} %` };
   });
 });
 
@@ -343,7 +350,7 @@ const detailTitle = computed(() => {
     case 'status':
       return 'Bewertung';
     case 'activity':
-      return `Aktivität · ${formatDayKey(selectedActivityDate.value)}`;
+      return t('Aktivität · {date}', { date: formatDayKey(selectedActivityDate.value) });
     case 'radar':
       return 'Kompetenzen';
     case 'category':
@@ -370,22 +377,22 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 <template>
   <div class="prog q-page">
     <div class="prog__title-row">
-      <h1 class="prog__title q-page-title">Übersicht</h1>
-      <RouterLink to="/leaderboard" class="prog__leaderboard-link">Leaderboard</RouterLink>
+      <h1 class="prog__title q-page-title">{{ t('Übersicht') }}</h1>
+      <RouterLink to="/leaderboard" class="prog__leaderboard-link">{{ t('Leaderboard') }}</RouterLink>
     </div>
 
     <div class="prog__stats">
       <div class="prog__stat">
         <div class="prog__stat-num">{{ progress.practicedParts }}</div>
-        <div class="prog__stat-label">Bearbeitete Teile</div>
+        <div class="prog__stat-label">{{ t('Bearbeitete Teile') }}</div>
       </div>
       <div class="prog__stat">
         <div class="prog__stat-num">{{ progress.dueCount }}</div>
-        <div class="prog__stat-label">Fällig heute</div>
+        <div class="prog__stat-label">{{ t('Fällig heute') }}</div>
       </div>
       <div class="prog__stat">
         <div class="prog__stat-num">{{ avgMastery }} %</div>
-        <div class="prog__stat-label">Ø Bewertung</div>
+        <div class="prog__stat-label">{{ t('Ø Bewertung') }}</div>
       </div>
     </div>
 
@@ -394,15 +401,15 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
     <div class="prog__duo">
       <section class="prog__section">
         <div class="prog__section-head">
-          <h2 class="prog__section-title">Bewertung nach Status</h2>
-          <button type="button" class="prog__detail-btn" @click="openDetail('status')">Details</button>
+          <h2 class="prog__section-title">{{ t('Bewertung nach Status') }}</h2>
+          <button type="button" class="prog__detail-btn" @click="openDetail('status')">{{ t('Details') }}</button>
         </div>
         <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />
       </section>
       <section class="prog__section">
         <div class="prog__section-head">
-          <h2 class="prog__section-title">Kompetenz-Radar</h2>
-          <button type="button" class="prog__detail-btn" @click="openDetail('radar')">Details</button>
+          <h2 class="prog__section-title">{{ t('Kompetenz-Radar') }}</h2>
+          <button type="button" class="prog__detail-btn" @click="openDetail('radar')">{{ t('Details') }}</button>
         </div>
         <RadarChart :axes="radarAxes" />
       </section>
@@ -410,31 +417,31 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
     <section class="prog__section">
       <div class="prog__section-head">
-        <h2 class="prog__section-title">Aktivität</h2>
-        <button type="button" class="prog__detail-btn" @click="openDetail('activity')">Details</button>
+        <h2 class="prog__section-title">{{ t('Aktivität') }}</h2>
+        <button type="button" class="prog__detail-btn" :disabled="selectedDayLoading || !selectedActivityDate" @click="openDetail('activity')">{{ t('Details') }}</button>
       </div>
       <div
         v-if="activityStore.cloudIncompleteMessage"
         class="prog__empty"
         :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
       >
-        {{ activityStore.cloudIncompleteMessage }}
+        {{ t(activityStore.cloudIncompleteMessage) }}
         <button
           v-if="progress.attemptUploadStatus.state !== 'uploading'"
           type="button"
           class="prog__detail-btn"
           @click="retryPendingActivity"
         >
-          Erneut versuchen
+          {{ t('Erneut versuchen') }}
         </button>
       </div>
       <div v-else-if="activityStore.loading" class="prog__empty" role="status">
-        Aktivität wird geladen …
+        {{ t('Aktivität wird geladen …') }}
       </div>
       <div v-else-if="activityStore.error" class="prog__empty" role="alert">
-        {{ activityStore.error }}
+        {{ t(activityStore.error) }}
         <button type="button" class="prog__detail-btn" @click="refreshActivity(true)">
-          Erneut versuchen
+          {{ t('Erneut versuchen') }}
         </button>
       </div>
       <div v-else class="prog__activity">
@@ -446,32 +453,33 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
             @select="selectActivityDay"
           />
         </div>
-        <div class="prog__activity-panel" aria-live="polite">
-          <div v-if="selectedDayError" class="prog__empty" role="alert">{{ selectedDayError }}</div>
+        <div class="prog__activity-panel" aria-live="polite" :aria-busy="selectedDayLoading">
+          <div v-if="selectedDayError" class="prog__empty" role="alert">{{ t(selectedDayError) }}</div>
           <div class="prog__activity-metrics">
             <div class="prog__activity-metric">
-              <span>Zeitraum</span>
+              <span>{{ t('Zeitraum') }}</span>
               <b>{{ activityTotal }}</b>
-              <small>Antworten</small>
+              <small>{{ t('Antworten') }}</small>
             </div>
             <div class="prog__activity-metric">
-              <span>Aktive Tage</span>
+              <span>{{ t('Aktive Tage') }}</span>
               <b>{{ activeDayCount }}</b>
-              <small>von 182</small>
+              <small>{{ t('von 182') }}</small>
             </div>
             <div class="prog__activity-metric">
               <span>{{ formatDayKey(selectedActivityDate) }}</span>
-              <b>{{ selectedDayEntries.length }}</b>
+              <b>{{ selectedDayLoading ? '…' : selectedDayEntries.length }}</b>
               <small>
-                {{ selectedDayPoints.awarded }}<template v-if="selectedDayPoints.max !== undefined">/{{ selectedDayPoints.max }}</template> P
+                <template v-if="selectedDayLoading">{{ t('Lade …') }}</template>
+                <template v-else>{{ formatNumber(selectedDayPoints.awarded) }}<template v-if="selectedDayPoints.max !== undefined">/{{ formatNumber(selectedDayPoints.max) }}</template> {{ t('P') }}</template>
               </small>
             </div>
           </div>
 
-          <div class="prog__day-states">
+          <div v-if="!selectedDayLoading" class="prog__day-states">
             <div v-for="row in selectedDayRows" :key="row.grading" class="prog__day-state">
               <GradingDot :grading="row.grading" :size="12" />
-              <span>{{ row.label }}</span>
+              <span>{{ t(row.label) }}</span>
               <b>{{ row.count }}</b>
             </div>
           </div>
@@ -481,23 +489,23 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
     <section v-if="categoryRows.length > 0" class="prog__section">
       <div class="prog__section-head prog__section-head--legend">
-        <h2 class="prog__section-title">Nach Bereich</h2>
+        <h2 class="prog__section-title">{{ t('Nach Bereich') }}</h2>
         <!-- legend for the MasteryBar colors used in this section's rows -->
         <div class="prog__legend">
-          <span class="prog__legend-item"><span class="prog__sq prog__sq--ok" />hoch</span>
-          <span class="prog__legend-item"><span class="prog__sq prog__sq--part" />mittel</span>
-          <span class="prog__legend-item"><span class="prog__sq prog__sq--low" />gering</span>
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--ok" />{{ t('hoch') }}</span>
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--part" />{{ t('mittel') }}</span>
+          <span class="prog__legend-item"><span class="prog__sq prog__sq--low" />{{ t('gering') }}</span>
         </div>
-        <button type="button" class="prog__detail-btn" @click="openDetail('category')">Details</button>
+        <button type="button" class="prog__detail-btn" @click="openDetail('category')">{{ t('Details') }}</button>
       </div>
       <div class="prog__table-scroll">
         <table class="prog__table">
           <thead>
             <tr>
-              <th scope="col">Bereich</th>
-              <th scope="col" class="prog__table-num">Kompetenzen</th>
-              <th scope="col" class="prog__table-num">Ø Bewertung</th>
-              <th scope="col" class="prog__table-bar">Verlauf</th>
+              <th scope="col">{{ t('Bereich') }}</th>
+              <th scope="col" class="prog__table-num">{{ t('Kompetenzen') }}</th>
+              <th scope="col" class="prog__table-num">{{ t('Ø Bewertung') }}</th>
+              <th scope="col" class="prog__table-bar">{{ t('Verlauf') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -507,13 +515,13 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
               class="prog__table-row--link"
               role="link"
               tabindex="0"
-              :title="`Aufgaben mit ${row.code} anzeigen`"
+              :title="t('Aufgaben mit {code} anzeigen', { code: row.code })"
               @click="openCategory(row.code)"
               @keydown.enter="openCategory(row.code)"
             >
               <td>
                 <span class="prog__cat-code">{{ row.code }}</span>
-                <span class="prog__cat-name">{{ row.name }}</span>
+                <span class="prog__cat-name">{{ t(row.name) }}</span>
                 <span class="prog__cat-go" aria-hidden="true">→</span>
               </td>
               <td class="prog__table-num">{{ row.count }}</td>
@@ -527,40 +535,40 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
     <CompetencyGroups v-if="entries.length > 0" :entries="entries" />
     <div v-else class="prog__empty">
-      Noch kein Fortschritt.
-      <RouterLink to="/practice" class="prog__cta">Programm starten →</RouterLink>
+      {{ t('Noch kein Fortschritt.') }}
+      <RouterLink to="/practice" class="prog__cta">{{ t('Programm starten →') }}</RouterLink>
     </div>
 
     <Teleport to="body">
-      <div v-if="detailKind" class="prog-modal q-modal-backdrop" role="dialog" aria-modal="true" :aria-label="detailTitle" @click.self="closeDetail">
+      <div v-if="detailKind" class="prog-modal q-modal-backdrop" role="dialog" aria-modal="true" :aria-label="t(detailTitle)" @click.self="closeDetail">
         <div
           ref="detailCard"
           class="prog-modal__card"
           :class="{ 'prog-modal__card--wide': detailKind === 'status' || detailKind === 'radar' }"
         >
           <div class="prog-modal__head">
-            <h3 class="prog-modal__title">{{ detailTitle }}</h3>
-            <QIconButton aria-label="Schließen" data-autofocus @click="closeDetail" />
+            <h3 class="prog-modal__title">{{ t(detailTitle) }}</h3>
+            <QIconButton :aria-label="t('Schließen')" data-autofocus @click="closeDetail" />
           </div>
 
           <div v-if="detailKind === 'status'" class="prog-modal__body">
             <div v-if="partMetaFailed" class="prog-modal__metawarn" role="status">
-              Core nicht erreichbar · IDs statt Titel.
+              {{ t('Core nicht erreichbar · IDs statt Titel.') }}
             </div>
             <div class="prog-modal__chart-grid">
               <section class="prog-modal__chart-card">
                 <div class="prog-modal__chart-title">
-                  <b>Bewertete Teile</b>
-                  <span>{{ gradedPartCount }} Teile</span>
+                  <b>{{ t('Bewertete Teile') }}</b>
+                  <span>{{ gradedPartCount }} {{ t('Teile') }}</span>
                 </div>
                 <GradingDistribution size="large" :counts="progress.gradingCounts" @select="openStatusFilter" />
               </section>
               <section class="prog-modal__chart-card">
                 <div class="prog-modal__chart-title">
-                  <b>Alle Teile</b>
+                  <b>{{ t('Alle Teile') }}</b>
                   <span>
-                    <template v-if="partMetaLoaded">{{ bankPartCount }} Teile inkl. Neu</template>
-                    <template v-else>Lade Bankumfang ...</template>
+                    <template v-if="partMetaLoaded">{{ bankPartCount }} {{ t('Teile inkl. Neu') }}</template>
+                    <template v-else>{{ t('Lade Bankumfang ...') }}</template>
                   </span>
                 </div>
                 <GradingDistribution
@@ -575,17 +583,17 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
             <div class="prog-modal__groups">
               <section v-for="group in statusGroups" :key="group.grading" class="prog-modal__group">
                 <div class="prog-modal__group-head">
-                  <span><GradingDot :grading="group.grading" :size="12" /> {{ group.label }}</span>
+                  <span><GradingDot :grading="group.grading" :size="12" /> {{ t(group.label) }}</span>
                   <button
                     type="button"
                     class="prog-modal__mini-link"
                     :disabled="group.rows.length === 0"
                     @click="openStatusFilter(group.grading)"
                   >
-                    Aufgaben
+                    {{ t('Aufgaben') }}
                   </button>
                 </div>
-                <div v-if="group.rows.length === 0" class="prog-modal__empty-row">Keine Einträge.</div>
+                <div v-if="group.rows.length === 0" class="prog-modal__empty-row">{{ t('Keine Einträge.') }}</div>
                 <div v-else class="prog-modal__list">
                   <div v-for="row in group.rows" :key="row.partId" class="prog-modal__row">
                     <div class="prog-modal__row-main">
@@ -606,17 +614,17 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
             <div class="prog-modal__chart-grid">
               <section class="prog-modal__chart-card prog-modal__radar-card">
                 <div class="prog-modal__chart-title">
-                  <b>Kompetenzen</b>
-                  <span>Durchschnitt</span>
+                  <b>{{ t('Kompetenzen') }}</b>
+                  <span>{{ t('Durchschnitt') }}</span>
                 </div>
                 <RadarChart :axes="radarAxes" :size="380" />
               </section>
               <section class="prog-modal__chart-card prog-modal__radar-card">
                 <div class="prog-modal__chart-title">
-                  <b>Bewertung</b>
+                  <b>{{ t('Bewertung') }}</b>
                   <span>
-                    <template v-if="partMetaLoaded">Statusverteilung inkl. Neu</template>
-                    <template v-else>Statusverteilung</template>
+                    <template v-if="partMetaLoaded">{{ t('Statusverteilung inkl. Neu') }}</template>
+                    <template v-else>{{ t('Statusverteilung') }}</template>
                   </span>
                 </div>
                 <RadarChart :axes="statusRadarAxes" :size="380" />
@@ -625,22 +633,22 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
           </div>
 
           <div v-else-if="detailKind === 'activity'" class="prog-modal__body">
-            <div v-if="selectedDayError" class="prog-modal__empty" role="alert">{{ selectedDayError }}</div>
-            <div v-else-if="selectedDayEntries.length === 0" class="prog-modal__empty">Keine Antworten an diesem Tag.</div>
+            <div v-if="selectedDayError" class="prog-modal__empty" role="alert">{{ t(selectedDayError) }}</div>
+            <div v-else-if="selectedDayEntries.length === 0" class="prog-modal__empty">{{ t('Keine Antworten an diesem Tag.') }}</div>
             <template v-else>
               <div class="prog-modal__summary-grid">
                 <div class="prog-modal__summary-card">
-                  <span>Antworten</span>
+                  <span>{{ t('Antworten') }}</span>
                   <b>{{ selectedDayEntries.length }}</b>
                 </div>
                 <div class="prog-modal__summary-card">
-                  <span>Punkte</span>
+                  <span>{{ t('Punkte') }}</span>
                   <b>
                     {{ selectedDayPoints.awarded }}<template v-if="selectedDayPoints.max !== undefined">/{{ selectedDayPoints.max }}</template>
                   </b>
                 </div>
                 <div class="prog-modal__summary-card">
-                  <span>Status</span>
+                  <span>{{ t('Status') }}</span>
                   <b>{{ selectedDayRows.filter((row) => row.count > 0).length }}</b>
                 </div>
               </div>
@@ -648,7 +656,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
               <div class="prog-modal__day-state-grid">
                 <div v-for="row in selectedDayRows" :key="row.grading" class="prog-modal__day-state">
                   <GradingDot :grading="row.grading" :size="12" />
-                  <span>{{ row.label }}</span>
+                  <span>{{ t(row.label) }}</span>
                   <b>{{ row.count }}</b>
                 </div>
               </div>
@@ -660,7 +668,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
                   <div class="prog-modal__row-main">
                     <div class="prog-modal__row-title">{{ entry.questionId }}</div>
                     <div class="prog-modal__row-sub">
-                      {{ entry.partId }} · {{ entry.awardedPoints }}<template v-if="entry.maxPoints !== undefined">/{{ entry.maxPoints }}</template> P · {{ GRADING_LABELS[entry.grading] }}
+                      {{ entry.partId }} · {{ entry.awardedPoints }}<template v-if="entry.maxPoints !== undefined">/{{ entry.maxPoints }}</template> {{ t('P ·') }} {{ t(GRADING_LABELS[entry.grading]) }}
                     </div>
                   </div>
                 </div>
@@ -669,16 +677,16 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
           </div>
 
           <div v-else class="prog-modal__body">
-            <div v-if="categoryDetailGroups.length === 0" class="prog-modal__empty">Noch keine Bereichsdaten.</div>
+            <div v-if="categoryDetailGroups.length === 0" class="prog-modal__empty">{{ t('Noch keine Bereichsdaten.') }}</div>
             <div v-else class="prog-modal__category-groups">
               <section v-for="group in categoryDetailGroups" :key="group.code" class="prog-modal__category">
                 <div class="prog-modal__category-head">
                   <div>
                     <b>{{ group.code }}</b>
-                    <span>{{ group.name }}</span>
+                    <span>{{ t(group.name) }}</span>
                   </div>
                   <button type="button" class="prog-modal__mini-link" @click="openCategory(group.code)">
-                    Aufgaben
+                    {{ t('Aufgaben') }}
                   </button>
                 </div>
                 <div class="prog-modal__competencies">
@@ -710,7 +718,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog__leaderboard-link {
   color: var(--q-accent-strong);
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
   text-decoration: none;
 }
@@ -732,7 +740,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
 }
 .prog__sq {
@@ -755,14 +763,14 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   background: transparent;
 }
 .prog__stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
   flex-wrap: wrap;
 }
 .prog__stat {
-  flex: 1;
-  min-width: 120px;
+  min-width: 0;
   background: var(--q-card);
   border: 1px solid var(--q-border);
   border-radius: 12px;
@@ -773,7 +781,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   font-size: 24px;
 }
 .prog__stat-label {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   margin-top: 2px;
 }
@@ -792,7 +800,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   margin-bottom: 12px;
 }
 .prog__section-title {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -857,7 +865,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   flex-direction: column;
   gap: 12px;
   flex: 1;
-  min-width: 280px;
+  min-width: min(280px, 100%);
 }
 .prog__activity-metrics {
   display: grid;
@@ -904,7 +912,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
 }
 .prog__day-state b {
@@ -952,11 +960,11 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   width: 100%;
   min-width: 460px;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
 }
 .prog__table th {
   text-align: left;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-faint);
   padding: 0 10px 8px 0;
@@ -994,7 +1002,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   padding: 32px 20px;
   text-align: center;
   color: var(--q-mut-2);
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   background: var(--q-panel);
   border-radius: 12px;
   display: flex;
@@ -1049,7 +1057,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog-modal__empty {
   color: var(--q-mut-2);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   padding: 18px 0;
 }
 .prog-modal__list {
@@ -1091,11 +1099,11 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   margin-bottom: 10px;
 }
 .prog-modal__chart-title b {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 850;
 }
 .prog-modal__chart-title span {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-faint);
   text-align: right;
@@ -1135,7 +1143,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 800;
 }
 .prog-modal__category-head div {
@@ -1144,7 +1152,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   gap: 1px;
 }
 .prog-modal__category-head span {
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   color: var(--q-mut-2);
 }
@@ -1172,7 +1180,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   outline: none;
 }
 .prog-modal__empty-row {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   padding: 6px 2px;
 }
@@ -1203,7 +1211,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .prog-modal__timeline {
   display: flex;
@@ -1239,14 +1247,14 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   flex: 1;
 }
 .prog-modal__row-title {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 750;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .prog-modal__row-sub {
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   margin-top: 2px;
   overflow: hidden;
@@ -1260,7 +1268,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
   color: var(--q-part-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .prog-modal__competencies {
   display: flex;
@@ -1282,7 +1290,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog-modal__competency b {
   text-align: right;
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   font-variant-numeric: tabular-nums;
 }
 @media (max-width: 560px) {

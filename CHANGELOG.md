@@ -14,6 +14,17 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.3.2 — 2026-09-08
+
+### klarer & leichter
+
+- **ui:** einheitliche controls, weniger text
+- **mobil:** kompakte listen, mehr platz
+- **english:** oberfläche, menüs & fenster
+- **eingabe:** nächste lücke per enter, keine symbolleiste
+- **desktop:** lokal & remote direkt wechseln
+- **laden:** ruhige übergänge, sichere wiederholung
+
 ## 2.3.1 — 2026-09-08
 
 ### zuverlässigere inhalte

@@ -3,10 +3,11 @@
  * grading supplement §10: authentication is a modal, not a page).
  */
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, onScopeDispose, ref, watch } from 'vue';
+import { setUiLocale } from '@qed2/ui';
 import { translate, type Locale, type MessageKey } from '../i18n.js';
 import { entriesToAnnounce, parseChangelogIndex, type ChangelogEntry } from '../changelog.js';
-import { APP_VERSION } from '../services.js';
+import { APP_VERSION, ports, storage } from '../services.js';
 
 const LOCALE_KEY = 'qed2.locale';
 const LAST_SEEN_VERSION_KEY = 'qed2.lastSeenVersion';
@@ -17,8 +18,11 @@ const LEGACY_LAST_SEEN_COMMIT_KEY = 'qed2.lastSeenCommit';
 const APP_COMMIT: string = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev';
 
 function initialLocale(): Locale {
-  if (typeof window === 'undefined') return 'de';
-  return window.localStorage.getItem(LOCALE_KEY) === 'en' ? 'en' : 'de';
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem(LOCALE_KEY) === 'en' ? 'en' : 'de';
+  } catch {
+    return 'de';
+  }
 }
 
 export const useUiStore = defineStore('ui', () => {
@@ -27,14 +31,62 @@ export const useUiStore = defineStore('ui', () => {
   const authModalMode = ref<'login' | 'register'>('login');
   const locale = ref<Locale>(initialLocale());
   const t = computed(() => (key: MessageKey) => translate(locale.value, key));
+  let localeWriteTail = Promise.resolve();
+  let localeChange = 0;
+
+  function applyLocale(next: Locale): void {
+    locale.value = next;
+    setUiLocale(next);
+    if (typeof document !== 'undefined') document.documentElement.lang = next;
+    try { window.localStorage.setItem(LOCALE_KEY, next); } catch { /* Session language still works. */ }
+  }
+
+  watch(locale, (next) => {
+    setUiLocale(next);
+    if (typeof document !== 'undefined') document.documentElement.lang = next;
+  }, { immediate: true, flush: 'sync' });
 
   function setLocale(next: Locale): void {
-    locale.value = next;
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(LOCALE_KEY, next);
-      // keep <html lang> honest — screen readers pick pronunciation from it
-      window.document.documentElement.lang = next;
+    if (next !== 'de' && next !== 'en') return;
+    localeChange += 1;
+    applyLocale(next);
+    if (ports.shell.capabilities.desktop) {
+      // Persist in the native profile too: UI port changes must not reset language.
+      localeWriteTail = localeWriteTail.catch(() => {}).then(() => storage.set('config', 'locale', next));
+      void localeWriteTail.catch(() => {});
     }
+  }
+
+  async function initializeLocale(resetMissing = false): Promise<void> {
+    if (!ports.shell.capabilities.desktop) return;
+    const revision = localeChange;
+    try {
+      const saved = await storage.get<unknown>('config', 'locale');
+      if (revision === localeChange) {
+        if (saved === 'en' || saved === 'de') applyLocale(saved);
+        else if (resetMissing) applyLocale('de');
+      }
+    } catch { /* Retain the last browser-side selection if native storage is unavailable. */ }
+  }
+
+  if (typeof window !== 'undefined') {
+    const onLanguageChange = (event: StorageEvent): void => {
+      if (event.key === LOCALE_KEY || event.key === null) {
+        localeChange += 1;
+        const next = event.key === null ? 'de' : event.newValue === 'en' ? 'en' : 'de';
+        locale.value = next;
+      }
+    };
+    window.addEventListener('storage', onLanguageChange);
+    onScopeDispose(() => window.removeEventListener('storage', onLanguageChange));
+  }
+  if (ports.shell.capabilities.desktop && storage.onChange) {
+    const unsubscribe = storage.onChange((change) => {
+      if (change.collection === 'config' && (change.key === 'locale' || change.operation === 'clear')) {
+        void initializeLocale(change.operation === 'delete' || change.operation === 'clear');
+      }
+    });
+    onScopeDispose(unsubscribe);
   }
 
   function openAuthModal(mode: 'login' | 'register' = 'login'): void {
@@ -141,6 +193,7 @@ export const useUiStore = defineStore('ui', () => {
     locale,
     t,
     setLocale,
+    initializeLocale,
     openAuthModal,
     closeAuthModal,
     appCommit: APP_COMMIT,

@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import { computed, ref } from 'vue';
 import SessionItemList from './SessionItemList.vue';
 import type { SessionItem } from './SessionItemList.vue';
 import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
+
+const { t } = useI18n();
 
 
 const props = defineProps<{
@@ -25,22 +29,22 @@ useModalA11y(panel, isOpen, () => emit('close'));
 
 <template>
   <Transition name="practice-session-drawer">
-    <div v-if="open" class="practice-session-drawer" role="dialog" aria-modal="true" aria-label="Programmübersicht">
+    <div v-if="open" class="practice-session-drawer" role="dialog" aria-modal="true" :aria-label="t('Programmübersicht')">
       <button
         type="button"
         class="practice-session-drawer__backdrop q-modal-backdrop"
-        aria-label="Programmliste schließen"
+        :aria-label="t('Programmliste schließen')"
         tabindex="-1"
         @click="emit('close')"
       />
 
-      <aside ref="panel" class="practice-session-drawer__panel" aria-label="Programmübersicht">
+      <aside ref="panel" class="practice-session-drawer__panel" :aria-label="t('Programmübersicht')">
         <div class="practice-session-drawer__head">
           <div>
-            <span class="practice-session-drawer__title">Programm</span>
+            <span class="practice-session-drawer__title">{{ t('Programm') }}</span>
             <span class="practice-session-drawer__count">{{ gradedCount }}/{{ total }}</span>
           </div>
-          <QIconButton aria-label="Programmliste schließen" @click="emit('close')" />
+          <QIconButton :aria-label="t('Programmliste schließen')" @click="emit('close')" />
         </div>
 
         <SessionItemList :items="items" @jump="emit('jump', $event)" />

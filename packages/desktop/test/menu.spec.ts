@@ -27,6 +27,17 @@ function click(items: MenuItemConstructorOptions[], label: string): void {
 }
 
 describe('desktop application menu', () => {
+  it('localizes every native group and keeps command routing and shortcuts intact', () => {
+    const dispatch = vi.fn();
+    const template = buildApplicationMenuTemplate({ appName: 'QED2', locale: 'en', platform: 'darwin', dispatch });
+    expect(template.map((item) => item.label)).toEqual(['QED2', 'File', 'Edit', 'Navigate', 'View', 'Window', 'Help']);
+    const navigation = submenu(template, 'Navigate');
+    click(navigation, 'Questions');
+    expect(dispatch).toHaveBeenCalledWith('navigate-questions', undefined);
+    expect(navigation.find((item) => item.label === 'Questions')?.accelerator).toBe('CmdOrCtrl+3');
+    expect(submenu(template, 'Edit').find((item) => item.role === 'paste')?.label).toBe('Paste');
+    expect(submenu(template, 'Window').some((item) => item.label === 'Local node')).toBe(true);
+  });
   it('makes every singleton window and native log recovery discoverable', () => {
     const openPracticeWindow = vi.fn();
     const openUpdateCenterWindow = vi.fn();

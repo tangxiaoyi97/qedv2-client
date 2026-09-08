@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, formatNumber } = useI18n();
+
 /**
  * Practice flow, redesigned (user feedback #2/#3 + tsx layout reference):
  *
@@ -17,7 +20,6 @@ import {
   type AiExplainResult,
   type AiRequestContext,
   TEIL_LABELS,
-  formatScore,
   TERM_LABELS,
   VERDICT_LABELS_SHORT,
   type ExamPart,
@@ -546,7 +548,7 @@ const learningMarkdown = computed(() =>
 );
 const learningNextAction = computed(() =>
   (learningResponse.value?.mode === 'hint' ? learningResponse.value.hint.nextAction : undefined)
-    ?? (hintLevel.value > 0 ? 'Versuche jetzt den nächsten eigenen Schritt.' : undefined),
+    ?? (hintLevel.value > 0 ? t('Versuche jetzt den nächsten eigenen Schritt.') : undefined),
 );
 const canRequestHint = computed(() =>
   hintLevel.value < 3
@@ -1483,24 +1485,23 @@ const bankSourceIsLocal = computed(
   () => desktopShell && practice.contentSource === 'local',
 );
 const bankSourceName = computed(() => {
-  if (!desktopShell) return 'Remote-Core';
-  return bankSourceIsLocal.value ? 'Lokale Bank' : 'Remote-Core';
+  return bankSourceIsLocal.value ? t('Lokal') : t('Remote');
 });
 const bankSourceText = computed(() => {
-  const revision = practice.contentId ? shortCommit(practice.contentId) : 'Version wird geprüft';
-  const archive = practice.contentMode === 'revision' ? 'Archiv ' : '';
+  const revision = practice.contentId ? shortCommit(practice.contentId) : t('Version wird geprüft');
+  const archive = practice.contentMode === 'revision' ? `${t('Archiv')} ` : '';
   return `${bankSourceName.value} · ${archive}${revision}`;
 });
 const bankSourceA11yText = computed(() => {
   const revision = practice.contentId
     ? `Revision ${practice.contentId}`
-    : 'Revision wird geprüft';
-  const archive = practice.contentMode === 'revision' ? 'Archiv. ' : '';
+    : t('Revision wird geprüft');
+  const archive = practice.contentMode === 'revision' ? `${t('Archiv')}. ` : '';
   return `${bankSourceName.value}. ${archive}${revision}`;
 });
 const bankSourceTitle = computed(() => {
   if (!practice.contentId) return undefined;
-  const archive = practice.contentMode === 'revision' ? ' · Archiv' : '';
+  const archive = practice.contentMode === 'revision' ? ` · ${t('Archiv')}` : '';
   return `${bankSourceName.value}${archive} · ${practice.contentId}`;
 });
 
@@ -1552,7 +1553,7 @@ const gradedCount = computed(() => practice.graded.length);
 const sourceLine = computed(() => {
   const q = current.value?.question;
   if (!q) return '';
-  return `${TERM_LABELS[q.source.term]} ${q.source.year} · ${TEIL_LABELS[q.source.part]}`;
+  return `${t(TERM_LABELS[q.source.term])} ${q.source.year} · ${t(TEIL_LABELS[q.source.part])}`;
 });
 const officialAufgabenpoolUrl = computed(() => {
   const refs = current.value?.question.externalRefs ?? [];
@@ -1591,14 +1592,15 @@ const currentCompetencyCodes = computed(() =>
         data-practice-exit
         class="practice__close"
         :class="{ 'practice__close--armed': exitArmed }"
-        :aria-label="exitArmed ? 'Programm verlassen bestätigen' : 'Programm verlassen'"
-        :title="exitArmed ? 'Erneut klicken, um das Programm zu verlassen' : 'Programm verlassen'"
+        :aria-label="exitArmed ? t('Programm verlassen bestätigen') : t('Programm verlassen')"
+        :title="exitArmed ? t('Erneut klicken, um das Programm zu verlassen') : t('Programm verlassen')"
+        :data-confirm-label="t('Beenden?')"
         @click.stop="exit"
       />
       <div class="practice__progress">
         <div class="practice__progress-label">
-          <template v-if="practice.phase === 'running' && practice.sessionAccessible">Aufgabe {{ practice.index + 1 }} von {{ practice.total }}</template>
-          <template v-else-if="practice.phase === 'summary' && practice.sessionAccessible">Programm abgeschlossen</template>
+          <template v-if="practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
+          <template v-else-if="practice.phase === 'summary' && practice.sessionAccessible">{{ t('Programm abgeschlossen') }}</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
         <SessionProgressBar
@@ -1612,7 +1614,7 @@ const currentCompetencyCodes = computed(() =>
         v-if="practice.phase === 'running' && practice.sessionAccessible && showProgramRail"
         type="button"
         class="practice__session-button"
-        aria-label="Programmliste öffnen"
+        :aria-label="t('Programmliste öffnen')"
         @click="mobileRailOpen = true"
       >
         ☰
@@ -1631,11 +1633,11 @@ const currentCompetencyCodes = computed(() =>
         class="practice__center"
       >
         <div class="practice__error" role="alert">
-          <div class="practice__error-title">Programm gehört zu einem anderen Konto</div>
+          <div class="practice__error-title">{{ t('Programm gehört zu einem anderen Konto') }}</div>
           <div class="practice__error-text">
-            Wechsle zum ursprünglichen Konto zurück, um genau hier weiterzumachen.
+            {{ t('Mit dem ursprünglichen Konto fortsetzen.') }}
           </div>
-          <QButton variant="secondary" @click="closeLockedSession">Schließen</QButton>
+          <QButton variant="secondary" @click="closeLockedSession">{{ t('Schließen') }}</QButton>
         </div>
       </div>
 
@@ -1647,7 +1649,7 @@ const currentCompetencyCodes = computed(() =>
           <div class="practice__skeleton-bar" style="width: 75%" />
           <div class="practice__skeleton-bar" style="width: 85%" />
         </div>
-        <div class="practice__loading-text">Aufgaben werden geladen …</div>
+        <div class="practice__loading-text">{{ t('Aufgaben werden geladen …') }}</div>
       </div>
 
       <!-- Legacy snapshots did not record a bank revision. They stay intact
@@ -1660,17 +1662,15 @@ const currentCompetencyCodes = computed(() =>
       >
         <div class="practice__error" role="status" aria-live="polite">
           <h1 ref="provenanceHeading" class="practice__error-title" tabindex="-1">
-            Aufgabenversion unbekannt
+            {{ t('Aufgabenversion unbekannt') }}
           </h1>
           <div class="practice__error-text">
-            Dieses gespeicherte Programm stammt aus einer älteren QED2-Version und nennt
-            keine Aufgabenbank. Es wird nicht automatisch mit neueren Aufgaben vermischt.
-            Du kannst dieselben Aufgaben-IDs bewusst mit der aktuell gewählten Bank öffnen.
+            {{ t('Mit der aktuellen Aufgabenbank öffnen? Die Aufgaben können sich geändert haben.') }}
           </div>
           <div class="practice__actions-row">
-            <QButton variant="secondary" @click="exitNow">Später</QButton>
+            <QButton variant="secondary" @click="exitNow">{{ t('Später') }}</QButton>
             <QButton @click="practice.resumeWithCurrentContent()">
-              Aktuelle Aufgabenbank verwenden
+              {{ t('Aktuelle Aufgabenbank verwenden') }}
             </QButton>
           </div>
         </div>
@@ -1679,13 +1679,13 @@ const currentCompetencyCodes = computed(() =>
       <!-- error -->
       <div v-else-if="practice.phase === 'error'" key="error" class="practice__center">
         <div class="practice__error">
-          <div class="practice__error-title">Aufgaben konnten nicht geladen werden</div>
+          <div class="practice__error-title">{{ t('Aufgaben konnten nicht geladen werden') }}</div>
           <div class="practice__error-text">
-            {{ practice.error }} — ist der Inhalts-Server erreichbar? (Einstellungen → Serveradressen)
+            {{ t(practice.error ?? '') }}
           </div>
           <div class="practice__actions-row">
-            <QButton variant="secondary" @click="exitNow">Zurück</QButton>
-            <QButton @click="practice.retry()">Erneut versuchen</QButton>
+            <QButton variant="secondary" @click="exitNow">{{ t('Zurück') }}</QButton>
+            <QButton @click="practice.retry()">{{ t('Erneut versuchen') }}</QButton>
           </div>
         </div>
       </div>
@@ -1694,9 +1694,9 @@ const currentCompetencyCodes = computed(() =>
       <div v-else-if="practice.phase === 'summary'" key="summary" class="practice__center">
         <div v-if="summaryStats.count === 0" class="practice__summary">
           <p class="practice__summary-empty">
-            Keine passenden Aufgaben gefunden — andere Filter probieren?
+            {{ t('Keine passenden Aufgaben.') }}
           </p>
-          <QButton class="practice__summary-cta" @click="exitNow">Zurück</QButton>
+          <QButton class="practice__summary-cta" @click="exitNow">{{ t('Zurück') }}</QButton>
         </div>
 
         <div v-else class="practice__summary">
@@ -1704,34 +1704,34 @@ const currentCompetencyCodes = computed(() =>
                headline, everything else supports it. -->
           <section class="practice__result">
             <div class="practice__result-score">
-              <span class="practice__result-points">{{ formatScore(summaryStats.points) }}</span>
-              <span class="practice__result-max">von {{ formatScore(summaryStats.maxPoints) }} Punkten</span>
+              <span class="practice__result-points">{{ formatNumber(summaryStats.points) }}</span>
+              <span class="practice__result-max">{{ t('von {points} Punkten', { points: formatNumber(summaryStats.maxPoints) }) }}</span>
             </div>
-            <div class="practice__result-meter" role="img" :aria-label="`${scorePct} Prozent erreicht`">
-              <span class="practice__result-meter-fill" :style="{ width: `${scorePct}%` }" />
+            <div class="practice__result-meter" role="img" :aria-label="t('{percent} Prozent erreicht', { percent: scorePct })">
+              <span class="practice__result-meter-fill" :style="{ transform: `scaleX(${scorePct / 100})` }" />
             </div>
             <p class="practice__result-count">
-              {{ summaryStats.count }} {{ summaryStats.count === 1 ? 'Aufgabe' : 'Aufgaben' }} bearbeitet
+              {{ summaryStats.count === 1 ? t('1 Aufgabe bearbeitet') : t('{count} Aufgaben bearbeitet', { count: summaryStats.count }) }}
             </p>
 
             <ul class="practice__result-verdicts">
               <li v-for="row in summaryVerdictRows" :key="row.state" class="practice__result-verdict">
                 <StateIcon :state="row.state" :size="18" />
                 <span class="practice__result-verdict-num">{{ row.count }}</span>
-                <span class="practice__result-verdict-label">{{ row.label }}</span>
+                <span class="practice__result-verdict-label">{{ t(row.label) }}</span>
               </li>
             </ul>
 
             <p v-if="summaryStats.corrections.eligible > 0" class="practice__result-count">
-              Korrektur {{ summaryStats.corrections.correct }} / {{ summaryStats.corrections.eligible }}
+              {{ t('Korrektur') }} {{ summaryStats.corrections.correct }} / {{ summaryStats.corrections.eligible }}
             </p>
 
-            <p class="practice__result-action">{{ summaryAction }}</p>
+            <p class="practice__result-action">{{ t(summaryAction) }}</p>
 
-            <p v-if="auth.isLoggedIn && syncNote" class="practice__result-sync">{{ syncNote }}</p>
+            <p v-if="auth.isLoggedIn && syncNote" class="practice__result-sync">{{ t(syncNote) }}</p>
           </section>
 
-          <QButton class="practice__summary-cta" @click="exitNow">Zurück</QButton>
+          <QButton class="practice__summary-cta" @click="exitNow">{{ t('Zurück') }}</QButton>
           <div
             class="practice__source-footer practice__source-footer--summary"
             :data-source="bankSourceIsLocal ? 'local' : 'remote'"
@@ -1813,7 +1813,7 @@ const currentCompetencyCodes = computed(() =>
             <PartPlayer
               :key="current.part.id"
               :part="current.part"
-              :label="multiPart ? `Teil ${current.part.label}` : undefined"
+              :label="multiPart ? t('Teil {label}', { label: current.part.label ?? '' }) : undefined"
               :command="playerCommand"
               :restored-first-result="practice.currentReview?.result"
               :restored-submission="practice.currentReview?.pendingSubmission"
@@ -1872,7 +1872,7 @@ const currentCompetencyCodes = computed(() =>
           :solution="current.part.solution"
           :grading="currentGrading"
           :grading-disabled="gradingOverrideDisabled"
-          :primary-label="primaryLabel"
+          :primary-label="t(primaryLabel)"
           :primary-disabled="primaryDisabled"
           :learning-available="learningAvailable"
           :solution-ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
@@ -1892,8 +1892,8 @@ const currentCompetencyCodes = computed(() =>
               :max-points="playerState.selfAssessment?.maxPoints"
               :labels="rubricLabels"
               :loading="assist.loading"
-              :error="assist.error"
-              :storage-warning="ai.cacheWarning ?? undefined"
+              :error="assist.error ? t(assist.error) : undefined"
+              :storage-warning="ai.cacheWarning ? t(ai.cacheWarning) : undefined"
               :can-renew="assistRenewGeneration != null"
               :advisory-only="assist.advisoryOnly"
               :model="assist.model"
@@ -1922,8 +1922,8 @@ const currentCompetencyCodes = computed(() =>
               :diagnosis="learningResponse?.mode === 'diagnosis' ? learningResponse.diagnosis : undefined"
               :correction-outcome="correctionOutcome ?? undefined"
               :loading="learningLoading"
-              :error="learningError ?? undefined"
-              :storage-warning="ai.cacheWarning ?? undefined"
+              :error="learningError ? t(learningError) : undefined"
+              :storage-warning="ai.cacheWarning ? t(ai.cacheWarning) : undefined"
               :can-renew="learningRenewGeneration != null"
               :ai-generated="learningUsesAi"
               :can-request-hint="canRequestHint"
@@ -1940,20 +1940,20 @@ const currentCompetencyCodes = computed(() =>
           </template>
         </PracticeBottomBar>
 
-        <div v-if="practice.warning" class="practice__warning" role="alert">{{ practice.warning }}</div>
+        <div v-if="practice.warning" class="practice__warning" role="alert">{{ t(practice.warning) }}</div>
         <div v-if="commitError || selfAssessmentDraftError || pendingGradingSaveError || correctionDraftError || answerDraftSaveError" class="practice__warning" role="alert">
-          <span>{{ commitError ?? selfAssessmentDraftError ?? pendingGradingSaveError ?? correctionDraftError ?? answerDraftSaveError }}</span>
+          <span>{{ t(commitError ?? selfAssessmentDraftError ?? pendingGradingSaveError ?? correctionDraftError ?? answerDraftSaveError ?? '') }}</span>
           <QButton
             v-if="!commitBusy"
             variant="secondary"
             size="sm"
             @click="abandonUndurableAndExit"
           >
-            Ohne Speichern verlassen
+            {{ t('Ohne Speichern verlassen') }}
           </QButton>
         </div>
         <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
-          Offline — wird später synchronisiert
+          {{ t('Offline — wird später synchronisiert') }}
         </div>
       </div>
     </transition>
@@ -1999,9 +1999,6 @@ const currentCompetencyCodes = computed(() =>
   gap: 7px;
   overflow: hidden;
   transition:
-    width var(--q-transition-fast),
-    min-width var(--q-transition-fast),
-    flex-basis var(--q-transition-fast),
     background var(--q-transition-fast),
     color var(--q-transition-fast),
     opacity var(--q-transition-fast);
@@ -2014,8 +2011,8 @@ const currentCompetencyCodes = computed(() =>
   color: var(--q-err);
 }
 .practice__close--armed::after {
-  content: 'Beenden?';
-  font-size: 12px;
+  content: attr(data-confirm-label);
+  font-size: var(--q-font-small);
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
@@ -2034,7 +2031,7 @@ const currentCompetencyCodes = computed(() =>
   gap: 5px;
 }
 .practice__progress-label {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   text-align: center;
   color: var(--q-ink-2);
@@ -2174,7 +2171,6 @@ const currentCompetencyCodes = computed(() =>
   width: 100%;
   flex: 1;
   min-width: 0;
-  transition: padding-bottom 0.3s ease;
 }
 /* SolutionSheet is fixed above the bar — while it's open, the content must
  * clear the sheet plus the bar (~110px) or feedback hides behind it. The
@@ -2219,7 +2215,7 @@ const currentCompetencyCodes = computed(() =>
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
   color: var(--q-part-ink);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   padding: 6px 12px;
   border-radius: 8px;
   z-index: 41;
@@ -2230,7 +2226,7 @@ const currentCompetencyCodes = computed(() =>
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   pointer-events: none;
 }
@@ -2268,7 +2264,7 @@ const currentCompetencyCodes = computed(() =>
   }
 }
 .practice__loading-text {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut-2);
 }
 .practice__error {
@@ -2281,7 +2277,7 @@ const currentCompetencyCodes = computed(() =>
   margin: 0 0 8px;
 }
 .practice__error-text {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut);
   line-height: 1.55;
   margin-bottom: 18px;
@@ -2309,7 +2305,7 @@ const currentCompetencyCodes = computed(() =>
   margin: 0;
   text-align: center;
   color: var(--q-mut);
-  font-size: 14px;
+  font-size: var(--q-font-ui);
 }
 .practice__summary-cta {
   align-self: stretch;
@@ -2343,7 +2339,7 @@ const currentCompetencyCodes = computed(() =>
   font-variant-numeric: tabular-nums;
 }
 .practice__result-max {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut-2);
   font-weight: 600;
 }
@@ -2359,11 +2355,12 @@ const currentCompetencyCodes = computed(() =>
   height: 100%;
   border-radius: 3px;
   background: var(--q-accent);
-  transition: width var(--q-transition-normal);
+  transform-origin: left;
+  transition: transform var(--q-transition-normal);
 }
 .practice__result-count {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   color: var(--q-faint);
 }
 
@@ -2389,7 +2386,7 @@ const currentCompetencyCodes = computed(() =>
   font-variant-numeric: tabular-nums;
 }
 .practice__result-verdict-label {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
 }
 
@@ -2415,7 +2412,7 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__result-sync {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
 }
 

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { LoaderCircle } from 'lucide-vue-next';
 defineProps<{
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   disabled?: boolean;
+  loading?: boolean;
   type?: 'button' | 'submit';
 }>();
 defineEmits<{ click: [ev: MouseEvent] }>();
@@ -10,25 +12,40 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 <template>
   <button
     class="q-btn"
-    :class="`q-btn--${variant ?? 'primary'}`"
-    :disabled="disabled"
+    :class="[`q-btn--${variant ?? 'primary'}`, { 'q-btn--loading': loading }]"
+    :disabled="disabled || loading"
+    :aria-busy="loading || undefined"
     :type="type ?? 'button'"
     @click="$emit('click', $event)"
   >
-    <slot />
+    <span v-if="loading" class="q-btn__spinner" aria-hidden="true"><LoaderCircle :size="18" /></span>
+    <span class="q-btn__content"><slot /></span>
   </button>
 </template>
 
 <style scoped>
 .q-btn {
-  font: 700 13.5px 'Public Sans', system-ui, sans-serif;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 var(--q-font-ui, 14px) 'Public Sans', system-ui, sans-serif;
   min-height: var(--q-control-height);
   box-sizing: border-box;
   padding: 11px 20px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-control, 10px);
   cursor: pointer;
   border: none;
-  transition: all var(--q-transition-fast, 0.15s ease);
+  transition: background-color var(--q-transition-fast), color var(--q-transition-fast), border-color var(--q-transition-fast), opacity var(--q-transition-fast), transform var(--q-transition-fast);
+}
+.q-btn__content { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.q-btn--loading .q-btn__content { opacity: 0; }
+.q-btn--loading:disabled { opacity: 0.8; cursor: wait; }
+.q-btn__spinner { position: absolute; inset: 0; display: grid; place-items: center; }
+.q-btn__spinner svg { animation: q-btn-spin 0.8s linear infinite; }
+@keyframes q-btn-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .q-btn, .q-btn__spinner svg { transition: none; animation: none; }
 }
 .q-btn:disabled {
   opacity: 0.45;
@@ -44,9 +61,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 }
 @media (hover: hover) and (pointer: fine) {
   .q-btn--primary:not(:disabled):hover {
-    filter: brightness(1.08);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px var(--q-accent-ring);
+    opacity: 0.9;
   }
 }
 .q-btn--secondary {
@@ -60,8 +75,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 }
 @media (hover: hover) and (pointer: fine) {
   .q-btn--secondary:not(:disabled):hover {
-    background: linear-gradient(135deg, var(--q-card), var(--q-panel));
-    transform: translateY(-1px);
+    background: var(--q-panel);
   }
 }
 .q-btn--ghost {

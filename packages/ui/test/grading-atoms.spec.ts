@@ -107,9 +107,8 @@ describe('GradingMenu', () => {
       expect(text).toContain(GRADING_LABELS[g]);
     }
     expect(text).not.toContain('Neu');
-    // hint texts present
-    expect(text).toContain('Eigentlich gekonnt');
-    expect(text).toContain('Nie wieder üben');
+    // One label per option; the menu no longer repeats explanatory subtitles.
+    expect(w.find('.q-grading-menu__hint').exists()).toBe(false);
   });
 
   it('marks the current state row', async () => {

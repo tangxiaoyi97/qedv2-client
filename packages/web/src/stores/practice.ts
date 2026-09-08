@@ -8,6 +8,7 @@
  * grading overrides rebase FSRS on the pre-answer snapshot kept per part.
  */
 import { defineStore } from 'pinia';
+import { useI18n } from '../i18n.js';
 import { computed, ref, shallowRef } from 'vue';
 import {
   CoreClient,
@@ -54,6 +55,8 @@ import {
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 import { useProgressStore } from './progress.js';
+
+const { t } = useI18n();
 
 /** Sync after every N graded parts while logged in (brief §5: sync eagerly). */
 const SYNC_EVERY_N_GRADES = 3;
@@ -713,7 +716,7 @@ function assertQuestionMatchesManifest(
   const record = manifest.questions[question.id];
   if (!record) {
     throw new ContentIntegrityError(
-      `Aufgabe ${question.id} fehlt im überprüften Aufgabenbank-Manifest.`,
+      t('Aufgabe {id} fehlt im überprüften Aufgabenbank-Manifest.', { id: question.id }),
     );
   }
   const actualWireHash = questionContentHash(question);
@@ -722,7 +725,7 @@ function assertQuestionMatchesManifest(
     || (advertisedWireHash !== undefined && advertisedWireHash !== record.wireSha256)
   ) {
     throw new ContentIntegrityError(
-      `Die Übertragungs-Prüfsumme von Aufgabe ${question.id} stimmt nicht mit der Aufgabenbank überein.`,
+      t('Die Übertragungs-Prüfsumme von Aufgabe {id} stimmt nicht mit der Aufgabenbank überein.', { id: question.id }),
     );
   }
   const actualAssets = questionAssetPaths(question);
@@ -732,7 +735,7 @@ function assertQuestionMatchesManifest(
     || actualAssets.some((path) => !expectedAssets.has(path))
   ) {
     throw new ContentIntegrityError(
-      `Die Grafiken von Aufgabe ${question.id} stimmen nicht mit der Aufgabenbank überein.`,
+      t('Die Grafiken von Aufgabe {id} stimmen nicht mit der Aufgabenbank überein.', { id: question.id }),
     );
   }
 }
@@ -743,7 +746,7 @@ async function readBoundedAsset(
   expected?: ManifestAssetV2,
 ): Promise<Blob> {
   if (!response.ok) {
-    throw new ContentIntegrityError(`Eine Aufgabengrafik konnte nicht geladen werden (${response.status}).`);
+    throw new ContentIntegrityError(t('Eine Aufgabengrafik konnte nicht geladen werden ({status}).', { status: response.status }));
   }
   const allowed = Math.min(MAX_SINGLE_ASSET_BYTES, remainingBytes);
   const declaredHeader = response.headers.get('content-length');
@@ -928,7 +931,7 @@ export const usePracticeStore = defineStore('practice', () => {
       const expected = manifest.formatVersion === 2 ? manifest.assets[path] : undefined;
       if (manifest.formatVersion === 2 && !expected) {
         throw new ContentIntegrityError(
-          `Aufgabengrafik ${path} fehlt im überprüften Aufgabenbank-Manifest.`,
+          t('Aufgabengrafik {path} fehlt im überprüften Aufgabenbank-Manifest.', { path }),
         );
       }
       const url = mode === 'current' && manifest.formatVersion === 2
@@ -1831,17 +1834,17 @@ export const usePracticeStore = defineStore('practice', () => {
           }
           if (!requested.has(q.id)) {
             throw new ContentIntegrityError(
-              `Der Core hat eine nicht angeforderte Aufgabe geliefert (${q.id}).`,
+              t('Der Core hat eine nicht angeforderte Aufgabe geliefert ({id}).', { id: q.id }),
             );
           }
           if (returned.has(q.id)) {
-            throw new ContentIntegrityError(`Der Core hat Aufgabe ${q.id} doppelt geliefert.`);
+            throw new ContentIntegrityError(t('Der Core hat Aufgabe {id} doppelt geliefert.', { id: q.id }));
           }
           returned.add(q.id);
           const expectedHash = manifest.formatVersion === 2 ? undefined : manifest.items[q.id];
           if (!isSha256(entry.contentHash) || !isSha256(entry.wireHash)) {
             throw new ContentIntegrityError(
-              `Der Core hat für Aufgabe ${q.id} keine überprüfbaren Prüfsummen geliefert.`,
+              t('Der Core hat für Aufgabe {id} keine überprüfbaren Prüfsummen geliefert.', { id: q.id }),
             );
           }
           if (
@@ -1849,12 +1852,12 @@ export const usePracticeStore = defineStore('practice', () => {
             && (!isSha256(expectedHash) || entry.contentHash !== expectedHash)
           ) {
             throw new ContentIntegrityError(
-              `Die Inhalts-Prüfsumme von Aufgabe ${q.id} stimmt nicht mit der Aufgabenbank überein.`,
+              t('Die Inhalts-Prüfsumme von Aufgabe {id} stimmt nicht mit der Aufgabenbank überein.', { id: q.id }),
             );
           }
           if (questionContentHash(q) !== entry.wireHash) {
             throw new ContentIntegrityError(
-              `Die Übertragungs-Prüfsumme von Aufgabe ${q.id} ist ungültig.`,
+              t('Die Übertragungs-Prüfsumme von Aufgabe {id} ist ungültig.', { id: q.id }),
             );
           }
           assertQuestionMatchesManifest(manifest, q, entry.wireHash);
@@ -1870,7 +1873,7 @@ export const usePracticeStore = defineStore('practice', () => {
           throw new ContentIntegrityError('Die Batch-Antwort des Core ist unvollständig oder widersprüchlich.');
         }
         if (reportedMissing.size > 0) {
-          warning.value = `${reportedMissing.size} Aufgaben sind in dieser Bank nicht verfügbar.`;
+          warning.value = t('{count} Aufgaben sind in dieser Bank nicht verfügbar.', { count: reportedMissing.size });
         }
       } catch (e) {
         // Hash/revision failures are evidence of mixed content, not an
@@ -1889,7 +1892,7 @@ export const usePracticeStore = defineStore('practice', () => {
         if (batchPayloadReceived) throw e;
         if (map.size === 0) throw e;
         const unavailable = unique.length - map.size;
-        warning.value = `${unavailable} Aufgaben konnten nicht geladen werden — Programm läuft mit ${map.size} geprüften gespeicherten weiter.`;
+        warning.value = t('{count} Aufgaben konnten nicht geladen werden — Programm läuft mit {saved} geprüften gespeicherten weiter.', { count: unavailable, saved: map.size });
       }
     }
 

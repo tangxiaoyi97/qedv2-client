@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from './i18n.js';
+const { t } = useI18n();
+
 /**
  * App shell: sidebar navigation on desktop, bottom tab bar on mobile
  * (prototype 3a / 5a). The sidebar separates the two practice modes
@@ -54,7 +57,7 @@ watch(
 
 /** Two practice entries, visually grouped (supplement §7). */
 const practiceItems = [
-  { to: '/practice', label: 'Programm starten', icon: Play, title: 'FSRS-Empfehlungen' },
+  { to: '/practice', label: 'Üben', icon: Play, title: 'Empfohlene Aufgaben' },
   { to: '/questions', label: 'Aufgaben', icon: Grid, title: 'Alle Aufgaben' },
 ] as const;
 
@@ -119,27 +122,27 @@ watch(
       :inert="chromeHidden || auth.transitioning || undefined"
     >
         <div class="app__logo">QED<span class="app__logo-accent">2</span></div>
-        <nav class="app__nav" aria-label="Hauptnavigation">
+        <nav class="app__nav" :aria-label="t('Hauptnavigation')">
           <RouterLink
             to="/"
             class="app__nav-item"
             :class="{ 'app__nav-item--active': isActive('/') }"
           >
             <Calendar class="app__nav-icon" aria-hidden="true" />
-            <span>Heute</span>
+            <span>{{ t('Heute') }}</span>
           </RouterLink>
 
-          <div class="app__nav-group" aria-hidden="true">Üben</div>
+          <div class="app__nav-group" aria-hidden="true">{{ t('Üben') }}</div>
           <RouterLink
             v-for="item in practiceItems"
             :key="item.to"
             :to="item.to"
             class="app__nav-item"
             :class="{ 'app__nav-item--active': isActive(item.to) }"
-            :title="item.title"
+            :title="t(item.title)"
           >
             <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
-            <span>{{ item.label }}</span>
+            <span>{{ t(item.label) }}</span>
           </RouterLink>
 
           <div class="app__nav-sep" aria-hidden="true" />
@@ -151,7 +154,7 @@ watch(
             :class="{ 'app__nav-item--active': isActive(item.to) }"
           >
             <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
-            <span>{{ item.label }}</span>
+            <span>{{ t(item.label) }}</span>
           </RouterLink>
           <RouterLink
             v-if="ports.shell.capabilities.desktop"
@@ -161,17 +164,17 @@ watch(
             data-desktop-capability-entry
           >
             <Server class="app__nav-icon" aria-hidden="true" />
-            <span>Desktop &amp; Knoten</span>
+            <span>{{ t('Desktop') }}</span>
           </RouterLink>
         </nav>
         <div v-if="!auth.isLoggedIn" class="app__guest-card">
           <div class="app__guest-header">
             <UserCircle class="app__guest-avatar" aria-hidden="true" />
             <div class="app__guest-info">
-              <div class="app__guest-title">Gast</div>
+              <div class="app__guest-title">{{ t('Gast') }}</div>
             </div>
           </div>
-          <button type="button" class="app__guest-btn" @click="ui.openAuthModal()">Anmelden</button>
+          <QButton variant="secondary" @click="ui.openAuthModal()">{{ t('Anmelden') }}</QButton>
         </div>
         <div v-else class="app__guest-card">
           <div class="app__guest-header">
@@ -179,15 +182,15 @@ watch(
             <div class="app__guest-info">
               <div class="app__guest-title">{{ auth.username }}</div>
               <div class="app__guest-text">
-                <template v-if="progress.attemptUploadStatus.state === 'uploading'">⟳ Verlauf wird hochgeladen …</template>
-                <template v-else-if="progress.attemptUploadStatus.state === 'pending'">⚠ Verlauf wartet auf Upload</template>
-                <template v-else-if="progress.attemptUploadStatus.state === 'error'">⚠ Verlauf-Upload fehlgeschlagen</template>
-                <template v-else-if="progress.syncStatus.state === 'synced'">✓ Synchronisiert</template>
-                <template v-else-if="progress.syncStatus.state === 'syncing'">⟳ Sync …</template>
-                <template v-else-if="progress.syncStatus.state === 'offline'">Offline</template>
-                <template v-else-if="progress.syncStatus.state === 'conflict'">⚠ Konflikt</template>
-                <template v-else-if="progress.syncStatus.state === 'error'">⚠ Synchronisierung fehlgeschlagen</template>
-                <template v-else>Cloud aktiv</template>
+                <template v-if="progress.attemptUploadStatus.state === 'uploading'">{{ t('Synchronisiert …') }}</template>
+                <template v-else-if="progress.attemptUploadStatus.state === 'pending'">{{ t('Upload ausstehend') }}</template>
+                <template v-else-if="progress.attemptUploadStatus.state === 'error'">{{ t('Upload fehlgeschlagen') }}</template>
+                <template v-else-if="progress.syncStatus.state === 'synced'">{{ t('✓ Synchronisiert') }}</template>
+                <template v-else-if="progress.syncStatus.state === 'syncing'">{{ t('⟳ Sync …') }}</template>
+                <template v-else-if="progress.syncStatus.state === 'offline'">{{ t('Offline') }}</template>
+                <template v-else-if="progress.syncStatus.state === 'conflict'">{{ t('⚠ Konflikt') }}</template>
+                <template v-else-if="progress.syncStatus.state === 'error'">{{ t('⚠ Synchronisierung fehlgeschlagen') }}</template>
+                <template v-else>{{ t('Cloud aktiv') }}</template>
               </div>
             </div>
           </div>
@@ -199,7 +202,7 @@ watch(
         :class="{ 'app__tabbar--hidden': chromeHidden }"
         :aria-hidden="chromeHidden || auth.transitioning || undefined"
         :inert="chromeHidden || auth.transitioning || undefined"
-        aria-label="Hauptnavigation"
+        :aria-label="t('Hauptnavigation')"
       >
         <RouterLink
           v-for="item in tabItems"
@@ -209,7 +212,7 @@ watch(
           :class="{ 'app__tab--active': isTabActive(item.to) }"
         >
           <component :is="item.icon" class="app__tab-icon" aria-hidden="true" />
-          <span class="app__tab-label">{{ item.label }}</span>
+          <span class="app__tab-label">{{ t(item.label) }}</span>
         </RouterLink>
       </nav>
 
@@ -253,9 +256,9 @@ watch(
           aria-live="polite"
           aria-atomic="true"
         >
-          {{ auth.transitionError ? 'Kontowechsel konnte nicht abgeschlossen werden.' : 'Konto wird sicher gewechselt …' }}
+          {{ auth.transitionError ? t('Kontowechsel konnte nicht abgeschlossen werden.') : t('Konto wird sicher gewechselt …') }}
         </p>
-        <QButton v-if="auth.transitionError" data-autofocus @click="reloadApp">Neu laden</QButton>
+        <QButton v-if="auth.transitionError" data-autofocus @click="reloadApp">{{ t('Neu laden') }}</QButton>
       </div>
     </div>
   </div>
@@ -317,7 +320,8 @@ watch(
   top: 0;
   height: 100vh;
   height: 100dvh;
-  transition: margin-left var(--q-transition-normal), opacity var(--q-transition-normal);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .app__sidebar--hidden {
   margin-left: calc(-1 * var(--q-sidebar-width));
@@ -362,9 +366,9 @@ watch(
   border-radius: 9px;
   color: var(--q-mut);
   font-weight: 500;
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   text-decoration: none;
-  transition: all var(--q-transition-fast);
+  transition: color var(--q-transition-fast), background-color var(--q-transition-fast), opacity var(--q-transition-fast), transform var(--q-transition-fast);
 }
 @media (hover: hover) and (pointer: fine) {
   .app__nav-item:hover {
@@ -418,7 +422,7 @@ watch(
   min-width: 0;
 }
 .app__guest-title {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
   line-height: 1.2;
   color: var(--q-ink);
@@ -427,7 +431,7 @@ watch(
   text-overflow: ellipsis;
 }
 .app__guest-text {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   margin-top: 3px;
   line-height: 1.2;
@@ -446,7 +450,7 @@ watch(
   padding: 8px;
   border-radius: 7px;
   cursor: pointer;
-  transition: all var(--q-transition-fast);
+  transition: color var(--q-transition-fast), background-color var(--q-transition-fast), transform var(--q-transition-fast);
 }
 @media (hover: hover) and (pointer: fine) {
   .app__guest-btn:hover {
@@ -468,7 +472,6 @@ watch(
 .app__main {
   flex: 1;
   min-width: 0;
-  transition: padding var(--q-transition-normal);
 }
 .app__main:focus {
   outline: none; /* programmatic focus target after route changes */
@@ -505,7 +508,7 @@ watch(
     justify-content: center;
     gap: 3px;
     color: var(--q-mut-2);
-    font-size: 11px;
+    font-size: var(--q-font-small);
     font-weight: 500;
     text-decoration: none;
     /* The tint is painted by this element, so its own box IS the pill — the
@@ -546,7 +549,7 @@ watch(
     stroke-width: 2.2px;
   }
   .app__main {
-    padding-bottom: 84px;
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
     /* clears the iOS status bar / notch in standalone PWA mode; the
        practice route reserves this itself via .practice__topbar instead
        (see the --hidden override below), since it has no tabbar/sidebar

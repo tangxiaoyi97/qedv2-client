@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * Star / bookmark toggle (supplement §2) — independent of grading.
  * ★ filled when starred, ☆ outline otherwise; aria-pressed carries the
  * state (never color-only: the glyph itself changes).
  */
 import { computed } from 'vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   starred: boolean;
@@ -13,7 +16,7 @@ const props = defineProps<{
 
 defineEmits<{ toggle: [] }>();
 
-const title = computed(() => (props.starred ? 'Gemerkt' : 'Merken'));
+const title = computed(() => t(props.starred ? 'Gemerkt' : 'Merken'));
 </script>
 
 <template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * Mastery picker as five visible icon buttons rather than a dropdown.
  *
@@ -16,6 +17,8 @@ import { computed } from 'vue';
 import { GRADING_HINTS, GRADING_LABELS, SELECTABLE_GRADINGS, type Grading } from '@qed2/core-logic';
 import GradingDot from './GradingDot.vue';
 import { onRadioGroupKeydown } from './radio-group.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   /** Null until the user has picked — no state is preselected for them. */
@@ -38,7 +41,7 @@ function radioTabIndex(option: Grading, index: number): 0 | -1 {
   <div
     class="q-gpick"
     role="radiogroup"
-    :aria-label="label ?? 'Bewertung'"
+    :aria-label="label ?? t('Bewertung')"
     @keydown="onRadioGroupKeydown"
   >
     <button
@@ -51,11 +54,11 @@ function radioTabIndex(option: Grading, index: number): 0 | -1 {
       :aria-checked="option === grading"
       :disabled="disabled"
       :tabindex="radioTabIndex(option, index)"
-      :title="`${GRADING_LABELS[option]} · ${GRADING_HINTS[option]}`"
+      :title="`${t(GRADING_LABELS[option])} · ${t(GRADING_HINTS[option])}`"
       @click="emit('select', option)"
     >
       <GradingDot :grading="option" :size="20" />
-      <span class="q-gpick__label">{{ GRADING_LABELS[option] }}</span>
+      <span class="q-gpick__label">{{ t(GRADING_LABELS[option]) }}</span>
     </button>
   </div>
 </template>
