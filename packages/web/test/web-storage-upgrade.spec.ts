@@ -22,6 +22,7 @@ const firstEvent: LearningEvent = {
   contentId: 'a'.repeat(40),
   at: '2026-09-08T08:00:00.000Z',
 };
+const historicalEvent: LearningEvent = { ...firstEvent, correctionOutcome: 'correct' };
 const legacyEntries = [
   {
     collection: STORAGE.archive,
@@ -116,7 +117,7 @@ async function seedLegacy(includeLearning = false): Promise<IDBDatabase> {
   if (includeLearning) {
     transaction.objectStore(STORAGE.learning).put({
       version: 1,
-      rows: [{ eventId: 'existing-attempt', event: firstEvent }],
+      rows: [{ eventId: 'existing-attempt', event: historicalEvent }],
     }, learningAddress.key);
     revisions.put(37, [learningAddress.collection, learningAddress.key]);
   }
@@ -174,9 +175,9 @@ describe('WebStorage schema upgrades', () => {
     const learning = new LearningEventStore(storage);
 
     await expect(learning.recordFirst(profile, 'new-attempt', firstEvent)).resolves.toBeUndefined();
-    await expect(learning.recordCorrection(profile, 'new-attempt', 'correct')).resolves.toEqual({
+    await expect(learning.recordDiagnosis(profile, 'new-attempt', 'algebra')).resolves.toEqual({
       ...firstEvent,
-      correctionOutcome: 'correct',
+      errorCode: 'algebra',
     });
 
     await expectPreserved(storage, before);
@@ -184,7 +185,7 @@ describe('WebStorage schema upgrades', () => {
       ...learningAddress,
       revision: 2,
       exists: true,
-      value: { version: 1, rows: [{ eventId: 'new-attempt', event: { ...firstEvent, correctionOutcome: 'correct' } }] },
+      value: { version: 1, rows: [{ eventId: 'new-attempt', event: { ...firstEvent, errorCode: 'algebra' } }] },
     }]);
     const reloadedLearning = new LearningEventStore(new WebStorage());
     expect(await reloadedLearning.recommendEvents(profile)).toEqual([{
@@ -193,7 +194,7 @@ describe('WebStorage schema upgrades', () => {
       hintLevel: 2,
       contentId: firstEvent.contentId,
       at: firstEvent.at,
-      correctionOutcome: 'correct',
+      errorCode: 'algebra',
     }]);
     expect(deleteDatabase).not.toHaveBeenCalled();
   });
@@ -242,29 +243,29 @@ describe('WebStorage schema upgrades', () => {
     expect(() => abandonedConnection.transaction(STORAGE.app)).toThrow();
 
     await expect(learning.recordFirst(profile, 'new-attempt', firstEvent)).resolves.toBeUndefined();
-    await expect(learning.recordCorrection(profile, 'new-attempt', 'partial'))
-      .resolves.toMatchObject({ correctionOutcome: 'partial' });
+    await expect(learning.recordDiagnosis(profile, 'new-attempt', 'arithmetic'))
+      .resolves.toMatchObject({ errorCode: 'arithmetic' });
     await expectPreserved(storage, before);
     expect((await storage.readBatch([learningAddress]))[0]!.revision).toBe(2);
     expect(deleteDatabase).not.toHaveBeenCalled();
   });
 
-  it('creates every store on a fresh install and persists first attempts and corrections', async () => {
+  it('creates every store on a fresh install and persists first attempts and diagnosis', async () => {
     const storage = new WebStorage();
     const learning = new LearningEventStore(storage);
     await learning.recordFirst(profile, 'fresh-attempt', firstEvent);
-    await learning.recordCorrection(profile, 'fresh-attempt', 'correct');
+    await learning.recordDiagnosis(profile, 'fresh-attempt', 'algebra');
 
     const db = await opened(factory.open(DB_NAME));
     expect(db.version).toBe(4);
     expect(Array.from(db.objectStoreNames).sort()).toEqual([...Object.values(STORAGE), META_STORE].sort());
     expect(await new LearningEventStore(new WebStorage()).recommendEvents(profile)).toEqual([
-      expect.objectContaining({ partId: firstEvent.partId, correctionOutcome: 'correct' }),
+      expect.objectContaining({ partId: firstEvent.partId, errorCode: 'algebra' }),
     ]);
     expect((await storage.readBatch([learningAddress]))[0]!.revision).toBe(2);
   });
 
-  it('preserves learning data and its nonzero revision when v3 already has the learning store', async () => {
+  it('preserves historical correction data and its revision when v3 already has the learning store', async () => {
     const legacy = await seedLegacy(true);
     const before = await snapshot(legacy);
     legacy.close();
@@ -273,14 +274,15 @@ describe('WebStorage schema upgrades', () => {
 
     const db = await expectPreserved(storage, before);
     expect(await snapshot(db)).toEqual(before);
-    await learning.recordFirst(profile, 'existing-attempt', firstEvent);
+    expect(await learning.event(profile, 'existing-attempt')).toEqual(historicalEvent);
+    await learning.recordFirst(profile, 'existing-attempt', historicalEvent);
     expect((await storage.readBatch([learningAddress]))[0]!.revision).toBe(37);
-    await learning.recordCorrection(profile, 'existing-attempt', 'correct');
+    await learning.recordDiagnosis(profile, 'existing-attempt', 'algebra');
     expect(await storage.readBatch([learningAddress])).toEqual([{
       ...learningAddress,
       revision: 38,
       exists: true,
-      value: { version: 1, rows: [{ eventId: 'existing-attempt', event: { ...firstEvent, correctionOutcome: 'correct' } }] },
+      value: { version: 1, rows: [{ eventId: 'existing-attempt', event: { ...historicalEvent, errorCode: 'algebra' } }] },
     }]);
     await expectPreserved(storage, before);
   });

@@ -2,7 +2,7 @@
 import { useI18n } from '../i18n.js';
 
 import { computed, ref, useId } from 'vue';
-import { ArrowRight, Check, KeyRound, Lightbulb, RotateCcw } from 'lucide-vue-next';
+import { ArrowRight, KeyRound, Lightbulb } from 'lucide-vue-next';
 import type { AiDiagnosisCode, AiDiagnosisResult, RichText } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import MarkdownView from '../shared/MarkdownView.vue';
@@ -14,13 +14,12 @@ import RichTextView from '../shared/RichTextView.vue';
 const { t } = useI18n();
 
 const props = defineProps<{
-  stage: 'hint' | 'diagnosis' | 'correction';
+  stage: 'hint' | 'diagnosis';
   hintLevel?: 1 | 2 | 3;
   markdown?: string;
   authoredHint?: RichText;
   nextAction?: string;
   diagnosis?: AiDiagnosisResult;
-  correctionOutcome?: 'incorrect' | 'partial' | 'correct';
   loading?: boolean;
   error?: string;
   storageWarning?: string;
@@ -28,7 +27,6 @@ const props = defineProps<{
   aiGenerated?: boolean;
   canRequestHint?: boolean;
   canRequestDiagnosis?: boolean;
-  canCorrect?: boolean;
   needsSetup?: boolean;
   model?: string;
   source?: string;
@@ -38,17 +36,16 @@ const emit = defineEmits<{
   requestHint: [];
   requestDiagnosis: [];
   renew: [];
-  correct: [];
   dismiss: [];
   setup: [];
 }>();
 
 const titleId = 'q-learning-title-' + useId();
 const hasContent = computed(() => Boolean(
-  props.authoredHint?.length || props.markdown?.trim() || props.diagnosis || props.correctionOutcome,
+  props.authoredHint?.length || props.markdown?.trim() || props.diagnosis,
 ));
 const panelTitle = computed(() => t(props.aiGenerated
-  ? 'KI-Hilfe' : props.stage === 'hint' ? 'Hinweis' : 'Korrektur'));
+  ? 'KI-Hilfe' : props.stage === 'hint' ? 'Hinweis' : 'Erklärung'));
 
 const DIAGNOSIS_LABELS: Record<AiDiagnosisCode, string> = {
   concept: 'Begriff verwechselt',
@@ -62,12 +59,6 @@ const DIAGNOSIS_LABELS: Record<AiDiagnosisCode, string> = {
   unknown: 'Fehler noch unklar',
 };
 
-const correctionText = computed(() => {
-  if (props.correctionOutcome === 'correct') return t('Korrektur gelungen.');
-  if (props.correctionOutcome === 'partial') return t('Fast — ein Schritt fehlt noch.');
-  if (props.correctionOutcome === 'incorrect') return t('Noch nicht. Prüfe den ersten abweichenden Schritt.');
-  return '';
-});
 const panelElement = ref<HTMLElement | null>(null);
 
 defineExpose({
@@ -85,8 +76,7 @@ defineExpose({
     :aria-busy="loading ? 'true' : 'false'"
   >
     <div class="q-learning__head">
-      <RotateCcw v-if="stage !== 'hint' && !aiGenerated" :size="18" aria-hidden="true" />
-      <Lightbulb v-else :size="18" aria-hidden="true" />
+      <Lightbulb :size="18" aria-hidden="true" />
       <h3 :id="titleId">{{ panelTitle }}</h3>
       <AiBadge v-if="aiGenerated && hasContent" size="sm" />
       <QIconButton :aria-label="t('{title} schließen', { title: panelTitle })" @click="emit('dismiss')" />
@@ -145,34 +135,6 @@ defineExpose({
         <MarkdownView :source="markdown" />
       </div>
 
-      <div v-else-if="stage === 'correction' && correctionOutcome" class="q-learning__correction" role="status">
-        <Check v-if="correctionOutcome === 'correct'" :size="18" aria-hidden="true" />
-        <RotateCcw v-else :size="18" aria-hidden="true" />
-        <span>{{ correctionText }}</span>
-      </div>
-
-      <div v-else-if="stage === 'correction' && diagnosis" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">{{ t(DIAGNOSIS_LABELS[diagnosis.errorCode]) }}</span>
-        <p>{{ diagnosis.reason }}</p>
-        <p class="q-learning__action">
-          <ArrowRight :size="16" aria-hidden="true" />
-          {{ diagnosis.correctionPrompt }}
-        </p>
-      </div>
-
-      <div v-else-if="stage === 'correction' && markdown" class="q-learning__content q-reveal">
-        <span class="q-learning__eyebrow">{{ t('Für die Korrektur') }}</span>
-        <MarkdownView :source="markdown" />
-        <p v-if="nextAction" class="q-learning__action">
-          <ArrowRight :size="16" aria-hidden="true" />
-          {{ nextAction }}
-        </p>
-      </div>
-
-      <p v-else-if="stage === 'correction'" class="q-learning__correction" role="status">
-        {{ t('Versuche die Aufgabe noch einmal.') }}
-      </p>
-
       <div class="q-learning__actions">
         <QButton v-if="needsSetup" variant="secondary" @click="emit('setup')">
           <KeyRound :size="16" aria-hidden="true" />
@@ -191,9 +153,6 @@ defineExpose({
           @click="emit('requestDiagnosis')"
         >
           {{ t('Fehler ansehen') }}
-        </QButton>
-        <QButton v-if="stage === 'diagnosis' && canCorrect" @click="emit('correct')">
-          {{ t('Jetzt korrigieren') }}
         </QButton>
       </div>
 
@@ -259,8 +218,7 @@ defineExpose({
   color: var(--q-mut);
   font-size: 12.5px;
 }
-.q-learning__action,
-.q-learning__correction {
+.q-learning__action {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -272,8 +230,7 @@ defineExpose({
   color: var(--q-ink);
   font-weight: 650;
 }
-.q-learning__action svg,
-.q-learning__correction svg {
+.q-learning__action svg {
   flex: none;
   margin-top: 2px;
 }

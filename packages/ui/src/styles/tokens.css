@@ -111,7 +111,13 @@ body.q-modal-open {
   --q-transition-spring: 0.28s cubic-bezier(0.25, 1, 0.5, 1);
   /* Header row and data row live in different files; editing one without the
    * other silently misaligns the table, so the track list is stated once. */
-  --q-leaderboard-columns: 64px minmax(150px, 1fr) 136px 92px 92px 24px;
+  --q-leaderboard-columns: 40px minmax(0, 1fr) 112px 88px 88px 16px;
+}
+
+@media (max-width: 700px) {
+  :root {
+    --q-leaderboard-columns: 24px minmax(0, 1fr) repeat(3, minmax(0, 0.6fr)) 12px;
+  }
 }
 
 /* One field contract for settings, search and answer inputs. */

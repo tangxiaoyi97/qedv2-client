@@ -14,6 +14,11 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.3.3 — 2026-09-09
+
+- **learning:** Korrektur removed; hints & explanations stay
+- **leaderboard:** clearer ranks, compact rows & steadier loading
+
 ## 2.3.2 — 2026-09-08
 
 ### klarer & leichter

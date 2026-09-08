@@ -66,14 +66,12 @@ const props = defineProps<{
   label?: string;
   chromeless?: boolean;
   command?: PartPlayerCommand | null;
-  /** Durable first result restored after a crash, before the one correction. */
+  /** Durable result restored after a crash without grading the answer again. */
   restoredFirstResult?: GradeResult;
-  /** Short-lived local snapshot, retained only while one correction is open. */
+  /** Short-lived local answer snapshot, retained while its review is open. */
   restoredSubmission?: Submission;
   /** The durable result exists, but its private answer was intentionally discarded. */
   restoredSubmissionUnavailable?: boolean;
-  /** Local-only correction edit restored without reopening the official solution. */
-  restoredCorrectionDraft?: Submission;
   /** Local-only first-attempt state saved before the official solution opens. */
   restoredDraft?: PartPlayerDraft;
   /** Local-only answer edit restored before the first submission. */
@@ -88,28 +86,19 @@ const emit = defineEmits<{
     selfAssessed: boolean;
     manualGrading?: Grading;
   }];
-  corrected: [payload: {
-    partId: string;
-    result: GradeResult;
-    submission: Submission;
-    selfAssessed: boolean;
-  }];
   state: [payload: PartPlayerState];
   draft: [payload: PartPlayerDraft];
-  correctionDraft: [payload: Submission];
   answerDraft: [payload: Submission];
 }>();
 
 type Phase = 'answering' | 'self-assessing' | 'reviewed';
 
 const phase = ref<Phase>(props.restoredFirstResult
-  ? props.restoredCorrectionDraft ? 'answering' : 'reviewed'
+  ? 'reviewed'
   : props.restoredDraft
     ? 'self-assessing'
     : 'answering');
-const attemptPhase = ref<'first' | 'correction'>(props.restoredCorrectionDraft ? 'correction' : 'first');
-const result = ref<GradeResult | null>(props.restoredCorrectionDraft ? null : props.restoredFirstResult ?? null);
-const firstResult = ref<GradeResult | null>(props.restoredFirstResult ?? null);
+const result = ref<GradeResult | null>(props.restoredFirstResult ?? null);
 const indeterminate = ref(props.restoredDraft?.indeterminate ?? false);
 const indeterminateMax = ref(props.restoredDraft?.indeterminateMax ?? 1);
 const selfAssessment = ref<SelfAssessment>(props.restoredDraft
@@ -127,12 +116,10 @@ const reviewSubmissionUnavailable = ref(props.restoredSubmissionUnavailable === 
 const answer = computed(() => props.part.answer);
 const submission = ref<Submission | null>(
   props.restoredDraft?.submission
-    ?? props.restoredCorrectionDraft
     ?? props.restoredSubmission
     ?? props.restoredAnswerDraft
     ? cloneSubmission((
         props.restoredDraft?.submission
-        ?? props.restoredCorrectionDraft
         ?? props.restoredSubmission
         ?? props.restoredAnswerDraft
       )!)
@@ -195,10 +182,8 @@ const selfAssessmentState = computed(() =>
 watchEffect(() => {
   emit('state', {
     phase: phase.value,
-    attemptPhase: attemptPhase.value,
     canSubmit: phase.value === 'answering' && canSubmit.value,
     result: result.value,
-    firstResult: firstResult.value,
     indeterminate: indeterminate.value,
     unplayable: !answer.value,
     answerPreview: currentAnswerPreview.value,
@@ -231,13 +216,9 @@ function emitSelfAssessmentDraft(): void {
 }
 
 function onSubmissionUpdate(value: Submission): void {
-  submission.value = cloneSubmission(value);
   if (phase.value !== 'answering') return;
-  if (attemptPhase.value === 'correction') {
-    emit('correctionDraft', cloneSubmission(value));
-  } else {
-    emit('answerDraft', cloneSubmission(value));
-  }
+  submission.value = cloneSubmission(value);
+  emit('answerDraft', cloneSubmission(value));
 }
 
 function submit(): void {
@@ -263,11 +244,6 @@ function submit(): void {
 }
 
 function emitOutcome(outcome: GradeResult, value: Submission, selfAssessed: boolean, manualGrading?: Grading): void {
-  if (attemptPhase.value === 'correction') {
-    emit('corrected', { partId: props.part.id, result: outcome, submission: value, selfAssessed });
-    return;
-  }
-  firstResult.value = outcome;
   emit('graded', {
     partId: props.part.id,
     result: outcome,
@@ -275,22 +251,6 @@ function emitOutcome(outcome: GradeResult, value: Submission, selfAssessed: bool
     selfAssessed,
     ...(manualGrading ? { manualGrading } : {}),
   });
-}
-
-function startCorrection(): void {
-  if (
-    attemptPhase.value !== 'first'
-    || phase.value !== 'reviewed'
-    || !firstResult.value
-    || firstResult.value.verdict === 'correct'
-  ) return;
-  attemptPhase.value = 'correction';
-  phase.value = 'answering';
-  result.value = null;
-  indeterminate.value = false;
-  selfAssessment.value = {};
-  selfAssessmentPoints.value = null;
-  selfAssessmentGrading.value = null;
 }
 
 function restoreReview(
@@ -301,8 +261,6 @@ function restoreReview(
   if (restoredSubmission) submission.value = cloneSubmission(restoredSubmission);
   else if (answer.value) submission.value = emptySubmission(answer.value);
   reviewSubmissionUnavailable.value = submissionUnavailable;
-  attemptPhase.value = 'first';
-  firstResult.value = restoredResult;
   result.value = restoredResult;
   phase.value = 'reviewed';
   indeterminate.value = false;
@@ -354,9 +312,6 @@ watch(
         break;
       case 'confirm-self-assessment':
         confirmSelfAssessment();
-        break;
-      case 'start-correction':
-        startCorrection();
         break;
       case 'restore-review':
         restoreReview(command.result, command.submission, command.submissionUnavailable);
@@ -427,7 +382,6 @@ defineExpose({
   setSelfAssessmentScore,
   setSelfAssessmentGrading,
   setSelfAssessment,
-  startCorrection,
 });
 </script>
 
@@ -437,10 +391,6 @@ defineExpose({
       <span v-if="label" class="q-part__label">{{ label }}</span>
       <QChip v-if="!chromeless && part.format" tone="neutral">{{ part.format }}</QChip>
       <span v-if="!chromeless && part.points != null" class="q-part__points">{{ part.points }} P</span>
-    </div>
-
-    <div v-if="attemptPhase === 'correction' && phase !== 'reviewed'" class="q-part__correction" role="status">
-      {{ t('Korrektur') }}
     </div>
 
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
@@ -528,18 +478,6 @@ defineExpose({
   margin-bottom: 14px;
   /* wide inline KaTeX scrolls here instead of panning the whole page */
   overflow-x: auto;
-}
-.q-part__correction {
-  width: max-content;
-  margin: 0 0 12px;
-  padding: 5px 9px;
-  border-radius: 999px;
-  background: var(--q-accent-bg);
-  color: var(--q-accent-strong);
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 .q-part__unplayable {
   padding: 14px;

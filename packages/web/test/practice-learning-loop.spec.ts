@@ -22,11 +22,11 @@ describe('practice learning loop route contract', () => {
     expect(route).toContain("mode: 'hint'");
     expect(route).toContain("mode: 'diagnosis'");
     expect(route).not.toContain("mode: identity ? 'diagnosis' : 'answer'");
-    expect(route).toContain("type: 'start-correction'");
+    expect(route).not.toContain("type: 'start-correction'");
     expect(route).not.toContain('<AiExplainPanel');
     expect(route).not.toContain('showWalkthrough');
     expect(route).toContain("if (stage !== 'hint') authoredHint.value = null");
-    expect(route).toContain(':can-request-diagnosis="learningStage === \'diagnosis\' && firstNeedsCorrection');
+    expect(route).toContain(':can-request-diagnosis="canRequestDiagnosis && !visibleLearningResponse"');
   });
 
   it('never reveals the official solution before a real first attempt', () => {
@@ -35,9 +35,11 @@ describe('practice learning loop route contract', () => {
     expect(bar).not.toContain('KI-Hilfe öffnen');
   });
 
-  it('records correction by exact attempt and tells the truth about lost paid responses', () => {
-    expect(route).toContain('practice.recordCorrection(attemptId, payload.partId, payload.result)');
+  it('preserves first-answer review without a second-answer path or correction statistics', () => {
     expect(route).toContain(':restored-first-result="practice.currentReview?.result"');
+    expect(route).toContain(':restored-submission="practice.currentReview?.pendingSubmission"');
+    expect(route).not.toMatch(/recordCorrection|saveCorrectionDraft|correctionDraft|correctionOutcome|@corrected|@correct=|can-correct|summaryStats\.corrections/);
+    expect(route).toContain("attemptPhase: 'first'");
     expect(route).toContain("case 'AI_REQUEST_ALREADY_COMPLETED':");
     expect(route).toContain('Es wird nicht automatisch erneut bezahlt');
   });
@@ -45,7 +47,7 @@ describe('practice learning loop route contract', () => {
   it('locks navigation and manual grading until local commits are durable', () => {
     expect(route).toContain(':grading-disabled="gradingOverrideDisabled"');
     expect(route).toContain('commitBusy.value\n  || commitError.value !== null');
-    expect(route).toContain('playerState.value.attemptPhase === \'correction\'');
+    expect(route).toContain('pendingGradeCommit.value !== null');
     expect(route).toContain('onBeforeRouteLeave(canLeaveCurrentAnswer)');
     expect(route).toContain('onBeforeRouteUpdate(async (to, from) => {');
     expect(route).toContain('return canLeaveCurrentAnswer();');
@@ -66,7 +68,8 @@ describe('practice learning loop route contract', () => {
   });
 
   it('never carries paid result or retry state into another learning phase', () => {
-    expect(route).toContain("[() => playerState.value.phase, () => playerState.value.attemptPhase]");
+    expect(route).toContain("previousPhase === 'self-assessing' && phase !== 'self-assessing'");
+    expect(route).toContain("marker.attemptPhase !== 'first'");
     expect(route).toContain('assistResult.value = null;');
     expect(route).toContain('assistRenewGeneration.value = null;');
     expect(route).toContain('watch(learningStage, (stage, previousStage) => {');

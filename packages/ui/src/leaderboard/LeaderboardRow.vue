@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from '../i18n.js';
 
-import { ChevronRight, Trophy } from 'lucide-vue-next';
+import { ChevronRight } from 'lucide-vue-next';
 import type { LeaderboardItem, LeaderboardPeriod } from '@qed2/core-logic';
 
 const { t, formatNumber } = useI18n();
@@ -26,39 +26,39 @@ function periodCount(): number {
       'leader-row--me': item.isMe,
       'leader-row--podium': item.rank <= 3,
     }"
-    :aria-label="t('{name}, Rang {rank}, Details öffnen', { name: item.nickname, rank: item.rank })"
+    :aria-label="[
+      t('{name}, Rang {rank}, Details öffnen', { name: item.nickname, rank: item.rank }),
+      `${t(period === 'today' ? 'Heute' : 'Diese Woche')}: ${formatNumber(periodCount())}`,
+      `${t('Gesamt')}: ${formatNumber(item.totalPracticed)}`,
+      `${t('Punkte')}: ${formatNumber(item.totalScore)}`,
+      item.isMe ? t('Du') : '',
+    ].filter(Boolean).join(', ')"
     @click="$emit('open', item.profileId)"
   >
     <span class="leader-row__top">
       <span class="leader-row__rank" :class="`leader-row__rank--${Math.min(item.rank, 4)}`">
-        <Trophy v-if="item.rank <= 3" aria-hidden="true" />
-        <span v-else>{{ item.rank }}</span>
+        <span>{{ item.rank }}</span>
       </span>
 
       <span class="leader-row__identity">
-        <span class="leader-row__nickname">{{ item.nickname }}</span>
+        <span class="leader-row__nickname" :title="item.nickname">{{ item.nickname }}</span>
         <span v-if="item.isMe" class="leader-row__you">{{ t('Du') }}</span>
       </span>
-
-      <ChevronRight class="leader-row__chevron leader-row__chevron--mobile" aria-hidden="true" />
     </span>
 
     <span class="leader-row__stats">
       <span class="leader-row__stat leader-row__stat--primary">
-        <span class="leader-row__mobile-label">{{ t('Aktuell') }}</span>
-        <strong>{{ formatNumber(periodCount()) }}</strong>
+        <strong :title="formatNumber(periodCount())">{{ formatNumber(periodCount()) }}</strong>
       </span>
       <span class="leader-row__stat">
-        <span class="leader-row__mobile-label">{{ t('Gesamt') }}</span>
-        <strong>{{ formatNumber(item.totalPracticed) }}</strong>
+        <strong :title="formatNumber(item.totalPracticed)">{{ formatNumber(item.totalPracticed) }}</strong>
       </span>
       <span class="leader-row__stat leader-row__stat--score">
-        <span class="leader-row__mobile-label">{{ t('Punkte') }}</span>
-        <strong>{{ formatNumber(item.totalScore) }}</strong>
+        <strong :title="formatNumber(item.totalScore)">{{ formatNumber(item.totalScore) }}</strong>
       </span>
     </span>
 
-    <ChevronRight class="leader-row__chevron leader-row__chevron--desktop" aria-hidden="true" />
+    <ChevronRight class="leader-row__chevron" aria-hidden="true" />
   </button>
 </template>
 
@@ -66,14 +66,14 @@ function periodCount(): number {
 .leader-row {
   position: relative;
   width: 100%;
-  min-height: 68px;
+  min-height: 64px;
   display: grid;
   grid-template-columns: var(--q-leaderboard-columns);
   align-items: center;
-  gap: 14px;
+  gap: 16px;
   padding: 12px 16px;
   border: 1px solid var(--q-border);
-  border-radius: 11px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
   color: var(--q-ink);
   cursor: pointer;
@@ -106,22 +106,16 @@ function periodCount(): number {
 }
 
 .leader-row__rank {
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   justify-self: center;
   border-radius: 50%;
   color: var(--q-mut);
-  font-size: 17px;
+  font-size: var(--q-font-ui);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
-}
-
-.leader-row__rank svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2.2;
 }
 
 .leader-row__rank--1 {
@@ -145,29 +139,27 @@ function periodCount(): number {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
 }
 
 .leader-row__nickname {
   overflow: hidden;
   color: var(--q-ink-2);
-  font-size: 15px;
-  font-weight: 720;
+  font-size: var(--q-font-ui);
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .leader-row__you {
   flex: none;
-  padding: 3px 7px;
+  padding: 2px 4px;
   border: 1px solid color-mix(in srgb, var(--q-accent) 38%, transparent);
   border-radius: 5px;
   background: var(--q-card);
   color: var(--q-accent-strong);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: var(--q-font-small);
+  font-weight: 600;
 }
 
 .leader-row__stats {
@@ -175,21 +167,25 @@ function periodCount(): number {
 }
 
 .leader-row__stat {
+  min-width: 0;
   color: var(--q-ink-2);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .leader-row__stat strong {
-  font-size: 14px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-font-ui);
   font-weight: 650;
 }
 
 .leader-row__stat--primary strong {
   color: var(--q-accent-strong);
-  font-size: 21px;
-  font-weight: 820;
-  letter-spacing: -0.035em;
+  font-size: 20px;
+  font-weight: 800;
 }
 
 .leader-row__stat--score {
@@ -197,8 +193,8 @@ function periodCount(): number {
 }
 
 .leader-row__chevron {
-  width: 17px;
-  height: 17px;
+  width: 16px;
+  height: 16px;
   color: var(--q-faint);
   opacity: 0.65;
   transition: opacity var(--q-transition-fast), transform var(--q-transition-fast);
@@ -209,84 +205,53 @@ function periodCount(): number {
   transform: translateX(2px);
 }
 
-.leader-row__chevron--mobile,
-.leader-row__mobile-label {
-  display: none;
-}
-
 @media (max-width: 700px) {
   .leader-row {
-    display: flex;
-    flex-direction: column;
-    gap: 11px;
-    min-height: 0;
-    padding: 14px;
-    border-radius: 10px;
-  }
-
-  .leader-row__top {
-    width: 100%;
-    display: grid;
-    grid-template-columns: 38px minmax(0, 1fr) 18px;
-    align-items: center;
-    gap: 10px;
+    gap: 8px;
+    min-height: 56px;
+    padding: 12px 8px;
+    border-radius: var(--q-radius-control);
   }
 
   .leader-row__rank {
-    width: 30px;
-    height: 30px;
-    justify-self: start;
-    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    font-size: var(--q-font-small);
   }
 
   .leader-row__nickname {
-    font-size: 14px;
+    font-size: var(--q-font-small);
   }
 
-  .leader-row__stats {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    padding-top: 11px;
-    border-top: 1px solid var(--q-border-soft);
-  }
-
-  .leader-row__stat {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+  .leader-row__identity {
     gap: 4px;
-    text-align: center;
-  }
-
-  .leader-row__stat + .leader-row__stat {
-    border-left: 1px solid var(--q-border-soft);
   }
 
   .leader-row__stat strong,
   .leader-row__stat--primary strong {
-    font-size: 17px;
+    font-size: var(--q-font-small);
   }
 
-  .leader-row__mobile-label {
-    display: block;
-    color: var(--q-faint);
-    font-size: 8.5px;
-    font-weight: 800;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
+  .leader-row__you {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    font-size: 10px;
   }
 
-  .leader-row__stat--primary .leader-row__mobile-label {
-    color: var(--q-accent-strong);
+  .leader-row__chevron {
+    width: 12px;
+    height: 12px;
   }
+}
 
-  .leader-row__chevron--desktop {
-    display: none;
+@media (prefers-reduced-motion: reduce) {
+  .leader-row,
+  .leader-row__chevron {
+    transition: none;
   }
-
-  .leader-row__chevron--mobile {
-    display: block;
+  .leader-row:hover .leader-row__chevron {
+    transform: none;
   }
 }
 </style>

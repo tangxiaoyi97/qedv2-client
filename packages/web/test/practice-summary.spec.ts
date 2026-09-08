@@ -115,6 +115,15 @@ describe('programme summary', () => {
     unmount();
   });
 
+  it('shows only the original score even when historical correction metadata exists', async () => {
+    const legacy = { ...record('p1', 'incorrect', 0), correctionOutcome: 'correct' as const };
+    const { host, unmount } = await mountSummary([legacy]);
+    expect(host.querySelector('.practice__result-points')?.textContent).toBe('0');
+    expect(host.textContent).not.toMatch(/Korrektur|Correction|korrigieren/);
+    expect(usePracticeStore().graded[0]?.correctionOutcome).toBe('correct');
+    unmount();
+  });
+
   it('says how many tasks were done, in the right number', async () => {
     const one = await mountSummary([record('p1', 'correct', 1)]);
     expect(one.host.querySelector('.practice__result-count')?.textContent).toContain('1 Aufgabe ');

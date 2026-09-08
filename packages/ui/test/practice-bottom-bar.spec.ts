@@ -6,15 +6,8 @@ import PracticeBottomBar from '../src/practice/PracticeBottomBar.vue';
 
 const reviewed = (verdict: 'correct' | 'partial' | 'incorrect'): PartPlayerState => ({
   phase: 'reviewed',
-  attemptPhase: 'first',
   canSubmit: false,
   result: {
-    verdict,
-    correct: verdict === 'correct',
-    awardedPoints: verdict === 'correct' ? 1 : 0,
-    maxPoints: 1,
-  },
-  firstResult: {
     verdict,
     correct: verdict === 'correct',
     awardedPoints: verdict === 'correct' ? 1 : 0,
@@ -29,10 +22,8 @@ const reviewed = (verdict: 'correct' | 'partial' | 'incorrect'): PartPlayerState
 
 const answering: PartPlayerState = {
   phase: 'answering',
-  attemptPhase: 'first',
   canSubmit: false,
   result: null,
-  firstResult: null,
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
@@ -42,10 +33,8 @@ const answering: PartPlayerState = {
 
 const selfAssessing: PartPlayerState = {
   phase: 'self-assessing',
-  attemptPhase: 'first',
   canSubmit: false,
   result: null,
-  firstResult: null,
   indeterminate: false,
   unplayable: false,
   answerPreview: null,
@@ -177,6 +166,22 @@ describe('PracticeBottomBar', () => {
     expect(trigger?.disabled).toBe(true);
     trigger?.click();
     expect(host.querySelector('.q-grading-menu__popover')).toBeNull();
+    unmount();
+  });
+
+  it('keeps one help entry after an incorrect answer, with no correction control', () => {
+    let toggles = 0;
+    const { host, unmount } = mountBar(reviewed('incorrect'), {
+      learningAvailable: true,
+      onLearningToggle: () => { toggles += 1; },
+    });
+    const help = host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle');
+    expect(help?.textContent?.trim()).toBe('Lernhilfe');
+    expect(help?.getAttribute('aria-label')).toBe('Lernhilfe öffnen');
+    expect(help?.getAttribute('aria-expanded')).toBe('false');
+    help?.click();
+    expect(toggles).toBe(1);
+    expect(host.textContent).not.toContain('Korrektur');
     unmount();
   });
 });

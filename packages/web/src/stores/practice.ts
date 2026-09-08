@@ -127,13 +127,15 @@ export interface GradedRecord {
   gradedAt: string;
   elapsedMs: number;
   hintLevel?: LearningHintLevel;
+  /** Legacy correction metadata is read and preserved, never produced by this client. */
   correctionOutcome?: GradeResult['verdict'];
   correctedAt?: string;
-  /** User deliberately continued without a correction. */
   correctionClosedAt?: string;
-  /** Local-only while one correction is open; never synced or learned from. */
+  /** A durable navigation marker prevents another window restoring a closed review. */
+  reviewClosedAt?: string;
+  /** Local-only original answer for result review; never synced or learned from. */
   pendingSubmission?: Submission;
-  /** Local-only edits made during the one correction, with a CAS merge clock. */
+  /** Legacy local correction draft; retained without reopening it for editing. */
   correctionDraft?: { submission: Submission; savedAt: string };
   /** Allows a post-reload manual choice to replace this exact review. */
   gradingBaseCaptured?: true;
@@ -269,6 +271,8 @@ function isPersistedPracticeSession(value: unknown): value is PersistedPracticeS
         || (typeof record.correctedAt === 'string' && !Number.isNaN(Date.parse(record.correctedAt))))
       && (record.correctionClosedAt === undefined
         || (typeof record.correctionClosedAt === 'string' && !Number.isNaN(Date.parse(record.correctionClosedAt))))
+      && (record.reviewClosedAt === undefined
+        || (typeof record.reviewClosedAt === 'string' && !Number.isNaN(Date.parse(record.reviewClosedAt))))
       && (record.pendingSubmission === undefined || isPersistableSubmission(record.pendingSubmission))
       && (record.correctionDraft === undefined
         || (record.correctionDraft
@@ -1596,6 +1600,8 @@ export const usePracticeStore = defineStore('practice', () => {
         continue;
       }
       let current = merged[index]!;
+      // Preserve legacy fields when an older window also saves this session.
+      // No current practice action creates or updates correction evidence.
       if (!current.correctionOutcome && !current.correctionClosedAt) {
         const currentDraft = current.correctionDraft;
         const pendingDraft = record.correctionDraft;
@@ -1637,6 +1643,12 @@ export const usePracticeStore = defineStore('practice', () => {
           ...withoutPrivateAnswer,
           correctionClosedAt: record.correctionClosedAt,
         });
+      }
+      const reviewClosedAt = [current.reviewClosedAt, record.reviewClosedAt]
+        .filter((value): value is string => value !== undefined).sort().at(-1);
+      if (reviewClosedAt) {
+        const { pendingSubmission: _privateAnswer, ...closedReview } = merged[index]!;
+        merged[index] = cloneGradedRecord({ ...closedReview, reviewClosedAt });
       }
     }
     return merged;
@@ -1750,8 +1762,8 @@ export const usePracticeStore = defineStore('practice', () => {
         if (committed.committed) return next;
       } catch (cause) {
         // The browser/IPC may lose the response after COMMIT. A matching
-        // session containing every grade from this snapshot is already a
-        // safe outcome; otherwise the caller must surface the storage error.
+        // session must contain every grade and any requested review closure;
+        // an existing first grade alone cannot prove the close was saved.
         const [durable] = await storage.readBatch([address]).catch(() => []);
         const durableSession = durable?.value;
         if (
@@ -1760,7 +1772,12 @@ export const usePracticeStore = defineStore('practice', () => {
           && sameSessionDefinition(durableSession, snapshot)
           && snapshot.graded.every((record) =>
             durableSession.graded.some((saved) =>
-              saved.clientAttemptId === record.clientAttemptId))
+              saved.clientAttemptId === record.clientAttemptId
+              && (!record.reviewClosedAt || (
+                saved.reviewClosedAt !== undefined
+                && saved.reviewClosedAt >= record.reviewClosedAt
+                && saved.pendingSubmission === undefined
+              ))))
         ) {
           return durableSession;
         }
@@ -1833,7 +1850,7 @@ export const usePracticeStore = defineStore('practice', () => {
     return { item, question, part };
   });
 
-  /** A current first attempt can remain on screen for one crash-safe correction. */
+  /** Restore the original result without regrading or reapplying its progress. */
   const currentReview = computed(() => {
     if (!sessionAccessible.value) return undefined;
     const item = items.value[index.value];
@@ -1861,10 +1878,10 @@ export const usePracticeStore = defineStore('practice', () => {
       : undefined;
   });
 
-  function correctionStillOpen(record: GradedRecord | undefined): record is GradedRecord {
+  function reviewStillOpen(record: GradedRecord | undefined): record is GradedRecord {
     return !!record
       && record.result.verdict !== 'correct'
-      && record.correctionOutcome === undefined
+      && record.reviewClosedAt === undefined
       && record.correctionClosedAt === undefined;
   }
 
@@ -1874,21 +1891,13 @@ export const usePracticeStore = defineStore('practice', () => {
     const maxPoints = list.reduce((s, g) => s + g.result.maxPoints, 0);
     const byVerdict = { correct: 0, partial: 0, incorrect: 0 };
     for (const g of list) byVerdict[g.result.verdict]++;
-    const correctionEligible = list.filter((record) => record.result.verdict !== 'correct').length;
-    const correctionCorrect = list.filter((record) => record.correctionOutcome === 'correct').length;
-    const corrections = {
-      eligible: correctionEligible,
-      attempted: list.filter((record) => record.correctionOutcome !== undefined).length,
-      correct: correctionCorrect,
-      unresolved: Math.max(0, correctionEligible - correctionCorrect),
-    };
     const codes = new Set<string>();
     for (const g of list) {
       const q = questions.value.get(g.questionId);
       const part = q?.parts.find((p) => p.id === g.partId);
       for (const c of part?.competencies ?? []) codes.add(c.code);
     }
-    return { count: list.length, points, maxPoints, byVerdict, corrections, competencies: [...codes] };
+    return { count: list.length, points, maxPoints, byVerdict, competencies: [...codes] };
   });
 
   /**
@@ -2500,7 +2509,7 @@ export const usePracticeStore = defineStore('practice', () => {
           at: record.gradedAt,
         });
       } catch {
-        warning.value = 'Die Korrektur-Empfehlung konnte lokal nicht gespeichert werden.';
+        warning.value = 'Die Lernempfehlung konnte lokal nicht gespeichert werden.';
       }
     }
     // Guests retain the staged event under their local-only owner. Authenticated
@@ -2588,94 +2597,6 @@ export const usePracticeStore = defineStore('practice', () => {
       return durable;
     }
     return learningEventStore.event(profileId, record.clientAttemptId);
-  }
-
-  /** A correction is learning evidence, not another spaced-repetition event. */
-  async function recordCorrection(
-    clientAttemptId: string,
-    partId: string,
-    result: GradeResult,
-  ): Promise<GradedRecord | undefined> {
-    const recordIndex = graded.value.findIndex((candidate) =>
-      candidate.clientAttemptId === clientAttemptId && candidate.partId === partId);
-    const record = graded.value[recordIndex];
-    const profileId = sessionOwner?.localProfileId;
-    if (!record || !profileId) return;
-    if (record.correctionOutcome) {
-      if (record.correctionOutcome !== result.verdict) {
-        throw new Error('Eine andere Ansicht hat bereits eine andere Korrektur gespeichert.');
-      }
-      return cloneGradedRecord(record);
-    }
-    if (record.correctionClosedAt) {
-      throw new Error('Diese Korrektur wurde bereits in einer anderen Ansicht abgeschlossen.');
-    }
-    const correctedAt = new Date().toISOString();
-    const {
-      pendingSubmission: _privateAnswer,
-      correctionDraft: _correctionDraft,
-      correctionClosedAt: _closedReview,
-      ...withoutPrivateAnswer
-    } = record;
-    const nextGraded = graded.value.map((candidate, index) => index === recordIndex
-      ? cloneGradedRecord({
-          ...withoutPrivateAnswer,
-          correctionOutcome: result.verdict,
-          correctedAt,
-        })
-      : candidate);
-    const owner = await ensureSessionIdentity();
-    const key = sessionStorageKey;
-    if (!key) throw new Error('Practice session has no durable storage identity');
-    const snapshot = buildPersistedSession(owner, nextGraded, correctedAt);
-    const committed = await enqueueSessionPersistence(() => commitSessionSnapshot(key, snapshot, false));
-    graded.value = committed.graded.map(cloneGradedRecord);
-    lastActivityAt.value = committed.savedAt;
-    sessionIdentityDurable.value = true;
-    const durable = graded.value.find((candidate) => candidate.clientAttemptId === record.clientAttemptId);
-    if (!durable || durable.correctionOutcome !== result.verdict) {
-      throw new Error('Eine andere Ansicht hat bereits eine andere Korrektur gespeichert.');
-    }
-    // Recommendation evidence is optional telemetry. A failure never rolls
-    // back or hides the already durable correction.
-    try {
-      await recoverLearningEvent(profileId, durable, committed);
-      await learningEventStore.recordCorrection(profileId, record.clientAttemptId, result.verdict);
-    } catch {
-      warning.value = 'Die Korrektur-Empfehlung konnte lokal nicht aktualisiert werden.';
-    }
-    return cloneGradedRecord(durable);
-  }
-
-  async function saveCorrectionDraft(
-    clientAttemptId: string,
-    partId: string,
-    submission: Submission,
-  ): Promise<boolean> {
-    if (!isPersistableSubmission(submission)) throw new TypeError('Correction draft is malformed');
-    const recordIndex = graded.value.findIndex((candidate) =>
-      candidate.clientAttemptId === clientAttemptId && candidate.partId === partId);
-    const record = graded.value[recordIndex];
-    if (!record || record.correctionOutcome || record.correctionClosedAt) return false;
-    if (
-      record.correctionDraft
-      && JSON.stringify(record.correctionDraft.submission) === JSON.stringify(submission)
-    ) return true;
-    const previous = graded.value;
-    const previousMs = record.correctionDraft
-      ? Date.parse(record.correctionDraft.savedAt)
-      : Number.NEGATIVE_INFINITY;
-    const savedAt = new Date(Math.max(Date.now(), previousMs + 1)).toISOString();
-    const draft = { submission: cloneSubmission(submission), savedAt };
-    graded.value = graded.value.map((candidate, index) => index === recordIndex
-      ? cloneGradedRecord({ ...candidate, correctionDraft: draft })
-      : candidate);
-    if (!(await persistSession())) {
-      graded.value = previous;
-      return false;
-    }
-    const durable = graded.value.find((candidate) => candidate.clientAttemptId === clientAttemptId);
-    return JSON.stringify(durable?.correctionDraft?.submission) === JSON.stringify(submission);
   }
 
   async function recordDiagnosis(
@@ -3075,16 +2996,15 @@ export const usePracticeStore = defineStore('practice', () => {
   /** Remove the short-lived answer snapshot before any deliberate navigation. */
   async function closeCurrentReview(): Promise<void> {
     const review = currentReview.value;
-    if (review?.pendingSubmission || review?.correctionDraft) {
+    if (review && !review.reviewClosedAt) {
       const closedAt = new Date().toISOString();
       const nextGraded = graded.value.map((candidate) => {
         if (candidate.clientAttemptId !== review.clientAttemptId) return candidate;
         const {
           pendingSubmission: _privateAnswer,
-          correctionDraft: _correctionDraft,
           ...withoutPrivateAnswer
         } = candidate;
-        return cloneGradedRecord({ ...withoutPrivateAnswer, correctionClosedAt: closedAt });
+        return cloneGradedRecord({ ...withoutPrivateAnswer, reviewClosedAt: closedAt });
       });
       const owner = await ensureSessionIdentity();
       const key = sessionStorageKey;
@@ -3186,31 +3106,22 @@ export const usePracticeStore = defineStore('practice', () => {
 
       const validPartIds = new Set(validItems.map((item) => item.partId));
       const seenGraded = new Set<string>();
-      let restoredGraded = snapshot.graded.filter((record) => {
+      const restoredGraded = snapshot.graded.filter((record) => {
         if (!validPartIds.has(record.partId) || seenGraded.has(record.partId)) return false;
         seenGraded.add(record.partId);
         return true;
       });
-      // Older clients could commit learning evidence before the session. Keep
-      // recovering that correction, and repair a missing first event only for
-      // the current unresolved review; never repopulate evicted history.
+      // Repair first-attempt evidence for the current review only. Legacy
+      // correction evidence stays in storage and never changes the result.
       const learningProfile = sessionOwner?.localProfileId;
-      if (learningProfile) {
-        restoredGraded = await Promise.all(restoredGraded.map(async (record) => {
-          if (record.correctionOutcome) return record;
-          let evidence: LearningEvent | undefined;
-          try {
-            evidence = record.partId === snapshot.items[snapshot.index]?.partId
-              && correctionStillOpen(record)
-              ? await recoverLearningEvent(learningProfile, record, snapshot)
-              : await learningEventStore.event(learningProfile, record.clientAttemptId);
-          } catch {
-            warning.value = 'Die Korrektur-Empfehlung konnte lokal nicht gespeichert werden.';
-          }
-          return evidence?.correctionOutcome
-            ? cloneGradedRecord({ ...record, correctionOutcome: evidence.correctionOutcome })
-            : record;
-        }));
+      const currentRecord = restoredGraded.find((record) =>
+        record.partId === snapshot.items[snapshot.index]?.partId);
+      if (learningProfile && reviewStillOpen(currentRecord)) {
+        try {
+          await recoverLearningEvent(learningProfile, currentRecord, snapshot);
+        } catch {
+          warning.value = 'Die Lernempfehlung konnte lokal nicht gespeichert werden.';
+        }
       }
       assertContentLoadCurrent();
       if (!activeProfileCanAccessSession()) throw new Error('Das Konto wurde während des Ladens gewechselt.');
@@ -3238,7 +3149,7 @@ export const usePracticeStore = defineStore('practice', () => {
       }
       const savedReview = restoredGraded.find((record) =>
         record.partId === validItems[restoredIndex]!.partId);
-      const restoreReviewedState = correctionStillOpen(savedReview);
+      const restoreReviewedState = reviewStillOpen(savedReview);
       if (restoredGraded.length >= validItems.length && !restoreReviewedState) {
         index.value = restoredIndex;
         phase.value = 'summary';
@@ -3266,6 +3177,26 @@ export const usePracticeStore = defineStore('practice', () => {
       });
       assertContentLoadCurrent();
       if (!saved) throw new Error('Das laufende Programm konnte lokal nicht gespeichert werden.');
+      // A concurrent window can close the review while this restore awaits
+      // content or the final CAS. Decide navigation from the merged snapshot.
+      if (currentReview.value && !reviewStillOpen(currentReview.value)) {
+        if (graded.value.length >= items.value.length) {
+          phase.value = 'summary';
+          await clearPersistedSession();
+        } else {
+          for (let step = 1; step <= items.value.length; step++) {
+            const candidate = (index.value + step) % items.value.length;
+            if (!gradedPartIds.value.has(items.value[candidate]!.partId)) {
+              index.value = candidate;
+              break;
+            }
+          }
+          if (!(await persistSession())) {
+            throw new Error('Das laufende Programm konnte lokal nicht gespeichert werden.');
+          }
+        }
+        assertContentLoadCurrent();
+      }
       pendingUnprovenancedSession = undefined;
       pendingExactRestore = undefined;
       return true;
@@ -3342,7 +3273,7 @@ export const usePracticeStore = defineStore('practice', () => {
       if (
         current.value
         && gradedPartIds.value.has(current.value.item.partId)
-        && !correctionStillOpen(currentReview.value)
+        && !reviewStillOpen(currentReview.value)
       ) {
         next();
         await sessionPersistenceTail;
@@ -3514,8 +3445,6 @@ export const usePracticeStore = defineStore('practice', () => {
     startQuestions,
     startPrepared,
     recordGraded,
-    recordCorrection,
-    saveCorrectionDraft,
     recordDiagnosis,
     recordHintLevel,
     recordCachedAiHelp,

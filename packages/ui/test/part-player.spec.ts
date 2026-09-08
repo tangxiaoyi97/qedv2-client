@@ -10,6 +10,7 @@ import type {
   Submission,
 } from '@qed2/core-logic';
 import PartPlayer from '../src/practice/PartPlayer.vue';
+import AnswerControl from '../src/question/AnswerControl.vue';
 import type { PartPlayerDraft, PartPlayerState } from '../src/practice/part-player-types.js';
 import fixture from '../../core-logic/test/fixtures/sample-questions.json';
 
@@ -33,7 +34,6 @@ type Exposed = {
   setSelfAssessmentScore: (points: number) => void;
   setSelfAssessmentGrading: (grading: Grading) => void;
   setSelfAssessment: (value: SelfAssessment) => void;
-  startCorrection: () => void;
 };
 
 function exposed(wrapper: ReturnType<typeof mount>): Exposed {
@@ -219,18 +219,12 @@ describe('PartPlayer (chromeless shell contract)', () => {
       props: {
         part: openPart,
         chromeless: true,
-        restoredFirstResult: {
-          verdict: 'incorrect',
-          correct: false,
-          awardedPoints: 0,
-          maxPoints: 1,
-        },
-        restoredCorrectionDraft: {
+        restoredAnswerDraft: {
           kind: 'open',
           text: 'Alter Entwurf',
           selfAssessment: {},
         },
-        onCorrectionDraft: async () => {
+        onAnswerDraft: async () => {
           saves += 1;
           const observedRevision = parentRevision.value;
           await Promise.resolve();
@@ -249,7 +243,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
 
     expect(saves).toBe(1);
     expect(parentRevision.value).toBe(1);
-    expect(wrapper.emitted('correctionDraft')).toHaveLength(1);
+    expect(wrapper.emitted('answerDraft')).toHaveLength(1);
   });
 
   it('exposes interval previews to the shell instead of rendering them in chromeless mode', async () => {
@@ -348,7 +342,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(self?.grading).toBe('meh');
   });
 
-  it('emits one first attempt and one correction without grading twice', async () => {
+  it('keeps an incorrect result read-only with no correction action or second grade', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: choicePart, chromeless: true },
     });
@@ -360,32 +354,30 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(wrapper.emitted('graded')).toHaveLength(1);
     expect((wrapper.emitted('graded')![0]![0] as GradedPayload).result.verdict).toBe('incorrect');
 
-    exposed(wrapper).startCorrection();
-    await nextTick();
-    expect(states(wrapper).at(-1)).toMatchObject({
-      phase: 'answering',
-      attemptPhase: 'correction',
-      firstResult: { verdict: 'incorrect' },
+    expect(wrapper.vm).not.toHaveProperty('startCorrection');
+    expect(states(wrapper).at(-1)).not.toHaveProperty('attemptPhase');
+    expect(wrapper.find('.q-part__correction').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('Korrektur');
+
+    // Even a stale control event or repeated primary action cannot edit the
+    // answer after its original grade has been shown.
+    wrapper.getComponent(AnswerControl).vm.$emit('update:modelValue', {
+      kind: 'choice', selected: [1, 3],
     });
-    await options[0]!.trigger('click');
-    await options[2]!.trigger('click');
-    await options[1]!.trigger('click');
-    await options[3]!.trigger('click');
     exposed(wrapper).submit();
     await nextTick();
 
     expect(wrapper.emitted('graded')).toHaveLength(1);
-    expect(wrapper.emitted('corrected')).toHaveLength(1);
-    expect((wrapper.emitted('corrected')![0]![0] as GradedPayload).result.verdict).toBe('correct');
+    expect(wrapper.emitted('corrected')).toBeUndefined();
+    expect(wrapper.emitted('correctionDraft')).toBeUndefined();
+    expect(wrapper.getComponent(AnswerControl).props('modelValue')).toEqual({
+      kind: 'choice', selected: [0, 2],
+    });
     expect(states(wrapper).at(-1)).toMatchObject({
       phase: 'reviewed',
-      attemptPhase: 'correction',
-      result: { verdict: 'correct' },
-      firstResult: { verdict: 'incorrect' },
+      result: { verdict: 'incorrect', awardedPoints: 0 },
+      canSubmit: false,
     });
-
-    exposed(wrapper).startCorrection();
-    expect(states(wrapper).at(-1)?.phase).toBe('reviewed');
   });
 
   it('restores a reviewed first result without emitting a second grade', async () => {
@@ -400,23 +392,26 @@ describe('PartPlayer (chromeless shell contract)', () => {
         part: choicePart,
         chromeless: true,
         restoredFirstResult: restored,
+        restoredSubmission: { kind: 'choice', selected: [0, 2] },
       },
     });
 
     expect(states(wrapper).at(-1)).toMatchObject({
       phase: 'reviewed',
-      attemptPhase: 'first',
       result: { verdict: 'incorrect' },
-      firstResult: { verdict: 'incorrect' },
     });
     expect(wrapper.emitted('graded')).toBeUndefined();
 
-    exposed(wrapper).startCorrection();
+    exposed(wrapper).submit();
     await nextTick();
     expect(states(wrapper).at(-1)).toMatchObject({
-      phase: 'answering',
-      attemptPhase: 'correction',
-      firstResult: { verdict: 'incorrect' },
+      phase: 'reviewed',
+      result: { verdict: 'incorrect', awardedPoints: 0 },
+    });
+    expect(wrapper.emitted('graded')).toBeUndefined();
+    expect(wrapper.emitted('corrected')).toBeUndefined();
+    expect(wrapper.getComponent(AnswerControl).props('modelValue')).toEqual({
+      kind: 'choice', selected: [0, 2],
     });
   });
 

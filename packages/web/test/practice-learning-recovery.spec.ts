@@ -28,7 +28,7 @@ import { practiceSessionStorageKey, usePracticeStore, type GradedRecord } from '
 
 const originalRuntime = ports.coreRuntime;
 const COMMIT = 'c'.repeat(40);
-const SAVE_WARNING = 'Die Korrektur-Empfehlung konnte lokal nicht gespeichert werden.';
+const SAVE_WARNING = 'Die Lernempfehlung konnte lokal nicht gespeichert werden.';
 
 function question(id: string): Question {
   return {
@@ -126,7 +126,7 @@ afterEach(() => {
 });
 
 describe('practice learning evidence recovery', () => {
-  it('restores an exact v4 session and corrects it using unmigrated profile history without rewriting progress', async () => {
+  it('restores an exact v4 session and diagnoses it using unmigrated profile history without rewriting progress', async () => {
     const { record, profile } = await failedFirstEvent();
     const currentKey = practiceSessionStorageKey(profile);
     const snapshot = (await storage.get<{
@@ -149,12 +149,10 @@ describe('practice learning evidence recovery', () => {
     expect(restored.currentReview?.clientAttemptId).toBe(record.clientAttemptId);
     expect(restored.warning).toBeUndefined();
     expect(await learningEventStore.event(profile, record.clientAttemptId)).toMatchObject({ contentId: COMMIT });
-    await restored.recordCorrection(record.clientAttemptId, record.partId, {
-      verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1,
-    });
+    await restored.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
     expect(restored.warning).toBeUndefined();
     expect(await learningEventStore.event(profile, record.clientAttemptId))
-      .toMatchObject({ correctionOutcome: 'correct' });
+      .toMatchObject({ errorCode: 'algebra' });
     expect(await rawProgressState()).toEqual(before);
     expect(listHistory).not.toHaveBeenCalled();
     expect(commit.mock.calls.flatMap(([batch]) => batch.mutations)
@@ -208,12 +206,9 @@ describe('practice learning evidence recovery', () => {
       version: 1, partId: 'q1-a', outcome: 'incorrect', hintLevel: 2, contentId: COMMIT, at: record.gradedAt,
     });
     await restored.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
-    await restored.recordCorrection(record.clientAttemptId, record.partId, {
-      verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1,
-    });
     expect(restored.warning).toBeUndefined();
     expect(await learningEventStore.event(profile, record.clientAttemptId)).toMatchObject({
-      correctionOutcome: 'correct', errorCode: 'algebra',
+      outcome: 'incorrect', errorCode: 'algebra',
     });
     expect(await durableGradeState()).toEqual(before);
     const document = await storage.get<{ rows: unknown[] }>(STORAGE.learning, learningEventStorageKey(profile));
@@ -222,19 +217,13 @@ describe('practice learning evidence recovery', () => {
     expect(JSON.stringify(document)).not.toContain('selected');
   });
 
-  it.each(['correction', 'diagnosis'] as const)('repairs a missing event on an explicit %s without reload', async (operation) => {
+  it('repairs a missing event on an explicit diagnosis without reload', async () => {
     const { practice, record, profile } = await failedFirstEvent();
     const before = await durableGradeState();
-    if (operation === 'correction') {
-      await practice.recordCorrection(record.clientAttemptId, record.partId, {
-        verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1,
-      });
-    } else {
-      await practice.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
-    }
+    await practice.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
     expect(await learningEventStore.event(profile, record.clientAttemptId)).toMatchObject({
       contentId: COMMIT,
-      ...(operation === 'correction' ? { correctionOutcome: 'correct' } : { errorCode: 'algebra' }),
+      errorCode: 'algebra',
     });
     expect(await durableGradeState()).toEqual(before);
   });
@@ -320,19 +309,17 @@ describe('practice learning evidence recovery', () => {
     expect(await learningEventStore.event(profile, record.clientAttemptId)).toBeUndefined();
   });
 
-  it('keeps real storage failures visible while the first grade and correction remain durable', async () => {
+  it('keeps real storage failures visible while the first grade remains durable', async () => {
     const { record } = await failedFirstEvent();
     const before = await durableGradeState();
     vi.spyOn(learningEventStore, 'recordFirst').mockRejectedValue(new Error('storage unavailable'));
     const restored = await freshPractice();
     await restored.restoreSession();
     expect(restored.warning).toBe(SAVE_WARNING);
-    await restored.recordCorrection(record.clientAttemptId, record.partId, {
-      verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1,
-    });
-    expect(restored.warning).toBe('Die Korrektur-Empfehlung konnte lokal nicht aktualisiert werden.');
+    await restored.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
+    expect(restored.warning).toBe('Die Fehlerdiagnose konnte lokal nicht gespeichert werden.');
     expect(await storage.get(STORAGE.app, practiceSessionStorageKey(localProfileStore.current())))
-      .toMatchObject({ graded: [expect.objectContaining({ correctionOutcome: 'correct' })] });
+      .toMatchObject({ graded: [{ result: { verdict: 'incorrect' } }] });
     expect(await durableGradeState()).toEqual(before);
   });
 });

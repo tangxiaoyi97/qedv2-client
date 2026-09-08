@@ -31,6 +31,8 @@ describe('UI language', () => {
     expect(translate('en', 'settingsLanguage')).toBe('Language');
     expect(i18n.t('Eine Aufgabengrafik konnte nicht geladen werden ({status}).', { status: 503 }))
       .toBe('Could not load a figure (503).');
+    expect(i18n.t('Die Lernempfehlung konnte lokal nicht gespeichert werden.'))
+      .toBe('Could not save the learning recommendation.');
     expect(i18n.formatNumber(1234.5)).toBe('1,234.5');
   });
 

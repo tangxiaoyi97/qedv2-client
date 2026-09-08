@@ -135,17 +135,21 @@ describe('LearningEventStore', () => {
     expect(await storage.keys(STORAGE.learning)).toEqual([key]);
   });
 
-  it('confirms correction and diagnosis after a committed response is lost', async () => {
+  it('confirms diagnosis after a lost response and preserves historical correction evidence', async () => {
     const storage = new LostResponseStorage();
     const store = new LearningEventStore(storage);
-    await store.recordFirst(profile, 'attempt-1', event('q1-a'));
+    const historical = { ...event('q1-a'), correctionOutcome: 'correct' as const };
+    await storage.set(STORAGE.learning, learningEventStorageKey(profile), {
+      version: 1,
+      rows: [{ eventId: 'attempt-1', event: historical }],
+    });
 
     storage.loseNextResponse = true;
-    await expect(store.recordCorrection(profile, 'attempt-1', 'correct'))
-      .resolves.toMatchObject({ correctionOutcome: 'correct' });
-    storage.loseNextResponse = true;
     await expect(store.recordDiagnosis(profile, 'attempt-1', 'algebra'))
-      .resolves.toMatchObject({ errorCode: 'algebra' });
+      .resolves.toEqual({ ...historical, errorCode: 'algebra' });
+    expect(await store.event(profile, 'attempt-1'))
+      .toEqual({ ...historical, errorCode: 'algebra' });
+    expect('recordCorrection' in store).toBe(false);
 
     expect(await store.recommendEvents(profile)).toEqual([
       expect.objectContaining({
@@ -156,6 +160,23 @@ describe('LearningEventStore', () => {
         contentId: revision,
       }),
     ]);
+  });
+
+  it('reads historical corrections without rewriting the stored document', async () => {
+    const storage = new AtomicMemoryStorage();
+    const key = learningEventStorageKey(profile);
+    const historical = { ...event('q1-a'), correctionOutcome: 'partial' as const };
+    const document = { version: 1, rows: [{ eventId: 'legacy-attempt', event: historical }] };
+    await storage.set(STORAGE.learning, key, document);
+    const before = await storage.readBatch([{ collection: STORAGE.learning, key }]);
+    const store = new LearningEventStore(storage);
+
+    expect(parseLearningEvent(historical)).toEqual(historical);
+    expect(await store.event(profile, 'legacy-attempt')).toEqual(historical);
+    expect(await store.recommendEvents(profile)).toEqual([
+      expect.objectContaining({ outcome: 'incorrect', correctionOutcome: 'partial' }),
+    ]);
+    expect(await storage.readBatch([{ collection: STORAGE.learning, key }])).toEqual(before);
   });
 
   it('is idempotent but rejects reuse for different learning evidence', async () => {
