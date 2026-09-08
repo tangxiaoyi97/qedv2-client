@@ -171,11 +171,13 @@ export class ServerClient {
   /** GET /leaderboard — authenticated, opt-in aggregate rankings. */
   getLeaderboard(
     query: { period?: LeaderboardPeriod; page?: number; pageSize?: number } = {},
+    options: Pick<RequestOptions, 'signal'> = {},
   ): Promise<LeaderboardResponse> {
     return requestJson<LeaderboardResponse>(
       this.baseUrl,
       '/leaderboard',
       this.authed({
+        ...options,
         query: {
           period: query.period,
           page: query.page,
@@ -186,20 +188,20 @@ export class ServerClient {
   }
 
   /** GET /leaderboard/users/:profileId — public aggregates, still auth-only. */
-  getLeaderboardDetail(profileId: string): Promise<LeaderboardDetail> {
+  getLeaderboardDetail(profileId: string, options: Pick<RequestOptions, 'signal'> = {}): Promise<LeaderboardDetail> {
     return requestJson<LeaderboardDetail>(
       this.baseUrl,
       `/leaderboard/users/${encodeURIComponent(profileId)}`,
-      this.authed({}),
+      this.authed(options),
     );
   }
 
   /** GET /me/leaderboard-profile */
-  getLeaderboardProfile(): Promise<LeaderboardProfile> {
+  getLeaderboardProfile(options: Pick<RequestOptions, 'signal'> = {}): Promise<LeaderboardProfile> {
     return requestJson<LeaderboardProfile>(
       this.baseUrl,
       '/me/leaderboard-profile',
-      this.authed({}),
+      this.authed(options),
     );
   }
 

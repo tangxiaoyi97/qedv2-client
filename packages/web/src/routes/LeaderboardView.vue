@@ -2,7 +2,7 @@
 import { useI18n } from '../i18n.js';
 const { t } = useI18n();
 
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ApiError, type LeaderboardDetail, type LeaderboardPeriod, type LeaderboardResponse } from '@qed2/core-logic';
 import { LeaderboardDetailDrawer, LeaderboardRow, QButton, QLoadingPanel } from '@qed2/ui';
 import { LogOut, Pencil, Trophy, UserRound } from 'lucide-vue-next';
@@ -33,13 +33,20 @@ const detailLoading = ref(false);
 const detailError = ref('');
 let listRequest = 0;
 let detailRequest = 0;
+let scope = 0;
+let disposed = false;
+let listController: AbortController | undefined;
+let detailController: AbortController | undefined;
+let failedListReset = true;
+let lastPageLength = 0;
 
 const profile = computed(() => leaderboard.profile);
+const profileLoadError = computed(() => leaderboard.profileError);
 const isParticipating = computed(() => profile.value?.participating === true);
 const periodLabel = computed(() => (period.value === 'today' ? 'heute' : 'diese Woche'));
 const canLoadMore = computed(
   () =>
-    response.value !== undefined &&
+    !loading.value && response.value !== undefined && response.value.page < 1000 && lastPageLength > 0 &&
     response.value.items.length < response.value.totalParticipants,
 );
 
@@ -50,25 +57,36 @@ function syncNicknameField(): void {
 }
 
 async function loadList(reset = true): Promise<void> {
-  if (!auth.isLoggedIn) return;
+  if (!auth.isLoggedIn || disposed || (!reset && (loading.value || loadingMore.value || !canLoadMore.value))) return;
   const request = ++listRequest;
+  const requestScope = scope;
+  const requestedPeriod = period.value;
+  listController?.abort();
+  listController = new AbortController();
   const page = reset ? 1 : (response.value?.page ?? 0) + 1;
+  if (reset && response.value?.period !== requestedPeriod) response.value = undefined;
   if (reset) loading.value = true;
   else loadingMore.value = true;
+  if (reset) loadingMore.value = false;
   loadError.value = '';
   try {
     const next = await app.serverClient.getLeaderboard({
-      period: period.value,
+      period: requestedPeriod,
       page,
       pageSize: PAGE_SIZE,
-    });
-    if (request !== listRequest) return;
-    response.value =
-      reset || !response.value
-        ? next
-        : { ...next, items: [...response.value.items, ...next.items] };
+    }, { signal: listController.signal });
+    if (request !== listRequest || requestScope !== scope || disposed) return;
+    if (next.period !== requestedPeriod || next.page !== page) throw new Error('Unexpected leaderboard page');
+    lastPageLength = next.items.length;
+    // Rankings may move between page requests. Keep each public profile once;
+    // the latest response wins without accumulating duplicate row keys.
+    const items = reset || !response.value ? next.items :
+      [...new Map([...response.value.items, ...next.items].map((item) => [item.profileId, item])).values()]
+        .sort((left, right) => left.rank - right.rank);
+    response.value = { ...next, items };
   } catch (error) {
-    if (request !== listRequest) return;
+    if (request !== listRequest || requestScope !== scope || disposed) return;
+    failedListReset = reset;
     loadError.value =
       error instanceof ApiError && error.status === 401
         ? 'Bitte melde dich erneut an.'
@@ -81,13 +99,23 @@ async function loadList(reset = true): Promise<void> {
   }
 }
 
+function retryList(): void {
+  void loadList(failedListReset);
+}
+
+async function retryProfile(): Promise<void> {
+  const requestScope = scope;
+  const previousNickname = nickname.value;
+  await leaderboard.refreshProfile();
+  if (requestScope === scope && !disposed && !editingNickname.value && nickname.value === previousNickname) syncNicknameField();
+}
+
 async function initialize(): Promise<void> {
-  if (!auth.isLoggedIn) return;
+  if (!auth.isLoggedIn || disposed) return;
   // The requested default is useful immediately, even before the profile
   // request returns on a slow connection.
   if (!nickname.value) nickname.value = auth.username ?? '';
-  await Promise.all([leaderboard.refreshProfile(), loadList(true)]);
-  syncNicknameField();
+  await Promise.all([retryProfile(), loadList(true)]);
 }
 
 async function selectPeriod(next: LeaderboardPeriod): Promise<void> {
@@ -113,45 +141,56 @@ function friendlyProfileError(error: unknown): string {
 }
 
 async function saveProfile(): Promise<void> {
-  if (savingProfile.value) return;
+  if (savingProfile.value || !auth.isLoggedIn || disposed) return;
+  const requestScope = scope;
   savingProfile.value = true;
   profileError.value = '';
   try {
     await leaderboard.saveNickname(nickname.value);
+    if (requestScope !== scope || disposed) return;
     syncNicknameField();
     editingNickname.value = false;
     await loadList(true);
   } catch (error) {
-    profileError.value = friendlyProfileError(error);
+    if (requestScope === scope && !disposed) profileError.value = friendlyProfileError(error);
   } finally {
-    savingProfile.value = false;
+    if (requestScope === scope) savingProfile.value = false;
   }
 }
 
 async function leaveLeaderboard(): Promise<void> {
-  if (savingProfile.value) return;
+  if (savingProfile.value || !auth.isLoggedIn || disposed) return;
+  const requestScope = scope;
   savingProfile.value = true;
   profileError.value = '';
   try {
     await leaderboard.leave();
+    if (requestScope !== scope || disposed) return;
+    closeDetail();
+    // Do not keep showing a departed public profile if the next read fails.
+    response.value = undefined;
     syncNicknameField();
     editingNickname.value = false;
     await loadList(true);
   } catch {
-    profileError.value = 'Das Leaderboard konnte nicht verlassen werden.';
+    if (requestScope === scope && !disposed) profileError.value = 'Das Leaderboard konnte nicht verlassen werden.';
   } finally {
-    savingProfile.value = false;
+    if (requestScope === scope) savingProfile.value = false;
   }
 }
 
 async function loadDetail(profileId: string): Promise<void> {
+  if (!auth.isLoggedIn || disposed) return;
   const request = ++detailRequest;
+  const requestScope = scope;
+  detailController?.abort();
+  detailController = new AbortController();
   selectedDetail.value = undefined;
   detailLoading.value = true;
   detailError.value = '';
   try {
-    const detail = await app.serverClient.getLeaderboardDetail(profileId);
-    if (request === detailRequest) selectedDetail.value = detail;
+    const detail = await app.serverClient.getLeaderboardDetail(profileId, { signal: detailController.signal });
+    if (request === detailRequest && requestScope === scope && !disposed) selectedDetail.value = detail;
   } catch {
     if (request === detailRequest) {
       detailError.value = 'Die Details konnten nicht geladen werden.';
@@ -162,6 +201,7 @@ async function loadDetail(profileId: string): Promise<void> {
 }
 
 async function openDetail(profileId: string): Promise<void> {
+  if (!auth.isLoggedIn || disposed) return;
   selectedProfileId.value = profileId;
   await loadDetail(profileId);
 }
@@ -172,26 +212,39 @@ function retryDetail(): void {
 
 function closeDetail(): void {
   detailRequest += 1;
+  detailController?.abort();
+  detailController = undefined;
   selectedProfileId.value = undefined;
   selectedDetail.value = undefined;
   detailLoading.value = false;
   detailError.value = '';
 }
 
-watch(
-  () => auth.isLoggedIn,
-  (loggedIn) => {
-    if (loggedIn) void initialize();
-    else {
-      leaderboard.clear();
-      response.value = undefined;
-      closeDetail();
-    }
-  },
-);
+function resetRequests(): void {
+  scope += 1;
+  listRequest += 1;
+  listController?.abort();
+  listController = undefined;
+  response.value = undefined;
+  loading.value = false;
+  loadingMore.value = false;
+  loadError.value = '';
+  profileError.value = '';
+  savingProfile.value = false;
+  nickname.value = '';
+  editingNickname.value = false;
+  lastPageLength = 0;
+  closeDetail();
+}
 
-onMounted(() => {
+watch(() => [auth.session?.user.id, auth.session?.token, app.config.serverBaseUrl, auth.isLoggedIn], () => {
+  resetRequests();
   if (auth.isLoggedIn) void initialize();
+}, { immediate: true, flush: 'sync' });
+
+onBeforeUnmount(() => {
+  disposed = true;
+  resetRequests();
 });
 </script>
 
@@ -234,14 +287,14 @@ onMounted(() => {
 
       <div v-if="loadError" class="leaderboard__notice leaderboard__notice--error" role="alert">
         <span>{{ t(loadError) }}</span>
-        <button type="button" @click="loadList(true)">{{ t('Erneut versuchen') }}</button>
+        <QButton variant="ghost" :loading="loading || loadingMore" @click="retryList">{{ t('Erneut versuchen') }}</QButton>
       </div>
 
-      <section class="leaderboard__list" :aria-label="t('Leaderboard')">
+      <section class="leaderboard__list" :aria-label="t('Leaderboard')" :aria-busy="loading || loadingMore">
         <div class="leaderboard__columns" aria-hidden="true">
           <span>{{ t('Rang') }}</span>
           <span>{{ t('Nickname') }}</span>
-          <span>{{ t('Aufgaben ·') }} {{ t(periodLabel) }}</span>
+          <span :title="`${t('Aufgaben ·')} ${t(periodLabel)}`">{{ t(period === 'today' ? 'Heute' : 'Diese Woche') }}</span>
           <span>{{ t('Gesamt') }}</span>
           <span>{{ t('Punkte') }}</span>
           <span />
@@ -249,11 +302,11 @@ onMounted(() => {
 
         <div class="leaderboard__stage q-crossfade">
         <transition name="q-crossfade">
-        <QLoadingPanel v-if="loading" key="loading" :label="t('Leaderboard wird geladen …')" class="leaderboard__loading" />
-        <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty">
+        <QLoadingPanel v-if="loading && !response" key="loading" :label="t('Leaderboard wird geladen …')" class="leaderboard__loading" />
+        <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty" role="status">
           {{ t('Noch keine Einträge.') }}
         </div>
-        <div v-else key="rows" class="leaderboard__rows">
+        <div v-else key="rows" class="leaderboard__rows" :class="{ 'leaderboard__rows--refreshing': loading }">
           <LeaderboardRow
             v-for="item in response?.items"
             :key="item.profileId"
@@ -267,13 +320,21 @@ onMounted(() => {
       </section>
 
       <div v-if="canLoadMore" class="leaderboard__more">
-        <QButton variant="ghost" :disabled="loadingMore" @click="loadList(false)">
-          {{ loadingMore ? t('Wird geladen …') : t('Mehr anzeigen') }}
+        <QButton variant="ghost" :loading="loadingMore" @click="loadList(false)">
+          {{ t('Mehr anzeigen') }}
         </QButton>
       </div>
 
-      <section v-if="!isParticipating" class="leaderboard__profile">
+      <section v-if="!profile && leaderboard.loadingProfile" class="leaderboard__profile">
+        <QLoadingPanel bare :label="t('Wird geladen …')" />
+      </section>
+      <section v-else-if="!profile && profileLoadError" class="leaderboard__notice leaderboard__notice--error leaderboard__profile-status" role="alert">
+        <span>{{ t(profileLoadError) }}</span>
+        <QButton variant="ghost" @click="retryProfile">{{ t('Erneut versuchen') }}</QButton>
+      </section>
+      <section v-else-if="profile && !isParticipating" class="leaderboard__profile">
         <form class="leaderboard__join" @submit.prevent="saveProfile">
+          <div class="leaderboard__nickname-field">
           <label for="leaderboard-nickname">{{ t('Nickname') }}</label>
           <input
             id="leaderboard-nickname"
@@ -281,16 +342,21 @@ onMounted(() => {
             v-model="nickname"
             autocomplete="nickname"
             maxlength="32"
+            minlength="2"
+            required
             :disabled="savingProfile"
+            :aria-invalid="profileError ? true : undefined"
+            :aria-describedby="profileError ? 'leaderboard-profile-error' : undefined"
           />
-          <QButton type="submit" :disabled="savingProfile">
-            {{ savingProfile ? t('Wird gespeichert …') : t('Beitreten') }}
+          </div>
+          <QButton type="submit" :loading="savingProfile">
+            {{ t('Beitreten') }}
           </QButton>
         </form>
-        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
+        <div v-if="profileError" id="leaderboard-profile-error" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
 
-      <section v-else class="leaderboard__profile leaderboard__profile--joined">
+      <section v-else-if="isParticipating" class="leaderboard__profile leaderboard__profile--joined">
         <div v-if="!editingNickname" class="leaderboard__profile-actions">
           <div class="leaderboard__profile-identity">
             <span class="leaderboard__profile-avatar" aria-hidden="true">
@@ -301,17 +367,18 @@ onMounted(() => {
             </span>
           </div>
           <div class="leaderboard__profile-buttons">
-            <QButton variant="secondary" @click="editingNickname = true">
+            <QButton variant="secondary" :disabled="savingProfile" @click="editingNickname = true">
               <Pencil aria-hidden="true" />
               {{ t('Ändern') }}
             </QButton>
-            <QButton variant="danger" :disabled="savingProfile" @click="leaveLeaderboard">
+            <QButton variant="danger" :loading="savingProfile" @click="leaveLeaderboard">
               <LogOut aria-hidden="true" />
               {{ t('Verlassen') }}
             </QButton>
           </div>
         </div>
         <form v-else class="leaderboard__join" @submit.prevent="saveProfile">
+          <div class="leaderboard__nickname-field">
           <label for="leaderboard-nickname-edit">{{ t('Nickname') }}</label>
           <input
             id="leaderboard-nickname-edit"
@@ -319,12 +386,19 @@ onMounted(() => {
             v-model="nickname"
             autocomplete="nickname"
             maxlength="32"
+            minlength="2"
+            required
             :disabled="savingProfile"
+            :aria-invalid="profileError ? true : undefined"
+            :aria-describedby="profileError ? 'leaderboard-profile-error' : undefined"
           />
-          <QButton type="submit" :disabled="savingProfile">{{ t('Speichern') }}</QButton>
+          </div>
+          <div class="leaderboard__form-actions">
+          <QButton type="submit" :loading="savingProfile">{{ t('Speichern') }}</QButton>
           <QButton variant="ghost" :disabled="savingProfile" @click="editingNickname = false; syncNicknameField()">{{ t('Abbrechen') }}</QButton>
+          </div>
         </form>
-        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
+        <div v-if="profileError" id="leaderboard-profile-error" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
     </template>
 
@@ -343,7 +417,7 @@ onMounted(() => {
 .leaderboard {
   max-width: 980px;
   margin: 0 auto;
-  padding: 32px 24px 38px;
+  padding: 32px 24px 40px;
 }
 
 .leaderboard__header {
@@ -351,24 +425,22 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 22px;
+  margin-bottom: 24px;
 }
 
 .leaderboard__header h1,
 .leaderboard__auth h1 {
   margin: 0;
-  font-size: 27px;
-  font-weight: 800;
-  letter-spacing: -0.035em;
 }
 
 .leaderboard__segments {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  width: 268px;
+  width: 280px;
+  flex: none;
   padding: 4px;
   border: 1px solid var(--q-border);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-panel);
 }
 
@@ -376,15 +448,15 @@ onMounted(() => {
   min-height: var(--q-control-height);
   padding: 0 16px;
   border: 0;
-  border-radius: 7px;
+  border-radius: calc(var(--q-radius-control) - 4px);
   background: transparent;
   color: var(--q-mut);
   cursor: pointer;
-  font: 700 12px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui)/1.3 'Public Sans', system-ui, sans-serif;
   transition: background var(--q-transition-fast), color var(--q-transition-fast);
 }
 
-.leaderboard__segments button:hover {
+.leaderboard__segments button:not(.leaderboard__segment--active):hover {
   color: var(--q-ink);
 }
 
@@ -405,18 +477,16 @@ onMounted(() => {
 }
 
 .leaderboard__columns {
-  min-height: 34px;
+  min-height: 40px;
   display: grid;
   grid-template-columns: var(--q-leaderboard-columns);
   align-items: center;
-  gap: 14px;
-  padding: 0 16px 7px;
+  gap: 16px;
+  padding: 0 16px 8px;
   border-bottom: 1px solid var(--q-border);
-  color: var(--q-faint);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  color: var(--q-mut);
+  font-size: var(--q-font-small);
+  font-weight: 600;
 }
 
 .leaderboard__columns span {
@@ -433,24 +503,28 @@ onMounted(() => {
 
 .leaderboard__columns span:nth-child(3) {
   color: var(--q-accent-strong);
-  white-space: nowrap;
 }
 
 .leaderboard__rows {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-top: 9px;
+  padding-top: 8px;
+  transition: opacity var(--q-transition-fast);
+}
+
+.leaderboard__rows--refreshing {
+  opacity: 0.6;
 }
 
 .leaderboard__loading {
-  margin-top: 9px;
+  margin-top: 8px;
 }
 .leaderboard__empty {
-  margin-top: 9px;
-  padding: 56px 20px;
+  margin-top: 8px;
+  padding: 48px 24px;
   border: 1px solid var(--q-border);
-  border-radius: 11px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
   color: var(--q-mut);
   font-size: var(--q-font-ui);
@@ -464,22 +538,30 @@ onMounted(() => {
 }
 
 .leaderboard__profile {
-  position: sticky;
-  bottom: 14px;
-  z-index: 8;
   margin-top: 24px;
-  padding: 14px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--q-card) 94%, transparent);
-  backdrop-filter: blur(12px);
+  padding: 16px;
+  border: 1px solid var(--q-border);
+  border-radius: var(--q-radius-card);
+  background: var(--q-card);
 }
 
 .leaderboard__join {
   display: grid;
-  grid-template-columns: auto minmax(200px, 1fr) auto auto;
-  gap: 10px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: end;
+}
+
+.leaderboard__nickname-field {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.leaderboard__form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .leaderboard__join label {
@@ -489,6 +571,7 @@ onMounted(() => {
 }
 
 .leaderboard__join input {
+  min-width: 0;
   width: 100%;
 }
 
@@ -502,13 +585,13 @@ onMounted(() => {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 12px;
   margin-right: auto;
 }
 
 .leaderboard__profile-avatar {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: grid;
   place-items: center;
@@ -519,8 +602,8 @@ onMounted(() => {
 }
 
 .leaderboard__profile-avatar svg {
-  width: 17px;
-  height: 17px;
+  width: 20px;
+  height: 20px;
   stroke-width: 1.9;
 }
 
@@ -530,10 +613,11 @@ onMounted(() => {
 }
 
 .leaderboard__profile-copy strong {
+  display: block;
   overflow: hidden;
   color: var(--q-ink-2);
-  font-size: 15px;
-  font-weight: 750;
+  font-size: var(--q-font-ui);
+  font-weight: 700;
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -542,24 +626,24 @@ onMounted(() => {
 .leaderboard__profile-buttons {
   display: grid;
   grid-template-columns: repeat(2, auto);
-  gap: 6px;
+  gap: 8px;
 }
 
 .leaderboard__profile-buttons :deep(.q-btn) {
-  min-height: 40px;
+  min-height: var(--q-control-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .leaderboard__profile-buttons :deep(.q-btn svg) {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
 }
 
 .leaderboard__profile-error {
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--q-err);
   font-size: var(--q-font-small);
   font-weight: 600;
@@ -570,21 +654,20 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
-  padding: 11px 14px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
   border: 1px solid var(--q-err-border);
-  border-radius: 8px;
+  border-radius: var(--q-radius-control);
   background: var(--q-err-bg);
   color: var(--q-err-text);
   font-size: var(--q-font-small);
 }
-.leaderboard__notice button {
-  border: 0;
-  background: transparent;
+.leaderboard__notice :deep(.q-btn) {
+  flex: none;
   color: inherit;
-  cursor: pointer;
-  font: 700 12px 'Public Sans', system-ui, sans-serif;
-  text-decoration: underline;
+}
+.leaderboard__profile-status {
+  margin-top: 24px;
 }
 
 .leaderboard__auth {
@@ -594,28 +677,28 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 24px;
   margin: min(15vh, 120px) auto 0;
-  padding: 36px;
+  padding: 32px;
   border: 1px solid var(--q-border);
-  border-radius: 13px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
   text-align: center;
 }
 
 .leaderboard__auth-icon {
-  width: 52px;
-  height: 52px;
+  width: 56px;
+  height: 56px;
   display: grid;
   place-items: center;
-  margin-bottom: 18px;
   border-radius: 50%;
   background: var(--q-accent-bg);
   color: var(--q-accent-strong);
 }
 
 .leaderboard__auth-icon svg {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 
 @media (max-width: 700px) {
@@ -624,41 +707,50 @@ onMounted(() => {
   }
 
   .leaderboard__header {
-    gap: 14px;
-    margin-bottom: 18px;
-  }
-
-  .leaderboard__header h1 {
-    font-size: 22px;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 16px;
   }
 
   .leaderboard__segments {
-    width: 190px;
+    width: min(280px, 100%);
   }
 
   .leaderboard__segments button {
-    min-height: 34px;
-    padding: 0 10px;
-    font-size: 10.5px;
+    padding: 0 12px;
   }
 
   .leaderboard__columns {
-    display: none;
+    gap: 8px;
+    padding: 0 8px 8px;
+  }
+
+  .leaderboard__columns span:first-child {
+    overflow: hidden;
+    font-size: 10px;
+  }
+
+  .leaderboard__columns span:nth-child(3) {
+    line-height: 1.2;
   }
 
   .leaderboard__profile {
-    bottom: calc(66px + env(safe-area-inset-bottom));
-    margin-top: 18px;
+    margin-top: 24px;
     padding: 12px;
   }
 
   .leaderboard__join {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 12px;
   }
 
   .leaderboard__join :deep(.q-btn) {
     width: 100%;
+  }
+
+  .leaderboard__form-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .leaderboard__profile-actions {
@@ -681,7 +773,24 @@ onMounted(() => {
 
   .leaderboard__auth {
     margin-top: 10vh;
-    padding: 28px 20px;
+    padding: 32px 24px;
+  }
+
+  .leaderboard__notice {
+    align-items: start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .leaderboard__notice :deep(.q-btn) {
+    align-self: end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaderboard__rows,
+  .leaderboard__segments button {
+    transition: none;
   }
 }
 </style>

@@ -1,1 +1,2 @@
 - **learning:** Korrektur removed; hints & explanations stay
+- **leaderboard:** clearer ranks, compact rows & steadier loading

@@ -6,6 +6,39 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import LeaderboardView from '../src/routes/LeaderboardView.vue';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
+import { useLeaderboardStore } from '../src/stores/leaderboard.js';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { resolve, promise };
+}
+
+function board(period = 'today', page = 1, ids = ['mira'], total = ids.length) {
+  return {
+    period, page, pageSize: 50, totalParticipants: total, timeZone: 'Europe/Vienna',
+    generatedAt: '2026-09-08T12:00:00Z', me: { participating: false },
+    items: ids.map((id, index) => ({ profileId: id, nickname: id, rank: index + 1,
+      isMe: false, todayPracticed: 4, weekPracticed: 9, totalPracticed: 18, totalScore: 24 })),
+  };
+}
+
+async function mountSignedIn(cachedPrivateProfile = false) {
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/leaderboard', component: LeaderboardView }] });
+  await router.push('/leaderboard');
+  const auth = useAuthStore();
+  auth.session = { token: 'test', expiresAt: '2099-01-01T00:00:00Z', user: { id: 'u1', username: 'tester' }, serverBaseUrl: useAppStore().config.serverBaseUrl };
+  useAppStore().setTokenProvider(() => auth.session?.token);
+  if (cachedPrivateProfile) useLeaderboardStore().profile = { participating: false, suggestedNickname: 'tester' };
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const app = createApp(LeaderboardView).use(pinia).use(router);
+  app.mount(host);
+  await settle();
+  return { host, auth, unmount: () => app.unmount() };
+}
 
 function json(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -48,6 +81,8 @@ describe('LeaderboardView', () => {
     expect(host.textContent).toContain('Anmelden');
     expect(host.textContent).not.toContain('Bitte anmelden');
     expect(host.querySelector('.leaderboard__auth p')).toBeNull();
+    expect([...host.querySelector('.leaderboard__auth')!.children].map((child) => child.tagName))
+      .toEqual(['SPAN', 'H1', 'BUTTON']);
 
     app.unmount();
   });
@@ -297,5 +332,138 @@ describe('LeaderboardView', () => {
     });
 
     app.unmount();
+  });
+
+  it('preserves a typed nickname when the cached private profile refresh finishes', async () => {
+    const pending = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(async (input) => String(input).endsWith('/me/leaderboard-profile')
+      ? pending.promise : json(board())));
+    const { host, unmount } = await mountSignedIn(true);
+    const input = host.querySelector<HTMLInputElement>('#leaderboard-nickname')!;
+    input.value = 'My chosen name';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    pending.resolve(json({ participating: false, suggestedNickname: 'tester' }));
+    await vi.waitFor(() => expect(useLeaderboardStore().loadingProfile).toBe(false));
+    expect(input.value).toBe('My chosen name');
+    unmount();
+  });
+
+  it('removes the departed profile even when refreshing the public list fails', async () => {
+    let left = false;
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      if (String(input).endsWith('/me/leaderboard-profile')) {
+        if (init?.method === 'DELETE') {
+          left = true;
+          return new Response(null, { status: 204 });
+        }
+        return json({ participating: true, profileId: 'self', nickname: 'tester',
+          createdAt: '2026-07-23T12:00:00Z', updatedAt: '2026-07-23T12:00:00Z' });
+      }
+      if (left) throw new TypeError('offline');
+      const result = board('today', 1, ['self']);
+      result.items[0]!.isMe = true;
+      return json(result);
+    }));
+    const { host, unmount } = await mountSignedIn();
+    await vi.waitFor(() => expect(host.querySelector('.leader-row--me')).not.toBeNull());
+    [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('Verlassen'))!.click();
+    await vi.waitFor(() => {
+      expect(host.textContent).toContain('Das Leaderboard konnte nicht geladen werden.');
+      expect(host.textContent).toContain('Beitreten');
+      expect(host.querySelector('.leader-row--me')).toBeNull();
+    });
+    unmount();
+  });
+
+  it('keeps a failed participation lookup distinct from the private opt-in state and retries it', async () => {
+    let profiles = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      if (String(input).endsWith('/me/leaderboard-profile')) {
+        if (++profiles === 1) throw new TypeError('offline');
+        return json({ participating: false, suggestedNickname: 'tester' });
+      }
+      return json(board());
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('Die Teilnahme konnte nicht geladen werden.'));
+      expect(mounted.host.querySelector('.leader-row')).not.toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__join')).toBeNull();
+      const retry = [...mounted.host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Erneut versuchen'))!;
+      retry.click();
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leaderboard__join')).not.toBeNull());
+      expect(profiles).toBe(2);
+    } finally { mounted.unmount(); }
+  });
+
+  it('cancels obsolete periods and never labels old rows as the new period', async () => {
+    const today = deferred<Response>();
+    let firstSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/me/leaderboard-profile')) return Promise.resolve(json({ participating: false, suggestedNickname: 'tester' }));
+      if (url.includes('period=today')) { firstSignal = init.signal; return today.promise; }
+      return Promise.resolve(json(board('week', 1, ['weekly'])));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      const week = [...mounted.host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Diese Woche'))!;
+      week.click();
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('weekly'));
+      expect(firstSignal?.aborted).toBe(true);
+      today.resolve(json(board('today', 1, ['obsolete'])));
+      await settle();
+      expect(mounted.host.textContent).not.toContain('obsolete');
+      expect(mounted.host.textContent).toContain('weekly');
+    } finally { mounted.unmount(); }
+  });
+
+  it('drops pending list responses after logout and direct account switches', async () => {
+    const old = deferred<Response>();
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn((input) => {
+      if (String(input).endsWith('/me/leaderboard-profile')) return Promise.resolve(json({ participating: false, suggestedNickname: 'tester' }));
+      return ++calls === 1 ? old.promise : Promise.resolve(json(board('today', 1, ['new-account'])));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      mounted.auth.session = { ...mounted.auth.session!, token: 'another', user: { id: 'u2', username: 'second' } };
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('new-account'));
+      old.resolve(json(board('today', 1, ['old-account'])));
+      await settle();
+      expect(mounted.host.textContent).not.toContain('old-account');
+      mounted.auth.session = undefined;
+      await settle();
+      expect(mounted.host.querySelector('.leaderboard__auth')).not.toBeNull();
+      expect(mounted.host.querySelector('.leader-row')).toBeNull();
+    } finally { mounted.unmount(); }
+  });
+
+  it('retries the failed next page in place, prevents double requests and deduplicates moving ranks', async () => {
+    let pages = 0;
+    const pageTwo = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/me/leaderboard-profile')) return json({ participating: false, suggestedNickname: 'tester' });
+      if (url.includes('page=2')) {
+        if (++pages === 1) throw new TypeError('offline');
+        return pageTwo.promise;
+      }
+      return json(board('today', 1, ['a', 'b'], 3));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelectorAll('.leader-row')).toHaveLength(2));
+      mounted.host.querySelector<HTMLButtonElement>('.leaderboard__more button')!.click();
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('Das Leaderboard konnte nicht geladen werden.'));
+      expect(mounted.host.querySelectorAll('.leader-row')).toHaveLength(2);
+      mounted.host.querySelector<HTMLButtonElement>('.leaderboard__notice button')!.click();
+      await settle();
+      mounted.host.querySelector<HTMLButtonElement>('.leaderboard__more button')!.click();
+      expect(pages).toBe(2);
+      pageTwo.resolve(json(board('today', 2, ['b', 'c'], 3)));
+      await vi.waitFor(() => expect(mounted.host.querySelectorAll('.leader-row')).toHaveLength(3));
+      expect(mounted.host.querySelector('.leaderboard__more')).toBeNull();
+    } finally { mounted.unmount(); }
   });
 });

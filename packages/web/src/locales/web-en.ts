@@ -64,6 +64,7 @@ export const webEn: Record<string, string> = {
   'Cloud-Version': 'Cloud version',
   'Core nicht erreichbar · IDs statt Titel.': 'Offline · showing question IDs',
   'Das Leaderboard konnte nicht geladen werden.': 'Could not load the leaderboard.',
+  'Die Teilnahme konnte nicht geladen werden.': 'Could not load your participation status.',
   'Das Leaderboard konnte nicht verlassen werden.': 'Could not leave the leaderboard.',
   'Das bereitgestellte KI-Kontingent ist gerade nicht verfügbar.': 'Shared AI is currently unavailable.',
   'Dein KI-Kontingent für diesen Monat ist aufgebraucht.': 'Your monthly AI allowance has been used.',
