@@ -476,7 +476,11 @@ onMounted(() => {
   );
 });
 
+let disposed = false;
+let preparationController: AbortController | undefined;
 onBeforeUnmount(() => {
+  disposed = true;
+  preparationController?.abort();
   ++loadSequence;
   ++searchSeq;
   rowObserver?.disconnect();
@@ -608,18 +612,25 @@ async function practiceSingle(id: string): Promise<void> {
 async function startPrepared(ids: string[], identity: { source: CoreSourcePreference; contentId: string }): Promise<void> {
   practiceStarting.value = true;
   practiceStartError.value = undefined;
+  const controller = new AbortController();
+  preparationController = controller;
   try {
-    await practice.startPrepared(ids, identity.source, identity.contentId);
-    await router.push({ path: '/practice', query: practiceQuery({ prepared: '1' }) });
-  } catch {
-    practiceStartError.value = 'Übung konnte nicht gestartet werden. Bitte erneut versuchen.';
+    const preparedId = await practice.startPrepared(ids, identity.source, identity.contentId, controller.signal);
+    if (disposed) return;
+    preparationController = undefined;
+    await router.push({ path: '/practice', query: practiceQuery({ prepared: preparedId }) });
+  } catch (cause) {
+    practiceStartError.value = cause instanceof Error && cause.name !== 'AbortError'
+      ? cause.message
+      : 'Übung konnte nicht gestartet werden. Bitte erneut versuchen.';
   } finally {
+    if (preparationController === controller) preparationController = undefined;
     practiceStarting.value = false;
   }
 }
 
 function toggleSelection(q: QuestionSummary): void {
-  if (!q.playable) return;
+  if (!q.playable || practiceStarting.value || sourceSwitching.value) return;
   const next = new Set(selectedIds.value);
   if (next.has(q.id)) next.delete(q.id);
   else next.add(q.id);

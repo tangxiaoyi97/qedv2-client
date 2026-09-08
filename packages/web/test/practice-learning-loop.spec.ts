@@ -46,7 +46,10 @@ describe('practice learning loop route contract', () => {
     expect(route).toContain(':grading-disabled="gradingOverrideDisabled"');
     expect(route).toContain('commitBusy.value\n  || commitError.value !== null');
     expect(route).toContain('playerState.value.attemptPhase === \'correction\'');
-    expect(route).toContain('onBeforeRouteLeave(async () => {');
+    expect(route).toContain('onBeforeRouteLeave(canLeaveCurrentAnswer)');
+    expect(route).toContain('onBeforeRouteUpdate(async (to, from) => {');
+    expect(route).toContain('return canLeaveCurrentAnswer();');
+    expect(route).toContain('return !hasUndurableWork.value;');
     expect(route).toContain('if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return false;');
     expect(route).toContain("window.addEventListener('beforeunload', onBeforeUnload)");
     expect(route).toContain('ev.defaultPrevented');

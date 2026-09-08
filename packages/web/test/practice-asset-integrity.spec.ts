@@ -297,6 +297,20 @@ describe('practice asset snapshot integrity', () => {
     expect(result.createObjectURL).toHaveBeenCalledOnce();
   });
 
+  it.each(['prepared', 'resume'] as const)('keeps verified image URLs during a live %s handoff', async (mode) => {
+    const bytes = new TextEncoder().encode('verified-png');
+    const { practice, assetRequests } = await startWithAsset(await assetReply(bytes));
+    const preparedId = practice.items[0]!.clientAttemptId;
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+
+    await expect(practice.restoreSession('manual', mode === 'prepared' ? preparedId : undefined)).resolves.toBe(true);
+
+    expect(practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(assetRequests).toEqual([ASSET_PATH]);
+    if (mode === 'prepared') expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
+  });
+
   it.each([
     ['missing Content-Length', async (bytes: Uint8Array) => assetReply(bytes, { contentLength: null })],
     ['missing ETag', async (bytes: Uint8Array) => assetReply(bytes, { etag: null })],

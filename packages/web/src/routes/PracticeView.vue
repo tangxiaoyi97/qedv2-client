@@ -13,7 +13,7 @@ const { t, formatNumber } = useI18n();
  *  - PartPlayer runs chromeless: it reports state, the bar triggers it.
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import { Cloud, HardDrive } from 'lucide-vue-next';
 import {
   type AiAssessResult,
@@ -73,7 +73,9 @@ const auth = useAuthStore();
 provideAssetResolver((src) => practice.assetUrl(src));
 
 
-const current = computed(() => practice.current);
+const preparedHandoff = ref<'ready' | 'loading' | 'missing'>(route.query.prepared !== undefined ? 'loading' : 'ready');
+const preparedBlocked = computed(() => preparedHandoff.value !== 'ready');
+const current = computed(() => preparedBlocked.value ? undefined : practice.current);
 /** Verdict per graded part — the segmented top bar's only input besides items. */
 const progressGraded = computed(() =>
   practice.graded.map((record) => ({ partId: record.partId, verdict: record.result.verdict })),
@@ -1215,14 +1217,21 @@ async function onStarToggle(): Promise<void> {
 }
 
 /* --- session lifecycle --- */
-function start(): void {
+let initializationSequence = 0;
+let practiceDisposed = false;
+function isCurrentInitialization(sequence: number): boolean {
+  return !practiceDisposed && sequence === initializationSequence;
+}
+
+async function start(sequence: number): Promise<void> {
+  if (!isCurrentInitialization(sequence)) return;
   const q = route.query;
   if (q.source === 'history') {
-    void startHistoryProgram();
+    await startHistoryProgram(sequence);
     return;
   }
   if (typeof q.questions === 'string' && q.questions.length > 0) {
-    void practice.startQuestions(q.questions.split(',').filter(Boolean));
+    await practice.startQuestions(q.questions.split(',').filter(Boolean));
     return;
   }
   const filters: QuestionsFilter = {};
@@ -1232,10 +1241,10 @@ function start(): void {
   if (typeof q.gk === 'string' && q.gk) filters.gk = q.gk;
   const opts: Parameters<typeof practice.startSmart>[0] =
     Object.keys(filters).length > 0 ? { filters } : {};
-  void practice.startSmart(opts);
+  await practice.startSmart(opts);
 }
 
-async function startHistoryProgram(): Promise<void> {
+async function startHistoryProgram(sequence: number): Promise<void> {
   const q = route.query;
   const fixedSource = q.coreSource === 'local' || q.coreSource === 'remote'
     ? q.coreSource
@@ -1253,37 +1262,52 @@ async function startHistoryProgram(): Promise<void> {
     const recent = await historyLog.list(80, 0);
     questionIds = [...new Set(recent.map((entry) => entry.questionId))];
   }
+  if (!isCurrentInitialization(sequence)) return;
   if (focusQuestionId && !questionIds.includes(focusQuestionId)) questionIds.unshift(focusQuestionId);
   if (fixedSource) await practice.startQuestions(questionIds, fixedSource, expectedContentId);
   else await practice.startQuestions(questionIds);
-  if (focusQuestionId) {
+  if (focusQuestionId && isCurrentInitialization(sequence)) {
     const idx = practice.items.findIndex((item) => item.questionId === focusQuestionId);
     if (idx > 0) practice.jumpTo(idx);
   }
 }
 
-onMounted(() => {
-  void (async () => {
+async function initializePractice(): Promise<void> {
+  const sequence = ++initializationSequence;
+  if (route.query.prepared !== undefined) {
+    try {
+      const id = route.query.prepared;
+      const restored = typeof id === 'string' && await practice.restoreSession('manual', id);
+      if (isCurrentInitialization(sequence)) preparedHandoff.value = restored ? 'ready' : 'missing';
+    } catch {
+      if (isCurrentInitialization(sequence)) preparedHandoff.value = 'missing';
+    }
+    return;
+  }
+  try {
+    preparedHandoff.value = 'ready';
     const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
       || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
     // Explicit deep links always (re)start.
     if (hasQuery) {
-      await start();
-      return;
-    }
-    // Bulk handoff from the Aufgaben list: the session is already seeded in
-    // the store, so adopt it whatever its origin.
-    if (route.query.prepared === '1') {
-      if (await practice.restoreSession()) return;
-      await start();
+      await start(sequence);
       return;
     }
     // Plain /practice — the navigation's „Programm üben". Resume only a
     // programme; a hand-picked set left over from the Aufgaben list is not
     // what was asked for, so it yields to a fresh recommendation.
-    if (await practice.restoreSession('smart')) return;
-    await start();
-  })();
+    if (await practice.restoreSession('smart') || !isCurrentInitialization(sequence)) return;
+    await start(sequence);
+  } catch {
+    if (isCurrentInitialization(sequence)) preparedHandoff.value = 'missing';
+  }
+}
+
+onMounted(() => { void initializePractice(); });
+watch(() => route.query.prepared, () => {
+  if (route.path !== '/practice') return;
+  preparedHandoff.value = 'loading';
+  void initializePractice();
 });
 
 watch(
@@ -1312,6 +1336,10 @@ function returnTarget(): string {
 const EXIT_SYNC_GRACE_MS = 2500;
 
 async function exitNow(): Promise<void> {
+  if (preparedBlocked.value) {
+    void router.replace('/questions');
+    return;
+  }
   if (!practice.sessionAccessible) {
     void router.replace(returnTarget());
     return;
@@ -1414,10 +1442,19 @@ const hasUndurableWork = computed(() =>
 );
 let allowRouteLeave = false;
 
-onBeforeRouteLeave(async () => {
+async function canLeaveCurrentAnswer(): Promise<boolean> {
   if (allowRouteLeave) return true;
   if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return false;
   return !hasUndurableWork.value;
+}
+
+onBeforeRouteLeave(canLeaveCurrentAnswer);
+onBeforeRouteUpdate(async (to, from) => {
+  if (to.query.prepared === from.query.prepared) return true;
+  // A query-only navigation reuses this component; apply the same draft
+  // protection and never let two prepared restores replace each other.
+  if (preparedHandoff.value === 'loading') return false;
+  return canLeaveCurrentAnswer();
 });
 
 function onBeforeUnload(event: BeforeUnloadEvent): void {
@@ -1454,6 +1491,8 @@ onMounted(() => window.addEventListener('keydown', onKeydown));
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
 onBeforeUnmount(() => {
+  practiceDisposed = true;
+  ++initializationSequence;
   assistController?.abort();
   learningController?.abort();
   window.removeEventListener('keydown', onKeydown);
@@ -1511,7 +1550,7 @@ const syncNote = computed(() => {
       return '';
   }
 });
-const showProgramRail = computed(() => practice.total > 1);
+const showProgramRail = computed(() => !preparedBlocked.value && practice.total > 1);
 const desktopShell = ports.shell.capabilities.desktop;
 const bankSourceIsLocal = computed(
   () => desktopShell && practice.contentSource === 'local',
@@ -1631,13 +1670,13 @@ const currentCompetencyCodes = computed(() =>
       />
       <div class="practice__progress">
         <div class="practice__progress-label">
-          <template v-if="practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
-          <template v-else-if="practice.phase === 'summary' && practice.sessionAccessible">{{ t('Programm abgeschlossen') }}</template>
+          <template v-if="!preparedBlocked && practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
+          <template v-else-if="!preparedBlocked && practice.phase === 'summary' && practice.sessionAccessible">{{ t('Programm abgeschlossen') }}</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
         <SessionProgressBar
-          :items="practice.sessionAccessible ? practice.items : []"
-          :graded="practice.sessionAccessible ? progressGraded : []"
+          :items="!preparedBlocked && practice.sessionAccessible ? practice.items : []"
+          :graded="!preparedBlocked && practice.sessionAccessible ? progressGraded : []"
           :current-index="practice.index"
           :active="practice.phase === 'running' && practice.sessionAccessible"
         />
@@ -1656,11 +1695,19 @@ const currentCompetencyCodes = computed(() =>
 
     <div class="practice__stage q-crossfade">
     <transition name="q-crossfade">
+      <div v-if="preparedBlocked" key="prepared-handoff" class="practice__center">
+        <div v-if="preparedHandoff === 'loading'" role="status">{{ t('Aufgaben werden geladen …') }}</div>
+        <div v-else class="practice__error" role="alert">
+          <h1 class="practice__error-title">{{ t('Auswahl nicht verfügbar') }}</h1>
+          <p class="practice__error-text">{{ t('Bitte wähle die Aufgaben erneut aus.') }}</p>
+          <QButton variant="secondary" @click="exitNow">{{ t('Zurück zu Aufgaben') }}</QButton>
+        </div>
+      </div>
       <!-- A profile switch locks every user-specific surface, including a
            completed summary. The old snapshot remains untouched and becomes
            visible again only after switching back to its owning profile. -->
       <div
-        v-if="!practice.sessionAccessible"
+        v-else-if="!practice.sessionAccessible"
         key="account-locked"
         class="practice__center"
       >

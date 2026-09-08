@@ -28,6 +28,7 @@
 - **sync:** fortschritt & verlauf gemeinsam, weiter nach unterbrechungen
 - **grafiken:** manifest-prüfung & kurze netzwerk-wiederholung
 - **ki:** serverfreigabe, passende einstiege & key-setup
+- **auswahl:** genau die gewählten aufgaben, sichere übergabe mit grafiken
 
 ## 2.3.1 — 2026-09-08
 

@@ -1,5 +1,9 @@
 /** Explicit translations for navigation and learning screens; bank content stays original. */
 export const webEn: Record<string, string> = {
+  'Auswahl nicht verfügbar': 'Selection unavailable',
+  'Bitte wähle die Aufgaben erneut aus.': 'Please select the questions again.',
+  'Zurück zu Aufgaben': 'Back to questions',
+  'Die Auswahl konnte nicht vollständig geladen werden. Bitte erneut versuchen.': 'Could not load the full selection. Try again.',
   'Diese KI-Funktion ist nicht verfügbar.': 'This AI feature is unavailable.',
   'Abbrechen': 'Cancel',
   'Aktive Tage': 'Active days',

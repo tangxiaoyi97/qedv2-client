@@ -259,7 +259,7 @@ describe('BrowseView catalogue loading', () => {
     unmount();
   });
 
-  it('does not navigate until the prepared session has finished its asynchronous owner capture', async () => {
+  it.each([false, true])('only navigates after preparation while Browse is still mounted (left early: %s)', async (leftEarly) => {
     const { release } = stubPagedCore();
     const { host, router, unmount } = await mountBrowse();
     release();
@@ -270,7 +270,12 @@ describe('BrowseView catalogue loading', () => {
       releaseStart = resolve;
     });
     const practice = usePracticeStore();
-    const startPrepared = vi.spyOn(practice, 'startPrepared').mockImplementation(async () => gate);
+    const preparedId = '11111111-1111-4111-8111-111111111111';
+    const startPrepared = vi.spyOn(practice, 'startPrepared').mockImplementation(async () => {
+      await gate;
+      return preparedId;
+    });
+    const navigate = vi.spyOn(router, 'push');
     const button = [...host.querySelectorAll<HTMLButtonElement>('button')]
       .find((candidate) => candidate.textContent?.includes('Üben →'));
     expect(button).toBeDefined();
@@ -281,6 +286,7 @@ describe('BrowseView catalogue loading', () => {
       BANK.map((question) => question.id),
       expect.stringMatching(/^(?:local|remote)$/u),
       BANK_COMMIT,
+      expect.any(AbortSignal),
     );
     expect(router.currentRoute.value.path).toBe('/questions');
     expect(button!.disabled).toBe(true);
@@ -288,8 +294,16 @@ describe('BrowseView catalogue loading', () => {
     button!.click();
     expect(startPrepared).toHaveBeenCalledOnce();
 
+    if (leftEarly) unmount();
     releaseStart();
+    if (leftEarly) {
+      await startPrepared.mock.results[0]!.value;
+      await settle();
+      expect(navigate).not.toHaveBeenCalled();
+      return;
+    }
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
+    expect(router.currentRoute.value.query.prepared).toBe(preparedId);
     unmount();
   });
 
