@@ -17,9 +17,11 @@ import {
   GUEST_ATTEMPT_OWNER,
   hasAtomicStorage,
   historyEventRowKey,
+  historyStorageKey,
   isGrading,
   isLocalProfileId,
   parseStoredHistoryEvent,
+  prepareHistoryLog,
   questionContentHash,
   STORAGE,
   submittedText as projectSubmittedText,
@@ -2539,8 +2541,20 @@ export const usePracticeStore = defineStore('practice', () => {
       STORAGE.history,
       historyEventRowKey(record.clientAttemptId, profileId),
     );
-    if (historyValue === undefined) return undefined;
-    const history = parseStoredHistoryEvent(historyValue);
+    let history;
+    if (historyValue !== undefined) {
+      // A corrupt or conflicting modern row must never be masked by an older
+      // copy. Only absence permits a read-only look in this exact profile.
+      history = parseStoredHistoryEvent(historyValue);
+    } else {
+      const legacy = prepareHistoryLog(await storage.get<unknown>(
+        STORAGE.history,
+        historyStorageKey(profileId),
+      ));
+      const matches = legacy.filter((entry) => entry.clientAttemptId === record.clientAttemptId);
+      if (matches.length !== 1) return undefined;
+      history = parseStoredHistoryEvent({ version: 2, profileId, entry: matches[0] });
+    }
     // A legacy session can be explicitly reopened against today's bank. Its
     // rewritten snapshot alone cannot prove the original attempt's revision.
     if (history.profileId !== profileId

@@ -4,10 +4,13 @@ import { createPinia, setActivePinia } from 'pinia';
 import {
   GUEST_ATTEMPT_OWNER,
   STORAGE,
+  hasAtomicStorage,
   historyEventRowKey,
+  historyStorageKey,
   learningEventStorageKey,
   questionContentHash,
   type Question,
+  type LocalProfileId,
   type StoredHistoryEvent,
 } from '@qed2/core-logic';
 import {
@@ -83,6 +86,21 @@ async function durableGradeState() {
   };
 }
 
+async function useLegacyProfileHistory(record: GradedRecord, profile: LocalProfileId) {
+  const eventKey = historyEventRowKey(record.clientAttemptId, profile);
+  const history = (await storage.get<StoredHistoryEvent>(STORAGE.history, eventKey))!;
+  await storage.set(STORAGE.history, historyStorageKey(profile), [history.entry]);
+  await storage.delete(STORAGE.history, eventKey);
+  return history;
+}
+
+async function rawProgressState() {
+  const addresses = (await Promise.all([STORAGE.archive, STORAGE.history].map(async (collection) =>
+    (await storage.keys(collection)).sort().map((key) => ({ collection, key })),
+  ))).flat();
+  return storage.readBatch!(addresses);
+}
+
 beforeEach(async () => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
@@ -108,6 +126,78 @@ afterEach(() => {
 });
 
 describe('practice learning evidence recovery', () => {
+  it('restores an exact v4 session and corrects it using unmigrated profile history without rewriting progress', async () => {
+    const { record, profile } = await failedFirstEvent();
+    const currentKey = practiceSessionStorageKey(profile);
+    const snapshot = (await storage.get<{
+      version: number;
+      owner: { localProfileId?: LocalProfileId };
+    }>(STORAGE.app, currentKey))!;
+    snapshot.version = 4;
+    delete snapshot.owner.localProfileId;
+    await storage.set(STORAGE.app, 'practice-session:guest', snapshot);
+    await storage.delete(STORAGE.app, currentKey);
+    await useLegacyProfileHistory(record, profile);
+    const before = await rawProgressState();
+    const listHistory = vi.spyOn(historyLog, 'list');
+    if (!hasAtomicStorage(storage)) throw new Error('WebStorage must support atomic commits');
+    const commit = vi.spyOn(storage, 'commitBatch');
+    const set = vi.spyOn(storage, 'set');
+    const remove = vi.spyOn(storage, 'delete');
+    const restored = await freshPractice();
+    await expect(restored.restoreSession()).resolves.toBe(true);
+    expect(restored.currentReview?.clientAttemptId).toBe(record.clientAttemptId);
+    expect(restored.warning).toBeUndefined();
+    expect(await learningEventStore.event(profile, record.clientAttemptId)).toMatchObject({ contentId: COMMIT });
+    await restored.recordCorrection(record.clientAttemptId, record.partId, {
+      verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1,
+    });
+    expect(restored.warning).toBeUndefined();
+    expect(await learningEventStore.event(profile, record.clientAttemptId))
+      .toMatchObject({ correctionOutcome: 'correct' });
+    expect(await rawProgressState()).toEqual(before);
+    expect(listHistory).not.toHaveBeenCalled();
+    expect(commit.mock.calls.flatMap(([batch]) => batch.mutations)
+      .filter((mutation) => mutation.collection === STORAGE.archive || mutation.collection === STORAGE.history))
+      .toEqual([]);
+    for (const spy of [set, remove]) {
+      expect(spy.mock.calls.filter(([collection]) => collection === STORAGE.archive || collection === STORAGE.history))
+        .toEqual([]);
+    }
+  });
+
+  it.each(['duplicate', 'wrong-revision', 'unscoped'] as const)('rejects %s legacy history for recovery', async (reason) => {
+    const { record, profile } = await failedFirstEvent();
+    const history = await useLegacyProfileHistory(record, profile);
+    const key = historyStorageKey(profile);
+    if (reason === 'duplicate') {
+      await storage.set(STORAGE.history, key, [history.entry, { ...history.entry, contentId: 'a'.repeat(40) }]);
+    } else if (reason === 'wrong-revision') {
+      await storage.set(STORAGE.history, key, [{ ...history.entry, contentId: 'a'.repeat(40) }]);
+    } else {
+      await storage.delete(STORAGE.history, key);
+      // A different profile's copy cannot establish this attempt's ownership.
+      await storage.set(STORAGE.history, historyStorageKey('user:someone-else'), [history.entry]);
+    }
+    const before = await rawProgressState();
+    const restored = await freshPractice();
+    await restored.restoreSession();
+    await restored.recordDiagnosis(record.clientAttemptId, record.partId, 'algebra');
+    expect(restored.warning).toBe('Die Fehlerdiagnose konnte lokal nicht gespeichert werden.');
+    expect(await learningEventStore.event(profile, record.clientAttemptId)).toBeUndefined();
+    expect(await rawProgressState()).toEqual(before);
+  });
+
+  it('never hides a corrupt modern history row behind valid legacy history', async () => {
+    const { record, profile } = await failedFirstEvent();
+    await useLegacyProfileHistory(record, profile);
+    await storage.set(STORAGE.history, historyEventRowKey(record.clientAttemptId, profile), { version: 2 });
+    const restored = await freshPractice();
+    await restored.restoreSession();
+    expect(restored.warning).toBe(SAVE_WARNING);
+    expect(await learningEventStore.event(profile, record.clientAttemptId)).toBeUndefined();
+  });
+
   it('repairs the current saved review without replaying its grade or retaining its answer', async () => {
     const { record, profile } = await failedFirstEvent();
     const before = await durableGradeState();
