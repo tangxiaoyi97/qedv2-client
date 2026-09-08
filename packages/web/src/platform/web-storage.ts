@@ -1,8 +1,8 @@
 /**
  * StoragePort adapter: IndexedDB (not localStorage — archives and question
- * caches outgrow it).  Version 3 adds a private revision store used for
- * cross-tab compare-and-swap transactions.  Values keep their existing shape;
- * metadata is separate so upgrades do not rewrite user data.
+ * caches outgrow it). Version 3 added cross-tab revision metadata; version 4
+ * adds the learning-event collection for existing installations. Upgrades
+ * create missing stores only and never rewrite saved values or revisions.
  */
 import {
   STORAGE,
@@ -15,7 +15,9 @@ import {
 } from '@qed2/core-logic';
 
 const DB_NAME = 'qed2';
-const DB_VERSION = 3;
+// Adding a collection also requires a schema bump: onupgradeneeded does not
+// run for an existing database just because STORAGE gained another entry.
+const DB_VERSION = 4;
 const META_STORE = '__qed2_storage_revisions__';
 const COLLECTIONS = Object.values(STORAGE);
 const COLLECTION_SET = new Set<string>(COLLECTIONS);
