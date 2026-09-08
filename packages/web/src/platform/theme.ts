@@ -120,11 +120,14 @@ let themeTransitionTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function suppressThemeTransitions(): void {
   if (typeof document === 'undefined') return;
-  document.documentElement.dataset.themeSwitching = '';
+  const root = document.documentElement;
+  root.dataset.themeSwitching = '';
   if (themeTransitionTimer !== undefined) clearTimeout(themeTransitionTimer);
   // Let the new palette paint before transitions are enabled again.
+  // Retain the initiating root: a delayed callback must not touch a newer
+  // document or depend on globals that disappear when its window closes.
   themeTransitionTimer = setTimeout(() => {
-    delete document.documentElement.dataset.themeSwitching;
+    delete root.dataset.themeSwitching;
     themeTransitionTimer = undefined;
   }, 80);
 }
