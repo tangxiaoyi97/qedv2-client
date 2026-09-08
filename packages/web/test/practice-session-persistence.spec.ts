@@ -221,6 +221,57 @@ describe('practice session persistence', () => {
     ]);
   });
 
+  it('hands off the exact durable selection in click order, including after reload', async () => {
+    const { practice } = await freshStores();
+    const preparedId = await practice.startPrepared(['q2', 'q1', 'q2']);
+    expect(preparedId).toBe(practice.items[0]!.clientAttemptId);
+    expect(practice.items.map((item) => item.questionId)).toEqual(['q2', 'q1']);
+    await expect(practice.restoreSession('manual', preparedId)).resolves.toBe(true);
+
+    const restored = await freshStores();
+    await expect(restored.practice.restoreSession('manual', preparedId)).resolves.toBe(true);
+    expect(restored.practice.items.map((item) => item.questionId)).toEqual(['q2', 'q1']);
+    expect(restored.practice.current?.question.id).toBe('q2');
+    expect(restored.practice.contentId).toBe(TEST_COMMIT);
+  });
+
+  it('does not hand off a new selection when its first durable write fails', async () => {
+    const { practice } = await freshStores();
+    await practice.startPrepared(['q1']);
+    const previous = await guestSession();
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      if (request.mutations.some((mutation) => mutation.collection === STORAGE.app
+        && mutation.key === activeSessionKey())) throw new Error('simulated disk failure');
+      return commit(request);
+    });
+
+    await expect(practice.startPrepared(['q2'])).rejects.toThrow();
+    expect(await guestSession()).toEqual(previous);
+    expect(practice.sessionIdentityDurable).toBe(false);
+  });
+
+  it('rejects incomplete cached selections without replacing the saved programme', async () => {
+    const { practice } = await freshStores();
+    await practice.startPrepared(['q1']);
+    const previous = await guestSession();
+
+    await expect(practice.startPrepared(['q2', 'missing'])).rejects.toThrow('Aufgabenbank');
+    expect(practice.phase).toBe('error');
+    expect(await guestSession()).toEqual(previous);
+  });
+
+  it('keeps the saved programme when every selected part is excluded', async () => {
+    const { practice, progress } = await freshStores();
+    await practice.startPrepared(['q1']);
+    const previous = await guestSession();
+    await progress.setGrading({ partId: 'q2-a', grading: 'excluded' });
+    await progress.setGrading({ partId: 'q3-a', grading: 'excluded' });
+
+    await expect(practice.startPrepared(['q2', 'q3'])).rejects.toThrow('Keine passenden Aufgaben.');
+    expect(await guestSession()).toEqual(previous);
+  });
+
   it('restores first-answer drafts across item changes and reload, then tombstones them with the grade', async () => {
     const first = await freshStores();
     await first.practice.startQuestions(['q3', 'q4']);

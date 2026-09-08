@@ -4,7 +4,10 @@
  * level text label (hoch / mittel / gering) — never color-only.
  */
 import { computed } from 'vue';
+import { useI18n } from '../i18n.js';
 import { masteryLevel } from '@qed2/core-logic';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   code: string;
@@ -16,7 +19,7 @@ const props = defineProps<{
 const LEVEL_LABELS = { low: 'gering', medium: 'mittel', high: 'hoch' } as const;
 
 const level = computed(() => props.level ?? masteryLevel(props.mastery));
-const label = computed(() => LEVEL_LABELS[level.value]);
+const label = computed(() => t(LEVEL_LABELS[level.value]));
 const percent = computed(() => Math.round(Math.min(1, Math.max(0, props.mastery)) * 100));
 </script>
 

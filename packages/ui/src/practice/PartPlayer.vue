@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * PartPlayer — one part's full answer cycle (supplement §0):
  *
@@ -56,6 +58,8 @@ import QButton from '../shared/QButton.vue';
 import QChip from '../shared/QChip.vue';
 import VerdictCard from './VerdictCard.vue';
 import SolutionPanel from './SolutionPanel.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   part: QuestionPart;
@@ -403,7 +407,8 @@ function confirmSelfAssessment(): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
-  if (ev.key !== 'Enter') return;
+  if (ev.key !== 'Enter' || ev.defaultPrevented || ev.isComposing || ev.keyCode === 229) return;
+  if (ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
   const target = ev.target as HTMLElement | null;
   // Native interactive elements own their Enter behavior: buttons toggle/
   // activate, selects open the dropdown, links navigate. Hijacking those to
@@ -435,7 +440,7 @@ defineExpose({
     </div>
 
     <div v-if="attemptPhase === 'correction' && phase !== 'reviewed'" class="q-part__correction" role="status">
-      Korrektur
+      {{ t('Korrektur') }}
     </div>
 
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
@@ -444,7 +449,7 @@ defineExpose({
     <FigureList :figures="part.figures" />
 
     <div v-if="!answer" class="q-part__unplayable">
-      Diese Teilaufgabe ist noch nicht beantwortbar (Inhalt in Umwandlung).
+      {{ t('Diese Teilaufgabe ist noch nicht beantwortbar (Inhalt in Umwandlung).') }}
     </div>
 
     <template v-else>
@@ -467,7 +472,7 @@ defineExpose({
         @update:model-value="onSubmissionUpdate"
       />
       <p v-else-if="reviewSubmissionUnavailable" class="q-part__remote-review" role="status">
-        Diese Aufgabe wurde in einem anderen Fenster gespeichert.
+        {{ t('Diese Aufgabe wurde in einem anderen Fenster gespeichert.') }}
       </p>
 
       <div v-if="phase === 'self-assessing' && !chromeless" class="q-part__selfassess">
@@ -482,13 +487,13 @@ defineExpose({
           @update:model-value="onSelfAssessmentUpdate"
         />
         <div class="q-part__actions">
-          <QButton :disabled="!canConfirmSelfAssessment" @click="confirmSelfAssessment">Bewertung übernehmen</QButton>
+          <QButton :disabled="!canConfirmSelfAssessment" @click="confirmSelfAssessment">{{ t('Bewertung übernehmen') }}</QButton>
         </div>
       </div>
 
       <div v-else-if="phase === 'answering' && !chromeless" class="q-part__actions">
-        <span class="q-part__key-hint">↵ prüfen</span>
-        <QButton :disabled="!canSubmit" @click="submit">Überprüfen</QButton>
+        <span class="q-part__key-hint">{{ t('↵ prüfen') }}</span>
+        <QButton :disabled="!canSubmit" @click="submit">{{ t('Überprüfen') }}</QButton>
       </div>
 
       <SolutionPanel

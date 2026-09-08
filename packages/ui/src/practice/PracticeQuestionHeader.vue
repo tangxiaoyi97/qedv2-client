@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import QChip from '../shared/QChip.vue';
 import StarButton from '../shared/StarButton.vue';
 import { ExternalLink } from 'lucide-vue-next';
+
+const { t } = useI18n();
 
 defineProps<{
   title: string;
@@ -37,9 +41,9 @@ const emit = defineEmits<{
         :href="officialUrl"
         target="_blank"
         rel="noopener noreferrer"
-        title="Offizielle Originalaufgabe"
+        :title="t('Offizielle Originalaufgabe')"
       >
-        Originalaufgabe <ExternalLink class="practice-qhead__official-icon" aria-hidden="true" />
+        {{ t('Originalaufgabe') }} <ExternalLink class="practice-qhead__official-icon" aria-hidden="true" />
       </a>
     </div>
   </header>

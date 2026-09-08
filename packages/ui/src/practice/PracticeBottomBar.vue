@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import { computed } from 'vue';
-import { Lightbulb } from 'lucide-vue-next';
+import { Lightbulb, RotateCcw } from 'lucide-vue-next';
 import {
   VERDICT_LABELS,
-  formatScore,
-  formatScoreRatio,
   type Grading,
   type GradingOrUnseen,
   type RichText,
@@ -21,6 +21,9 @@ import SolutionSheet from './SolutionSheet.vue';
 import type { AnswerPreview } from '../question/submission-preview.js';
 import type { PartPlayerState } from './part-player-types.js';
 import type { SheetDetent } from './SolutionSheet.vue';
+import { formatUiScore as formatScore, formatUiScoreRatio as formatScoreRatio } from '../shared/format-score.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   state: PartPlayerState;
@@ -41,6 +44,7 @@ const props = defineProps<{
   primaryDisabled: boolean;
   /** One low-interruption entry for hints, diagnosis and correction. */
   learningAvailable?: boolean;
+  learningKind?: 'help' | 'correction';
   /** Official material stays hidden until a self-assessment draft is durable. */
   solutionReady?: boolean;
 }>();
@@ -60,7 +64,7 @@ const assessedScore = computed(() => {
 });
 
 const verdictLabel = computed(() =>
-  props.state.result ? VERDICT_LABELS[props.state.result.verdict] : '',
+  props.state.result ? t(VERDICT_LABELS[props.state.result.verdict]) : '',
 );
 /** Points ride the verdict anchor — with the in-flow VerdictCard now limited
  *  to open parts, this is the only place the score shows for most kinds. */
@@ -117,7 +121,7 @@ const emit = defineEmits<{
         <slot name="assist" />
 
         <div class="practice-bar__mastery">
-          <span class="practice-bar__mastery-label">Bewertung</span>
+          <span class="practice-bar__mastery-label">{{ t('Bewertung') }}</span>
           <GradingPicker
             :grading="state.selfAssessment.grading"
             @select="emit('selfGradingSelect', $event)"
@@ -143,13 +147,13 @@ const emit = defineEmits<{
         />
         <div v-if="assessing && state.selfAssessment" class="practice-bar__preview">
           <span class="practice-bar__preview-main">
-            <span class="practice-bar__visually-hidden">Deine Punkte: </span>
+            <span class="practice-bar__visually-hidden">{{ t('Deine Punkte:') }} </span>
             <b class="practice-bar__preview-value">{{ assessedScore }}</b>
           </span>
         </div>
         <div v-else-if="answerPreview" class="practice-bar__preview">
           <span class="practice-bar__preview-main">
-            <span class="practice-bar__preview-label">{{ answerPreview.label }}:</span>
+            <span class="practice-bar__preview-label">{{ t(answerPreview.label) }}:</span>
             <b class="practice-bar__preview-value">{{ answerPreview.value }}</b>
           </span>
           <span v-if="answerPreview.hint" class="practice-bar__preview-hint">{{ answerPreview.hint }}</span>
@@ -163,11 +167,14 @@ const emit = defineEmits<{
           class="practice-bar__learning-toggle"
           :class="{ 'practice-bar__learning-toggle--on': solutionDetent !== 'collapsed' }"
           :aria-expanded="solutionDetent !== 'collapsed'"
-          :aria-label="solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen'"
+          :aria-label="learningKind === 'correction'
+            ? t(solutionDetent === 'collapsed' ? 'Korrektur öffnen' : 'Korrektur schließen')
+            : t(solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen')"
           @click="emit('learningToggle')"
         >
-          <Lightbulb :size="17" aria-hidden="true" />
-          <span>Lernhilfe</span>
+          <RotateCcw v-if="learningKind === 'correction'" :size="17" aria-hidden="true" />
+          <Lightbulb v-else :size="17" aria-hidden="true" />
+          <span>{{ t(learningKind === 'correction' ? 'Korrektur' : 'Lernhilfe') }}</span>
         </button>
         <!-- Hidden on narrow screens: the sheet's grab handle is the control
              there, so this button never has to fight the primary action for
@@ -180,7 +187,7 @@ const emit = defineEmits<{
           :aria-expanded="solutionDetent !== 'collapsed'"
           @click="emit('update:solutionDetent', solutionDetent === 'collapsed' ? 'default' : 'collapsed')"
         >
-          Lösung <ChevronDown class="practice-bar__solution-chevron" />
+          {{ t('Lösung') }} <ChevronDown class="practice-bar__solution-chevron" />
         </button>
         <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
       </div>

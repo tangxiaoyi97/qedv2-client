@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * GitHub-style activity heatmap (Fortschritt + dashboard). Feed comes from
  * HistoryLog.dailyActivity — keys are LOCAL dates 'YYYY-MM-DD'.
@@ -7,7 +9,9 @@
  * Monday on top). Intensity = accent overlay with fill-opacity buckets over a
  * track-colored base rect, so both themes ride on the same two tokens.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+
+const { t, locale, formatDate: localizedDate } = useI18n();
 
 const props = defineProps<{
   /** Answer events per LOCAL day, keys 'YYYY-MM-DD'. */
@@ -80,6 +84,7 @@ function keyOf(d: Date): string {
 }
 
 function formatDate(d: Date): string {
+  if (locale.value === 'en') return localizedDate(d, { day: '2-digit', month: 'short', year: 'numeric' });
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 }
 
@@ -131,7 +136,7 @@ const columns = computed<HeatColumn[]>(() => {
         row: r,
         count,
         bucket: bucketOf(count),
-        title: `${count === 1 ? '1 Aufgabe' : `${count} Aufgaben`} · ${formatDate(date)}`,
+        title: `${t(count === 1 ? '{count} Aufgabe' : '{count} Aufgaben', { count })} · ${formatDate(date)}`,
       });
     }
     cols.push({ x: LEFT + w * PITCH.value, month: monday.getMonth(), cells });
@@ -151,11 +156,18 @@ const monthLabels = computed(() => {
     if (cols[i]!.month !== cols[i - 1]!.month) changes.push(i);
   }
   if (cols.length > 0 && !changes.some((c) => c <= 2)) {
-    out.push({ x: cols[0]!.x, text: MONTHS[cols[0]!.month]! });
+    out.push({ x: cols[0]!.x, text: monthName(cols[0]!.month) });
   }
-  for (const c of changes) out.push({ x: cols[c]!.x, text: MONTHS[cols[c]!.month]! });
+  for (const c of changes) out.push({ x: cols[c]!.x, text: monthName(cols[c]!.month) });
   return out;
 });
+
+function monthName(month: number): string {
+  return locale.value === 'en' ? localizedDate(new Date(2026, month, 1), { month: 'short' }) : MONTHS[month]!;
+}
+function weekdayName(row: number, fallback: string): string {
+  return locale.value === 'en' ? localizedDate(new Date(2026, 0, 5 + row), { weekday: 'short' }) : fallback;
+}
 
 const svgWidth = computed(() => LEFT + weekCount.value * PITCH.value - GAP.value + RIGHT);
 const svgHeight = computed(() => TOP + 7 * PITCH.value - GAP.value);
@@ -237,16 +249,19 @@ function onCellKeydown(ev: KeyboardEvent): void {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   // jsdom (tests) has no matchMedia — coarse stays false there
   if (typeof window.matchMedia === 'function') {
     coarseMq = window.matchMedia('(pointer: coarse)');
     syncCoarse();
-    coarseMq.addEventListener('change', syncCoarse);
+    coarseMq?.addEventListener?.('change', syncCoarse);
   }
+  // Coarse input changes the SVG column pitch. Measure only after that
+  // render, otherwise mobile opens several months short of the latest day.
+  await nextTick();
   scrollToEnd();
 });
-onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
+onBeforeUnmount(() => coarseMq?.removeEventListener?.('change', syncCoarse));
 </script>
 
 <template>
@@ -258,7 +273,7 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
         :height="svgHeight"
         :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
         role="img"
-        :aria-label="`Aktivität der letzten ${weekCount} Wochen`"
+        :aria-label="t('Aktivität der letzten {count} Wochen', { count: weekCount })"
       >
         <text
           v-for="m in monthLabels"
@@ -276,7 +291,7 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
           :x="EDGE"
           :y="TOP + d.row * PITCH + 9"
         >
-          {{ d.text }}
+          {{ weekdayName(d.row, d.text) }}
         </text>
         <template v-for="col in columns" :key="col.x">
           <g
@@ -327,7 +342,7 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
       </svg>
     </div>
     <div class="q-heat__legend" aria-hidden="true">
-      <span class="q-heat__legend-text">Weniger</span>
+      <span class="q-heat__legend-text">{{ t('Weniger') }}</span>
       <svg
         v-for="b in 5"
         :key="`l${b}`"
@@ -348,7 +363,7 @@ onBeforeUnmount(() => coarseMq?.removeEventListener('change', syncCoarse));
           rx="2"
         />
       </svg>
-      <span class="q-heat__legend-text">Mehr</span>
+      <span class="q-heat__legend-text">{{ t('Mehr') }}</span>
     </div>
   </div>
 </template>

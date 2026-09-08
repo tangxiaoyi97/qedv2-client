@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * A figure image that can be opened full screen and zoomed.
  *
@@ -10,6 +11,8 @@
 import { ref } from 'vue';
 import { Maximize2 } from 'lucide-vue-next';
 import FigureViewer from './FigureViewer.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   src: string;
@@ -23,7 +26,7 @@ const open = ref(false);
   <button
     type="button"
     class="q-zfig"
-    :aria-label="props.alt ? `${props.alt} — vergrößern` : 'Abbildung vergrößern'"
+    :aria-label="props.alt ? t('{alt} — vergrößern', { alt: props.alt }) : t('Abbildung vergrößern')"
     @click="open = true"
   >
     <img class="q-zfig__img" :src="props.src" :alt="props.alt ?? ''" loading="lazy" />

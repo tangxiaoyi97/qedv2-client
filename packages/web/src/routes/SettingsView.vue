@@ -26,7 +26,7 @@ import {
   localRecoveryStore,
   ports,
 } from '../services.js';
-import { LOCALE_ENABLED, LOCALE_LABELS, type Locale } from '../i18n.js';
+import { LOCALE_ENABLED, LOCALE_LABELS, useI18n, type Locale } from '../i18n.js';
 import {
   BUILTIN_THEME_EXTENSIONS,
   type BuiltinThemeId,
@@ -45,6 +45,7 @@ const leaderboard = useLeaderboardStore();
 const progress = useProgressStore();
 const ui = useUiStore();
 const router = useRouter();
+const { t, formatDate } = useI18n();
 
 /* ---- Versionen: rows are clickable, each opens a detail modal ---- */
 const versionDetail = ref<'web' | 'core' | 'server' | null>(null);
@@ -116,13 +117,13 @@ function closeRecovery(): void {
 
 function recoveryProfileSummary(profile: LocalRecoveryInventory['profiles'][number]): string {
   const sections = [
-    ...(profile.hasArchive ? ['Fortschritt'] : []),
+    ...(profile.hasArchive ? [t('Fortschritt')] : []),
     ...((profile.historyCount + profile.historyEventCount) > 0
-      ? [`${profile.historyCount + profile.historyEventCount} Verlauf`]
+      ? [t('{count} Verlauf', { count: profile.historyCount + profile.historyEventCount })]
       : []),
-    ...(profile.attemptCount > 0 ? [`${profile.attemptCount} Antworten`] : []),
+    ...(profile.attemptCount > 0 ? [t('{count} Antworten', { count: profile.attemptCount })] : []),
   ];
-  return sections.join(' · ') || 'Unbekannte Daten';
+  return sections.join(' · ') || t('Unbekannte Daten');
 }
 
 async function downloadRecovery(): Promise<void> {
@@ -141,7 +142,7 @@ async function downloadRecovery(): Promise<void> {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 0);
   } catch {
-    recoveryError.value = 'Export fehlgeschlagen.';
+    recoveryError.value = t('Export fehlgeschlagen.');
   } finally {
     recoveryBusy.value = false;
   }
@@ -221,7 +222,7 @@ async function assignRecovery(profileId: LocalProfileId): Promise<void> {
     await refreshRecovery();
     if ((recoveryInventory.value?.totalCount ?? 0) === 0) recoveryOpen.value = false;
   } catch {
-    recoveryError.value = 'Nicht zugeordnet. Die Daten bleiben erhalten.';
+    recoveryError.value = t('Nicht zugeordnet. Die Daten bleiben erhalten.');
     await refreshRecovery();
   } finally {
     recoveryBusy.value = false;
@@ -236,48 +237,48 @@ interface DetailRow {
 const versionDetailRows = computed<DetailRow[]>(() => {
   if (versionDetail.value === 'web') {
     return [
-      { label: 'Dienst', value: 'qed2-client (Web-App)' },
-      { label: 'Version', value: APP_VERSION },
+      { label: t('Dienst'), value: 'qed2-client (Web-App)' },
+      { label: t('Version'), value: APP_VERSION },
       { label: 'Commit', value: ui.appCommit },
       { label: 'Repository', value: 'github.com/tangxiaoyi97/qedv2-client', link: 'https://github.com/tangxiaoyi97/qedv2-client' },
     ];
   }
   if (versionDetail.value === 'core') {
     const i = app.coreInfo;
-    if (!i) return [{ label: 'Status', value: 'nicht erreichbar' }];
+    if (!i) return [{ label: t('Status'), value: t('nicht erreichbar') }];
     return [
-      { label: 'Dienst', value: i.service },
-      { label: 'Version', value: i.version },
-      { label: 'Core-Commit', value: i.commit ?? 'unbekannt' },
-      { label: 'Core-Repository', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: t('Dienst'), value: i.service },
+      { label: t('Version'), value: i.version },
+      { label: t('Core-Commit'), value: i.commit ?? t('unbekannt') },
+      { label: t('Core-Repository'), value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
       { label: 'Build', value: formatBuildTime(i.buildTime) },
-      { label: 'Unterstützte Bank-Schemas', value: `${i.schemaVersionSupported.min} – ${i.schemaVersionSupported.max}` },
-      { label: 'Bank-Commit', value: i.bank.commit ?? 'unbekannt' },
-      { label: 'Bank-Repository', value: i.bank.repo.replace('https://github.com/', 'github.com/'), link: i.bank.repo },
-      { label: 'Bank-Branch', value: i.bank.branch },
-      { label: 'Aufgaben', value: `${i.bank.questionCount} insgesamt · ${i.bank.playableCount} verfügbar` },
+      { label: t('Unterstützte Bank-Schemas'), value: `${i.schemaVersionSupported.min} – ${i.schemaVersionSupported.max}` },
+      { label: t('Bank-Commit'), value: i.bank.commit ?? t('unbekannt') },
+      { label: t('Bank-Repository'), value: i.bank.repo.replace('https://github.com/', 'github.com/'), link: i.bank.repo },
+      { label: t('Bank-Branch'), value: i.bank.branch },
+      { label: t('Aufgaben'), value: t('{total} insgesamt · {available} verfügbar', { total: i.bank.questionCount, available: i.bank.playableCount }) },
     ];
   }
   if (versionDetail.value === 'server') {
     const i = app.serverInfo;
-    if (!i) return [{ label: 'Status', value: 'nicht erreichbar' }];
+    if (!i) return [{ label: t('Status'), value: t('nicht erreichbar') }];
     return [
-      { label: 'Dienst', value: i.service },
-      { label: 'Version', value: i.version },
-      { label: 'Server-Commit', value: i.commit ?? 'unbekannt' },
-      { label: 'Server-Repository', value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
+      { label: t('Dienst'), value: i.service },
+      { label: t('Version'), value: i.version },
+      { label: t('Server-Commit'), value: i.commit ?? t('unbekannt') },
+      { label: t('Server-Repository'), value: i.sourceRepo.replace('https://github.com/', 'github.com/'), link: i.sourceRepo },
       { label: 'Build', value: formatBuildTime(i.buildTime) },
-      { label: 'Datenbank-Status', value: databaseStatusLabel(i.database?.status) },
-      { label: 'Datenbank-System', value: 'PostgreSQL' },
-      { label: 'Schema-Version', value: i.database?.schemaVersion == null ? 'unbekannt' : `Schema ${i.database.schemaVersion}` },
-      { label: 'Letzte Migration', value: i.database?.latestMigration ?? 'unbekannt' },
+      { label: t('Datenbank-Status'), value: t(databaseStatusLabel(i.database?.status)) },
+      { label: t('Datenbank-System'), value: 'PostgreSQL' },
+      { label: t('Schema-Version'), value: i.database?.schemaVersion == null ? t('unbekannt') : `Schema ${i.database.schemaVersion}` },
+      { label: t('Letzte Migration'), value: i.database?.latestMigration ?? t('unbekannt') },
       { label: 'Auth', value: i.auth },
     ];
   }
   return [];
 });
 const versionDetailTitle = computed(() =>
-  versionDetail.value === 'web' ? 'Web-App' : versionDetail.value === 'core' ? 'Core' : 'Server',
+  versionDetail.value === 'web' ? t('Web-App') : versionDetail.value === 'core' ? 'Core' : 'Server',
 );
 
 const detailCard = ref<HTMLElement | null>(null);
@@ -289,20 +290,47 @@ const THEMES: { value: ThemePref; label: string }[] = [
   { value: 'system', label: 'System' },
 ];
 const LOCALES: Locale[] = ['de', 'en'];
+const themeSaving = ref(false);
+const themeError = ref('');
+const themeDraft = ref<ThemePref>();
+const themeChoice = computed({
+  get: () => themeDraft.value ?? app.theme,
+  set: (value: ThemePref) => { void pickTheme(value); },
+});
+async function pickTheme(theme: ThemePref): Promise<void> {
+  if (themeSaving.value || theme === app.theme) return;
+  themeDraft.value = theme;
+  themeSaving.value = true;
+  themeError.value = '';
+  try {
+    await app.setTheme(theme);
+  } catch {
+    themeError.value = t('Aussehen konnte nicht gespeichert werden.');
+  } finally {
+    themeDraft.value = undefined;
+    themeSaving.value = false;
+  }
+}
 
 /* Built-in CSS extensions; external records join this list next major. */
-const themeExtensionId = computed(() => app.accentTheme);
+const accentDraft = ref<BuiltinThemeId>();
+const themeExtensionId = computed({
+  get: () => accentDraft.value ?? app.accentTheme,
+  set: (value: BuiltinThemeId) => { void pickThemeExtension(value); },
+});
 const accentSaving = ref(false);
 const accentError = ref<string | undefined>();
 async function pickThemeExtension(id: BuiltinThemeId): Promise<void> {
   if (accentSaving.value || id === app.accentTheme) return;
+  accentDraft.value = id;
   accentSaving.value = true;
   accentError.value = undefined;
   try {
     await app.setAccentTheme(id);
   } catch {
-    accentError.value = 'Das Farbschema konnte nicht sicher gespeichert werden. Die bisherige Auswahl bleibt aktiv.';
+    accentError.value = t('Das Farbschema konnte nicht sicher gespeichert werden. Die bisherige Auswahl bleibt aktiv.');
   } finally {
+    accentDraft.value = undefined;
     accentSaving.value = false;
   }
 }
@@ -331,21 +359,22 @@ const urlError = ref('');
  *  (missing scheme, stray spaces) before they wedge the whole app. */
 function validateUrls(): string {
   const fields: [string, string][] = [
-    ['Core-Adresse', form.coreBaseUrl.trim()],
-    ['Server-Adresse', form.serverBaseUrl.trim()],
+    [t('Core-Adresse'), form.coreBaseUrl.trim()],
+    [t('Server-Adresse'), form.serverBaseUrl.trim()],
   ];
   for (const [label, value] of fields) {
-    if (value === '') return `${label} darf nicht leer sein.`;
+    if (value === '') return t('{label} darf nicht leer sein.', { label });
     try {
       canonicalServiceBaseUrl(value);
     } catch {
-      return `${label}: HTTPS verwenden; HTTP nur für localhost.`;
+      return t('{label}: HTTPS verwenden; HTTP nur für localhost.', { label });
     }
   }
   return '';
 }
 
 async function saveServers(): Promise<void> {
+  if (saving.value) return;
   urlError.value = validateUrls();
   if (urlError.value) return;
   saving.value = true;
@@ -357,7 +386,7 @@ async function saveServers(): Promise<void> {
     saved.value = true;
     setTimeout(() => (saved.value = false), 2500);
   } catch {
-    urlError.value = 'Nicht gespeichert. Die bisherigen Adressen bleiben aktiv.';
+    urlError.value = t('Nicht gespeichert. Die bisherigen Adressen bleiben aktiv.');
   } finally {
     saving.value = false;
   }
@@ -371,23 +400,24 @@ async function resetServers(): Promise<void> {
 
 /** de-AT build stamp, e.g. „04.07.2026, 14:30". */
 function formatBuildTime(iso: string): string {
-  return new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeStyle: 'short' }).format(
-    new Date(iso),
-  );
+  const value = new Date(iso);
+  return Number.isNaN(value.getTime()) ? t('unbekannt') : formatDate(value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /* manual archive upload (supplement §9) */
 const uploading = ref(false);
 const uploadTried = ref(false);
+const uploadError = ref('');
 
 async function uploadNow(): Promise<void> {
   if (uploading.value) return;
   uploading.value = true;
   uploadTried.value = true;
+  uploadError.value = '';
   try {
-    await progress.syncNow({ quiet: false });
+    await progress.syncCloudNow();
   } catch {
-    // syncStatus already reflects the failure; the line below shows it.
+    uploadError.value = t('Synchronisierung fehlgeschlagen. Erneut versuchen.');
   } finally {
     uploading.value = false;
   }
@@ -395,30 +425,50 @@ async function uploadNow(): Promise<void> {
 
 const uploadStatus = computed(() => {
   if (!uploadTried.value) return '';
+  if (uploading.value) return t('Wird synchronisiert …');
+  if (uploadError.value) return uploadError.value;
+  if (progress.archiveChoice) return t('Bitte Archiv auswählen.');
   const s = progress.syncStatus;
   switch (s.state) {
     case 'syncing':
-      return '⟳ Wird hochgeladen …';
+      return t('⟳ Wird hochgeladen …');
     case 'synced':
-      return `✓ Synchronisiert ${s.at ? new Intl.DateTimeFormat('de-AT', { hour: '2-digit', minute: '2-digit' }).format(s.at) : ''}`.trim();
+      if (progress.attemptUploadStatus.pendingCount > 0) {
+        return progress.attemptUploadStatus.state === 'error'
+          ? t(progress.attemptUploadStatus.message ?? 'Antwortverlauf nicht synchronisiert.')
+          : t('{count} Antworten warten auf Upload.', { count: progress.attemptUploadStatus.pendingCount });
+      }
+      return t('✓ Synchronisiert {time}', { time: s.at ? formatDate(s.at, { hour: '2-digit', minute: '2-digit' }) : '' }).trim();
     case 'conflict':
-      return '⚠ Konflikt — der Dialog öffnet sich';
+      return t('⚠ Konflikt — der Dialog öffnet sich');
     case 'offline':
-      return 'Offline — bitte später erneut versuchen.';
+      return t('Lokal gespeichert · Upload wird wiederholt.');
     case 'error':
-      return `Fehler: ${s.message ?? 'unbekannt'}`;
+      return t('Fehler: {message}', { message: s.message ? t(s.message) : t('unbekannt') });
     default:
       return '';
   }
 });
 
+const loggingOut = ref(false);
+const logoutError = ref('');
 async function doLogout(): Promise<void> {
-  await auth.logout();
+  if (loggingOut.value) return;
+  loggingOut.value = true;
+  logoutError.value = '';
+  try {
+    await auth.logout();
+  } catch {
+    logoutError.value = t('Abmelden fehlgeschlagen. Erneut versuchen.');
+  } finally {
+    loggingOut.value = false;
+  }
 }
 
 /** Opens the full release history — every version, not just this build's. */
 const changelogState = ref<'idle' | 'loading' | 'none'>('idle');
 async function openChangelog(): Promise<void> {
+  if (changelogState.value === 'loading') return;
   changelogState.value = 'loading';
   const found = await ui.showChangelogHistory();
   changelogState.value = found ? 'idle' : 'none';
@@ -428,33 +478,36 @@ async function openChangelog(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings q-page">
-    <h1 class="settings__title q-page-title">Einstellungen</h1>
+  <div class="settings q-page q-settings-panel">
+    <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
     <SettingsCard>
-      <SettingsRow label="Aussehen">
+      <SettingsRow class="settings__appearance-row" :label="t('Aussehen')">
+        <template #status>
+          <span v-if="themeError" class="settings__url-error" role="alert">{{ themeError }}</span>
+        </template>
         <template #default="{ labelId }">
-          <div class="settings__segments" role="radiogroup" :aria-labelledby="labelId">
+          <div class="settings__segments q-settings-segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="themeSaving">
             <label
-              v-for="t in THEMES"
-              :key="t.value"
-              class="settings__segment"
-              :class="{ 'settings__segment--on': app.theme === t.value }"
+              v-for="theme in THEMES"
+              :key="theme.value"
+              class="settings__segment q-settings-segment"
+              :class="{ 'settings__segment--on': themeChoice === theme.value }"
             >
               <input
                 class="settings__choice-input"
                 type="radio"
                 name="settings-appearance"
-                :value="t.value"
-                :checked="app.theme === t.value"
-                @change="app.setTheme(t.value)"
+                v-model="themeChoice"
+                :value="theme.value"
+                :disabled="themeSaving"
               />
-              <span>{{ t.label }}</span>
+              <span>{{ t(theme.label) }}</span>
             </label>
           </div>
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Farbschema" layout="stacked">
+      <SettingsRow :label="t('Farbschema')" layout="stacked">
         <template #status>
           <div v-if="accentError" class="settings__url-error" role="alert">{{ accentError }}</div>
         </template>
@@ -476,10 +529,9 @@ async function openChangelog(): Promise<void> {
                 class="settings__choice-input"
                 type="radio"
                 name="settings-colour-scheme"
+                v-model="themeExtensionId"
                 :value="extension.id"
-                :checked="themeExtensionId === extension.id"
                 :disabled="accentSaving"
-                @change="pickThemeExtension(extension.id)"
               />
               <span class="settings__theme-preview" aria-hidden="true">
                 <span class="settings__theme-card">
@@ -494,11 +546,11 @@ async function openChangelog(): Promise<void> {
         </template>
       </SettingsRow>
 
-      <SettingsRow :label="ui.t('settingsLanguage')">
+      <SettingsRow :label="t('Sprache')">
         <template #default="{ labelId }">
           <span class="settings__select-wrap">
             <select
-              class="settings__select"
+              class="settings__select q-settings-field"
               :aria-labelledby="labelId"
               :value="ui.locale"
               @change="onLocaleChange"
@@ -513,15 +565,60 @@ async function openChangelog(): Promise<void> {
       </SettingsRow>
     </SettingsCard>
 
-    <SettingsCard title="Versionen">
+    <AiSettings />
+
+    <SettingsCard>
+      <SettingsRow
+        v-if="(recoveryInventory?.totalCount ?? 0) > 0"
+        :label="t('Lokale Daten')"
+        :description="t('{count} nicht zugeordnet', { count: recoveryInventory!.totalCount })"
+      >
+        <QButton variant="secondary" @click="openRecovery">{{ t('Prüfen') }}</QButton>
+      </SettingsRow>
+      <template v-if="auth.isLoggedIn">
+        <SettingsRow label="Leaderboard">
+          <template #description>
+              <template v-if="leaderboard.loadingProfile">{{ t('Status wird geladen …') }}</template>
+              <template v-else-if="leaderboard.profile?.participating">
+                {{ t('Öffentlich als {name}', { name: leaderboard.profile.nickname }) }}
+              </template>
+              <template v-else>{{ t('Nicht öffentlich') }}</template>
+          </template>
+          <QButton variant="secondary" @click="router.push('/leaderboard')">
+            {{ leaderboard.profile?.participating ? t('Verwalten') : t('Beitreten') }}
+          </QButton>
+        </SettingsRow>
+        <SettingsRow :label="t('Archiv')">
+          <template #status>
+            <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
+          </template>
+          <QButton variant="secondary" :loading="uploading" @click="uploadNow">
+            {{ t('Synchronisieren') }}
+          </QButton>
+        </SettingsRow>
+        <SettingsRow :label="t('Abmelden')" tone="danger">
+          <template #status>
+            <span v-if="logoutError" role="alert">{{ logoutError }}</span>
+          </template>
+          <QButton variant="danger" :disabled="loggingOut" :aria-busy="loggingOut" @click="doLogout">{{ loggingOut ? t('Wird abgemeldet …') : t('Abmelden') }}</QButton>
+        </SettingsRow>
+      </template>
+      <template v-else>
+        <SettingsRow :label="t('Konto')">
+          <QButton @click="ui.openAuthModal()">{{ t('Anmelden') }}</QButton>
+        </SettingsRow>
+      </template>
+    </SettingsCard>
+
+    <SettingsCard :title="t('Versionen')">
       <template #action>
-        <QButton variant="ghost" @click="app.refreshServiceInfo()" title="Dienst-Infos neu laden">
-          ⟳ Aktualisieren
+        <QButton variant="ghost" @click="app.refreshServiceInfo()" :title="t('Dienst-Infos neu laden')">
+          {{ t('⟳ Aktualisieren') }}
         </QButton>
       </template>
       <div class="settings__vlist">
         <button type="button" class="settings__vrow" @click="versionDetail = 'web'">
-          <div class="settings__vname">Web-App</div>
+          <div class="settings__vname">{{ t('Web-App') }}</div>
           <div class="settings__vver">
             <b>{{ APP_VERSION }}</b>
           </div>
@@ -544,73 +641,25 @@ async function openChangelog(): Promise<void> {
       </div>
       <template #footer>
         <QButton variant="secondary" :disabled="changelogState === 'loading'" @click="openChangelog">
-          {{ changelogState === 'none' ? 'Keine Versionshinweise gefunden' : 'Änderungen' }}
+          {{ changelogState === 'none' ? t('Keine Versionshinweise gefunden') : t('Änderungen') }}
         </QButton>
       </template>
     </SettingsCard>
 
-    <AiSettings />
-
-    <SettingsCard>
-      <SettingsRow
-        v-if="(recoveryInventory?.totalCount ?? 0) > 0"
-        label="Lokale Daten"
-        :description="`${recoveryInventory!.totalCount} nicht zugeordnet`"
-      >
-        <QButton variant="secondary" @click="openRecovery">Prüfen</QButton>
-      </SettingsRow>
-      <template v-if="auth.isLoggedIn">
-        <SettingsRow label="Leaderboard">
-          <template #description>
-              <template v-if="leaderboard.loadingProfile">Status wird geladen …</template>
-              <template v-else-if="leaderboard.profile?.participating">
-                Öffentlich als {{ leaderboard.profile.nickname }}
-              </template>
-              <template v-else>Nicht öffentlich</template>
-          </template>
-          <QButton variant="secondary" @click="router.push('/leaderboard')">
-            {{ leaderboard.profile?.participating ? 'Verwalten' : 'Beitreten' }}
-          </QButton>
-        </SettingsRow>
-        <SettingsRow label="Archiv">
-          <template #status>
-            <div v-if="uploadStatus" class="settings__sync-status" role="status">{{ uploadStatus }}</div>
-          </template>
-          <QButton variant="secondary" :disabled="uploading" @click="uploadNow">
-            {{ uploading ? 'Lädt hoch …' : 'Hochladen' }}
-          </QButton>
-        </SettingsRow>
-        <SettingsRow label="Abmelden" tone="danger">
-          <QButton variant="danger" @click="doLogout">Abmelden</QButton>
-        </SettingsRow>
-      </template>
-      <template v-else>
-        <SettingsRow label="Konto">
-          <QButton @click="ui.openAuthModal()">Anmelden</QButton>
-        </SettingsRow>
-      </template>
-    </SettingsCard>
-
-    <CollapsePanel title="Erweitert · Serveradressen">
+    <CollapsePanel :title="t('Serveradressen')">
       <div class="settings__adv">
-        <div class="settings__warn">
-          Nur für eigene Server.
-        </div>
         <label class="settings__field">
-          <span class="settings__label">Inhalts-Server (core)</span>
-          <input v-model="form.coreBaseUrl" class="settings__input" spellcheck="false" />
+          <span class="settings__label">{{ t('Inhalts-Server (core)') }}</span>
+          <input v-model="form.coreBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input q-settings-field" spellcheck="false" :disabled="saving" @input="saved = false" />
         </label>
         <label class="settings__field">
-          <span class="settings__label">Nutzer-Server (sync)</span>
-          <input v-model="form.serverBaseUrl" class="settings__input" spellcheck="false" />
+          <span class="settings__label">{{ t('Nutzer-Server (sync)') }}</span>
+          <input v-model="form.serverBaseUrl" type="url" inputmode="url" autocomplete="url" autocapitalize="off" class="settings__input q-settings-field" spellcheck="false" :disabled="saving" @input="saved = false" />
         </label>
-        <div class="settings__group-note">
-          Desktop-Core und Bank bleiben unverändert.
-        </div>
         <div v-if="urlError" class="settings__url-error" role="alert">{{ urlError }}</div>
         <div class="settings__adv-actions">
-          <QButton variant="ghost" :disabled="saving" @click="resetServers">Standard wiederherstellen</QButton>
-          <QButton :disabled="saving" @click="saveServers">{{ saved ? '✓ Übernommen' : 'Übernehmen' }}</QButton>
+          <QButton variant="ghost" :disabled="saving" @click="resetServers">{{ t('Standard wiederherstellen') }}</QButton>
+          <QButton :disabled="saving" :aria-busy="saving" @click="saveServers">{{ saving ? t('Wird gespeichert …') : saved ? t('✓ Übernommen') : t('Übernehmen') }}</QButton>
         </div>
       </div>
     </CollapsePanel>
@@ -626,10 +675,10 @@ async function openChangelog(): Promise<void> {
           :aria-label="versionDetailTitle"
           @click.self="versionDetail = null"
         >
-          <div ref="detailCard" class="vdetail__card">
+          <div ref="detailCard" class="vdetail__card q-settings-panel">
             <div class="vdetail__head">
               <div class="vdetail__title">{{ versionDetailTitle }}</div>
-              <QIconButton aria-label="Schließen" data-autofocus @click="versionDetail = null" />
+              <QIconButton :aria-label="t('Schließen')" data-autofocus @click="versionDetail = null" />
             </div>
             <dl class="vdetail__list">
               <div v-for="row in versionDetailRows" :key="row.label" class="vdetail__row">
@@ -655,13 +704,13 @@ async function openChangelog(): Promise<void> {
           aria-labelledby="recovery-title"
           @click.self="closeRecovery"
         >
-          <div ref="recoveryCard" class="recovery__card">
+          <div ref="recoveryCard" class="recovery__card q-settings-panel">
             <header class="recovery__head">
-              <h2 id="recovery-title" class="recovery__title">Lokale Daten</h2>
-              <QIconButton aria-label="Schließen" data-autofocus @click="closeRecovery" />
+              <h2 id="recovery-title" class="recovery__title">{{ t('Lokale Daten') }}</h2>
+              <QIconButton :aria-label="t('Schließen')" data-autofocus @click="closeRecovery" />
             </header>
 
-            <p class="recovery__intro">Nicht automatisch zugeordnet.</p>
+            <p class="recovery__intro">{{ t('Nicht automatisch zugeordnet.') }}</p>
             <ul class="recovery__list">
               <li
                 v-for="(profile, index) in recoveryInventory.profiles"
@@ -670,7 +719,7 @@ async function openChangelog(): Promise<void> {
               >
                 <div class="recovery__item-copy">
                   <strong>
-                    {{ profile.kind === 'unclaimed-guest' ? 'Besucherdaten' : `Datensatz ${index + 1}` }}
+                    {{ profile.kind === 'unclaimed-guest' ? t('Besucherdaten') : t('Datensatz {number}', { number: index + 1 }) }}
                   </strong>
                   <span>{{ recoveryProfileSummary(profile) }}</span>
                 </div>
@@ -680,31 +729,31 @@ async function openChangelog(): Promise<void> {
                   :disabled="recoveryBusy"
                   @click="recoveryConfirm = profile.profileId"
                 >
-                  Wiederherstellen
+                  {{ t('Wiederherstellen') }}
                 </QButton>
                 <span v-else-if="!profile.assignment.safe" class="recovery__export-only">
-                  Nur Export
+                  {{ t('Nur Export') }}
                 </span>
                 <div
                   v-if="recoveryConfirm === profile.profileId"
                   class="recovery__confirm"
                   role="group"
-                  aria-label="Wiederherstellung bestätigen"
+                  :aria-label="t('Wiederherstellung bestätigen')"
                 >
-                  <span>Diesem Profil zuordnen?</span>
+                  <span>{{ t('Diesem Profil zuordnen?') }}</span>
                   <div class="recovery__confirm-actions">
                     <QButton
                       variant="ghost"
                       :disabled="recoveryBusy"
                       @click="recoveryConfirm = undefined"
                     >
-                      Abbrechen
+                      {{ t('Abbrechen') }}
                     </QButton>
                     <QButton
                       :disabled="recoveryBusy"
                       @click="assignRecovery(profile.profileId)"
                     >
-                      Zuordnen
+                      {{ t('Zuordnen') }}
                     </QButton>
                   </div>
                 </div>
@@ -714,50 +763,50 @@ async function openChangelog(): Promise<void> {
                 class="recovery__item"
               >
                 <div class="recovery__item-copy">
-                  <strong>Offene Antworten</strong>
+                  <strong>{{ t('Offene Antworten') }}</strong>
                   <span>{{ recoveryInventory.ambiguousAttemptCount }}</span>
                 </div>
-                <span class="recovery__export-only">Nur Export</span>
+                <span class="recovery__export-only">{{ t('Nur Export') }}</span>
               </li>
               <li
                 v-if="recoveryInventory.ambiguousAccountAttemptCount > 0"
                 class="recovery__item"
               >
                 <div class="recovery__item-copy">
-                  <strong>Kontodaten</strong>
+                  <strong>{{ t('Kontodaten') }}</strong>
                   <span>{{ recoveryInventory.ambiguousAccountAttemptCount }}</span>
                 </div>
-                <span class="recovery__export-only">Nur Export</span>
+                <span class="recovery__export-only">{{ t('Nur Export') }}</span>
               </li>
               <li
                 v-if="recoveryInventory.corruptAttemptCount > 0"
                 class="recovery__item"
               >
                 <div class="recovery__item-copy">
-                  <strong>Beschädigte Antworten</strong>
+                  <strong>{{ t('Beschädigte Antworten') }}</strong>
                   <span>{{ recoveryInventory.corruptAttemptCount }}</span>
                 </div>
-                <span class="recovery__export-only">Nur Export</span>
+                <span class="recovery__export-only">{{ t('Nur Export') }}</span>
               </li>
               <li
                 v-if="recoveryInventory.legacySyncMutationCount > 0"
                 class="recovery__item"
               >
                 <div class="recovery__item-copy">
-                  <strong>Alte Synchronisierung</strong>
+                  <strong>{{ t('Alte Synchronisierung') }}</strong>
                   <span>{{ recoveryInventory.legacySyncMutationCount }}</span>
                 </div>
-                <span class="recovery__export-only">Nur Export</span>
+                <span class="recovery__export-only">{{ t('Nur Export') }}</span>
               </li>
               <li
                 v-if="recoveryInventory.orphanedPracticeSessionCount > 0"
                 class="recovery__item"
               >
                 <div class="recovery__item-copy">
-                  <strong>Unterbrochene Übung</strong>
+                  <strong>{{ t('Unterbrochene Übung') }}</strong>
                   <span>{{ recoveryInventory.orphanedPracticeSessionCount }}</span>
                 </div>
-                <span class="recovery__export-only">Nur Export</span>
+                <span class="recovery__export-only">{{ t('Nur Export') }}</span>
               </li>
             </ul>
 
@@ -766,10 +815,10 @@ async function openChangelog(): Promise<void> {
             </p>
             <footer class="recovery__footer">
               <QButton variant="secondary" :disabled="recoveryBusy" @click="downloadRecovery">
-                Exportieren
+                {{ t('Exportieren') }}
               </QButton>
               <QButton variant="ghost" :disabled="recoveryBusy" @click="closeRecovery">
-                Später
+                {{ t('Später') }}
               </QButton>
             </footer>
           </div>
@@ -781,47 +830,23 @@ async function openChangelog(): Promise<void> {
 
 <style scoped>
 .settings {
-  max-width: 560px;
+  width: 100%;
+  max-width: 640px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--q-space-4);
 }
 /* Only the bottom gap differs from .q-page-title. */
 .settings__title {
-  margin-bottom: 4px;
+  margin-bottom: var(--q-space-1);
 }
 .settings__url-error {
-  font-size: 12.5px;
+  font-size: var(--q-font-small);
   color: var(--q-err-ink);
   background: var(--q-err-bg);
   border: 1px solid var(--q-err-border);
-  border-radius: 8px;
-  padding: 9px 12px;
-}
-.settings__segments {
-  display: flex;
-  border: 1px solid var(--q-btn-border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.settings__segment {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--q-control-height);
-  padding: 9px 13px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--q-mut-2);
-  background: var(--q-card);
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-.settings__segment + .settings__segment {
-  border-left: 1px solid var(--q-btn-border);
+  border-radius: var(--q-radius-control);
+  padding: var(--q-space-3);
 }
 .settings__segment--on {
   background: var(--q-accent-strong);
@@ -847,17 +872,20 @@ async function openChangelog(): Promise<void> {
   flex: none;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
+  gap: var(--q-space-3);
   width: 100%;
 }
 @media (max-width: 480px) {
   .settings__themes {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-auto-rows: max-content;
+    gap: var(--q-space-2);
   }
-  .settings__theme-preview {
-    height: clamp(72px, 21.5vw, 84px);
+  .settings .settings__theme-preview {
+    height: 28px;
     aspect-ratio: auto;
+    background: var(--q-accent-strong);
+  }
+  .settings .settings__theme-card {
+    display: none;
   }
 }
 .settings__theme {
@@ -866,10 +894,10 @@ async function openChangelog(): Promise<void> {
   flex-direction: column;
   min-height: var(--q-control-height);
   min-width: 0;
-  gap: 6px;
-  padding: 6px;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1);
   border: 1.5px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
   cursor: pointer;
   font-family: inherit;
@@ -897,8 +925,8 @@ async function openChangelog(): Promise<void> {
   box-sizing: border-box;
   display: flex;
   width: 100%;
-  border-radius: 8px;
-  padding: 8px;
+  border-radius: var(--q-radius-control);
+  padding: var(--q-space-2);
   aspect-ratio: 16 / 10;
   background: var(--q-page);
 }
@@ -907,9 +935,9 @@ async function openChangelog(): Promise<void> {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--q-space-1);
   border-radius: 6px;
-  padding: 8px;
+  padding: var(--q-space-2);
   background: var(--q-card);
   box-shadow: var(--q-shadow-card);
 }
@@ -942,7 +970,12 @@ async function openChangelog(): Promise<void> {
   opacity: 0.85;
 }
 .settings__theme-name {
-  font-size: 11.5px;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-mut);
   text-align: center;
@@ -957,18 +990,9 @@ async function openChangelog(): Promise<void> {
   display: inline-flex;
 }
 .settings__select {
-  min-height: var(--q-control-height);
-  padding: 8px var(--q-control-chevron-padding-end) 8px 13px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
+  width: auto;
+  padding-right: var(--q-control-chevron-padding-end);
   appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
 }
 .settings__select:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -980,76 +1004,45 @@ async function openChangelog(): Promise<void> {
   top: 50%;
   transform: translateY(-50%);
   color: var(--q-mut);
-  font-size: 16px;
+  font-size: var(--q-font-input);
   pointer-events: none;
 }
 .settings__adv {
   display: flex;
   flex-direction: column;
-  gap: 11px;
-}
-.settings__group-note {
-  font-size: 11px;
-  color: var(--q-faint);
-  line-height: 1.5;
-  padding-top: 4px;
-  border-top: 1px dashed var(--q-border);
-}
-.settings__warn {
-  padding: 9px 12px;
-  background: var(--q-part-bg);
-  border: 1px solid var(--q-part-border);
-  border-radius: 8px;
-  font-size: 11.5px;
-  color: var(--q-part-ink);
-  line-height: 1.5;
+  gap: var(--q-space-3);
 }
 .settings__field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--q-space-1);
 }
 .settings__label {
-  font-size: 11.5px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   color: var(--q-mut);
-}
-.settings__input {
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  padding: 9px 11px;
-  font: 500 16px ui-monospace, Menlo, monospace; /* ≥16px: no iOS focus-zoom */
-  color: var(--q-ink);
-  background: var(--q-panel);
-}
-.settings__input:focus {
-  outline: none;
-  border: 2px solid var(--q-accent);
-  padding: 8px 10px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
-  background: var(--q-card);
+  line-height: 1.4;
 }
 .settings__adv-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+  margin-top: var(--q-space-2);
 }
 .settings__vlist {
   display: flex;
   flex-direction: column;
-  margin: 0 20px 16px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
-  overflow: hidden;
+  margin: 0;
+  border-top: 1px solid var(--q-border-soft);
 }
 .settings__vrow {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--q-space-3);
   min-height: var(--q-control-height);
-  padding: 11px 13px;
-  background: var(--q-panel);
+  padding: var(--q-settings-block) var(--q-settings-inset);
+  background: var(--q-card);
   border: none;
   width: 100%;
   text-align: left;
@@ -1072,13 +1065,13 @@ async function openChangelog(): Promise<void> {
 .settings__vname {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
 }
 .settings__vchev {
   flex: none;
   color: var(--q-faint);
-  font-size: 16px;
+  font-size: var(--q-font-input);
   line-height: 1;
 }
 .settings__vver {
@@ -1086,7 +1079,7 @@ async function openChangelog(): Promise<void> {
   text-align: right;
 }
 .settings__vver b {
-  font: 700 12.5px ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   font-variant-numeric: tabular-nums;
 }
 /* ---- Versionen detail modal ---- */
@@ -1096,31 +1089,31 @@ async function openChangelog(): Promise<void> {
   max-height: 82vh;
   overflow-y: auto;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
 }
 .vdetail__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 16px 16px 10px 20px;
+  gap: var(--q-space-3);
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 .vdetail__title {
-  font-size: 15px;
+  font-size: var(--q-font-ui);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .vdetail__list {
   margin: 0;
-  padding: 0 20px 18px;
+  padding: 0 var(--q-settings-inset) var(--q-settings-block);
   display: flex;
   flex-direction: column;
 }
 .vdetail__row {
   display: flex;
-  gap: 14px;
-  padding: 7px 0;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) 0;
   border-top: 1px solid var(--q-border-soft);
 }
 .vdetail__row:first-child {
@@ -1129,13 +1122,13 @@ async function openChangelog(): Promise<void> {
 .vdetail__dt {
   flex: none;
   width: 128px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   padding-top: 1px;
 }
 .vdetail__dd {
   margin: 0;
-  font: 500 12.5px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   color: var(--q-ink);
   word-break: break-all;
   min-width: 0;
@@ -1146,19 +1139,19 @@ async function openChangelog(): Promise<void> {
 @media (max-width: 480px) {
   .vdetail__row {
     flex-direction: column;
-    gap: 2px;
+    gap: var(--q-space-1);
   }
   .vdetail__dt {
     width: auto;
   }
 }
 .settings__sync-status {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
-  padding: 10px 14px;
+  padding: var(--q-space-3);
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 8px;
+  border-radius: var(--q-radius-control);
 }
 
 /* ---- Explicit local recovery ---- */
@@ -1169,60 +1162,60 @@ async function openChangelog(): Promise<void> {
   overflow-y: auto;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
 }
 .recovery__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 14px 6px 18px;
+  gap: var(--q-space-3);
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 .recovery__title {
   margin: 0;
   color: var(--q-ink);
-  font-size: 15px;
+  font-size: var(--q-font-ui);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .recovery__intro {
   margin: 0;
-  padding: 0 18px 12px;
+  padding: 0 var(--q-settings-inset) var(--q-settings-block);
   color: var(--q-mut-2);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .recovery__list {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0 18px;
+  padding: 0 var(--q-settings-inset);
   list-style: none;
 }
 .recovery__item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: var(--q-space-3);
   min-width: 0;
-  padding: 12px 0;
+  padding: var(--q-space-3) 0;
   border-top: 1px solid var(--q-border-soft);
 }
 .recovery__item-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 2px;
+  gap: var(--q-space-1);
 }
 .recovery__item-copy strong {
   color: var(--q-ink);
-  font-size: 13px;
-  line-height: 1.35;
+  font-size: var(--q-font-ui);
+  line-height: 1.4;
 }
 .recovery__item-copy span,
 .recovery__export-only {
   color: var(--q-mut-2);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   line-height: 1.4;
 }
 .recovery__export-only {
@@ -1233,29 +1226,29 @@ async function openChangelog(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px;
+  gap: var(--q-space-3);
+  padding: var(--q-space-3);
   color: var(--q-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
 }
 .recovery__confirm-actions,
 .recovery__footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   flex-wrap: wrap;
 }
 .recovery__error {
-  margin: 10px 18px 0;
+  margin: var(--q-settings-block) var(--q-settings-inset) 0;
   color: var(--q-err-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .recovery__footer {
-  padding: 14px 18px 18px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
 }
 @media (max-width: 360px) {
   .recovery__item,
@@ -1275,5 +1268,10 @@ async function openChangelog(): Promise<void> {
   .recovery__footer > :deep(button) {
     flex: 1 1 auto;
   }
+}
+@media (max-width: 420px) {
+  .settings__appearance-row { grid-template-columns: minmax(0, 1fr); }
+  .settings__appearance-row :deep(.q-settings-row__control) { justify-self: stretch; }
+  .settings__segments { width: 100%; }
 }
 </style>

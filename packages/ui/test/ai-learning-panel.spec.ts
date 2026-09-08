@@ -62,16 +62,39 @@ describe('AiLearningPanel', () => {
 
   it('retries the same stage instead of silently switching actions', async () => {
     const hint = mount(AiLearningPanel, {
-      props: { stage: 'hint', error: 'Offline.' },
+      props: { stage: 'hint', error: 'Offline.', canRequestHint: true },
     });
     await hint.get('.q-learning__error .q-btn').trigger('click');
     expect(hint.emitted('requestHint')).toHaveLength(1);
     expect(hint.emitted('requestDiagnosis')).toBeUndefined();
 
     const diagnosis = mount(AiLearningPanel, {
-      props: { stage: 'diagnosis', error: 'Timeout.' },
+      props: { stage: 'diagnosis', error: 'Timeout.', canRequestDiagnosis: true },
     });
     await diagnosis.get('.q-learning__error .q-btn').trigger('click');
     expect(diagnosis.emitted('requestDiagnosis')).toHaveLength(1);
+  });
+
+  it('offers setup instead of a paid request and keeps correction independent of AI', async () => {
+    const wrapper = mount(AiLearningPanel, {
+      props: { stage: 'hint', aiGenerated: true, needsSetup: true },
+    });
+    expect(wrapper.text()).toContain('KI einrichten');
+    expect(wrapper.text()).not.toContain('Hinweis 1');
+    await wrapper.get('.q-learning__actions .q-btn').trigger('click');
+    expect(wrapper.emitted('setup')).toHaveLength(1);
+    expect(wrapper.emitted('requestHint')).toBeUndefined();
+    await wrapper.setProps({ stage: 'diagnosis', aiGenerated: false, needsSetup: false, canCorrect: true });
+    expect(wrapper.get('h3').text()).toBe('Korrektur');
+    expect(wrapper.text()).not.toContain('KI');
+    await wrapper.get('.q-learning__actions .q-btn').trigger('click');
+    expect(wrapper.emitted('correct')).toHaveLength(1);
+  });
+
+  it('does not leave a retry request after the stage feature becomes unavailable', () => {
+    const wrapper = mount(AiLearningPanel, {
+      props: { stage: 'diagnosis', error: 'Nicht verfügbar.', canRequestDiagnosis: false },
+    });
+    expect(wrapper.find('.q-learning__error .q-btn').exists()).toBe(false);
   });
 });

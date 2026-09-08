@@ -8,6 +8,7 @@
  * grading overrides rebase FSRS on the pre-answer snapshot kept per part.
  */
 import { defineStore } from 'pinia';
+import { useI18n } from '../i18n.js';
 import { computed, ref, shallowRef } from 'vue';
 import {
   CoreClient,
@@ -55,6 +56,8 @@ import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
 import { useProgressStore } from './progress.js';
 
+const { t } = useI18n();
+
 /** Sync after every N graded parts while logged in (brief §5: sync eagerly). */
 const SYNC_EVERY_N_GRADES = 3;
 /**
@@ -74,6 +77,10 @@ const SESSION_STORAGE_VERSION = 6;
 const SESSION_PROFILE_KEY_VERSION = 1;
 const MAX_PINNED_ASSET_BYTES = 128 * 1024 * 1024;
 const MAX_SINGLE_ASSET_BYTES = 32 * 1024 * 1024;
+const ASSET_REQUEST_TIMEOUT_MS = 12_000;
+const ASSET_RETRY_DELAY_MS = 350;
+const MAX_ASSET_RETRY_DELAY_MS = 2_000;
+const RETRYABLE_ASSET_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
 /**
  * Where a session came from. „Programm üben" in the navigation means the
@@ -713,7 +720,7 @@ function assertQuestionMatchesManifest(
   const record = manifest.questions[question.id];
   if (!record) {
     throw new ContentIntegrityError(
-      `Aufgabe ${question.id} fehlt im überprüften Aufgabenbank-Manifest.`,
+      t('Aufgabe {id} fehlt im überprüften Aufgabenbank-Manifest.', { id: question.id }),
     );
   }
   const actualWireHash = questionContentHash(question);
@@ -722,7 +729,7 @@ function assertQuestionMatchesManifest(
     || (advertisedWireHash !== undefined && advertisedWireHash !== record.wireSha256)
   ) {
     throw new ContentIntegrityError(
-      `Die Übertragungs-Prüfsumme von Aufgabe ${question.id} stimmt nicht mit der Aufgabenbank überein.`,
+      t('Die Übertragungs-Prüfsumme von Aufgabe {id} stimmt nicht mit der Aufgabenbank überein.', { id: question.id }),
     );
   }
   const actualAssets = questionAssetPaths(question);
@@ -732,7 +739,7 @@ function assertQuestionMatchesManifest(
     || actualAssets.some((path) => !expectedAssets.has(path))
   ) {
     throw new ContentIntegrityError(
-      `Die Grafiken von Aufgabe ${question.id} stimmen nicht mit der Aufgabenbank überein.`,
+      t('Die Grafiken von Aufgabe {id} stimmen nicht mit der Aufgabenbank überein.', { id: question.id }),
     );
   }
 }
@@ -743,7 +750,7 @@ async function readBoundedAsset(
   expected?: ManifestAssetV2,
 ): Promise<Blob> {
   if (!response.ok) {
-    throw new ContentIntegrityError(`Eine Aufgabengrafik konnte nicht geladen werden (${response.status}).`);
+    throw new ContentIntegrityError(t('Eine Aufgabengrafik konnte nicht geladen werden ({status}).', { status: response.status }));
   }
   const allowed = Math.min(MAX_SINGLE_ASSET_BYTES, remainingBytes);
   const declaredHeader = response.headers.get('content-length');
@@ -766,10 +773,16 @@ async function readBoundedAsset(
   }
   const etag = response.headers.get('etag');
   const etagMatch = /^"([0-9a-f]{64})"$/u.exec(etag ?? '');
-  if (!etagMatch) {
+  // The validated v2 manifest already authenticates this exact revision's
+  // bytes independently of transport headers. A proxy may hide or weaken an
+  // ETag without changing the PNG; that must not discard a stronger proof.
+  // Legacy revision manifests contain no asset hashes and still require a
+  // strong ETag. Neither path ever admits bytes without a SHA-256 match.
+  const expectedHash = expected?.sha256 ?? etagMatch?.[1];
+  if (!expectedHash) {
     throw new ContentIntegrityError('Eine Aufgabengrafik hat keine starke Prüfsumme geliefert.');
   }
-  if (expected && etagMatch[1] !== expected.sha256) {
+  if (expected && etagMatch && etagMatch[1] !== expected.sha256) {
     throw new ContentIntegrityError('Die angekündigte Prüfsumme einer Aufgabengrafik ist ungültig.');
   }
 
@@ -817,10 +830,57 @@ async function readBoundedAsset(
   const actualHash = [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
-  if (actualHash !== etagMatch[1]) {
+  if (actualHash !== expectedHash) {
     throw new ContentIntegrityError('Die Prüfsumme einer Aufgabengrafik ist ungültig.');
   }
   return new Blob([verifiedBytes.buffer], { type: 'image/png' });
+}
+
+/** Retry only interrupted transport; a contradictory content proof is final. */
+async function fetchVerifiedAsset(
+  url: string,
+  remainingBytes: number,
+  expected?: ManifestAssetV2,
+): Promise<Blob> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const deadline = globalThis.setTimeout(() => controller.abort(), ASSET_REQUEST_TIMEOUT_MS);
+    let retryDelayMs = ASSET_RETRY_DELAY_MS;
+    try {
+      const response = await fetch(url, {
+        cache: 'no-store',
+        credentials: 'omit',
+        signal: controller.signal,
+      });
+      if (!response.ok && RETRYABLE_ASSET_STATUSES.has(response.status) && attempt === 0) {
+        const retryAfter = response.headers.get('retry-after');
+        if (retryAfter) {
+          const seconds = /^\d+(?:\.\d+)?$/u.test(retryAfter) ? Number(retryAfter) : undefined;
+          const waitMs = seconds !== undefined ? seconds * 1_000 : Date.parse(retryAfter) - Date.now();
+          // Never hammer a throttled Core, or hold the loading screen for an
+          // unbounded Retry-After. A later explicit retry remains available.
+          if (!Number.isFinite(waitMs) || waitMs > MAX_ASSET_RETRY_DELAY_MS) {
+            throw new ContentIntegrityError(t('Eine Aufgabengrafik konnte nicht geladen werden ({status}).', { status: response.status }));
+          }
+          retryDelayMs = Math.max(retryDelayMs, waitMs);
+        }
+        throw new Error(`Temporary figure response: ${response.status}`);
+      }
+      return await readBoundedAsset(response, remainingBytes, expected);
+    } catch (cause) {
+      if (cause instanceof ContentIntegrityError) throw cause;
+      if (attempt > 0 || globalThis.navigator?.onLine === false) {
+        throw new Error(t('Grafik konnte nicht geladen werden. Bitte erneut versuchen.'), { cause });
+      }
+    } finally {
+      globalThis.clearTimeout(deadline);
+      // Also cancel a rejected/unused response body rather than leaving it
+      // downloading after a metadata failure or before the bounded retry.
+      controller.abort();
+    }
+    await new Promise<void>((resolve) => globalThis.setTimeout(resolve, retryDelayMs));
+  }
+  throw new Error(t('Grafik konnte nicht geladen werden. Bitte erneut versuchen.'));
 }
 
 export const usePracticeStore = defineStore('practice', () => {
@@ -879,6 +939,54 @@ export const usePracticeStore = defineStore('practice', () => {
   let sessionManifestUnavailable = false;
   let sessionLearningRecommendations = false;
   let pinnedAssetUrls = new Map<string, string>();
+  // Content loaders mutate one session and one set of verified object URLs.
+  // Keep the complete load/admit/save transaction ordered, not merely its I/O.
+  let contentLoadTail: Promise<void> = Promise.resolve();
+  let contentLoadEpoch = 0;
+  let activeContentLoad: { epoch: number; profileId: LocalProfileId | undefined; signal?: AbortSignal } | undefined;
+  let pendingExactRestore: { snapshot: PersistedPracticeSession; source: CoreSourcePreference; contentId: string } | undefined;
+
+  function assertContentLoadCurrent(): void {
+    const load = activeContentLoad;
+    if (load && (load.epoch !== contentLoadEpoch || load.signal?.aborted
+      || (load.profileId !== undefined && load.profileId !== localProfileStore.currentIfInitialized()))) {
+      throw new DOMException('The practice load was cancelled or its account changed.', 'AbortError');
+    }
+  }
+
+  function runContentLoad<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const epoch = contentLoadEpoch;
+    const profileId = localProfileStore.currentIfInitialized();
+    const run = contentLoadTail.then(async () => {
+      activeContentLoad = { epoch, profileId, signal };
+      let started = false;
+      try {
+        assertContentLoadCurrent();
+        started = true;
+        return await task();
+      } catch (cause) {
+        if (started && epoch === contentLoadEpoch
+          && cause instanceof DOMException && cause.name === 'AbortError'
+          && (phase.value === 'loading' || !sessionIdentityDurable.value)) {
+          // Cancellation is not `abort()`: the previously durable programme
+          // stays on disk. Drop only this unfinished load's in-memory material.
+          questions.value = new Map();
+          revokePinnedAssets();
+          phase.value = 'idle';
+          sessionIdentityDurable.value = false;
+        }
+        throw cause;
+      } finally {
+        if (started && (epoch !== contentLoadEpoch || signal?.aborted
+          || (profileId !== undefined && profileId !== localProfileStore.currentIfInitialized()))) {
+          useAppStore().releaseCoreContentPin();
+        }
+        activeContentLoad = undefined;
+      }
+    });
+    contentLoadTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
   /**
    * Kept verbatim while an old snapshot waits for explicit consent. A failed
    * current-bank load keeps it too, so retry never turns into a fresh session.
@@ -893,6 +1001,7 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   function enterFailClosedError(cause: unknown): void {
+    if (cause instanceof DOMException && cause.name === 'AbortError') throw cause;
     questions.value = new Map();
     revokePinnedAssets();
     phase.value = 'error';
@@ -925,24 +1034,22 @@ export const usePracticeStore = defineStore('practice', () => {
     const blobs = new Map<string, Blob>();
     let total = 0;
     for (const path of paths) {
+      assertContentLoadCurrent();
       const expected = manifest.formatVersion === 2 ? manifest.assets[path] : undefined;
       if (manifest.formatVersion === 2 && !expected) {
         throw new ContentIntegrityError(
-          `Aufgabengrafik ${path} fehlt im überprüften Aufgabenbank-Manifest.`,
+          t('Aufgabengrafik {path} fehlt im überprüften Aufgabenbank-Manifest.', { path }),
         );
       }
       const url = mode === 'current' && manifest.formatVersion === 2
         ? client.assetUrl(path, revision)
         : client.revisionAssetUrl(path, revision);
-      const response = await fetch(url, {
-        cache: 'no-store',
-        credentials: 'omit',
-      });
-      const blob = await readBoundedAsset(
-        response,
+      const blob = await fetchVerifiedAsset(
+        url,
         MAX_PINNED_ASSET_BYTES - total,
         expected,
       );
+      assertContentLoadCurrent();
       total += blob.size;
       blobs.set(path, blob);
     }
@@ -1276,17 +1383,22 @@ export const usePracticeStore = defineStore('practice', () => {
   async function bindSessionContent(
     requestedSource?: CoreSourcePreference,
     expectedContentId?: string,
+    preserveVerifiedAssets = false,
   ): Promise<CoreClient> {
     const app = useAppStore();
     const pin = await app.pinCoreContent(
       requestedSource ?? app.coreEndpointSource,
       expectedContentId,
     );
+    assertContentLoadCurrent();
     if (expectedContentId && pin.contentId && pin.contentId !== expectedContentId) {
       throw new Error(
         'Die Aufgabenbank dieses Programms wurde geändert. Der lokale Stand bleibt erhalten; bitte starte das Programm mit der passenden Quelle neu.',
       );
     }
+    const keepAssets = preserveVerifiedAssets && contentId.value !== undefined
+      && contentSource.value === pin.source
+      && contentId.value === (pin.contentId ?? expectedContentId);
     contentSource.value = pin.source;
     contentId.value = pin.contentId ?? expectedContentId;
     sessionCoreClient = pin.client;
@@ -1294,7 +1406,7 @@ export const usePracticeStore = defineStore('practice', () => {
     sessionManifest = pin.manifest;
     sessionManifestUnavailable = pin.manifestUnavailable === true;
     sessionLearningRecommendations = pin.learningRecommendations;
-    revokePinnedAssets();
+    if (!keepAssets) revokePinnedAssets();
     const request = lastRequest.value;
     if (contentId.value && request) {
       lastRequest.value = { ...request, contentId: contentId.value };
@@ -1531,6 +1643,7 @@ export const usePracticeStore = defineStore('practice', () => {
     replaceExisting: boolean,
   ): Promise<PersistedPracticeSession> {
     if (!hasAtomicStorage(storage)) {
+      assertContentLoadCurrent();
       await storage.set(STORAGE.app, key, snapshot);
       return snapshot;
     }
@@ -1621,6 +1734,10 @@ export const usePracticeStore = defineStore('practice', () => {
         }
       }
       try {
+        // A cancelled request may have been suspended in the revision read.
+        // Recheck immediately before the durable replacement, not just before
+        // entering this transaction loop. Once COMMIT starts, keep its result.
+        assertContentLoadCurrent();
         const committed = await storage.commitBatch({
           ifRevisions: [{ ...address, revision: entry.revision }],
           mutations: [{ ...address, operation: 'set', value: next }],
@@ -1651,13 +1768,16 @@ export const usePracticeStore = defineStore('practice', () => {
   async function persistSession(options: { replaceExisting?: boolean } = {}): Promise<boolean> {
     if (phase.value !== 'running' || items.value.length === 0) return false;
     const owner = await ensureSessionIdentity();
+    assertContentLoadCurrent();
     if (!activeProfileCanAccessSession()) return false;
     const key = sessionStorageKey!;
     const snapshot = buildPersistedSession(owner, graded.value, new Date().toISOString());
     try {
-      const committed = await enqueueSessionPersistence(() =>
-        commitSessionSnapshot(key, snapshot, options.replaceExisting === true),
-      );
+      const committed = await enqueueSessionPersistence(() => {
+        assertContentLoadCurrent();
+        return commitSessionSnapshot(key, snapshot, options.replaceExisting === true);
+      });
+      assertContentLoadCurrent();
       items.value = committed.items.map(cloneSessionItem);
       graded.value = committed.graded.map(cloneGradedRecord);
       draftRevision.value = committed.draftRevision ?? 0;
@@ -1668,6 +1788,7 @@ export const usePracticeStore = defineStore('practice', () => {
       sessionIdentityDurable.value = true;
       return true;
     } catch {
+      assertContentLoadCurrent();
       warning.value = 'Das laufende Programm konnte lokal nicht gespeichert werden.';
       return false;
     }
@@ -1800,6 +1921,7 @@ export const usePracticeStore = defineStore('practice', () => {
       )
         ? await questionCache.getVerified(id, cacheScope, expectedHash)
         : undefined;
+      assertContentLoadCurrent();
       if (!cached) {
         missing.push(id);
         continue;
@@ -1821,6 +1943,7 @@ export const usePracticeStore = defineStore('practice', () => {
         const res = contentMode.value === 'revision'
           ? await client.getRevisionQuestionsBatch(manifest.commit, missing)
           : await client.getQuestionsBatch(missing);
+        assertContentLoadCurrent();
         batchPayloadReceived = true;
         const requested = new Set(missing);
         const returned = new Set<string>();
@@ -1831,17 +1954,17 @@ export const usePracticeStore = defineStore('practice', () => {
           }
           if (!requested.has(q.id)) {
             throw new ContentIntegrityError(
-              `Der Core hat eine nicht angeforderte Aufgabe geliefert (${q.id}).`,
+              t('Der Core hat eine nicht angeforderte Aufgabe geliefert ({id}).', { id: q.id }),
             );
           }
           if (returned.has(q.id)) {
-            throw new ContentIntegrityError(`Der Core hat Aufgabe ${q.id} doppelt geliefert.`);
+            throw new ContentIntegrityError(t('Der Core hat Aufgabe {id} doppelt geliefert.', { id: q.id }));
           }
           returned.add(q.id);
           const expectedHash = manifest.formatVersion === 2 ? undefined : manifest.items[q.id];
           if (!isSha256(entry.contentHash) || !isSha256(entry.wireHash)) {
             throw new ContentIntegrityError(
-              `Der Core hat für Aufgabe ${q.id} keine überprüfbaren Prüfsummen geliefert.`,
+              t('Der Core hat für Aufgabe {id} keine überprüfbaren Prüfsummen geliefert.', { id: q.id }),
             );
           }
           if (
@@ -1849,12 +1972,12 @@ export const usePracticeStore = defineStore('practice', () => {
             && (!isSha256(expectedHash) || entry.contentHash !== expectedHash)
           ) {
             throw new ContentIntegrityError(
-              `Die Inhalts-Prüfsumme von Aufgabe ${q.id} stimmt nicht mit der Aufgabenbank überein.`,
+              t('Die Inhalts-Prüfsumme von Aufgabe {id} stimmt nicht mit der Aufgabenbank überein.', { id: q.id }),
             );
           }
           if (questionContentHash(q) !== entry.wireHash) {
             throw new ContentIntegrityError(
-              `Die Übertragungs-Prüfsumme von Aufgabe ${q.id} ist ungültig.`,
+              t('Die Übertragungs-Prüfsumme von Aufgabe {id} ist ungültig.', { id: q.id }),
             );
           }
           assertQuestionMatchesManifest(manifest, q, entry.wireHash);
@@ -1870,9 +1993,10 @@ export const usePracticeStore = defineStore('practice', () => {
           throw new ContentIntegrityError('Die Batch-Antwort des Core ist unvollständig oder widersprüchlich.');
         }
         if (reportedMissing.size > 0) {
-          warning.value = `${reportedMissing.size} Aufgaben sind in dieser Bank nicht verfügbar.`;
+          warning.value = t('{count} Aufgaben sind in dieser Bank nicht verfügbar.', { count: reportedMissing.size });
         }
       } catch (e) {
+        assertContentLoadCurrent();
         // Hash/revision failures are evidence of mixed content, not an
         // ordinary outage. Invalid stale entries must never be resurrected.
         if (e instanceof ContentIntegrityError) throw e;
@@ -1889,7 +2013,7 @@ export const usePracticeStore = defineStore('practice', () => {
         if (batchPayloadReceived) throw e;
         if (map.size === 0) throw e;
         const unavailable = unique.length - map.size;
-        warning.value = `${unavailable} Aufgaben konnten nicht geladen werden — Programm läuft mit ${map.size} geprüften gespeicherten weiter.`;
+        warning.value = t('{count} Aufgaben konnten nicht geladen werden — Programm läuft mit {saved} geprüften gespeicherten weiter.', { count: unavailable, saved: map.size });
       }
     }
 
@@ -1915,6 +2039,7 @@ export const usePracticeStore = defineStore('practice', () => {
           manifest!,
           contentMode.value,
         );
+        assertContentLoadCurrent();
       }
     }
     if (fetched.length > 0 || pendingAssets.size > 0) {
@@ -1923,7 +2048,9 @@ export const usePracticeStore = defineStore('practice', () => {
         confirmed = contentMode.value === 'revision'
           ? await client.revisionManifest(manifest!.commit)
           : await client.manifest();
+        assertContentLoadCurrent();
       } catch (cause) {
+        assertContentLoadCurrent();
         throw new ContentIntegrityError(
           'Die Aufgabenbank konnte nach dem Laden nicht erneut bestätigt werden.',
           { cause },
@@ -1948,14 +2075,17 @@ export const usePracticeStore = defineStore('practice', () => {
     }
 
     if (contentSource.value === 'remote' || contentMode.value === 'revision') {
+      assertContentLoadCurrent();
       commitPinnedAssets(pendingAssets);
     }
     if (fetched.length > 0 && cacheScope) {
       await questionCache.putManyVerified(fetched, cacheScope);
+      assertContentLoadCurrent();
       // The unscoped cache is a current-bank title compatibility index. A
       // historical replay must never overwrite it with an old title.
       if (contentMode.value === 'current') {
         await questionCache.putMany(fetched.map((entry) => entry.question));
+        assertContentLoadCurrent();
       }
     }
     questions.value = map;
@@ -1963,6 +2093,7 @@ export const usePracticeStore = defineStore('practice', () => {
 
   async function beginSession(list: SessionItem[], from: SessionOrigin): Promise<void> {
     await ensureSessionIdentity();
+    assertContentLoadCurrent();
     if (!activeProfileCanAccessSession()) {
       throw new Error('Das Konto wurde während des Ladens gewechselt.');
     }
@@ -1984,19 +2115,34 @@ export const usePracticeStore = defineStore('practice', () => {
 
   /**
    * Bulk practice handoff (URL-bloat fix): the browse page seeds the session
-   * IN THE STORE and navigates to a bare /practice — hundreds of question ids
-   * never enter the URL. Single questions keep the shareable ?questions= link.
+   * IN THE STORE. One durable attempt identity links the route to exactly this
+   * programme, without putting hundreds of question ids in the URL.
    */
   async function startPrepared(
     questionIds: string[],
     fixedSource = useAppStore().coreEndpointSource,
     expectedContentId?: string,
-  ): Promise<void> {
-    await startQuestions(questionIds, fixedSource, expectedContentId);
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const ids = [...new Set(questionIds)];
+    return runContentLoad(async () => {
+      await startQuestionsNow(ids, fixedSource, expectedContentId, { requireCompleteSelection: true });
+      assertContentLoadCurrent();
+      if (phase.value !== 'running' || !sessionIdentityDurable.value) {
+        throw new Error(error.value ?? warning.value ?? 'Übung konnte nicht gestartet werden. Bitte erneut versuchen.');
+      }
+      const preparedId = items.value[0]?.clientAttemptId;
+      if (!preparedId) throw new Error('Das laufende Programm konnte lokal nicht gespeichert werden.');
+      return preparedId;
+    }, signal);
+  }
+
+  function startSmart(opts?: { count?: number; filters?: QuestionsFilter }, fixedSource = useAppStore().coreEndpointSource, expectedContentId?: string): Promise<void> {
+    return runContentLoad(() => startSmartNow(opts, fixedSource, expectedContentId));
   }
 
   /** Smart session: FSRS-due reviews + weak-competency new parts (core decides). */
-  async function startSmart(
+  async function startSmartNow(
     opts?: { count?: number; filters?: QuestionsFilter },
     fixedSource = useAppStore().coreEndpointSource,
     expectedContentId?: string,
@@ -2007,7 +2153,10 @@ export const usePracticeStore = defineStore('practice', () => {
     const requestedSource = fixedSource;
     // Session ownership begins with the user's start action, before any fetch
     // or reconciliation await can let a different window change auth.
-    setSessionIdentity(await useProgressStore().captureAttemptOwner());
+    const owner = await useProgressStore().captureAttemptOwner();
+    assertContentLoadCurrent();
+    setSessionIdentity(owner);
+    pendingExactRestore = undefined;
     lastRequest.value = opts
       ? { kind: 'smart', source: requestedSource, opts, ...(expectedContentId ? { contentId: expectedContentId } : {}) }
       : { kind: 'smart', source: requestedSource, ...(expectedContentId ? { contentId: expectedContentId } : {}) };
@@ -2025,6 +2174,7 @@ export const usePracticeStore = defineStore('practice', () => {
       // recommendations (contract §8.2 step 2 — checksum compare inside).
       if (sessionResolvedOwnerId && progress.isActiveAccountOwner(sessionResolvedOwnerId)) {
         const syncResult = await progress.syncBeforeRecommendation();
+        assertContentLoadCurrent();
         if (syncResult === 'conflict' || syncResult === 'blocked') {
           throw new Error('Bitte löse zuerst den offenen Speicherkonflikt. Danach kann das Programm starten.');
         }
@@ -2042,6 +2192,7 @@ export const usePracticeStore = defineStore('practice', () => {
       const userState = await progress.toUserState(ownerProfile, {
         includeLearning: sessionLearningRecommendations,
       });
+      assertContentLoadCurrent();
       if (!activeProfileCanAccessSession()) {
         throw new Error('Das Konto wurde während des Ladens gewechselt.');
       }
@@ -2051,6 +2202,7 @@ export const usePracticeStore = defineStore('practice', () => {
       };
       if (opts?.filters) req.filters = opts.filters;
       const rec = await client.recommend(req);
+      assertContentLoadCurrent();
       await fetchQuestions(rec.items.map((i) => i.questionId));
       // Guards: playable parts only, and NEVER an excluded part (supplement
       // §1.4 — belt to the userState projection's braces).
@@ -2072,15 +2224,24 @@ export const usePracticeStore = defineStore('practice', () => {
    * is chosen deliberately (supplement §1.4: exclusion is not deletion).
    * For bulk selections (more than one question) excluded parts are skipped.
    */
-  async function startQuestions(
+  function startQuestions(questionIds: string[], fixedSource = useAppStore().coreEndpointSource, expectedContentId?: string): Promise<void> {
+    const ids = [...questionIds];
+    return runContentLoad(() => startQuestionsNow(ids, fixedSource, expectedContentId));
+  }
+
+  async function startQuestionsNow(
     questionIds: string[],
     fixedSource = useAppStore().coreEndpointSource,
     expectedContentId?: string,
+    options: { requireCompleteSelection?: boolean } = {},
   ): Promise<void> {
     const requestedSource = fixedSource;
     // Fix the same identity for question loading, answer commits and every
     // later snapshot; beginSession must not re-read live auth.
-    setSessionIdentity(await useProgressStore().captureAttemptOwner());
+    const owner = await useProgressStore().captureAttemptOwner();
+    assertContentLoadCurrent();
+    setSessionIdentity(owner);
+    pendingExactRestore = undefined;
     lastRequest.value = {
       kind: 'questions',
       source: requestedSource,
@@ -2094,6 +2255,9 @@ export const usePracticeStore = defineStore('practice', () => {
       await bindSessionContent(requestedSource, expectedContentId);
       const progress = useProgressStore();
       await fetchQuestions(questionIds);
+      if (options.requireCompleteSelection && questionIds.some((id) => !questions.value.has(id))) {
+        throw new Error('Die Auswahl konnte nicht vollständig geladen werden. Bitte erneut versuchen.');
+      }
       const excluded = progress.excludedPartIds;
       const deliberateSingle = questionIds.length === 1;
       const list: SessionItem[] = [];
@@ -2104,6 +2268,9 @@ export const usePracticeStore = defineStore('practice', () => {
           if (!deliberateSingle && excluded.has(p.id)) continue;
           list.push({ questionId: id, partId: p.id, reason: 'manual' });
         }
+      }
+      if (options.requireCompleteSelection && list.length === 0) {
+        throw new Error('Keine passenden Aufgaben.');
       }
       await beginSession(list, 'manual');
     } catch (e) {
@@ -2888,7 +3055,14 @@ export const usePracticeStore = defineStore('practice', () => {
     source: CoreSourcePreference,
     expectedContentId?: string,
   ): Promise<boolean> {
+    assertContentLoadCurrent();
+    if (!activeProfileCanAccessSession()) {
+      throw new DOMException('The saved practice belongs to another account.', 'AbortError');
+    }
+    const exact = expectedContentId !== undefined;
+    pendingExactRestore = exact ? { snapshot, source, contentId: expectedContentId } : undefined;
     phase.value = 'loading';
+    sessionIdentityDurable.value = false;
     error.value = undefined;
     warning.value = undefined;
     // If the restore fails the user lands on the error screen, whose retry
@@ -2912,6 +3086,9 @@ export const usePracticeStore = defineStore('practice', () => {
         const question = questions.value.get(item.questionId);
         return question?.parts.some((part) => part.id === item.partId && part.answer);
       }), identitySeed);
+      if (exact && validItems.length !== snapshot.items.length) {
+        throw new Error('Die Auswahl konnte nicht vollständig geladen werden. Bitte erneut versuchen.');
+      }
       if (validItems.length === 0) {
         if (pendingUnprovenancedSession?.snapshot === snapshot) {
           enterFailClosedError(
@@ -2947,6 +3124,8 @@ export const usePracticeStore = defineStore('practice', () => {
             : record;
         }));
       }
+      assertContentLoadCurrent();
+      if (!activeProfileCanAccessSession()) throw new Error('Das Konto wurde während des Ladens gewechselt.');
       const savedItem = snapshot.items[snapshot.index];
       let restoredIndex = savedItem
         ? validItems.findIndex((item) =>
@@ -2955,7 +3134,6 @@ export const usePracticeStore = defineStore('practice', () => {
       if (restoredIndex < 0) restoredIndex = 0;
 
       items.value = validItems.map(cloneSessionItem);
-      sessionIdentityDurable.value = true;
       origin.value = snapshot.origin;
       lastActivityAt.value = snapshot.savedAt;
       graded.value = restoredGraded;
@@ -2978,6 +3156,8 @@ export const usePracticeStore = defineStore('practice', () => {
         phase.value = 'summary';
         pendingUnprovenancedSession = undefined;
         await clearPersistedSession();
+        assertContentLoadCurrent();
+        pendingExactRestore = undefined;
         return true;
       }
 
@@ -2993,12 +3173,17 @@ export const usePracticeStore = defineStore('practice', () => {
       index.value = restoredIndex;
       phase.value = 'running';
       partShownAt.value = Date.now();
-      await persistSession({
+      const saved = await persistSession({
         replaceExisting: pendingUnprovenancedSession?.snapshot === snapshot,
       });
+      assertContentLoadCurrent();
+      if (!saved) throw new Error('Das laufende Programm konnte lokal nicht gespeichert werden.');
       pendingUnprovenancedSession = undefined;
+      pendingExactRestore = undefined;
       return true;
     } catch (e) {
+      assertContentLoadCurrent();
+      sessionIdentityDurable.value = false;
       enterFailClosedError(e);
       return true;
     }
@@ -3015,14 +3200,27 @@ export const usePracticeStore = defineStore('practice', () => {
    * by declining: every grade is written to the archive as it happens, only
    * the position inside that ad-hoc set goes away.
    */
-  async function restoreSession(want?: SessionOrigin): Promise<boolean> {
+  function restoreSession(want?: SessionOrigin, expectedPreparedId?: string): Promise<boolean> {
+    return runContentLoad(() => restoreSessionNow(want, expectedPreparedId));
+  }
+
+  async function restoreSessionNow(want?: SessionOrigin, expectedPreparedId?: string): Promise<boolean> {
+    if (expectedPreparedId !== undefined) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(expectedPreparedId)) return false;
+      // A new in-flight/failed preparation is never another route's session.
+      if (phase.value === 'loading' || pendingUnprovenancedSession || phase.value === 'provenance-choice') return false;
+      if (phase.value === 'running' && items.value[0]?.clientAttemptId !== expectedPreparedId) return false;
+    }
     if (phase.value === 'loading') return true;
     if (phase.value === 'provenance-choice' || (phase.value === 'error' && pendingUnprovenancedSession)) {
       const requestedOwner = await useProgressStore().captureAttemptOwner();
+      assertContentLoadCurrent();
       return profileCanAccessSession(requiredOwnerProfile(requestedOwner));
     }
     if (phase.value === 'running') {
       const requestedOwner = await useProgressStore().captureAttemptOwner();
+      assertContentLoadCurrent();
+      if (expectedPreparedId && items.value[0]?.clientAttemptId !== expectedPreparedId) return false;
       const requestedProfile = requiredOwnerProfile(requestedOwner);
       const ownerProfile = sessionOwner?.localProfileId;
       if (
@@ -3035,16 +3233,22 @@ export const usePracticeStore = defineStore('practice', () => {
       }
       if (ownerProfile !== requestedProfile) sessionResolvedOwnerId = requestedOwner.userId;
       if (want && origin.value !== want) return false;
-      try {
-        await bindSessionContent(contentSource.value, contentId.value);
-      } catch (e) {
-        enterFailClosedError(e);
-        return true;
+      // A just-prepared handoff already owns verified text and blob URLs.
+      // Rebinding here used to revoke those URLs before the first render.
+      if (!expectedPreparedId) {
+        try {
+          await bindSessionContent(contentSource.value, contentId.value, true);
+        } catch (e) {
+          enterFailClosedError(e);
+          return true;
+        }
       }
+      if (expectedPreparedId && !sessionIdentityDurable.value) return false;
       // A PWA can stay open for days; the live session ages the same way a
       // persisted one does.
       if (!isResumable(origin.value, lastActivityAt.value, new Date())) {
         await clearPersistedSession();
+        assertContentLoadCurrent();
         return false;
       }
       if (
@@ -3054,14 +3258,23 @@ export const usePracticeStore = defineStore('practice', () => {
       ) {
         next();
         await sessionPersistenceTail;
+        assertContentLoadCurrent();
       }
       return true;
     }
     const requestedOwner = await useProgressStore().captureAttemptOwner();
+    assertContentLoadCurrent();
     await sessionPersistenceTail;
+    assertContentLoadCurrent();
     const located = await locatePersistedSession(requestedOwner);
+    assertContentLoadCurrent();
     if (!located) return false;
     const { snapshot } = located;
+    // Reload/back may resume this exact saved selection, but never a newer
+    // programme or the arbitrary old snapshot left by a failed preparation.
+    if (expectedPreparedId && (snapshot.origin !== 'manual'
+      || snapshot.items[0]?.clientAttemptId !== expectedPreparedId
+      || !hasExactContentProvenance(snapshot))) return false;
     setSessionIdentity(snapshot.owner!, {
       key: located.key,
       resolvedOwnerId: located.resolvedOwnerId,
@@ -3087,7 +3300,11 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   /** Explicit opt-in required for v2/v3 or incomplete-v4 snapshots. */
-  async function resumeWithCurrentContent(): Promise<void> {
+  function resumeWithCurrentContent(): Promise<void> {
+    return runContentLoad(resumeWithCurrentContentNow);
+  }
+
+  async function resumeWithCurrentContentNow(): Promise<void> {
     const pending = pendingUnprovenancedSession;
     if (!pending) return;
     const source = pending.selectedSource ?? useAppStore().coreEndpointSource;
@@ -3101,7 +3318,16 @@ export const usePracticeStore = defineStore('practice', () => {
    * puts no ids in the URL, so a retry silently swapped the hand-picked set
    * for today's programme.
    */
-  async function retry(): Promise<void> {
+  function retry(): Promise<void> {
+    return runContentLoad(retryNow);
+  }
+
+  async function retryNow(): Promise<void> {
+    if (pendingExactRestore) {
+      const pending = pendingExactRestore;
+      await hydratePersistedSession(pending.snapshot, pending.source, pending.contentId);
+      return;
+    }
     if (pendingUnprovenancedSession?.selectedSource) {
       await hydratePersistedSession(
         pendingUnprovenancedSession.snapshot,
@@ -3111,16 +3337,18 @@ export const usePracticeStore = defineStore('practice', () => {
     }
     const request = lastRequest.value;
     if (!request) {
-      await startSmart();
+      await startSmartNow();
       return;
     }
     if (request.kind === 'questions') {
-      await startQuestions(request.ids, request.source, request.contentId);
+      await startQuestionsNow(request.ids, request.source, request.contentId);
     }
-    else await startSmart(request.opts, request.source, request.contentId);
+    else await startSmartNow(request.opts, request.source, request.contentId);
   }
 
   function abort(): void {
+    contentLoadEpoch += 1;
+    pendingExactRestore = undefined;
     phase.value = 'idle';
     warning.value = undefined;
     items.value = [];

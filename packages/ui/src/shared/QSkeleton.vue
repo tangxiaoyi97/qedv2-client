@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+import { ref } from 'vue';
+import { useVisibleMotion } from './useVisibleMotion.js';
+
+const { t } = useI18n();
+const surface = ref<HTMLElement | null>(null);
+const motionVisible = useVisibleMotion(surface);
 /**
  * Component-level loading placeholder: a stack of shimmering blocks shaped
  * like the rows that are about to replace them.
@@ -24,7 +31,7 @@ withDefaults(
 </script>
 
 <template>
-  <div class="q-skeleton-list" :style="{ gap }" role="status" :aria-label="label">
+  <div ref="surface" class="q-skeleton-list" :class="{ 'q-skeleton-list--paused': !motionVisible }" :style="{ gap }" role="status" :aria-label="t(label)">
     <div
       v-for="i in rows"
       :key="i"
@@ -40,6 +47,7 @@ withDefaults(
   display: flex;
   flex-direction: column;
 }
+.q-skeleton-list--paused .q-skeleton::after { animation-play-state: paused; }
 .q-skeleton-list__row {
   flex: none;
 }

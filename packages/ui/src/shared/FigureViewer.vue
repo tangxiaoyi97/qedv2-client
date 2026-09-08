@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Fullscreen pinch/pan viewer for a single figure.
  *
@@ -17,6 +19,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import QIconButton from './QIconButton.vue';
 import { lockBodyScroll, unlockBodyScroll } from './scroll-lock.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   src: string;
@@ -249,7 +253,7 @@ onBeforeUnmount(() => {
       class="q-figview q-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      :aria-label="alt ? `Abbildung: ${alt}` : 'Abbildung'"
+      :aria-label="alt ? t('Abbildung: {alt}', { alt }) : t('Abbildung')"
     >
       <div class="q-figview__bar">
         <span class="q-figview__scale" aria-live="polite">{{ Math.round(scale * 100) }} %</span>
@@ -259,11 +263,11 @@ onBeforeUnmount(() => {
           figure a strip of screen on every device, including the ones that
           cannot pinch. These buttons say the same thing by being usable.
         -->
-        <div class="q-figview__zoom" role="group" aria-label="Zoom">
+        <div class="q-figview__zoom" role="group" :aria-label="t('Zoom')">
           <button
             type="button"
             class="q-figview__zoom-btn"
-            aria-label="Verkleinern"
+            :aria-label="t('Verkleinern')"
             :disabled="!zoomed"
             @click="zoomBy(1 / ZOOM_STEP)"
           >
@@ -272,7 +276,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="q-figview__zoom-btn"
-            aria-label="Vergrößern"
+            :aria-label="t('Vergrößern')"
             :disabled="scale >= MAX_SCALE - 0.01"
             @click="zoomBy(ZOOM_STEP)"
           >
@@ -286,12 +290,12 @@ onBeforeUnmount(() => {
           :disabled="!zoomed"
           @click="reset"
         >
-          Zurücksetzen
+          {{ t('Zurücksetzen') }}
         </button>
         <QIconButton
           ref="closeButton"
           class="q-figview__close"
-          aria-label="Schließen"
+          :aria-label="t('Schließen')"
           @click="emit('close')"
         />
       </div>
@@ -300,7 +304,7 @@ onBeforeUnmount(() => {
         ref="stage"
         class="q-figview__stage"
         tabindex="0"
-        :aria-label="alt ? `Abbildung: ${alt}` : 'Abbildung'"
+        :aria-label="alt ? t('Abbildung: {alt}', { alt }) : t('Abbildung')"
         @click.self="emit('close')"
         @wheel.prevent="onWheel"
         @keydown="onStageKeydown"

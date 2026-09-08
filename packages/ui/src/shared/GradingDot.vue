@@ -7,6 +7,7 @@ export { GRADING_LABELS };
 </script>
 
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * Mastery grading dot (supplement §1.5) — six visuals where the SHAPE
  * carries the meaning and color only assists (a11y, never color-only):
@@ -15,13 +16,15 @@ export { GRADING_LABELS };
  */
 import { computed } from 'vue';
 
+const { t } = useI18n();
+
 const props = defineProps<{
   grading: GradingOrUnseen;
   size?: number;
   title?: string;
 }>();
 
-const label = computed(() => props.title ?? GRADING_LABELS[props.grading]);
+const label = computed(() => props.title ?? t(GRADING_LABELS[props.grading]));
 </script>
 
 <template>
@@ -32,7 +35,7 @@ const label = computed(() => props.title ?? GRADING_LABELS[props.grading]);
     :height="size ?? 14"
     viewBox="0 0 14 14"
     role="img"
-    :aria-label="GRADING_LABELS[grading]"
+    :aria-label="t(GRADING_LABELS[grading])"
     xmlns="http://www.w3.org/2000/svg"
   >
     <title>{{ label }}</title>

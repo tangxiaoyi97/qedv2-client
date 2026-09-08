@@ -20,31 +20,32 @@ const modelValue: IntervalSubmission = {
 };
 
 describe('IntervalControl', () => {
-  it('uses a compact unbounded and decimal hint', () => {
+  it('uses one interval row with accessible unbounded placeholders', () => {
     const wrapper = mount(IntervalControl, {
       props: { answer, modelValue, showPreview: true },
     });
 
-    expect(wrapper.get('.q-interval__hint').text()).toBe('leer/∞: unbeschränkt · , oder .');
+    expect(wrapper.find('.q-interval__hint').exists()).toBe(false);
+    expect(wrapper.findAll('input').map(input => input.attributes('placeholder'))).toEqual(['−∞', '∞']);
   });
 
-  it('renders bracket toggles in interval notation order: ([ input ; input ])', async () => {
+  it('retains open and closed interval semantics through native bracket selectors', async () => {
     const wrapper = mount(IntervalControl, {
       props: { answer, modelValue },
     });
 
-    const toggles = wrapper.findAll('.q-interval__toggle');
+    const toggles = wrapper.findAll('select');
     expect(toggles).toHaveLength(2);
-    expect(toggles[0]!.findAll('button').map((button) => button.text())).toEqual(['(', '[']);
-    expect(toggles[1]!.findAll('button').map((button) => button.text())).toEqual([']', ')']);
+    expect(toggles[0]!.findAll('option').map((option) => option.text())).toEqual(['(', '[']);
+    expect(toggles[1]!.findAll('option').map((option) => option.text())).toEqual([']', ')']);
 
-    await toggles[1]!.findAll('button')[0]!.trigger('click');
+    await toggles[1]!.setValue('true');
     expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
       ...modelValue,
       upperClosed: true,
     });
 
-    await toggles[1]!.findAll('button')[1]!.trigger('click');
+    await toggles[1]!.setValue('false');
     expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual({
       ...modelValue,
       upperClosed: false,

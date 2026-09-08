@@ -22,13 +22,18 @@ import { useUiStore } from './stores/ui.js';
 import { watchForBuildUpdates } from './platform/sw-update.js';
 import { installShellCommandRouter } from './platform/shell-commands.js';
 import { authStore as authStorage, localProfileStore, ports } from './services.js';
+import { useI18n } from './i18n.js';
+import { setUiLocale } from '@qed2/ui';
+
+setUiLocale(document.documentElement.lang === 'en' ? 'en' : 'de');
+const { t } = useI18n();
 
 /** Drive the boot splash (index.html #boot-bar / #boot-label). */
 function bootProgress(pct: number, text: string): void {
   const bar = document.getElementById('boot-bar');
   const label = document.getElementById('boot-label');
-  if (bar) bar.style.width = `${pct}%`;
-  if (label) label.textContent = text;
+  if (bar) bar.style.transform = `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`;
+  if (label) label.textContent = t(text);
 }
 
 async function boot(): Promise<void> {
@@ -42,6 +47,8 @@ async function boot(): Promise<void> {
   const app = createApp(App);
   app.use(createPinia());
   app.use(router);
+  const ui = useUiStore();
+  await ui.initializeLocale();
   // Ports/config first, then local archive, then token validation — the app
   // is fully usable as a guest even if the network never comes up.
   bootProgress(30, 'Einstellungen werden geladen …');
@@ -86,6 +93,15 @@ async function boot(): Promise<void> {
 
   bootProgress(100, 'Bereit');
   app.mount('#app');
+  const updateVisibility = () => {
+    document.documentElement.toggleAttribute('data-page-hidden', document.hidden);
+  };
+  const onKeyInput = () => { document.documentElement.dataset.inputModality = 'keyboard'; };
+  const onPointerInput = () => { document.documentElement.dataset.inputModality = 'pointer'; };
+  document.addEventListener('visibilitychange', updateVisibility);
+  document.addEventListener('keydown', onKeyInput, true);
+  document.addEventListener('pointerdown', onPointerInput, true);
+  updateVisibility();
   const removeShellCommandListener = installShellCommandRouter(router);
   const revalidateAccount = () => {
     if (document.visibilityState === 'hidden') return;
@@ -99,6 +115,9 @@ async function boot(): Promise<void> {
     removeShellCommandListener();
     window.removeEventListener('focus', revalidateAccount);
     document.removeEventListener('visibilitychange', revalidateAccount);
+    document.removeEventListener('visibilitychange', updateVisibility);
+    document.removeEventListener('keydown', onKeyInput, true);
+    document.removeEventListener('pointerdown', onPointerInput, true);
   }, { once: true });
 
   // After mount: announce what changed if this is a new build (non-blocking).
@@ -124,14 +143,14 @@ function showBootError(err: unknown): void {
     'font-family:system-ui,sans-serif;color:var(--q-mut);background:var(--q-page)';
   const msg = document.createElement('p');
   msg.style.cssText = 'margin:0;font-size:15px;font-weight:600;color:var(--q-ink)';
-  msg.textContent = 'QED2 konnte nicht gestartet werden.';
+  msg.textContent = t('QED2 konnte nicht gestartet werden.');
   const detail = document.createElement('p');
   detail.style.cssText = 'margin:0;font-size:13px;max-width:40ch';
   detail.textContent =
-    'Beim Laden der lokalen Daten ist ein Fehler aufgetreten. Ein Neuladen behebt das Problem meist.';
+    t('Lokale Daten konnten nicht geladen werden. Bitte erneut versuchen.');
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = 'Neu laden';
+  btn.textContent = t('Neu laden');
   btn.style.cssText =
     'padding:10px 22px;border-radius:9px;border:none;' +
     'background:var(--q-accent-strong);color:var(--q-on-accent);' +

@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 import { computed, ref } from 'vue';
 import { CalendarCheck2, CalendarRange, CheckCircle2, Target, Trophy } from 'lucide-vue-next';
 import type { LeaderboardDetail } from '@qed2/core-logic';
 import QButton from '../shared/QButton.vue';
 import QIconButton from '../shared/QIconButton.vue';
 import { useModalA11y } from '../shared/useModalA11y.js';
+
+const { t, formatNumber } = useI18n();
 
 
 const props = defineProps<{
@@ -19,10 +23,9 @@ const dialog = ref<HTMLElement | null>(null);
 const isOpen = computed(() => props.open);
 useModalA11y(dialog, isOpen, () => emit('close'));
 
-const numberFormat = new Intl.NumberFormat('de-AT');
 const accuracy = computed(() => {
   const value = props.detail?.accuracy;
-  return value === null || value === undefined ? '—' : `${numberFormat.format(value)} %`;
+  return value === null || value === undefined ? '—' : `${formatNumber(value)} %`;
 });
 </script>
 
@@ -35,51 +38,51 @@ const accuracy = computed(() => {
           class="leader-detail"
           role="dialog"
           aria-modal="true"
-          :aria-label="detail ? `Details zu ${detail.nickname}` : 'Details werden geladen'"
+          :aria-label="detail ? t('Details zu {name}', { name: detail.nickname }) : t('Details werden geladen')"
           tabindex="-1"
         >
           <header class="leader-detail__header">
             <h2>{{ detail?.nickname ?? 'Details' }}</h2>
-            <QIconButton aria-label="Schließen" @click="$emit('close')" />
+            <QIconButton :aria-label="t('Schließen')" @click="$emit('close')" />
           </header>
 
           <template v-if="detail">
             <div class="leader-detail__content">
               <div class="leader-detail__summary">
                 <article>
-                  <span><Target aria-hidden="true" /> Aufgaben</span>
-                  <strong>{{ numberFormat.format(detail.totalPracticed) }}</strong>
+                  <span><Target aria-hidden="true" /> {{ t('Aufgaben') }}</span>
+                  <strong>{{ formatNumber(detail.totalPracticed) }}</strong>
                 </article>
                 <article>
-                  <span><Trophy aria-hidden="true" /> Punkte</span>
-                  <strong>{{ numberFormat.format(detail.totalScore) }}</strong>
+                  <span><Trophy aria-hidden="true" /> {{ t('Punkte') }}</span>
+                  <strong>{{ formatNumber(detail.totalScore) }}</strong>
                 </article>
               </div>
 
               <section class="leader-detail__section">
-                <h3>Zeitraum</h3>
+                <h3>{{ t('Zeitraum') }}</h3>
                 <div class="leader-detail__periods">
                   <div>
-                    <span><CalendarCheck2 aria-hidden="true" /> Heute</span>
-                    <strong>{{ numberFormat.format(detail.todayPracticed) }}</strong>
-                    <small>{{ numberFormat.format(detail.todayScore) }} Punkte</small>
+                    <span><CalendarCheck2 aria-hidden="true" /> {{ t('Heute') }}</span>
+                    <strong>{{ formatNumber(detail.todayPracticed) }}</strong>
+                    <small>{{ formatNumber(detail.todayScore) }} {{ t('Punkte') }}</small>
                   </div>
                   <div>
-                    <span><CalendarRange aria-hidden="true" /> Diese Woche</span>
-                    <strong>{{ numberFormat.format(detail.weekPracticed) }}</strong>
-                    <small>{{ numberFormat.format(detail.weekScore) }} Punkte</small>
+                    <span><CalendarRange aria-hidden="true" /> {{ t('Diese Woche') }}</span>
+                    <strong>{{ formatNumber(detail.weekPracticed) }}</strong>
+                    <small>{{ formatNumber(detail.weekScore) }} {{ t('Punkte') }}</small>
                   </div>
                 </div>
               </section>
 
               <section class="leader-detail__section">
-                <h3>Lösungsquote</h3>
+                <h3>{{ t('Lösungsquote') }}</h3>
                 <div class="leader-detail__accuracy">
                   <div>
-                    <span><CheckCircle2 aria-hidden="true" /> Richtige Antworten</span>
+                    <span><CheckCircle2 aria-hidden="true" /> {{ t('Richtige Antworten') }}</span>
                     <strong>
-                      {{ numberFormat.format(detail.correctAnswers) }}
-                      <small>von {{ numberFormat.format(detail.totalScore) }}</small>
+                      {{ formatNumber(detail.correctAnswers) }}
+                      <small>{{ t('von') }} {{ formatNumber(detail.totalScore) }}</small>
                     </strong>
                   </div>
                   <b>{{ accuracy }}</b>
@@ -88,17 +91,17 @@ const accuracy = computed(() => {
             </div>
 
             <footer class="leader-detail__footer">
-              <QButton variant="secondary" @click="$emit('close')">Schließen</QButton>
+              <QButton variant="secondary" @click="$emit('close')">{{ t('Schließen') }}</QButton>
             </footer>
           </template>
 
           <div v-else-if="loading" class="leader-detail__loading" role="status">
-            Wird geladen …
+            {{ t('Wird geladen …') }}
           </div>
 
           <div v-else-if="error" class="leader-detail__error" role="alert">
             <p>{{ error }}</p>
-            <QButton variant="secondary" @click="$emit('retry')">Erneut versuchen</QButton>
+            <QButton variant="secondary" @click="$emit('retry')">{{ t('Erneut versuchen') }}</QButton>
           </div>
         </section>
       </div>

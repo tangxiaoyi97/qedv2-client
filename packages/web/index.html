@@ -2,7 +2,7 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
@@ -24,6 +24,7 @@
         }
         try {
           const storage = window.localStorage;
+          root.lang = storage.getItem('qed2.locale') === 'en' ? 'en' : 'de';
           const cachedCss = storage.getItem('qed2.themeCss');
           if (cachedCss) {
             const style = document.createElement('style');
@@ -79,10 +80,12 @@
         }
         .boot__bar {
           height: 100%;
-          width: 6%;
+          width: 100%;
+          transform: scaleX(0.06);
+          transform-origin: left;
           border-radius: 2px;
           background: var(--q-accent);
-          transition: width 0.3s ease;
+          transition: transform 0.2s ease-out;
         }
         .boot__label {
           font-size: 12px;
@@ -106,6 +109,12 @@
         </p>
       </noscript>
     </div>
+    <script>
+      if (document.documentElement.lang === 'en') {
+        document.getElementById('boot-label').textContent = 'Starting…';
+        document.querySelector('.initial-loading').setAttribute('aria-label', 'Loading QED2');
+      }
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,4 +1,6 @@
 // shared foundation
+export { createI18n, setUiLocale, translateUi, uiLocale, useI18n } from './i18n.js';
+export type { UiLocale, TranslationParams, TranslationMessages } from './i18n.js';
 export { default as MathText } from './shared/MathText.vue';
 export { default as RichTextView } from './shared/RichTextView.vue';
 export { default as FigureList } from './shared/FigureList.vue';

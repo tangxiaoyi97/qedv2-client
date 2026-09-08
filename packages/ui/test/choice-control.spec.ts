@@ -24,12 +24,12 @@ function lastEmitted(wrapper: ReturnType<typeof mount>): unknown {
 }
 
 describe('ChoiceControl', () => {
-  it('renders the "N aus M" chip, the singular-aware hint and lettered options', () => {
+  it('renders one count chip, a compact selection status and lettered options', () => {
     const wrapper = mount(ChoiceControl, {
       props: { answer, modelValue: [0] },
     });
     expect(wrapper.text()).toContain('2 aus 5');
-    expect(wrapper.text()).toContain('Wähle genau 2 Antworten');
+    expect(wrapper.text()).not.toContain('Wähle genau');
     expect(wrapper.text()).toContain('1 gewählt');
     const options = wrapper.findAll('button.q-choice__opt');
     expect(options).toHaveLength(5);
@@ -41,7 +41,7 @@ describe('ChoiceControl', () => {
     const single = mount(ChoiceControl, {
       props: { answer: singleAnswer, modelValue: [] },
     });
-    expect(single.text()).toContain('Wähle genau 1 Antwort');
+    expect(single.text()).toContain('1 aus 5');
     expect(single.text()).toContain('0 gewählt');
   });
 

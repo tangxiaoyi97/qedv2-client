@@ -36,6 +36,7 @@ export interface WindowManagerOptions {
   /** Whether verified app packages must be handed off for manual installation. */
   manualAppInstall: boolean;
   appName?: string;
+  locale?: 'de' | 'en';
   /** Current accent icon for newly created Windows/Linux native windows. */
   windowIcon?: () => NativeImage | undefined;
   /** Pre-paint color generated from the shared Web theme's --q-page token. */
@@ -102,8 +103,10 @@ export class WindowManager {
   ) => BrowserWindow;
   private readonly rendererEntry: URL;
   private readonly debounceMs: number;
+  private locale: 'de' | 'en';
 
   constructor(private readonly options: WindowManagerOptions) {
+    this.locale = options.locale ?? 'de';
     this.rendererEntry = new URL(options.rendererUrl);
     if (this.rendererEntry.protocol !== 'http:' && this.rendererEntry.protocol !== 'https:') {
       throw new Error('The desktop renderer must use an HTTP(S) origin');
@@ -117,6 +120,13 @@ export class WindowManager {
       : DEFAULT_PERSISTENCE_DEBOUNCE_MS;
     this.createBrowserWindow =
       options.createBrowserWindow ?? ((windowOptions) => new BrowserWindow(windowOptions));
+  }
+
+  setLocale(locale: 'de' | 'en'): void {
+    this.locale = locale;
+    for (const [kind, window] of this.windows) {
+      if (!window.isDestroyed()) window.setTitle(this.windowDefaults(kind).title);
+    }
   }
 
   openWindow(kind: ManagedWindowKind, route?: string): BrowserWindow {
@@ -266,7 +276,7 @@ export class WindowManager {
     // distinguishable in the Dock/task switcher without changing Web code.
     window.on('page-title-updated', (event) => {
       event.preventDefault();
-      if (!window.isDestroyed()) window.setTitle(defaults.title);
+      if (!window.isDestroyed()) window.setTitle(this.windowDefaults(kind).title);
     });
 
     window.once('ready-to-show', () => {
@@ -321,7 +331,7 @@ export class WindowManager {
         };
       case 'practice':
         return {
-          title: `${appName} – Üben`,
+          title: `${appName} – ${this.locale === 'en' ? 'Practice' : 'Üben'}`,
           width: 1180,
           height: 800,
           minWidth: 820,
@@ -331,7 +341,7 @@ export class WindowManager {
         };
       case 'updates':
         return {
-          title: `${appName} – Update-Center`,
+          title: `${appName} – ${this.locale === 'en' ? 'Updates' : 'Update-Center'}`,
           width: 760,
           height: 640,
           minWidth: 620,
@@ -341,7 +351,7 @@ export class WindowManager {
         };
       case 'node':
         return {
-          title: `${appName} – Knotendiagnose`,
+          title: `${appName} – ${this.locale === 'en' ? 'Local node' : 'Knotendiagnose'}`,
           width: 840,
           height: 680,
           minWidth: 680,

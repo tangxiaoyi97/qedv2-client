@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
 /**
  * Grading state capsule (supplement §3) — QChip-look pill showing the
  * current mastery grading as GradingDot + German label. Tone by state:
@@ -10,6 +11,8 @@ import { computed } from 'vue';
 import type { GradingOrUnseen } from '@qed2/core-logic';
 import ChevronDown from './ChevronDown.vue';
 import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   grading: GradingOrUnseen;
@@ -36,7 +39,7 @@ const TONES: Record<GradingOrUnseen, 'ok' | 'part' | 'neutral'> = {
 };
 
 const tone = computed(() => TONES[props.grading]);
-const label = computed(() => GRADING_LABELS[props.grading]);
+const label = computed(() => t(GRADING_LABELS[props.grading]));
 </script>
 
 <template>
@@ -48,7 +51,7 @@ const label = computed(() => GRADING_LABELS[props.grading]);
       { 'q-grading-capsule--interactive': interactive, 'q-grading-capsule--dense': dense },
     ]"
     :type="interactive ? 'button' : undefined"
-    :aria-label="`Bewertung: ${label}`"
+    :aria-label="t('Bewertung: {label}', { label })"
     @click="interactive && $emit('click', $event)"
   >
     <GradingDot :grading="grading" :size="10" />

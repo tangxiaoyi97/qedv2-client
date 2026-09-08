@@ -234,6 +234,31 @@ async function startWithAsset(response: object, historical = false): Promise<{
   return { practice, assetRequests, createObjectURL };
 }
 
+function setupManifestV2Asset(
+  manifest: Record<string, unknown>,
+  responseFor: (attempt: number, init: RequestInit) => object | Promise<object>,
+): { practice: ReturnType<typeof usePracticeStore>; assetRequests: ReturnType<typeof vi.fn> } {
+  const q1 = question();
+  const assetRequests = vi.fn(responseFor);
+  stubObjectUrls();
+  vi.stubGlobal('fetch', vi.fn(async (rawUrl: string, init: RequestInit = {}) => {
+    const path = new URL(rawUrl).pathname;
+    if (path === '/content/manifest/v2') return jsonReply(manifest);
+    if (path === '/content/questions/batch') {
+      return jsonReply({
+        questions: [{ ...q1, contentHash: RAW_HASH, wireHash: questionContentHash(q1) }],
+        missing: [],
+      });
+    }
+    if (path === `/content/banks/${COMMIT}/assets/fig/q1.png`) {
+      return assetRequests(assetRequests.mock.calls.length, init);
+    }
+    throw new Error(`unexpected request ${path}`);
+  }));
+  setActivePinia(createPinia());
+  return { practice: usePracticeStore(), assetRequests };
+}
+
 describe('practice asset snapshot integrity', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
@@ -255,6 +280,7 @@ describe('practice asset snapshot integrity', () => {
 
   afterEach(() => {
     ports.coreRuntime = originalCoreRuntime;
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -269,6 +295,20 @@ describe('practice asset snapshot integrity', () => {
     expect(result.assetRequests).toEqual([ASSET_PATH]);
     expect(result.practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
     expect(result.createObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it.each(['prepared', 'resume'] as const)('keeps verified image URLs during a live %s handoff', async (mode) => {
+    const bytes = new TextEncoder().encode('verified-png');
+    const { practice, assetRequests } = await startWithAsset(await assetReply(bytes));
+    const preparedId = practice.items[0]!.clientAttemptId;
+    const requestCount = vi.mocked(fetch).mock.calls.length;
+
+    await expect(practice.restoreSession('manual', mode === 'prepared' ? preparedId : undefined)).resolves.toBe(true);
+
+    expect(practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(assetRequests).toEqual([ASSET_PATH]);
+    if (mode === 'prepared') expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
   });
 
   it.each([
@@ -321,6 +361,136 @@ describe('practice asset snapshot integrity', () => {
     expect(practice.phase, practice.error).toBe('running');
     expect(assetRequests).toEqual([`/content/banks/${COMMIT}/assets/fig/q1.png`]);
     expect(createObjectURL).toHaveBeenCalledOnce();
+  });
+
+  it.each(['absent', 'weak'])('authenticates v2 bytes against the manifest when ETag is %s', async (etagMode) => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const etag = etagMode === 'absent' ? null : `W/"${await sha256(bytes)}"`;
+    const { practice } = setupManifestV2Asset(manifest, () => assetReply(bytes, { etag }));
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
+  });
+
+  it('never accepts tampered v2 bytes when ETag is absent', async () => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const tampered = bytes.slice();
+    tampered[0] = tampered[0]! ^ 1;
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, () => assetReply(tampered, { etag: null }));
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase).toBe('error');
+    expect(practice.error).toMatch(/Prüfsumme/);
+    expect(assetRequests).toHaveBeenCalledOnce();
+  });
+
+  it('recovers one transient image connection failure without restarting the practice', async () => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, (attempt) => {
+      if (attempt === 0) throw new TypeError('Failed to fetch');
+      return assetReply(bytes);
+    });
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(assetRequests).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([408, 429, 500, 502, 503, 504])('retries a temporary HTTP %s once and still verifies the new body', async (status) => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, (attempt) => {
+      if (attempt === 0) return new Response('', { status, headers: { 'Retry-After': '0' } });
+      return assetReply(bytes);
+    });
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(assetRequests).toHaveBeenCalledTimes(2);
+    for (const [, init] of assetRequests.mock.calls) {
+      expect(init.credentials).toBe('omit');
+      expect(init.signal?.aborted).toBe(true);
+    }
+  });
+
+  it.each([
+    ['missing image', 404, undefined],
+    ['long server backoff', 429, '120'],
+  ])('does not automatically retry %s', async (_label, status, retryAfter) => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, () => new Response('', {
+      status,
+      headers: retryAfter ? { 'Retry-After': retryAfter } : {},
+    }));
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase).toBe('error');
+    expect(assetRequests).toHaveBeenCalledOnce();
+  });
+
+  it('retries an interrupted response stream without admitting its partial bytes', async () => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, async (attempt) => {
+      const response = await assetReply(bytes);
+      if (attempt > 0) return response;
+      return {
+        ...response,
+        body: new ReadableStream({
+          start(controller) { controller.error(new TypeError('Connection reset mid-body')); },
+        }),
+      };
+    });
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(assetRequests).toHaveBeenCalledTimes(2);
+  });
+
+  it('bounds a stalled image request and recovers with the one allowed retry', async () => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, (attempt, init) => {
+      if (attempt > 0) return assetReply(bytes);
+      return new Promise((_resolve, reject) => {
+        init.signal!.addEventListener('abort', () => reject(new DOMException('Timed out', 'AbortError')), { once: true });
+      });
+    });
+
+    const start = practice.startQuestions(['q1'], 'remote');
+    await vi.waitFor(() => expect(assetRequests).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(12_350);
+    await start;
+
+    expect(practice.phase, practice.error).toBe('running');
+    expect(assetRequests).toHaveBeenCalledTimes(2);
+    expect(assetRequests.mock.calls[0]![1].signal?.aborted).toBe(true);
+  });
+
+  it('stops after two transport failures with a recoverable message', async () => {
+    const bytes = new TextEncoder().encode('manifest-authenticated-png');
+    const manifest = await currentManifestV2(question(), bytes);
+    const { practice, assetRequests } = setupManifestV2Asset(manifest, () => {
+      throw new TypeError('Network disconnected');
+    });
+
+    await practice.startQuestions(['q1'], 'remote');
+
+    expect(practice.phase).toBe('error');
+    expect(practice.error).toBe('Grafik konnte nicht geladen werden. Bitte erneut versuchen.');
+    expect(assetRequests).toHaveBeenCalledTimes(2);
   });
 
   it.each([

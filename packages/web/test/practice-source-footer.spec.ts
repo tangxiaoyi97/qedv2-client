@@ -136,17 +136,17 @@ describe('practice question-bank footer', () => {
     const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
 
     expect(mounted.host.querySelector('.practice__topbar .practice__source-footer')).toBeNull();
-    expect(mounted.host.querySelector('.practice__topbar')?.textContent).not.toContain('Remote-Core');
+    expect(mounted.host.querySelector('.practice__topbar')?.textContent).not.toContain('Remote');
 
     const railFooter = mounted.host.querySelector<HTMLElement>(
       '.practice__session-rail-shell .practice__source-footer',
     );
     expect(railFooter?.querySelector('[aria-hidden="true"]:not(svg)')?.textContent).toBe(
-      'Remote-Core · ff30462',
+      'Remote · ff30462',
     );
-    expect(railFooter?.title).toBe(`Remote-Core · ${COMMIT}`);
+    expect(railFooter?.title).toBe(`Remote · ${COMMIT}`);
     expect(railFooter?.querySelector('.practice__visually-hidden')?.textContent).toBe(
-      `Remote-Core. Revision ${COMMIT}`,
+      `Remote. Revision ${COMMIT}`,
     );
 
     mounted.host.querySelector<HTMLButtonElement>('.practice__session-button')?.click();
@@ -155,16 +155,16 @@ describe('practice question-bank footer', () => {
       '.practice-session-drawer__panel .practice__source-footer--drawer',
     );
     expect(drawerFooter?.querySelector('[aria-hidden="true"]:not(svg)')?.textContent).toBe(
-      'Remote-Core · ff30462',
+      'Remote · ff30462',
     );
-    expect(drawerFooter?.title).toBe(`Remote-Core · ${COMMIT}`);
+    expect(drawerFooter?.title).toBe(`Remote · ${COMMIT}`);
     expect(drawerFooter?.querySelector('.practice__visually-hidden')?.textContent).toBe(
-      `Remote-Core. Revision ${COMMIT}`,
+      `Remote. Revision ${COMMIT}`,
     );
     mounted.unmount();
   });
 
-  it('keeps the Remote-Core label in Desktop remote mode', async () => {
+  it('keeps the Remote label in Desktop remote mode', async () => {
     const desktopShell: ShellPort = {
       capabilities: { desktop: true, nativeMenu: true, nativeTitleBar: true },
       onCommand: () => () => undefined,
@@ -178,7 +178,7 @@ describe('practice question-bank footer', () => {
     const footer = mounted.host.querySelector<HTMLElement>('.practice__source-footer');
     expect(footer?.dataset.source).toBe('remote');
     expect(footer?.querySelector('[aria-hidden="true"]:not(svg)')?.textContent).toBe(
-      'Remote-Core · ff30462',
+      'Remote · ff30462',
     );
     mounted.unmount();
   });
@@ -192,7 +192,7 @@ describe('practice question-bank footer', () => {
     });
     expect(single.host.querySelector('.practice__session-rail-shell')).toBeNull();
     expect(single.host.querySelector('.practice__source-footer--inline')?.textContent).toContain(
-      'Remote-Core · ff30462',
+      'Remote · ff30462',
     );
     single.unmount();
     document.body.innerHTML = '';
@@ -205,7 +205,7 @@ describe('practice question-bank footer', () => {
       phase: 'summary',
     });
     expect(summary.host.querySelector('.practice__source-footer--summary')?.textContent).toContain(
-      'Remote-Core · ff30462',
+      'Remote · ff30462',
     );
     summary.unmount();
   });
@@ -224,11 +224,11 @@ describe('practice question-bank footer', () => {
     const footer = mounted.host.querySelector<HTMLElement>('.practice__source-footer');
     expect(footer?.dataset.source).toBe('local');
     expect(footer?.querySelector('[aria-hidden="true"]:not(svg)')?.textContent).toBe(
-      'Lokale Bank · Archiv ff30462',
+      'Lokal · Archiv ff30462',
     );
-    expect(footer?.title).toBe(`Lokale Bank · Archiv · ${COMMIT}`);
+    expect(footer?.title).toBe(`Lokal · Archiv · ${COMMIT}`);
     expect(footer?.querySelector('.practice__visually-hidden')?.textContent).toBe(
-      `Lokale Bank. Archiv. Revision ${COMMIT}`,
+      `Lokal. Archiv. Revision ${COMMIT}`,
     );
     mounted.unmount();
   });

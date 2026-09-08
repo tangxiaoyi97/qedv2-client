@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t } = useI18n();
+
 /**
  * Login/register modal (grading supplement §10): „Anmelden" opens a modal,
  * not a page. The register entry redraws the SAME modal into the invite-code
@@ -103,73 +106,77 @@ watch(
       class="authm q-modal-scrim q-modal-backdrop"
       role="dialog"
       aria-modal="true"
-      :aria-label="ui.authModalMode === 'login' ? 'Anmelden' : 'Registrieren'"
+      :aria-label="ui.authModalMode === 'login' ? t('Anmelden') : t('Registrieren')"
       @click.self="onBackdrop"
     >
       <!-- login face -->
       <form v-if="ui.authModalMode === 'login'" class="authm__card" @submit.prevent="doLogin">
-        <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
+        <QIconButton class="authm__close" :aria-label="t('Schließen')" :disabled="loginPending" @click="onBackdrop" />
         <div class="authm__brand">QED<span class="authm__brand-accent">2</span></div>
-        <p class="authm__scope">Lokal üben · mit Konto synchronisieren</p>
 
         <label class="authm__field">
-          <span class="authm__label">Benutzername</span>
-          <input v-model="loginUser" class="authm__input" autocomplete="username" data-autofocus required />
+          <span class="authm__label">{{ t('Benutzername') }}</span>
+          <input v-model="loginUser" class="authm__input q-input" autocomplete="username" autocapitalize="none" :spellcheck="false" :disabled="loginPending" data-autofocus required />
         </label>
         <label class="authm__field">
-          <span class="authm__label">Passwort</span>
-          <input v-model="loginPass" class="authm__input" type="password" autocomplete="current-password" required />
+          <span class="authm__label">{{ t('Passwort') }}</span>
+          <input v-model="loginPass" class="authm__input q-input" type="password" autocomplete="current-password" :disabled="loginPending" required />
         </label>
 
-        <div v-if="loginError" class="authm__error" role="alert">{{ loginError }}</div>
+        <div v-if="loginError" class="authm__error" role="alert">{{ t(loginError) }}</div>
 
         <QButton type="submit" :disabled="loginPending">
-          {{ loginPending ? 'Wird angemeldet …' : 'Anmelden' }}
+          {{ loginPending ? t('Wird angemeldet …') : t('Anmelden') }}
         </QButton>
-        <button type="button" class="authm__switch" @click="switchMode('register')">
-          Einladungscode einlösen →
+        <button type="button" class="authm__switch" :disabled="loginPending" @click="switchMode('register')">
+          {{ t('Einladungscode einlösen →') }}
         </button>
       </form>
 
       <!-- register face (same modal, redrawn in place — supplement §10) -->
       <form v-else class="authm__card" @submit.prevent="doRedeem">
-        <QIconButton class="authm__close" aria-label="Schließen" @click="ui.closeAuthModal()" />
+        <QIconButton class="authm__close" :aria-label="t('Schließen')" :disabled="invitePending" @click="onBackdrop" />
         <div class="authm__invite-head">
-          <div class="authm__invite-title">Einladungscode einlösen</div>
+          <div class="authm__invite-title">{{ t('Einladungscode einlösen') }}</div>
         </div>
 
         <label class="authm__field">
-          <span class="authm__label">Einladungscode</span>
+          <span class="authm__label">{{ t('Einladungscode') }}</span>
           <input
             v-model="inviteCode"
-            class="authm__input authm__input--mono"
+            class="authm__input authm__input--mono q-input"
             placeholder="QED2-XXXX-XXXX"
+            autocapitalize="characters"
+            :spellcheck="false"
+            :disabled="invitePending"
             data-autofocus
             required
           />
         </label>
         <label class="authm__field">
-          <span class="authm__label">Neuer Benutzername</span>
-          <input v-model="inviteUser" class="authm__input" placeholder="z. B. m.huber" autocomplete="username" required />
+          <span class="authm__label">{{ t('Neuer Benutzername') }}</span>
+          <input v-model="inviteUser" class="authm__input q-input" :placeholder="t('z. B. m.huber')" autocomplete="username" autocapitalize="none" :spellcheck="false" :disabled="invitePending" required />
         </label>
         <label class="authm__field">
-          <span class="authm__label">Passwort festlegen</span>
+          <span class="authm__label">{{ t('Passwort festlegen') }}</span>
           <input
             v-model="invitePass"
-            class="authm__input"
+            class="authm__input q-input"
             type="password"
-            placeholder="mind. 8 Zeichen"
+            :placeholder="t('mind. 8 Zeichen')"
             autocomplete="new-password"
+            minlength="8"
+            :disabled="invitePending"
             required
           />
         </label>
 
-        <div v-if="inviteError" class="authm__error" role="alert">{{ inviteError }}</div>
+        <div v-if="inviteError" class="authm__error" role="alert">{{ t(inviteError) }}</div>
 
         <QButton type="submit" variant="secondary" :disabled="invitePending">
-          {{ invitePending ? 'Erstelle Konto …' : 'Konto erstellen' }}
+          {{ invitePending ? t('Erstelle Konto …') : t('Konto erstellen') }}
         </QButton>
-        <button type="button" class="authm__switch" @click="switchMode('login')">← Zurück zur Anmeldung</button>
+        <button type="button" class="authm__switch" :disabled="invitePending" @click="switchMode('login')">{{ t('← Anmelden') }}</button>
       </form>
       </div>
     </transition>
@@ -215,42 +222,22 @@ watch(
 .authm__brand-accent {
   color: var(--q-accent);
 }
-.authm__scope {
-  margin: -6px 0 2px;
-  color: var(--q-mut-2);
-  font-size: 11.5px;
-  line-height: 1.4;
-}
 .authm__field {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .authm__label {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   color: var(--q-mut);
-}
-.authm__input {
-  border: 1px solid var(--q-border-3);
-  border-radius: 9px;
-  padding: 11px 13px;
-  font-size: 14px;
-  background: var(--q-card);
-  color: var(--q-ink);
-}
-.authm__input:focus {
-  outline: none;
-  border: 2px solid var(--q-accent);
-  padding: 10px 12px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
 }
 .authm__input--mono {
   font-family: ui-monospace, Menlo, monospace;
   letter-spacing: 0.05em;
 }
 .authm__error {
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   color: var(--q-err-ink);
   background: var(--q-err-bg);
   border: 1px solid var(--q-err-border);
@@ -261,10 +248,11 @@ watch(
   border: none;
   background: none;
   text-align: center;
-  font: 600 12.5px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui) 'Public Sans', system-ui, sans-serif;
   color: var(--q-accent-strong);
   cursor: pointer;
-  padding: 4px 0 0;
+  min-height: var(--q-control-height);
+  padding: 8px 0;
 }
 @media (hover: hover) and (pointer: fine) {
   .authm__switch:hover {

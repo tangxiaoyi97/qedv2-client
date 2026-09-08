@@ -14,25 +14,23 @@ function submission(text: string): OpenSubmission {
 }
 
 describe('OpenControl', () => {
-  it('uses compact answer and formula hints', () => {
+  it('uses a direct answer field without an editing toolbar', () => {
     const wrapper = mount(OpenControl, {
       props: { answer, modelValue: submission('') },
     });
 
     expect(wrapper.get('textarea').attributes('placeholder')).toBe('Antwort (optional)');
-    expect(wrapper.get('.q-open__hint').text()).toBe('Formeln: $…$ · ^ · / · sqrt()');
+    expect(wrapper.find('[role="toolbar"]').exists()).toBe(false);
+    expect(wrapper.find('.q-open__hint').exists()).toBe(false);
   });
 
-  it('inserts formula syntax at the current selection and keeps the plain-text contract', async () => {
+  it('accepts mixed prose and pasted formulas without rewriting the submission', async () => {
     const wrapper = mount(OpenControl, {
       props: { answer, modelValue: submission('x+1') },
     });
     const textarea = wrapper.get<HTMLTextAreaElement>('textarea');
-    textarea.element.setSelectionRange(0, 3);
-
-    await wrapper.get('button[aria-label="Formel markieren ($…$)"]').trigger('click');
-
-    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual(submission('$x+1$'));
+    await textarea.setValue('Also gilt $x+1$.\n−2,5');
+    expect(wrapper.emitted('update:modelValue')?.at(-1)?.[0]).toEqual(submission('Also gilt $x+1$.\n−2,5'));
   });
 
   it('renders live math previews for formula-only and mixed prose answers', async () => {

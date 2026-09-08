@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * AI assistance for the self-assessment step.
  *
@@ -13,11 +15,14 @@
  * instead of taking its word.
  */
 import { computed, nextTick, ref, watch } from 'vue';
+import { KeyRound } from 'lucide-vue-next';
 import { AI_SUGGESTION_CONFIDENCE_FLOOR } from '@qed2/core-logic';
 import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QButton from '../shared/QButton.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
+
+const { t } = useI18n();
 
 export interface AssessedCriterion {
   index: number;
@@ -48,6 +53,7 @@ const props = defineProps<{
   error?: string | undefined;
   storageWarning?: string | undefined;
   canRenew?: boolean;
+  needsSetup?: boolean;
   /** Server refuses to vouch for this reply — show it, tick nothing. */
   advisoryOnly?: boolean;
   model?: string | undefined;
@@ -58,7 +64,7 @@ const props = defineProps<{
   studentPoints?: number;
 }>();
 
-const emit = defineEmits<{ ask: []; renew: [] }>();
+const emit = defineEmits<{ ask: []; renew: []; setup: [] }>();
 
 const hasResult = computed(() => (props.criteria?.length ?? 0) > 0 || props.overall != null);
 const idle = computed(() => !hasResult.value && !props.loading && !props.error);
@@ -87,8 +93,12 @@ watch(
   () => props.loading,
   async (loading, wasLoading) => {
     if (!loading && !wasLoading) return;
+    // A delayed reply must not pull focus away from an answer being edited.
+    if (!panelElement.value?.contains(document.activeElement)) return;
     await nextTick();
-    panelElement.value?.focus();
+    if (document.activeElement === document.body || panelElement.value?.contains(document.activeElement)) {
+      panelElement.value?.focus({ preventScroll: true });
+    }
   },
 );
 </script>
@@ -101,30 +111,34 @@ watch(
     aria-live="polite"
     :aria-busy="loading ? 'true' : 'false'"
   >
-    <QButton v-if="idle" variant="secondary" class="q-aia__ask" @click="emit('ask')">
+    <QButton v-if="needsSetup" variant="secondary" class="q-aia__ask" @click="emit('setup')">
+      <KeyRound :size="16" aria-hidden="true" />
+      {{ t('KI einrichten') }}
+    </QButton>
+    <QButton v-else-if="idle" variant="secondary" class="q-aia__ask" @click="emit('ask')">
       <AiBadge size="md" />
-      KI vergleichen
+      {{ t('KI vergleichen') }}
     </QButton>
 
     <div v-else-if="loading" class="q-aia__loading">
-      <QSkeleton :rows="labels.length || 2" height="34px" radius="8px" gap="7px" label="KI prüft die Kriterien …" />
+      <QSkeleton :rows="labels.length || 2" height="34px" radius="8px" gap="7px" :label="t('KI prüft die Kriterien …')" />
     </div>
 
     <div v-else-if="error" class="q-aia__error" role="alert">
       <p class="q-aia__error-text">{{ error }}</p>
-      <QButton v-if="canRenew" variant="secondary" @click="emit('renew')">Neu anfragen</QButton>
-      <QButton v-else variant="secondary" @click="emit('ask')">Nochmal versuchen</QButton>
+      <QButton v-if="canRenew" variant="secondary" @click="emit('renew')">{{ t('Neu anfragen') }}</QButton>
+      <QButton v-else variant="secondary" @click="emit('ask')">{{ t('Nochmal versuchen') }}</QButton>
       <p v-if="canRenew" class="q-aia__billing-note">
-        Die neue Anfrage kann erneut berechnet werden.
+        {{ t('Die neue Anfrage kann erneut berechnet werden.') }}
       </p>
     </div>
 
     <template v-else>
       <div class="q-aia__head">
         <AiBadge />
-        <span class="q-aia__head-text">{{ advisoryOnly ? 'Nur als Hinweis' : 'KI-Vergleich' }}</span>
+        <span class="q-aia__head-text">{{ t(advisoryOnly ? 'Nur als Hinweis' : 'KI-Vergleich') }}</span>
         <strong class="q-aia__summary">
-          {{ differenceCount === 0 ? 'Keine Abweichung' : `${differenceCount} ${differenceCount === 1 ? 'Abweichung' : 'Abweichungen'}` }}
+          {{ differenceCount === 0 ? t('Keine Abweichung') : t(differenceCount === 1 ? '{count} Abweichung' : '{count} Abweichungen', { count: differenceCount }) }}
         </strong>
       </div>
 
@@ -137,16 +151,16 @@ watch(
         <div class="q-aia__item-main">
           <StateIcon :state="overall.points > 0 ? 'correct' : 'incorrect'" :size="16" />
           <p class="q-aia__criterion">
-            Vorschlag: {{ overall.points }}<template v-if="maxPoints !== undefined"> / {{ maxPoints }}</template> P
+            {{ t('Vorschlag:') }} {{ overall.points }}<template v-if="maxPoints !== undefined"> / {{ maxPoints }}</template> P
           </p>
           <span class="q-aia__confidence">{{ Math.round(overall.confidence * 100) }}%</span>
         </div>
         <details class="q-aia__evidence" :open="overallShaky">
-          <summary>{{ overallShaky ? 'Begründung prüfen' : 'Begründung' }}</summary>
+          <summary>{{ t(overallShaky ? 'Begründung prüfen' : 'Begründung') }}</summary>
           <div class="q-aia__evidence-body">
             <p v-if="overall.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !overall.quoteVerified }">
               „{{ overall.quote }}"
-              <span v-if="!overall.quoteVerified" class="q-aia__quote-warn">nicht wörtlich gefunden</span>
+              <span v-if="!overall.quoteVerified" class="q-aia__quote-warn">{{ t('nicht wörtlich gefunden') }}</span>
             </p>
             <p v-if="overall.reason" class="q-aia__reason">{{ overall.reason }}</p>
           </div>
@@ -162,17 +176,17 @@ watch(
         >
           <div class="q-aia__item-main">
             <StateIcon :state="c.met ? 'correct' : 'incorrect'" :size="16" />
-            <p class="q-aia__criterion">{{ labels[c.index] ?? `Kriterium ${c.index + 1}` }}</p>
-            <span class="q-aia__confidence" :title="`Sicherheit ${Math.round(c.confidence * 100)} %`">
+            <p class="q-aia__criterion">{{ labels[c.index] ?? t('Kriterium {index}', { index: c.index + 1 }) }}</p>
+            <span class="q-aia__confidence" :title="t('Sicherheit {percent} %', { percent: Math.round(c.confidence * 100) })">
               {{ Math.round(c.confidence * 100) }}%
             </span>
           </div>
           <details class="q-aia__evidence" :open="shaky(c)">
-            <summary>{{ shaky(c) ? 'Begründung prüfen' : 'Begründung' }}</summary>
+            <summary>{{ t(shaky(c) ? 'Begründung prüfen' : 'Begründung') }}</summary>
             <div class="q-aia__evidence-body">
               <p v-if="c.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !c.quoteVerified }">
                 „{{ c.quote }}"
-                <span v-if="!c.quoteVerified" class="q-aia__quote-warn">nicht wörtlich gefunden</span>
+                <span v-if="!c.quoteVerified" class="q-aia__quote-warn">{{ t('nicht wörtlich gefunden') }}</span>
               </p>
               <p v-if="c.reason" class="q-aia__reason">{{ c.reason }}</p>
             </div>
@@ -181,12 +195,11 @@ watch(
       </ul>
 
       <p v-if="differenceCount === 0" class="q-aia__same">
-        Deine Einschätzung und die KI stimmen überein.
+        {{ t('Deine Einschätzung und die KI stimmen überein.') }}
       </p>
 
       <p class="q-aia__foot">
-        {{ advisoryOnly ? 'Nichts wurde vorausgewählt.' : 'Deine Bewertung bleibt unverändert.' }}
-        Bitte selbst bestätigen.
+        {{ t('Bitte selbst bestätigen.') }}
         <span v-if="model && source !== 'pool'" class="q-aia__model">{{ model }}</span>
       </p>
     </template>

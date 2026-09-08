@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, formatDate } = useI18n();
+
 /**
  * Release notes dialog — used both for "what changed while you were away"
  * (opened automatically after an update) and for the full history from the
@@ -23,9 +26,8 @@ const many = computed(() => ui.changelogShown.length > 1);
 const title = computed(() => (many.value ? 'Änderungen' : 'Was ist neu'));
 
 /** de-AT reading order for a machine date, without pulling in a formatter. */
-function formatDate(iso: string): string {
-  const [y, m, d] = iso.split('-');
-  return y && m && d ? `${d}.${m}.${y}` : iso;
+function releaseDate(iso: string): string {
+  return formatDate(new Date(`${iso}T12:00:00`), { dateStyle: 'medium' });
 }
 </script>
 
@@ -37,25 +39,25 @@ function formatDate(iso: string): string {
         class="clog q-modal-scrim q-modal-backdrop"
         role="dialog"
         aria-modal="true"
-        :aria-label="title"
+        :aria-label="t(title)"
       >
         <div ref="card" class="clog__card">
           <div class="clog__head">
             <span class="clog__spark" aria-hidden="true">✦</span>
-            <div class="clog__title">{{ title }}</div>
+            <div class="clog__title">{{ t(title) }}</div>
           </div>
           <div class="clog__body">
             <section v-for="entry in ui.changelogShown" :key="entry.version" class="clog__entry">
               <div class="clog__entry-head">
                 <span class="clog__version">{{ entry.version }}</span>
-                <span v-if="entry.draft" class="clog__draft">Entwurf</span>
-                <span class="clog__date">{{ formatDate(entry.date) }}</span>
+                <span v-if="entry.draft" class="clog__draft">{{ t('Entwurf') }}</span>
+                <span class="clog__date">{{ releaseDate(entry.date) }}</span>
               </div>
               <MarkdownView :source="entry.body" />
             </section>
           </div>
           <div class="clog__footer">
-            <QButton @click="ui.closeChangelog()">Verstanden</QButton>
+            <QButton @click="ui.closeChangelog()">{{ t('Verstanden') }}</QButton>
           </div>
         </div>
       </div>
@@ -122,7 +124,7 @@ function formatDate(iso: string): string {
 }
 .clog__date {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   font-variant-numeric: tabular-nums;
 }

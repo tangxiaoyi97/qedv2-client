@@ -81,6 +81,7 @@ vi.mock('../src/platform/theme.js', () => ({
     value === 'weed' || value === 'sky' || value === 'raspberry' || value === 'violette',
   setBuiltinThemeExtension: mocks.setBuiltinThemeExtension,
   syncThemeColorFromCss: vi.fn(),
+  suppressThemeTransitions: vi.fn(),
 }));
 
 import { useAppStore } from '../src/stores/app.js';

@@ -37,6 +37,7 @@ import {
   isBuiltinThemeId,
   setBuiltinThemeExtension,
   syncThemeColorFromCss,
+  suppressThemeTransitions,
   type BuiltinThemeId,
 } from '../platform/theme.js';
 
@@ -59,6 +60,7 @@ export interface PinnedCoreContent {
 }
 
 function applyThemeToDom(pref: ThemePref): void {
+  suppressThemeTransitions();
   const dark =
     pref === 'dark' ||
     (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);

@@ -3,6 +3,7 @@
 import { computed, ref, watch } from 'vue';
 import { KeyRound, Languages, ShieldCheck, Sparkles, Trash2 } from 'lucide-vue-next';
 import { QButton, QChip, QNotice } from '@qed2/ui';
+import { useI18n } from '../../i18n.js';
 import { useAiStore } from '../../stores/ai.js';
 import { useAppStore } from '../../stores/app.js';
 import SettingsCard from './SettingsCard.vue';
@@ -10,6 +11,7 @@ import SettingsRow from './SettingsRow.vue';
 
 const ai = useAiStore();
 const app = useAppStore();
+const { t, formatNumber } = useI18n();
 
 const PROVIDERS: { id: 'openai' | 'gemini'; label: string }[] = [
   { id: 'openai', label: 'OpenAI / ChatGPT' },
@@ -47,6 +49,12 @@ const cacheCleared = ref(false);
 const maintenanceError = ref<string | null>(null);
 const refreshingStatus = ref(false);
 const sourceError = ref<string | null>(null);
+const savingSource = ref(false);
+const sourceDraft = ref<'pool' | 'byo'>();
+const sourceChoice = computed({
+  get: () => sourceDraft.value ?? ai.mode,
+  set: (value: 'pool' | 'byo') => { void selectMode(value); },
+});
 
 watch(availableProviders, (providers) => {
   if (providers.some((item) => item.id === provider.value)) return;
@@ -80,84 +88,90 @@ const sourceUnavailable = computed(
 type ReadinessTone = 'accent' | 'neutral' | 'warn';
 
 const readiness = computed<{ label: string; tone: ReadinessTone }>(() => {
-  if (ai.statusError) return { label: 'Status fehlt', tone: 'warn' };
-  if (!status.value) return { label: 'Lädt', tone: 'neutral' };
+  if (ai.statusError) return { label: t('Status fehlt'), tone: 'warn' };
+  if (!status.value) return { label: t('Lädt'), tone: 'neutral' };
   if (!status.value.features.explain && !status.value.features.assess) {
-    return { label: 'Nicht verfügbar', tone: 'warn' };
+    return { label: t('Nicht verfügbar'), tone: 'warn' };
   }
   if (ai.mode === 'pool') {
     return ai.poolOffered
-      ? { label: 'Bereit', tone: 'accent' }
-      : { label: 'Quelle wählen', tone: 'warn' };
+      ? { label: t('Bereit'), tone: 'accent' }
+      : { label: t('Quelle wählen'), tone: 'warn' };
   }
-  if (!ai.byoOffered) return { label: 'Nicht verfügbar', tone: 'warn' };
+  if (!ai.byoOffered) return { label: t('Nicht verfügbar'), tone: 'warn' };
   return configured.value
-    ? { label: 'Bereit', tone: 'accent' }
-    : { label: 'Einrichten', tone: 'warn' };
+    ? { label: t('Bereit'), tone: 'accent' }
+    : { label: t('Einrichten'), tone: 'warn' };
 });
 
 function providerLabel(value: string | undefined): string {
   if (value === 'gemini') return 'Google Gemini';
   if (value === 'openai') return 'OpenAI';
-  return 'Anbieter offen';
+  return t('Anbieter offen');
 }
 
 const featureLabel = computed(() => {
-  if (!status.value) return 'Wird geladen …';
+  if (!status.value) return t('Wird geladen …');
   const { explain, assess } = status.value.features;
-  if (explain && assess) return 'Erklären · Bewerten';
-  if (explain) return 'Erklären';
-  if (assess) return 'Bewerten';
-  return 'Nicht freigeschaltet';
+  if (explain && assess) return t('Erklären · Bewerten');
+  if (explain) return t('Erklären');
+  if (assess) return t('Bewerten');
+  return t('Nicht freigeschaltet');
 });
 
 const credentialSummary = computed(() => {
-  if (!configured.value) return 'Nicht eingerichtet';
+  if (!configured.value) return t('Nicht eingerichtet');
   const route = status.value?.byo;
-  const parts = ['Verschlüsselt', providerLabel(route?.provider)];
+  const parts = [t('Verschlüsselt'), providerLabel(route?.provider)];
   if (route?.model) parts.push(route.model);
   if (route?.last4) parts.push(`•••• ${route.last4}`);
   return parts.join(' · ');
 });
 
 const preferenceSummary = computed(() => {
-  const parts = [language.value.trim() || 'Standardsprache'];
-  if (customInstructions.value.trim()) parts.push('eigene Hinweise');
+  const parts = [language.value.trim() || t('Standardsprache')];
+  if (customInstructions.value.trim()) parts.push(t('eigene Hinweise'));
   return parts.join(' · ');
 });
 
 const privacyRecipient = computed(() => {
   const route = ai.mode === 'pool' ? status.value?.pool : status.value?.byo;
   const label = providerLabel(route?.provider);
-  return label === 'Anbieter offen' ? 'den gewählten KI-Anbieter' : label;
+  return label === t('Anbieter offen') ? t('den gewählten KI-Anbieter') : label;
 });
 
 const poolQuotaLabel = computed(() => {
   const remaining = pool.value?.remaining;
   if (remaining?.tokens !== undefined) {
-    return `${remaining.tokens.toLocaleString('de-AT')} Token`;
+    return t('{count} Token', { count: formatNumber(remaining.tokens) });
   }
   if (remaining?.costCents !== undefined) {
-    return (remaining.costCents / 100).toLocaleString('de-AT', {
+    return formatNumber(remaining.costCents / 100, {
       style: 'currency',
       currency: 'EUR',
     });
   }
-  return 'Verfügbar';
+  return t('Verfügbar');
 });
 
 function messageOf(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message.trim() ? error.message : fallback;
+  return error instanceof Error && error.message.trim() ? t(error.message) : fallback;
 }
 
 async function selectMode(next: 'pool' | 'byo'): Promise<void> {
+  if (savingSource.value || next === ai.mode) return;
+  sourceDraft.value = next;
+  savingSource.value = true;
   credentialSaved.value = false;
   confirmingRemoval.value = false;
   sourceError.value = null;
   try {
     await ai.setMode(next);
   } catch (error) {
-    sourceError.value = messageOf(error, 'Die KI-Quelle konnte nicht gespeichert werden.');
+    sourceError.value = messageOf(error, t('Die KI-Quelle konnte nicht gespeichert werden.'));
+  } finally {
+    sourceDraft.value = undefined;
+    savingSource.value = false;
   }
 }
 
@@ -200,6 +214,7 @@ async function saveCredential(): Promise<void> {
   if (
     !apiKey.value.trim()
     || savingCredential.value
+    || testingCredential.value
     || !availableProviders.value.some((item) => item.id === provider.value)
   ) return;
   savingCredential.value = true;
@@ -215,14 +230,14 @@ async function saveCredential(): Promise<void> {
     apiKey.value = '';
     credentialSaved.value = true;
   } catch (error) {
-    credentialError.value = messageOf(error, 'Der Schlüssel konnte nicht gespeichert werden.');
+    credentialError.value = messageOf(error, t('Der Schlüssel konnte nicht gespeichert werden.'));
   } finally {
     savingCredential.value = false;
   }
 }
 
 async function removeCredential(): Promise<void> {
-  if (savingCredential.value) return;
+  if (savingCredential.value || testingCredential.value) return;
   savingCredential.value = true;
   credentialError.value = null;
   try {
@@ -233,14 +248,14 @@ async function removeCredential(): Promise<void> {
     credentialEditorOpen.value = false;
     credentialEditorDismissed.value = true;
   } catch (error) {
-    credentialError.value = messageOf(error, 'Der Schlüssel konnte nicht entfernt werden.');
+    credentialError.value = messageOf(error, t('Der Schlüssel konnte nicht entfernt werden.'));
   } finally {
     savingCredential.value = false;
   }
 }
 
 async function testCredential(options: { newRequest?: boolean } = {}): Promise<void> {
-  if (testingCredential.value) return;
+  if (testingCredential.value || savingCredential.value) return;
   testingCredential.value = true;
   credentialTestResult.value = null;
   credentialTestError.value = null;
@@ -252,7 +267,7 @@ async function testCredential(options: { newRequest?: boolean } = {}): Promise<v
           expectedClientRequestId: credentialRenewRequestId.value ?? undefined,
         }
       : {});
-    credentialTestResult.value = `Verbunden · ${providerLabel(response.provider)} · ${response.model}`;
+    credentialTestResult.value = t('Verbunden · {provider} · {model}', { provider: providerLabel(response.provider), model: response.model });
     credentialRenewRequestId.value = null;
   } catch (error) {
     const code = (error as { code?: string }).code;
@@ -260,10 +275,10 @@ async function testCredential(options: { newRequest?: boolean } = {}): Promise<v
       credentialRenewRequestId.value = (error as { credentialRequestId?: string }).credentialRequestId ?? null;
     }
     credentialTestError.value = code === 'AI_REQUEST_ALREADY_COMPLETED'
-      ? 'Der Test wurde ausgeführt, aber die Antwort ging verloren. Er wird nicht automatisch wiederholt.'
+      ? t('Der Test wurde ausgeführt, aber die Antwort ging verloren. Er wird nicht automatisch wiederholt.')
       : code === 'AI_REQUEST_IN_PROGRESS'
-        ? 'Der Verbindungstest läuft noch.'
-        : messageOf(error, 'Die Verbindung konnte nicht bestätigt werden.');
+        ? t('Der Verbindungstest läuft noch.')
+        : messageOf(error, t('Die Verbindung konnte nicht bestätigt werden.'));
   } finally {
     testingCredential.value = false;
   }
@@ -288,7 +303,7 @@ async function savePreferences(): Promise<void> {
     ]);
     preferencesSaved.value = true;
   } catch (error) {
-    preferencesError.value = messageOf(error, 'Der Antwortstil konnte nicht gespeichert werden.');
+    preferencesError.value = messageOf(error, t('Der Antwortstil konnte nicht gespeichert werden.'));
   } finally {
     savingPreferences.value = false;
   }
@@ -303,7 +318,7 @@ async function clearCache(): Promise<void> {
     await ai.clearCache();
     cacheCleared.value = true;
   } catch (error) {
-    maintenanceError.value = messageOf(error, 'Die gespeicherten Antworten konnten nicht gelöscht werden.');
+    maintenanceError.value = messageOf(error, t('Die gespeicherten Antworten konnten nicht gelöscht werden.'));
   } finally {
     clearing.value = false;
   }
@@ -311,8 +326,8 @@ async function clearCache(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="ai.available" class="ai-settings settings__section">
-    <SettingsCard title="KI-Erklärungen">
+  <div v-if="ai.available" id="ai-settings" class="ai-settings settings__section" tabindex="-1">
+    <SettingsCard :title="t('KI-Erklärungen')">
       <template #action>
         <span role="status" aria-live="polite">
           <QChip :tone="readiness.tone">
@@ -323,54 +338,54 @@ async function clearCache(): Promise<void> {
       </template>
 
       <QNotice v-if="ai.statusError" class="ai-settings__notice" tone="error">
-        KI-Status konnte nicht geladen werden: {{ ai.statusError }}
+        {{ t('KI-Status konnte nicht geladen werden: {message}', { message: t(ai.statusError) }) }}
         <template #action>
           <QButton variant="secondary" :disabled="refreshingStatus" @click="retryStatus">
-            {{ refreshingStatus ? 'Wird geladen …' : 'Erneut laden' }}
+            {{ refreshingStatus ? t('Wird geladen …') : t('Erneut laden') }}
           </QButton>
         </template>
       </QNotice>
 
-      <SettingsRow v-else-if="!status" label="Status">
-        <span class="ai-settings__value" role="status" aria-live="polite">Wird geladen …</span>
+      <SettingsRow v-else-if="!status" :label="t('Status')">
+        <span class="ai-settings__value" role="status" aria-live="polite">{{ t('Wird geladen …') }}</span>
       </SettingsRow>
 
       <template v-else>
-        <SettingsRow label="Funktionen">
+        <SettingsRow :label="t('Funktionen')">
           <span class="ai-settings__value">
             <Sparkles :size="16" aria-hidden="true" />
             {{ featureLabel }}
           </span>
         </SettingsRow>
 
-        <SettingsRow v-if="showSourceChooser" label="Quelle">
+        <SettingsRow v-if="showSourceChooser" class="ai-settings__source-row" :label="t('Quelle')">
           <template #default="{ labelId }">
-            <div class="ai-settings__segments" role="radiogroup" :aria-labelledby="labelId">
+            <div class="ai-settings__segments q-settings-segments" role="radiogroup" :aria-labelledby="labelId" :aria-busy="savingSource">
               <label
-                class="ai-settings__segment"
-                :class="{ 'ai-settings__segment--on': ai.mode === 'byo' }"
+                class="ai-settings__segment q-settings-segment"
+                :class="{ 'ai-settings__segment--on': sourceChoice === 'byo' }"
               >
                 <input
                   class="ai-settings__choice-input"
                   type="radio"
                   name="ai-source"
                   value="byo"
-                  :checked="ai.mode === 'byo'"
-                  @change="selectMode('byo')"
+                  v-model="sourceChoice"
+                  :disabled="savingSource"
                 />
-                <span>Eigener Schlüssel</span>
+                <span>{{ t('Eigener Schlüssel') }}</span>
               </label>
               <label
-                class="ai-settings__segment"
-                :class="{ 'ai-settings__segment--on': ai.mode === 'pool' }"
+                class="ai-settings__segment q-settings-segment"
+                :class="{ 'ai-settings__segment--on': sourceChoice === 'pool' }"
               >
                 <input
                   class="ai-settings__choice-input"
                   type="radio"
                   name="ai-source"
                   value="pool"
-                  :checked="ai.mode === 'pool'"
-                  @change="selectMode('pool')"
+                  v-model="sourceChoice"
+                  :disabled="savingSource"
                 />
                 <span>Server</span>
               </label>
@@ -379,10 +394,10 @@ async function clearCache(): Promise<void> {
         </SettingsRow>
 
         <QNotice v-if="sourceUnavailable" class="ai-settings__notice">
-          Server-Kontingent nicht verfügbar.
+          {{ t('Server-Kontingent nicht verfügbar.') }}
           <template #action>
             <QButton variant="secondary" @click="selectMode('byo')">
-              Eigenen Schlüssel verwenden
+              {{ t('Eigenen Schlüssel verwenden') }}
             </QButton>
           </template>
         </QNotice>
@@ -391,30 +406,30 @@ async function clearCache(): Promise<void> {
           {{ sourceError }}
         </QNotice>
 
-        <SettingsRow v-if="pool?.eligible" label="Kontingent">
+        <SettingsRow v-if="ai.mode === 'pool' && pool?.eligible" :label="t('Kontingent')">
           <span class="ai-settings__value" role="status">{{ poolQuotaLabel }}</span>
         </SettingsRow>
 
-        <SettingsRow v-if="ai.byoOffered || configured" label="API-Schlüssel">
+        <SettingsRow v-if="ai.byoOffered || configured" :label="t('API-Schlüssel')">
           <template #description>{{ credentialSummary }}</template>
           <template v-if="configured && !ai.byoOffered" #status>
             <span class="ai-settings__secure">
               <ShieldCheck :size="14" aria-hidden="true" />
-              Gespeichert · nicht verfügbar
+              {{ t('Gespeichert · nicht verfügbar') }}
             </span>
           </template>
           <div
             v-if="!ai.byoOffered && configured && confirmingRemoval"
             class="ai-settings__confirm"
             role="group"
-            aria-label="Schlüssel wirklich entfernen"
+            :aria-label="t('Schlüssel wirklich entfernen')"
           >
-            <span>Schlüssel entfernen?</span>
+            <span>{{ t('Schlüssel entfernen?') }}</span>
             <QButton variant="ghost" :disabled="savingCredential" @click="confirmingRemoval = false">
-              Abbrechen
+              {{ t('Abbrechen') }}
             </QButton>
             <QButton variant="danger" :disabled="savingCredential" @click="removeCredential">
-              {{ savingCredential ? 'Wird entfernt …' : 'Entfernen' }}
+              {{ savingCredential ? t('Wird entfernt …') : t('Entfernen') }}
             </QButton>
           </div>
           <QButton
@@ -425,29 +440,30 @@ async function clearCache(): Promise<void> {
           >
             <span class="ai-settings__button-content">
               <Trash2 :size="16" aria-hidden="true" />
-              Entfernen
+              {{ t('Entfernen') }}
             </span>
           </QButton>
           <QButton
             v-else
             variant="secondary"
             :aria-expanded="showCredentialEditor"
+            :disabled="savingCredential"
             aria-controls="ai-credential-editor"
             @click="toggleCredentialEditor"
           >
             <span class="ai-settings__button-content">
               <KeyRound :size="16" aria-hidden="true" />
-              {{ showCredentialEditor ? 'Schließen' : configured ? 'Ändern' : 'Einrichten' }}
+              {{ showCredentialEditor ? t('Schließen') : configured ? t('Ändern') : t('Einrichten') }}
             </span>
           </QButton>
         </SettingsRow>
 
-        <SettingsRow v-if="ai.canTestCredential && ai.mode === 'byo'" label="Verbindung">
+        <SettingsRow v-if="ai.canTestCredential && ai.mode === 'byo'" :label="t('Verbindung')">
           <template v-if="credentialTestResult" #description>
             <span role="status">{{ credentialTestResult }}</span>
           </template>
-          <QButton variant="secondary" :disabled="testingCredential" @click="testCredential()">
-            {{ testingCredential ? 'Wird getestet …' : 'Verbindung testen' }}
+          <QButton variant="secondary" :disabled="testingCredential || savingCredential" :aria-busy="testingCredential" @click="testCredential()">
+            {{ testingCredential ? t('Wird getestet …') : t('Verbindung testen') }}
           </QButton>
         </SettingsRow>
 
@@ -459,7 +475,7 @@ async function clearCache(): Promise<void> {
               :disabled="testingCredential"
               @click="testCredential({ newRequest: true })"
             >
-              Neu testen (kann erneut kosten)
+              {{ t('Neu testen (kann erneut kosten)') }}
             </QButton>
           </template>
         </QNotice>
@@ -468,12 +484,12 @@ async function clearCache(): Promise<void> {
           v-if="showCredentialEditor"
           id="ai-credential-editor"
           class="ai-settings__editor"
-          aria-label="Eigenen KI-Schlüssel einrichten"
+          :aria-label="t('Eigenen KI-Schlüssel einrichten')"
           @submit.prevent="saveCredential"
         >
-          <SettingsRow label="Anbieter">
+          <SettingsRow :label="t('Anbieter')">
             <template #default="{ labelId }">
-              <select v-model="provider" class="ai-settings__input" :aria-labelledby="labelId">
+              <select v-model="provider" class="ai-settings__input q-settings-field" :aria-labelledby="labelId" :disabled="savingCredential">
                 <option v-for="item in availableProviders" :key="item.id" :value="item.id">
                   {{ item.label }}
                 </option>
@@ -481,33 +497,36 @@ async function clearCache(): Promise<void> {
             </template>
           </SettingsRow>
 
-          <SettingsRow :label="configured ? 'Neuer API-Schlüssel' : 'API-Schlüssel'">
+          <SettingsRow :label="configured ? t('Neuer API-Schlüssel') : t('API-Schlüssel')">
             <template #default="{ labelId }">
               <input
                 id="ai-key"
                 v-model="apiKey"
                 type="password"
-                class="ai-settings__input"
+                class="ai-settings__input q-settings-field"
                 maxlength="512"
                 autocomplete="off"
+                autocapitalize="off"
+                :disabled="savingCredential"
                 spellcheck="false"
-                placeholder="API-Schlüssel"
+                :placeholder="t('API-Schlüssel')"
                 :aria-labelledby="labelId"
                 @input="credentialSaved = false"
               />
             </template>
           </SettingsRow>
 
-          <SettingsRow label="Modell (optional)">
+          <SettingsRow :label="t('Modell (optional)')">
             <template #default="{ labelId }">
               <input
                 id="ai-model"
                 v-model="model"
                 type="text"
                 maxlength="200"
-                class="ai-settings__input"
+                class="ai-settings__input q-settings-field"
                 spellcheck="false"
-                placeholder="Standardmodell"
+                :placeholder="t('Standardmodell')"
+                :disabled="savingCredential"
                 :aria-labelledby="labelId"
               />
             </template>
@@ -519,21 +538,21 @@ async function clearCache(): Promise<void> {
 
           <div class="ai-settings__editor-actions">
             <span v-if="credentialSaved" class="ai-settings__saved" role="status">
-              Schlüssel gespeichert.
+              {{ t('Schlüssel gespeichert.') }}
             </span>
 
             <div
               v-if="confirmingRemoval"
               class="ai-settings__confirm"
               role="group"
-              aria-label="Schlüssel wirklich entfernen"
+              :aria-label="t('Schlüssel wirklich entfernen')"
             >
-              <span>Schlüssel entfernen?</span>
+              <span>{{ t('Schlüssel entfernen?') }}</span>
               <QButton variant="ghost" :disabled="savingCredential" @click="confirmingRemoval = false">
-                Abbrechen
+                {{ t('Abbrechen') }}
               </QButton>
               <QButton variant="danger" :disabled="savingCredential" @click="removeCredential">
-                {{ savingCredential ? 'Wird entfernt …' : 'Entfernen' }}
+                {{ savingCredential ? t('Wird entfernt …') : t('Entfernen') }}
               </QButton>
             </div>
 
@@ -546,27 +565,28 @@ async function clearCache(): Promise<void> {
               >
                 <span class="ai-settings__button-content">
                   <Trash2 :size="16" aria-hidden="true" />
-                  Entfernen
+                  {{ t('Entfernen') }}
                 </span>
               </QButton>
-              <QButton type="submit" :disabled="!apiKey.trim() || savingCredential">
-                {{ savingCredential ? 'Wird gespeichert …' : 'Speichern' }}
+              <QButton type="submit" :disabled="!apiKey.trim() || savingCredential || testingCredential">
+                {{ savingCredential ? t('Wird gespeichert …') : t('Speichern') }}
               </QButton>
             </template>
           </div>
         </form>
 
-        <SettingsRow label="Antwortstil">
+        <SettingsRow :label="t('Antwortstil')">
           <template #description>{{ preferenceSummary }}</template>
           <QButton
             variant="secondary"
             :aria-expanded="preferencesOpen"
+            :disabled="savingPreferences"
             aria-controls="ai-preferences-editor"
             @click="togglePreferences"
           >
             <span class="ai-settings__button-content">
               <Languages :size="16" aria-hidden="true" />
-              {{ preferencesOpen ? 'Schließen' : 'Bearbeiten' }}
+              {{ preferencesOpen ? t('Schließen') : t('Bearbeiten') }}
             </span>
           </QButton>
         </SettingsRow>
@@ -575,34 +595,36 @@ async function clearCache(): Promise<void> {
           v-if="preferencesOpen"
           id="ai-preferences-editor"
           class="ai-settings__editor"
-          aria-label="Antwortstil der KI"
+          :aria-label="t('Antwortstil der KI')"
           @submit.prevent="savePreferences"
         >
-          <SettingsRow label="Sprache">
+          <SettingsRow :label="t('Sprache')">
             <template #default="{ labelId }">
               <input
                 id="ai-language"
                 v-model="language"
                 type="text"
                 maxlength="80"
-                class="ai-settings__input"
-                placeholder="Deutsch"
+                class="ai-settings__input q-settings-field"
+                :placeholder="t('Deutsch')"
+                :disabled="savingPreferences"
                 :aria-labelledby="labelId"
                 @input="markPreferencesDirty"
               />
             </template>
           </SettingsRow>
-          <SettingsRow label="Hinweise (optional)" layout="stacked">
+          <SettingsRow :label="t('Hinweise (optional)')" layout="stacked">
             <template #default="{ labelId }">
               <textarea
                 id="ai-instructions"
                 v-model="customInstructions"
                 maxlength="600"
                 rows="3"
-                class="ai-settings__input ai-settings__textarea"
-                placeholder="Kurz und mit einem Beispiel erklären."
+                class="ai-settings__input ai-settings__textarea q-settings-field"
+                :placeholder="t('Kurz und mit einem Beispiel erklären.')"
                 :aria-labelledby="labelId"
                 aria-describedby="ai-instructions-count"
+                :disabled="savingPreferences"
                 @input="markPreferencesDirty"
               />
               <span id="ai-instructions-count" class="ai-settings__count">
@@ -616,15 +638,15 @@ async function clearCache(): Promise<void> {
           </QNotice>
           <div class="ai-settings__editor-actions">
             <span v-if="preferencesSaved" class="ai-settings__saved" role="status">
-              Antwortstil gespeichert.
+              {{ t('Antwortstil gespeichert.') }}
             </span>
             <QButton type="submit" :disabled="savingPreferences">
-              {{ savingPreferences ? 'Wird gespeichert …' : 'Speichern' }}
+              {{ savingPreferences ? t('Wird gespeichert …') : t('Speichern') }}
             </QButton>
           </div>
         </form>
 
-        <SettingsRow label="Datenschutz">
+        <SettingsRow :label="t('Datenschutz')">
           <QButton
             variant="secondary"
             :aria-expanded="privacyOpen"
@@ -633,25 +655,25 @@ async function clearCache(): Promise<void> {
           >
             <span class="ai-settings__button-content">
               <ShieldCheck :size="16" aria-hidden="true" />
-              {{ privacyOpen ? 'Schließen' : 'Details' }}
+              {{ privacyOpen ? t('Schließen') : t('Details') }}
             </span>
           </QButton>
         </SettingsRow>
 
         <div v-if="privacyOpen" id="ai-privacy-details" class="ai-settings__privacy">
           <p>
-            <strong>Nur nach deinem Klick:</strong>
-            Aufgabe, Musterlösung und deine Antwort gehen an {{ privacyRecipient }}.
+            <strong>{{ t('Nur nach deinem Klick:') }}</strong>
+            {{ t('Aufgabe, Musterlösung und deine Antwort gehen an {provider}.', { provider: privacyRecipient }) }}
           </p>
-          <p><strong>Nicht übertragen:</strong> Konto, Lernfortschritt und Statistiken.</p>
+          <p><strong>{{ t('Nicht übertragen:') }}</strong> {{ t('Konto, Lernfortschritt und Statistiken.') }}</p>
         </div>
 
-        <SettingsRow label="KI-Cache">
+        <SettingsRow :label="t('KI-Cache')">
           <template v-if="cacheCleared" #status>
-            <span class="ai-settings__saved" role="status">Geleert.</span>
+            <span class="ai-settings__saved" role="status">{{ t('Geleert.') }}</span>
           </template>
           <QButton variant="secondary" :disabled="clearing" @click="clearCache">
-            {{ clearing ? 'Wird geleert …' : 'Leeren' }}
+            {{ clearing ? t('Wird geleert …') : t('Leeren') }}
           </QButton>
         </SettingsRow>
 
@@ -668,21 +690,27 @@ async function clearCache(): Promise<void> {
   min-width: 0;
 }
 
-.ai-settings__notice {
-  margin: 0 20px 16px;
+.ai-settings :deep(.q-settings-row--inline) {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
+
+.ai-settings :deep(.q-settings-row__description) {
+  overflow-wrap: anywhere;
+}
+
+.ai-settings__notice { margin: var(--q-settings-block) var(--q-settings-inset); }
 
 .ai-settings__value,
 .ai-settings__secure,
 .ai-settings__button-content {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--q-space-2);
 }
 
 .ai-settings__value {
   color: var(--q-ink-2);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -690,52 +718,18 @@ async function clearCache(): Promise<void> {
 .ai-settings__secure,
 .ai-settings__saved {
   color: var(--q-ok-ink);
-  font-size: 11.5px;
+  font-size: var(--q-font-small);
   font-weight: 700;
 }
 
 .ai-settings__segments {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  min-height: var(--q-control-height);
-  overflow: hidden;
-  border: 1px solid var(--q-border-2);
-  border-radius: 9px;
-  background: var(--q-card);
-}
-
-.ai-settings__segment {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: var(--q-control-height);
-  box-sizing: border-box;
-  padding: 8px 16px;
-  background: transparent;
-  color: var(--q-mut-2);
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.35;
-  text-align: center;
-}
-
-.ai-settings__segment + .ai-settings__segment {
-  border-left: 1px solid var(--q-border-2);
 }
 
 .ai-settings__segment--on {
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
-}
-
-.ai-settings__segment:focus-within,
-.ai-settings__input:focus-visible {
-  position: relative;
-  outline: 2px solid var(--q-accent);
-  outline-offset: 2px;
 }
 
 .ai-settings__choice-input {
@@ -748,49 +742,36 @@ async function clearCache(): Promise<void> {
   white-space: nowrap;
 }
 
+.ai-settings__editor :deep(.q-settings-row--inline) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+.ai-settings__editor :deep(.q-settings-row__control) {
+  width: 100%;
+  justify-self: stretch;
+}
+
 .ai-settings__editor {
   border-top: 1px solid var(--q-border-soft);
   border-bottom: 1px solid var(--q-border-soft);
   background: var(--q-panel);
 }
 
-.ai-settings__editor :deep(.q-settings-row) {
-  padding-top: 12px;
-  padding-bottom: 12px;
+
+.ai-settings__editor :deep(.q-settings-row--stacked .q-settings-row__control) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
 }
 
-.ai-settings__input {
-  width: min(360px, 100%);
-  min-height: var(--q-control-height);
-  box-sizing: border-box;
-  padding: 0 12px;
-  border: 1px solid var(--q-border-2);
-  border-radius: 9px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 400;
-}
+.ai-settings__input { width: 100%; }
 
-.ai-settings__input::placeholder {
-  color: var(--q-hint);
-}
 
-.ai-settings__textarea {
-  width: 100%;
-  min-height: 88px;
-  padding-top: 10px;
-  padding-bottom: 10px;
-  line-height: 1.5;
-  resize: vertical;
-}
 
 .ai-settings__count {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--q-space-1);
   color: var(--q-faint);
-  font: 500 11px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
   text-align: right;
 }
 
@@ -798,9 +779,9 @@ async function clearCache(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   min-height: var(--q-control-height);
-  padding: 12px 20px 16px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
   flex-wrap: wrap;
 }
 
@@ -812,20 +793,20 @@ async function clearCache(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--q-space-2);
   color: var(--q-err-ink);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   flex-wrap: wrap;
 }
 
 .ai-settings__privacy {
-  padding: 12px 20px;
+  padding: var(--q-settings-block) var(--q-settings-inset);
   border-top: 1px solid var(--q-border-soft);
   border-bottom: 1px solid var(--q-border-soft);
   background: var(--q-panel);
   color: var(--q-mut);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   line-height: 1.55;
 }
 
@@ -834,7 +815,7 @@ async function clearCache(): Promise<void> {
 }
 
 .ai-settings__privacy p + p {
-  margin-top: 4px;
+  margin-top: var(--q-space-1);
 }
 
 .ai-settings__privacy strong {
@@ -849,9 +830,18 @@ async function clearCache(): Promise<void> {
 }
 
 @media (max-width: 520px) {
-  .ai-settings__notice {
-    margin-right: 16px;
-    margin-left: 16px;
+  .ai-settings :deep(.ai-settings__source-row) {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .ai-settings__source-row :deep(.q-settings-row__control) {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .ai-settings__segments {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
   }
 
   .ai-settings__value {
@@ -875,12 +865,11 @@ async function clearCache(): Promise<void> {
 
   .ai-settings__editor-actions,
   .ai-settings__confirm {
-    align-items: stretch;
-    flex-direction: column;
+    gap: var(--q-space-2);
   }
 
   .ai-settings__saved {
-    margin-right: 0;
+    flex-basis: 100%;
   }
 }
 </style>

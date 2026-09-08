@@ -9,6 +9,7 @@ export type ShellCommandDispatcher = (
 
 export interface ApplicationMenuOptions {
   appName: string;
+  locale?: 'de' | 'en';
   dispatch: ShellCommandDispatcher;
   /** Opens or focuses the singleton practice workspace. */
   openPracticeWindow?: () => void;
@@ -37,6 +38,44 @@ export const SHELL_COMMAND_LABELS = {
   'go-back': 'Zurück',
   'go-forward': 'Vorwärts',
 } satisfies Record<ShellCommand, string>;
+
+const ENGLISH_LABELS: Record<string, string> = {
+  Startseite: 'Home', 'Üben': 'Practice', Aufgaben: 'Questions', Verlauf: 'History',
+  Fortschritt: 'Progress', 'Einstellungen…': 'Settings…', 'Update-Center…': 'Updates…',
+  'Zurück': 'Back', 'Vorwärts': 'Forward', 'Update-Center': 'Updates',
+  Datei: 'File', Bearbeiten: 'Edit', Navigation: 'Navigate', Darstellung: 'View',
+  Fenster: 'Window', Hilfe: 'Help', 'Üben in eigenem Fenster': 'Practice in a new window',
+  Knotendiagnose: 'Local node', 'Diagnoseprotokoll anzeigen': 'Show diagnostic log',
+};
+
+const ROLE_LABELS: Record<string, readonly [string, string]> = {
+  undo: ['Widerrufen', 'Undo'], redo: ['Wiederholen', 'Redo'], cut: ['Ausschneiden', 'Cut'],
+  copy: ['Kopieren', 'Copy'], paste: ['Einfügen', 'Paste'], delete: ['Löschen', 'Delete'],
+  pasteAndMatchStyle: ['Stilgerecht einsetzen', 'Paste and match style'],
+  selectAll: ['Alles auswählen', 'Select all'], services: ['Dienste', 'Services'],
+  hideOthers: ['Andere ausblenden', 'Hide others'], unhide: ['Alle einblenden', 'Show all'],
+  close: ['Fenster schließen', 'Close window'], minimize: ['Minimieren', 'Minimize'],
+  zoom: ['Zoomen', 'Zoom'], front: ['Alle nach vorne bringen', 'Bring all to front'],
+  resetZoom: ['Originalgröße', 'Actual size'], zoomIn: ['Vergrößern', 'Zoom in'],
+  zoomOut: ['Verkleinern', 'Zoom out'], togglefullscreen: ['Vollbild', 'Toggle full screen'],
+};
+
+function localizeMenu(items: MenuItemConstructorOptions[], options: ApplicationMenuOptions): MenuItemConstructorOptions[] {
+  const english = options.locale === 'en';
+  return items.map((item) => {
+    let label = item.label;
+    if (english && label) label = ENGLISH_LABELS[label] ?? label;
+    if (item.role === 'about') label = `${english ? 'About' : 'Über'} ${options.appName}`;
+    else if (item.role === 'quit') label = english ? `Quit ${options.appName}` : `${options.appName} beenden`;
+    else if (item.role === 'hide') label = english ? `Hide ${options.appName}` : `${options.appName} ausblenden`;
+    else if (!label && item.role && ROLE_LABELS[item.role]) label = ROLE_LABELS[item.role]![english ? 1 : 0];
+    return {
+      ...item,
+      ...(label ? { label } : {}),
+      ...(Array.isArray(item.submenu) ? { submenu: localizeMenu(item.submenu, options) } : {}),
+    };
+  });
+}
 
 function acceleratorFor(command: ShellCommand, platform: NodeJS.Platform): string | undefined {
   switch (command) {
@@ -233,7 +272,7 @@ export function buildApplicationMenuTemplate(
   options: ApplicationMenuOptions,
 ): MenuItemConstructorOptions[] {
   const platform = options.platform ?? process.platform;
-  return [
+  return localizeMenu([
     ...(platform === 'darwin' ? [appMenu(options, platform)] : []),
     fileMenu(options, platform),
     editMenu(),
@@ -241,7 +280,7 @@ export function buildApplicationMenuTemplate(
     viewMenu(),
     windowMenu(options, platform),
     helpMenu(options),
-  ];
+  ], options);
 }
 
 export function installApplicationMenu(options: ApplicationMenuOptions): Menu {

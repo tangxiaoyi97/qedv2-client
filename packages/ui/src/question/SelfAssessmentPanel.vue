@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Self-assessment (prototype 2e, lower half) — used after submitting `open`
  * parts and for `expression` parts the CAS could not decide.
@@ -9,13 +11,15 @@
 import { computed } from 'vue';
 import type { RichText, Scoring, SelfAssessment } from '@qed2/core-logic';
 import {
-  formatScore,
   sameScore,
   selfAssessmentOverallForScore,
   type SelfAssessmentScoreOption,
 } from '../practice/self-assessment.js';
 import RichTextView from '../shared/RichTextView.vue';
 import { onRadioGroupKeydown } from '../shared/radio-group.js';
+import { formatUiScore as formatScore } from '../shared/format-score.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   scoring?: Scoring | null;
@@ -114,11 +118,11 @@ function scoreTabIndex(index: number): 0 | -1 {
 <template>
   <div class="q-selfassess">
     <div class="q-selfassess__head">
-      <span class="q-selfassess__title">Selbstbewertung</span>
+      <span class="q-selfassess__title">{{ t('Selbstbewertung') }}</span>
     </div>
 
     <div v-if="rubric && rubric.length > 0" class="q-selfassess__rubric">
-      <div class="q-selfassess__rubric-title">Bewertungsraster</div>
+      <div class="q-selfassess__rubric-title">{{ t('Bewertungsraster') }}</div>
       <RichTextView :nodes="rubric" />
     </div>
 
@@ -131,7 +135,7 @@ function scoreTabIndex(index: number): 0 | -1 {
         :disabled="disabled"
         @click="selectNoCriteria"
       >
-        Kein Kriterium <span>0&nbsp;P</span>
+        {{ t('Kein Kriterium') }} <span>{{ t('0 P') }}</span>
       </button>
       <button
         v-for="(criterion, i) in criteria"
@@ -151,7 +155,7 @@ function scoreTabIndex(index: number): 0 | -1 {
     </div>
 
     <div v-else class="q-selfassess__overall">
-      <div class="q-selfassess__segments" role="radiogroup" aria-label="Selbstbewertung" @keydown="onRadioGroupKeydown">
+      <div class="q-selfassess__segments" role="radiogroup" :aria-label="t('Selbstbewertung')" @keydown="onRadioGroupKeydown">
         <button
           v-for="(option, index) in scoreOptions"
           :key="option.points"
@@ -167,13 +171,13 @@ function scoreTabIndex(index: number): 0 | -1 {
           :tabindex="scoreTabIndex(index)"
           @click="setPoints(option.points)"
         >
-          {{ option.label }}
+          {{ formatScore(option.points) }}
         </button>
       </div>
     </div>
 
     <div class="q-selfassess__total">
-      <span>Deine Punkte</span>
+      <span>{{ t('Deine Punkte') }}</span>
       <b>{{ formatScore(points) }} / {{ formatScore(maxPoints) }}</b>
     </div>
   </div>

@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CoreRuntimePort, QuestionSummary, ShellPort } from '@qed2/core-logic';
+import { setUiLocale } from '@qed2/ui';
 import BrowseView from '../src/routes/BrowseView.vue';
 import { ports } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
@@ -124,6 +125,7 @@ describe('BrowseView catalogue loading', () => {
   });
 
   afterEach(() => {
+    setUiLocale('de');
     ports.coreRuntime = originalCoreRuntime;
     ports.shell = originalShell;
     vi.unstubAllGlobals();
@@ -210,11 +212,11 @@ describe('BrowseView catalogue loading', () => {
       button.textContent?.includes('Lokal'),
     );
     const remote = [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((button) =>
-      button.textContent?.includes('Remote-Core'),
+      button.textContent?.includes('Remote'),
     );
     expect(local).toBeDefined();
     expect(local?.textContent?.trim()).toBe('Lokal');
-    expect(remote?.textContent?.trim()).toBe('Remote-Core');
+    expect(remote?.textContent?.trim()).toBe('Remote');
     expect(host.textContent).not.toContain('Auf diesem Gerät');
     expect(host.textContent).not.toContain('Über das Netzwerk');
     expect(host.textContent).not.toContain('Ein Quellenwechsel löscht keine Antworten oder Speicherstände');
@@ -240,6 +242,9 @@ describe('BrowseView catalogue loading', () => {
     };
     await nextTick();
     expect(host.querySelector('.browse__source-status')?.textContent).toContain('Remote-Ersatz');
+    const beforeRetry = selectSource.mock.calls.length;
+    local?.click();
+    await vi.waitFor(() => expect(selectSource.mock.calls.length).toBeGreaterThan(beforeRetry));
 
     app.online = false;
     app.coreRuntimeStatus = {
@@ -254,7 +259,7 @@ describe('BrowseView catalogue loading', () => {
     unmount();
   });
 
-  it('does not navigate until the prepared session has finished its asynchronous owner capture', async () => {
+  it.each([false, true])('only navigates after preparation while Browse is still mounted (left early: %s)', async (leftEarly) => {
     const { release } = stubPagedCore();
     const { host, router, unmount } = await mountBrowse();
     release();
@@ -265,9 +270,14 @@ describe('BrowseView catalogue loading', () => {
       releaseStart = resolve;
     });
     const practice = usePracticeStore();
-    const startPrepared = vi.spyOn(practice, 'startPrepared').mockImplementation(async () => gate);
+    const preparedId = '11111111-1111-4111-8111-111111111111';
+    const startPrepared = vi.spyOn(practice, 'startPrepared').mockImplementation(async () => {
+      await gate;
+      return preparedId;
+    });
+    const navigate = vi.spyOn(router, 'push');
     const button = [...host.querySelectorAll<HTMLButtonElement>('button')]
-      .find((candidate) => candidate.textContent?.includes('Auswahl üben'));
+      .find((candidate) => candidate.textContent?.includes('Üben →'));
     expect(button).toBeDefined();
 
     button!.click();
@@ -276,11 +286,47 @@ describe('BrowseView catalogue loading', () => {
       BANK.map((question) => question.id),
       expect.stringMatching(/^(?:local|remote)$/u),
       BANK_COMMIT,
+      expect.any(AbortSignal),
     );
     expect(router.currentRoute.value.path).toBe('/questions');
+    expect(button!.disabled).toBe(true);
+    expect(button!.getAttribute('aria-busy')).toBe('true');
+    button!.click();
+    expect(startPrepared).toHaveBeenCalledOnce();
 
+    if (leftEarly) unmount();
     releaseStart();
+    if (leftEarly) {
+      await startPrepared.mock.results[0]!.value;
+      await settle();
+      expect(navigate).not.toHaveBeenCalled();
+      return;
+    }
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
+    expect(router.currentRoute.value.query.prepared).toBe(preparedId);
+    unmount();
+  });
+
+  it('switches the interface live while preserving original question titles', async () => {
+    const { release } = stubPagedCore();
+    const { host, unmount } = await mountBrowse();
+    release();
+    await vi.waitFor(() => expect(host.querySelectorAll('.browse__row').length).toBeGreaterThan(0));
+    setUiLocale('en');
+    await nextTick();
+    expect(host.querySelector('h1')?.textContent).toBe('Questions');
+    expect(host.querySelector<HTMLInputElement>('.browse__search input')?.placeholder).toBe('Search questions');
+    await vi.waitFor(() => expect(host.querySelector('.browse__meta')?.textContent).toContain('450 questions'));
+    const row = host.querySelector<HTMLButtonElement>('.browse__row')!;
+    expect(row.textContent).toContain('Aufgabe 1');
+    row.click();
+    await nextTick();
+    expect(row.getAttribute('aria-pressed')).toBe('true');
+    expect(host.querySelector('.browse__head')?.textContent).toContain('Practice (1)');
+    setUiLocale('de');
+    await nextTick();
+    expect(host.querySelector('h1')?.textContent).toBe('Aufgaben');
+    expect(row.getAttribute('aria-pressed')).toBe('true');
     unmount();
   });
 });

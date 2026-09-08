@@ -7,6 +7,9 @@
 import { computed } from 'vue';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
+import { useI18n } from '../i18n.js';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   /** KaTeX source (the `v` of a {t:"math"} node). */
@@ -34,7 +37,7 @@ const rendered = computed(() => {
 
 <template>
   <span v-if="rendered.ok" class="q-math" :class="{ 'q-math--display': display }" v-html="rendered.html" />
-  <code v-else class="q-math-fallback" :title="'KaTeX konnte diese Formel nicht rendern'">{{ src }}</code>
+  <code v-else class="q-math-fallback" :title="t('Formel konnte nicht angezeigt werden')">{{ src }}</code>
 </template>
 
 <style scoped>

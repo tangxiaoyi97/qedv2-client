@@ -110,7 +110,7 @@ describe('programme summary', () => {
       record('p2', 'incorrect', 0),
     ]);
     expect(host.querySelector('.practice__result-meter-fill')?.getAttribute('style')).toContain(
-      'width: 50%',
+      'transform: scaleX(0.5)',
     );
     unmount();
   });

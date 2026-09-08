@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
-import { defineComponent } from 'vue';
+import { defineComponent, nextTick } from 'vue';
 import type { Grading, SolutionEntry } from '@qed2/core-logic';
 import ActivityHeatmap from '../src/review/ActivityHeatmap.vue';
 import GradingDistribution from '../src/review/GradingDistribution.vue';
@@ -56,6 +56,35 @@ describe('ActivityHeatmap', () => {
     });
     const months = w.findAll('.q-heat__month').map((t) => t.text());
     expect(months).toEqual(['Mai', 'Juni']);
+  });
+
+  it('opens the latest mobile range after coarse layout and preserves later user scrolling', async () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    const width = vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+      return Number(this.querySelector('svg')?.getAttribute('width') ?? 0);
+    });
+    const viewport = vi.spyOn(Element.prototype, 'clientWidth', 'get').mockReturnValue(320);
+    const wrapper = mount(ActivityHeatmap, { props: { endDate: '2026-09-08', weeks: 52, data: {} } });
+    try {
+      await nextTick();
+      const scroll = wrapper.get<HTMLDivElement>('.q-heat__scroll').element;
+      const svgWidth = Number(wrapper.get('.q-heat__svg').attributes('width'));
+      expect(svgWidth).toBe(995);
+      expect(scroll.scrollLeft).toBe(svgWidth - 320);
+
+      scroll.scrollLeft = 80;
+      await wrapper.setProps({ data: { '2026-09-08': 1 } });
+      expect(scroll.scrollLeft).toBe(80);
+    } finally {
+      wrapper.unmount();
+      width.mockRestore();
+      viewport.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('renders the legend row Weniger … Mehr with 5 swatches', () => {

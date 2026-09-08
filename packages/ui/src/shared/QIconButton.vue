@@ -53,13 +53,13 @@ defineExpose({ focus });
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--q-radius-control, 10px);
   background: transparent;
   color: var(--q-mut-2);
   line-height: 0;
   cursor: pointer;
   transition:
-    background var(--q-transition-fast),
+    background-color var(--q-transition-fast),
     color var(--q-transition-fast),
     opacity var(--q-transition-fast);
 }

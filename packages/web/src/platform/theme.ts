@@ -116,6 +116,18 @@ export const THEME_STORAGE_KEYS = {
 } as const;
 
 const STYLE_ID = 'qed2-external-theme';
+let themeTransitionTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function suppressThemeTransitions(): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.themeSwitching = '';
+  if (themeTransitionTimer !== undefined) clearTimeout(themeTransitionTimer);
+  // Let the new palette paint before transitions are enabled again.
+  themeTransitionTimer = setTimeout(() => {
+    delete document.documentElement.dataset.themeSwitching;
+    themeTransitionTimer = undefined;
+  }, 80);
+}
 
 export function isBuiltinThemeId(v: string | null | undefined): v is BuiltinThemeId {
   return v != null && BUILTIN_THEME_EXTENSIONS.some((theme) => theme.id === v);
@@ -151,6 +163,7 @@ export function currentBuiltinThemeId(): BuiltinThemeId {
 
 /** Apply + persist a built-in CSS extension. Clears any external theme. */
 export function setBuiltinThemeExtension(id: BuiltinThemeId): void {
+  suppressThemeTransitions();
   clearExternalTheme();
   applyBuiltinThemeToDom(id);
   syncThemeColorFromCss();
@@ -173,6 +186,7 @@ export function setBuiltinThemeExtension(id: BuiltinThemeId): void {
  * css completely replaces the built-in theme" path.
  */
 export function applyExternalTheme(cssText: string): void {
+  suppressThemeTransitions();
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
   if (!el) {
     el = document.createElement('style');

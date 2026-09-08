@@ -36,8 +36,7 @@ describe('NumericControl', () => {
     // unit chip only where declared
     expect(wrapper.find('.q-numeric__unit').exists()).toBe(true);
     expect(wrapper.find('.q-numeric__unit').text()).toBe('cm');
-    // hint line
-    expect(wrapper.get('.q-numeric__hint').text()).toBe('Komma oder Punkt');
+    expect(wrapper.find('.q-numeric__hint').exists()).toBe(false);
   });
 
   it('renders a single blank without label, full-width', () => {
@@ -82,8 +81,8 @@ describe('NumericControl', () => {
     expect(inputs[0]!.classes()).toContain('q-numeric__input--ok');
     expect(inputs[1]!.classes()).toContain('q-numeric__input--err');
     // read-only
-    expect(inputs[0]!.attributes('disabled')).toBeDefined();
-    expect(inputs[1]!.attributes('disabled')).toBeDefined();
+    expect(inputs[0]!.attributes('readonly')).toBeDefined();
+    expect(inputs[1]!.attributes('readonly')).toBeDefined();
     // icon + text, never color-only
     expect(wrapper.text()).toContain('Richtig');
     expect(wrapper.text()).toContain('Falsch');
@@ -92,5 +91,20 @@ describe('NumericControl', () => {
     expect(wrapper.find('.q-numeric__expected').text()).toContain('Richtig: 4,5 cm (±0,1)');
     // hint hidden in review
     expect(wrapper.find('.q-numeric__hint').exists()).toBe(false);
+  });
+
+  it('moves Enter to the next blank, retaining the final Enter for submission', async () => {
+    const wrapper = mount(NumericControl, { attachTo: document.body, props: { answer: multiAnswer, modelValue: { x1: '-2', x2: '4,5' } } });
+    const inputs = wrapper.findAll<HTMLInputElement>('input');
+    expect(inputs[0]!.attributes('enterkeyhint')).toBe('next');
+    inputs[0]!.element.focus();
+    const next = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    inputs[0]!.element.dispatchEvent(next);
+    expect(document.activeElement).toBe(inputs[1]!.element);
+    expect(next.defaultPrevented).toBe(true);
+    const last = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    inputs[1]!.element.dispatchEvent(last);
+    expect(last.defaultPrevented).toBe(false);
+    wrapper.unmount();
   });
 });

@@ -1,14 +1,12 @@
 <script setup lang="ts">
-/**
- * interval control — bounds + open/closed toggles (prototype 2c).
- * Empty bound (or ∞ notation) = unbounded. Review compares against the
- * canonical interval notation.
- */
 import { computed } from 'vue';
-import type { GradeResult, IntervalAnswer } from '@qed2/core-logic';
-import type { IntervalSubmission } from '@qed2/core-logic';
+import type { GradeResult, IntervalAnswer, IntervalSubmission } from '@qed2/core-logic';
 import StateIcon from '../shared/StateIcon.vue';
+import { useI18n } from '../i18n.js';
 import { formatIntervalSubmissionPreview } from './submission-preview.js';
+import { onMathInputKeydown } from './math-input.js';
+
+const { t, formatNumber } = useI18n();
 
 const props = defineProps<{
   answer: IntervalAnswer;
@@ -16,264 +14,107 @@ const props = defineProps<{
   result?: GradeResult | null;
   showPreview?: boolean;
 }>();
-
 const emit = defineEmits<{ 'update:modelValue': [value: IntervalSubmission] }>();
-
 const review = computed(() => props.result != null);
 
-function patch(p: Partial<IntervalSubmission>): void {
-  if (review.value) return;
-  emit('update:modelValue', { ...props.modelValue, ...p });
+function patch(value: Partial<IntervalSubmission>): void {
+  if (!review.value) emit('update:modelValue', { ...props.modelValue, ...value });
 }
-
-function fmtNum(n: number): string {
-  return n.toLocaleString('de-AT', { maximumFractionDigits: 6 });
+function onInput(bound: 'lower' | 'upper', event: Event): void {
+  if ((event as InputEvent).isComposing) return;
+  patch({ [bound]: (event.target as HTMLInputElement).value });
 }
-
 const preview = computed(() => formatIntervalSubmissionPreview(props.modelValue));
-
-function isUnbounded(raw: string): boolean {
-  const t = raw.trim().toLowerCase();
-  return t === '' || t === 'inf' || t === '-inf' || t === 'oo' || t === '-oo' || t === '∞' || t === '-∞';
-}
-
 const correctNotation = computed(() => {
-  const a = props.answer;
-  const lb = a.lower !== null && a.lowerClosed ? '[' : '(';
-  const ub = a.upper !== null && a.upperClosed ? ']' : ')';
-  const lo = a.lower === null ? '−∞' : fmtNum(a.lower);
-  const hi = a.upper === null ? '∞' : fmtNum(a.upper);
-  return `${lb} ${lo} ; ${hi} ${ub}`;
+  const answer = props.answer;
+  const lower = answer.lower === null ? '−∞' : formatNumber(answer.lower, { maximumFractionDigits: 6 });
+  const upper = answer.upper === null ? '∞' : formatNumber(answer.upper, { maximumFractionDigits: 6 });
+  return `${answer.lower !== null && answer.lowerClosed ? '[' : '('} ${lower} ; ${upper} ${answer.upper !== null && answer.upperClosed ? ']' : ')'}`;
 });
 </script>
 
 <template>
-  <div class="q-interval">
+  <div class="q-interval" data-answer-fields>
     <div class="q-interval__row" :class="{ 'q-interval__row--review': review }">
-      <div class="q-interval__toggle-col">
-        <div class="q-interval__toggle" role="group" aria-label="Untere Grenze offen oder geschlossen">
-          <button
-            type="button"
-            class="q-interval__bracket"
-            :class="{ 'q-interval__bracket--on': !modelValue.lowerClosed }"
-            :aria-pressed="!modelValue.lowerClosed"
-            aria-label="Untere Grenze offen"
-            :disabled="review"
-            @click="patch({ lowerClosed: false })"
-          >
-            (
-          </button>
-          <button
-            type="button"
-            class="q-interval__bracket"
-            :class="{ 'q-interval__bracket--on': modelValue.lowerClosed }"
-            :aria-pressed="modelValue.lowerClosed"
-            aria-label="Untere Grenze geschlossen"
-            :disabled="review"
-            @click="patch({ lowerClosed: true })"
-          >
-            [
-          </button>
-        </div>
-        <span class="q-interval__toggle-label">{{ modelValue.lowerClosed ? 'geschl.' : 'offen' }}</span>
-      </div>
-
-      <input
-        class="q-interval__input"
-        :value="modelValue.lower"
-        inputmode="text"
-        enterkeyhint="done"
-        placeholder="−∞"
-        aria-label="Untere Grenze (leer = unbeschränkt)"
-        :readonly="review"
-        @input="patch({ lower: ($event.target as HTMLInputElement).value })"
-      />
-      <span class="q-interval__sep">;</span>
-      <input
-        class="q-interval__input"
-        :value="modelValue.upper"
-        inputmode="text"
-        enterkeyhint="done"
-        placeholder="∞"
-        aria-label="Obere Grenze (leer = unbeschränkt)"
-        :readonly="review"
-        @input="patch({ upper: ($event.target as HTMLInputElement).value })"
-      />
-
-      <div class="q-interval__toggle-col">
-        <div class="q-interval__toggle" role="group" aria-label="Obere Grenze offen oder geschlossen">
-          <button
-            type="button"
-            class="q-interval__bracket"
-            :class="{ 'q-interval__bracket--on': modelValue.upperClosed }"
-            :aria-pressed="modelValue.upperClosed"
-            aria-label="Obere Grenze geschlossen"
-            :disabled="review"
-            @click="patch({ upperClosed: true })"
-          >
-            ]
-          </button>
-          <button
-            type="button"
-            class="q-interval__bracket"
-            :class="{ 'q-interval__bracket--on': !modelValue.upperClosed }"
-            :aria-pressed="!modelValue.upperClosed"
-            aria-label="Obere Grenze offen"
-            :disabled="review"
-            @click="patch({ upperClosed: false })"
-          >
-            )
-          </button>
-        </div>
-        <span class="q-interval__toggle-label">{{ modelValue.upperClosed ? 'geschl.' : 'offen' }}</span>
-      </div>
-    </div>
-
-    <div v-if="!review && showPreview !== false" class="q-interval__preview">
-      Ergebnis: <b class="q-interval__preview-val">{{ preview }}</b>
-      <span class="q-interval__hint">leer/∞: unbeschränkt · , oder .</span>
-    </div>
-
-    <div v-else-if="review" class="q-interval__review">
-      <div
-        class="q-interval__verdict q-reveal"
-        :class="result!.verdict === 'correct' ? 'q-interval__verdict--ok' : 'q-interval__verdict--err'"
+      <select
+        class="q-interval__bracket q-select"
+        :value="String(modelValue.lowerClosed)"
+        :disabled="review"
+        :aria-label="t('Untere Grenze offen oder geschlossen')"
+        @change="patch({ lowerClosed: ($event.target as HTMLSelectElement).value === 'true' })"
       >
+        <option value="false">(</option>
+        <option value="true">[</option>
+      </select>
+      <input
+        class="q-interval__input q-input"
+        :value="modelValue.lower"
+        type="text"
+        inputmode="text"
+        enterkeyhint="next"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        placeholder="−∞"
+        :aria-label="t('Untere Grenze (leer = unbeschränkt)')"
+        :readonly="review"
+        @input="onInput('lower', $event)"
+        @compositionend="onInput('lower', $event)"
+        @keydown="onMathInputKeydown"
+      />
+      <span class="q-interval__sep" aria-hidden="true">;</span>
+      <input
+        class="q-interval__input q-input"
+        :value="modelValue.upper"
+        type="text"
+        inputmode="text"
+        enterkeyhint="done"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        placeholder="∞"
+        :aria-label="t('Obere Grenze (leer = unbeschränkt)')"
+        :readonly="review"
+        @input="onInput('upper', $event)"
+        @compositionend="onInput('upper', $event)"
+        @keydown="onMathInputKeydown"
+      />
+      <select
+        class="q-interval__bracket q-select"
+        :value="String(modelValue.upperClosed)"
+        :disabled="review"
+        :aria-label="t('Obere Grenze offen oder geschlossen')"
+        @change="patch({ upperClosed: ($event.target as HTMLSelectElement).value === 'true' })"
+      >
+        <option value="true">]</option>
+        <option value="false">)</option>
+      </select>
+    </div>
+    <div v-if="!review && showPreview !== false" class="q-interval__preview" :aria-label="t('Vorschau')">{{ preview }}</div>
+    <div v-else-if="review" class="q-interval__review">
+      <div class="q-interval__verdict q-reveal" :class="result!.verdict === 'correct' ? 'q-interval__verdict--ok' : 'q-interval__verdict--err'">
         <StateIcon :state="result!.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
-        <span>Deine Antwort: <b>{{ preview }}</b></span>
+        <span>{{ t('Deine Antwort') }}: <b>{{ preview }}</b></span>
       </div>
       <div v-if="result!.verdict !== 'correct'" class="q-interval__correct">
         <StateIcon state="missed" :size="20" />
-        <span>Richtig: <b>{{ correctNotation }}</b></span>
+        <span>{{ t('Richtig') }}: <b>{{ correctNotation }}</b></span>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.q-interval__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  justify-content: center;
-  padding: 8px 0;
-  flex-wrap: wrap;
-}
-.q-interval__toggle-col {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-}
-.q-interval__toggle {
-  display: flex;
-  height: 42px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-.q-interval__bracket {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 35px;
-  padding: 0;
-  font-size: 15px;
-  border: none;
-  background: var(--q-card);
-  color: var(--q-disabled);
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
-}
-.q-interval__bracket--on {
-  background: var(--q-accent-strong);
-  color: var(--q-on-accent);
-  font-weight: 700;
-}
-.q-interval__bracket:focus-visible {
-  outline: 2px solid var(--q-accent);
-  outline-offset: -2px;
-}
-.q-interval__toggle-label {
-  font-size: 10px;
-  color: var(--q-faint);
-}
-.q-interval__input {
-  width: 76px;
-  height: 42px;
-  box-sizing: border-box;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  padding: 10px;
-  text-align: center;
-  font-size: 16px; /* ≥16px: no iOS focus-zoom */
-  background: var(--q-card);
-  color: var(--q-ink);
-}
-.q-interval__input:focus {
-  outline: none;
-  border: 2px solid var(--q-accent);
-  padding: 9px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
-}
-.q-interval__sep {
-  display: inline-flex;
-  align-items: center;
-  height: 42px;
-  font-size: 16px;
-  color: var(--q-mut-2);
-}
-.q-interval__preview {
-  margin-top: 12px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--q-mut-2);
-}
-.q-interval__preview-val {
-  color: var(--q-ink);
-  font-size: 15px;
-}
-.q-interval__hint {
-  display: block;
-  margin-top: 6px;
-  font: 500 11px ui-monospace, Menlo, monospace;
-  color: var(--q-hint);
-}
-.q-interval__review {
-  margin-top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.q-interval__verdict,
-.q-interval__correct {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 13px;
-  border-radius: 10px;
-  font-size: 13.5px;
-}
-.q-interval__verdict--ok {
-  border: 1.5px solid var(--q-ok);
-  background: var(--q-ok-bg);
-}
-.q-interval__verdict--err {
-  border: 1.5px solid var(--q-err);
-  background: var(--q-err-bg);
-}
-.q-interval__correct {
-  border: 1.5px dashed var(--q-ok);
-}
-@media (pointer: coarse) {
-  /* 44px touch targets for the bracket toggles */
-  .q-interval__toggle {
-    height: 48px;
-  }
-  .q-interval__bracket {
-    width: 44px;
-  }
-}
+.q-interval__row { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto minmax(0, 1fr) 48px; align-items: center; gap: 6px; }
+.q-interval__input { width: 100%; text-align: center; }
+.q-interval__bracket { width: 48px; padding-inline: 9px 19px; background-position: right 4px center; cursor: pointer; }
+.q-interval__sep { color: var(--q-mut); }
+.q-interval__preview { margin-top: 8px; text-align: center; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--q-mut); }
+.q-interval__review { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.q-interval__verdict, .q-interval__correct { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--q-radius-control, 10px); font-size: 14px; }
+.q-interval__verdict--ok { border: 1px solid var(--q-ok); background: var(--q-ok-bg); }
+.q-interval__verdict--err { border: 1px solid var(--q-err); background: var(--q-err-bg); }
+.q-interval__correct { border: 1px dashed var(--q-ok); }
 </style>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t, formatDate } = useI18n();
+
 /**
  * Startseite „Heute" (prototype 3a) — the one-glance launchpad. Cards are
  * navigable teasers of their detail pages (Bewertung/Status → Fortschritt,
@@ -8,7 +11,7 @@
 import { computed, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { groupMasteryByCategory, type GradingOrUnseen } from '@qed2/core-logic';
-import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar } from '@qed2/ui';
+import { ActivityHeatmap, GradingDistribution, GradingDot, MasteryBar, QButton } from '@qed2/ui';
 import { ChevronRight } from 'lucide-vue-next';
 import { useActivityStore } from '../stores/activity.js';
 import { useAuthStore } from '../stores/auth.js';
@@ -34,9 +37,7 @@ const greeting = computed(() => {
   return h < 11 ? 'Guten Morgen' : h < 18 ? 'Guten Tag' : 'Guten Abend';
 });
 const dateLine = computed(() =>
-  new Intl.DateTimeFormat('de-AT', { weekday: 'long', day: 'numeric', month: 'long' }).format(
-    now.value,
-  ),
+  formatDate(now.value, { weekday: 'long', day: 'numeric', month: 'long' }),
 );
 
 const categoryMastery = computed(() =>
@@ -50,10 +51,10 @@ const weakest = computed(() =>
 const heroText = computed(() => {
   const due = progress.dueCount;
   const next = weakest.value.length > 0
-    ? `Neue Aufgaben · ${weakest.value.join(' · ')}`
-    : 'Neue Aufgaben zum Einstieg';
+    ? t('Neue Aufgaben · {areas}', { areas: weakest.value.join(' · ') })
+    : t('Neue Aufgaben zum Einstieg');
   if (due === 0) return next;
-  return `${due} fällig · ${next}`;
+  return t('{count} fällig · {next}', { count: due, next });
 });
 
 /** Relative day for the „Zuletzt" rows — text, never color/icon-only. */
@@ -65,9 +66,9 @@ function relativeDay(iso: string): string {
       new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime()) /
       86_400_000,
   );
-  if (days <= 0) return 'heute';
-  if (days === 1) return 'gestern';
-  return `vor ${days} Tagen`;
+  if (days <= 0) return t('heute');
+  if (days === 1) return t('gestern');
+  return t('vor {days} Tagen', { days });
 }
 
 const recent = computed(() =>
@@ -86,8 +87,6 @@ const recent = computed(() =>
 const activity = computed(() => activityStore.activity);
 void activityStore.ensure(84, new Date());
 
-const hasProgress = computed(() => progress.practicedParts > 0);
-
 function go(path: string): void {
   void router.push(path);
 }
@@ -105,25 +104,25 @@ function openCategoryFilter(code: string): void {
   <div class="home q-page">
     <div class="home__header">
       <div>
-        <h1 class="home__greeting">{{ greeting }} 👋</h1>
+        <h1 class="home__greeting">{{ t(greeting) }} 👋</h1>
         <div class="home__date">{{ dateLine }}</div>
       </div>
     </div>
 
     <div class="home__hero">
       <div class="home__hero-body">
-        <div class="home__hero-label">Empfohlen</div>
-        <div class="home__hero-text">{{ heroText }}</div>
+        <div class="home__hero-label">{{ t('Empfohlen') }}</div>
+        <div class="home__hero-text">{{ t(heroText) }}</div>
       </div>
-      <button type="button" class="home__hero-cta" @click="go('/practice')">Starten →</button>
+      <QButton class="home__hero-cta" @click="go('/practice')">{{ t('Starten →') }}</QButton>
     </div>
 
     <div class="home__cards">
       <div class="home__card">
-        <div class="home__card-label">Heute fällig</div>
-        <div class="home__big"><b>{{ progress.dueCount }}</b> <span>Aufgaben</span></div>
+        <div class="home__card-label">{{ t('Heute fällig') }}</div>
+        <div class="home__big"><b>{{ progress.dueCount }}</b> <span>{{ t('Aufgaben') }}</span></div>
         <div class="home__card-rows">
-          <div class="home__card-row"><span>Bearbeitet gesamt</span><b>{{ progress.practicedParts }}</b></div>
+          <div class="home__card-row"><span>{{ t('Bearbeitet gesamt') }}</span><b>{{ progress.practicedParts }}</b></div>
         </div>
       </div>
 
@@ -132,10 +131,10 @@ function openCategoryFilter(code: string): void {
         role="link"
         tabindex="0"
         @click="go('/progress')"
-        @keydown.enter="go('/progress')"
+        @keydown.enter.self="go('/progress')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Bewertung</div>
+          <div class="home__card-label">{{ t('Bewertung') }}</div>
           <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div v-if="categoryMastery.length > 0" class="home__mastery">
@@ -144,13 +143,13 @@ function openCategoryFilter(code: string): void {
             :key="c.code"
             type="button"
             class="home__mastery-row"
-            :title="`Aufgaben mit ${c.code} anzeigen`"
+            :title="t('Aufgaben mit {code} anzeigen', { code: c.code })"
             @click.stop="openCategoryFilter(c.code)"
           >
             <MasteryBar :code="c.code" :mastery="c.mastery" />
           </button>
         </div>
-        <div v-else class="home__empty-note">Noch keine Daten.</div>
+        <div v-else class="home__empty-note">{{ t('Noch keine Daten.') }}</div>
       </div>
 
       <div
@@ -158,20 +157,20 @@ function openCategoryFilter(code: string): void {
         role="link"
         tabindex="0"
         @click="go('/history')"
-        @keydown.enter="go('/history')"
+        @keydown.enter.self="go('/history')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Zuletzt</div>
+          <div class="home__card-label">{{ t('Zuletzt') }}</div>
           <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div v-if="recent.length > 0" class="home__recent">
           <div v-for="r in recent" :key="r.partId" class="home__recent-row">
             <GradingDot :grading="r.grading" :size="14" />
             <span class="home__recent-id">{{ r.partId }}</span>
-            <span class="home__recent-day">{{ r.day }}</span>
+            <span class="home__recent-day">{{ t(r.day) }}</span>
           </div>
         </div>
-        <div v-else class="home__empty-note">Noch nichts geübt.</div>
+        <div v-else class="home__empty-note">{{ t('Noch nichts geübt.') }}</div>
       </div>
 
       <div
@@ -179,10 +178,10 @@ function openCategoryFilter(code: string): void {
         role="link"
         tabindex="0"
         @click="go('/history')"
-        @keydown.enter="go('/history')"
+        @keydown.enter.self="go('/history')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Aktivität</div>
+          <div class="home__card-label">{{ t('Aktivität') }}</div>
           <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
         <div
@@ -190,13 +189,13 @@ function openCategoryFilter(code: string): void {
           class="home__empty-note"
           :role="progress.attemptUploadStatus.state === 'error' ? 'alert' : 'status'"
         >
-          {{ activityStore.cloudIncompleteMessage }}
+          {{ t(activityStore.cloudIncompleteMessage) }}
         </div>
         <div v-else-if="activityStore.loading" class="home__empty-note" role="status">
-          Aktivität wird geladen …
+          {{ t('Aktivität wird geladen …') }}
         </div>
         <div v-else-if="activityStore.error" class="home__empty-note" role="alert">
-          {{ activityStore.error }}
+          {{ t(activityStore.error) }}
         </div>
         <ActivityHeatmap v-else :data="activity" :weeks="12" />
       </div>
@@ -206,23 +205,18 @@ function openCategoryFilter(code: string): void {
         role="link"
         tabindex="0"
         @click="go('/progress')"
-        @keydown.enter="go('/progress')"
+        @keydown.enter.self="go('/progress')"
       >
         <div class="home__card-head">
-          <div class="home__card-label">Bewertung nach Status</div>
+          <div class="home__card-label">{{ t('Bewertung nach Status') }}</div>
           <ChevronRight class="home__card-link" aria-hidden="true" />
         </div>
-        <GradingDistribution :counts="progress.gradingCounts" @select="openStatusFilter" />
+        <GradingDistribution :counts="progress.gradingCounts" @click.stop @select="openStatusFilter" />
       </div>
     </div>
 
-    <div v-if="!hasProgress" class="home__intro">
-      Starte ein Programm oder wähle <RouterLink to="/questions">Aufgaben</RouterLink>.
-    </div>
-
     <div v-if="!auth.isLoggedIn" class="home__guest">
-      Konto-Sync:
-      <button type="button" class="home__guest-link" @click="ui.openAuthModal()">Anmelden</button>
+      <QButton variant="ghost" @click="ui.openAuthModal()">{{ t('Anmelden') }}</QButton>
     </div>
   </div>
 </template>
@@ -244,14 +238,14 @@ function openCategoryFilter(code: string): void {
   margin: 0;
 }
 .home__date {
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut-2);
   margin-top: 2px;
 }
 .home__hero {
   background: var(--q-cta-card);
   border-radius: 14px;
-  padding: 24px 26px;
+  padding: 20px;
   display: flex;
   align-items: center;
   gap: 20px;
@@ -260,11 +254,11 @@ function openCategoryFilter(code: string): void {
 }
 .home__hero-body {
   flex: 1;
-  min-width: 220px;
+  min-width: 0;
 }
 .home__hero-label {
   color: var(--q-cta-card-label);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -272,23 +266,11 @@ function openCategoryFilter(code: string): void {
 }
 .home__hero-text {
   color: var(--q-cta-card-text);
-  font-size: 13.5px;
+  font-size: var(--q-font-ui);
   line-height: 1.5;
 }
 .home__hero-cta {
-  border: none;
-  background: var(--q-accent);
-  color: #1a1a1a;
-  font: 800 14.5px 'Public Sans', system-ui, sans-serif;
-  padding: 14px 26px;
-  border-radius: 11px;
-  cursor: pointer;
   white-space: nowrap;
-}
-@media (hover: hover) and (pointer: fine) {
-  .home__hero-cta:hover {
-    filter: brightness(1.06);
-  }
 }
 .home__cards {
   /* fixed 12-col grid — flex+min-width used to overflow into a squeezed
@@ -345,7 +327,7 @@ function openCategoryFilter(code: string): void {
   white-space: nowrap;
 }
 .home__card-label {
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -368,7 +350,7 @@ function openCategoryFilter(code: string): void {
   font-size: 30px;
 }
 .home__big span {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
 }
 .home__card-rows {
@@ -376,7 +358,7 @@ function openCategoryFilter(code: string): void {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
 }
 .home__card-row {
@@ -391,12 +373,21 @@ function openCategoryFilter(code: string): void {
 .home__mastery-row {
   display: block;
   width: 100%;
-  padding: 4px 6px;
+  min-height: var(--q-control-height);
+  padding: 8px 6px;
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
   color: inherit;
   cursor: pointer;
+}
+@media (max-width: 480px) {
+  .home__header { margin-bottom: 18px; }
+  .home__hero { padding: 16px; gap: 12px; }
+  .home__hero-text { font-size: var(--q-font-small); }
+  .home__cards { gap: 12px; }
+  .home__card { padding: 14px; }
+  .home__guest { padding: 0; background: transparent; border: none; }
 }
 @media (hover: hover) and (pointer: fine) {
   .home__mastery-row:hover {
@@ -413,7 +404,7 @@ function openCategoryFilter(code: string): void {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .home__recent-row {
   display: flex;
@@ -423,19 +414,19 @@ function openCategoryFilter(code: string): void {
 }
 .home__recent-id {
   font-family: ui-monospace, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .home__recent-day {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   white-space: nowrap;
 }
 .home__empty-note {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
 }
 .home__intro,
@@ -445,7 +436,7 @@ function openCategoryFilter(code: string): void {
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
   border-radius: 10px;
-  font-size: 12.5px;
+  font-size: var(--q-font-ui);
   color: var(--q-mut-2);
   line-height: 1.55;
 }

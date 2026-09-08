@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE } from '@qed2/core-logic';
 import HistoryView from '../src/routes/HistoryView.vue';
+import historySource from '../src/routes/HistoryView.vue?raw';
 import { historyLog, localProfileStore, storage } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
@@ -21,6 +22,24 @@ async function settle(): Promise<void> {
 }
 
 describe('HistoryView activity filter', () => {
+  it('keeps long titles shrinkable on narrow phones while preserving score and time columns', () => {
+    const css = historySource.slice(historySource.indexOf('<style scoped>'));
+    const title = css.match(/\.hist__row-title\s*\{([^}]*)\}/u)?.[1] ?? '';
+    const copyRules = [...css.matchAll(/\.hist__row-copy\s*\{([^}]*)\}/gu)].map(match => match[1]);
+    expect(title).toMatch(/flex:\s*1\s+1\s+0%/u);
+    expect(title).toMatch(/min-width:\s*0/u);
+    expect(title).toMatch(/max-width:\s*100%/u);
+    expect(title).toMatch(/overflow:\s*hidden/u);
+    expect(title).toMatch(/text-overflow:\s*ellipsis/u);
+    // A previous <=420px column override let the inline title use its full
+    // intrinsic width and paint over the score, despite a bounded outer grid.
+    expect(copyRules.every(rule => !/flex-direction:\s*column/u.test(rule ?? ''))).toBe(true);
+    for (const className of ['hist__row-points', 'hist__row-time']) {
+      const rules = [...css.matchAll(new RegExp(`\\.${className}\\s*\\{([^}]*)\\}`, 'gu'))];
+      expect(rules.every(match => !/display:\s*none|visibility:\s*hidden/u.test(match[1] ?? ''))).toBe(true);
+    }
+  });
+
   beforeEach(async () => {
     await storage.clear(STORAGE.app);
     await storage.clear(STORAGE.archive);
@@ -238,7 +257,7 @@ describe('HistoryView activity filter', () => {
 
     // Rows written by pre-provenance clients must be honest about replaying
     // against today's bank. They never receive a fabricated source/revision.
-    expect(host.textContent).toContain('Version unbekannt');
+    expect(host.querySelector('.hist__row-provenance')?.getAttribute('title')).toBe('Version unbekannt');
     expect(host.textContent).not.toContain('Wiederholung mit aktueller Bank');
     expect(host.textContent).not.toContain('Verlauf aus deinem Konto');
     const legacyRow = host.querySelector<HTMLButtonElement>('.hist__row');
@@ -404,7 +423,7 @@ describe('HistoryView activity filter', () => {
     expect(row?.textContent).not.toContain('Remote');
     expect(row?.textContent).not.toContain('Version unbekannt');
     expect(row?.querySelector('.hist__row-source')).toBeNull();
-    expect(row?.getAttribute('aria-label')).toContain(`Quelle Remote-Core, Bank ${commit.slice(0, 7)}`);
+    expect(row?.getAttribute('aria-label')).toContain(`Quelle Remote, Bank ${commit.slice(0, 7)}`);
     row?.click();
     await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/practice'));
     expect(router.currentRoute.value.query).toMatchObject({

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+const { t } = useI18n();
+
 import { computed, onMounted, ref, watch } from 'vue';
 import { ApiError, type LeaderboardDetail, type LeaderboardPeriod, type LeaderboardResponse } from '@qed2/core-logic';
 import { LeaderboardDetailDrawer, LeaderboardRow, QButton, QLoadingPanel } from '@qed2/ui';
@@ -93,6 +96,14 @@ async function selectPeriod(next: LeaderboardPeriod): Promise<void> {
   await loadList(true);
 }
 
+function onPeriodKeydown(event: KeyboardEvent): void {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const next = event.key === 'ArrowLeft' || event.key === 'Home' ? 'today' : 'week';
+  (event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]')[next === 'today' ? 0 : 1]?.focus();
+  void selectPeriod(next);
+}
+
 function friendlyProfileError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.code === 'NICKNAME_TAKEN') return 'Dieser Nickname ist bereits vergeben.';
@@ -185,60 +196,62 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="leaderboard">
+  <div class="leaderboard q-page">
     <template v-if="!auth.isLoggedIn">
       <section class="leaderboard__auth">
         <span class="leaderboard__auth-icon" aria-hidden="true"><Trophy /></span>
-        <h1>Leaderboard</h1>
-        <QButton @click="ui.openAuthModal()">Anmelden</QButton>
+        <h1 class="q-page-title">{{ t('Leaderboard') }}</h1>
+        <QButton @click="ui.openAuthModal()">{{ t('Anmelden') }}</QButton>
       </section>
     </template>
 
     <template v-else>
       <header class="leaderboard__header">
-        <h1>Leaderboard</h1>
-        <div class="leaderboard__segments" role="radiogroup" aria-label="Zeitraum">
+        <h1 class="q-page-title">{{ t('Leaderboard') }}</h1>
+        <div class="leaderboard__segments" role="radiogroup" :aria-label="t('Zeitraum')" @keydown="onPeriodKeydown">
           <button
             type="button"
             role="radio"
             :aria-checked="period === 'today'"
+            :tabindex="period === 'today' ? 0 : -1"
             :class="{ 'leaderboard__segment--active': period === 'today' }"
             @click="selectPeriod('today')"
           >
-            Heute
+            {{ t('Heute') }}
           </button>
           <button
             type="button"
             role="radio"
             :aria-checked="period === 'week'"
+            :tabindex="period === 'week' ? 0 : -1"
             :class="{ 'leaderboard__segment--active': period === 'week' }"
             @click="selectPeriod('week')"
           >
-            Diese Woche
+            {{ t('Diese Woche') }}
           </button>
         </div>
       </header>
 
       <div v-if="loadError" class="leaderboard__notice leaderboard__notice--error" role="alert">
-        <span>{{ loadError }}</span>
-        <button type="button" @click="loadList(true)">Erneut versuchen</button>
+        <span>{{ t(loadError) }}</span>
+        <button type="button" @click="loadList(true)">{{ t('Erneut versuchen') }}</button>
       </div>
 
-      <section class="leaderboard__list" aria-label="Leaderboard">
+      <section class="leaderboard__list" :aria-label="t('Leaderboard')">
         <div class="leaderboard__columns" aria-hidden="true">
-          <span>Rang</span>
-          <span>Nickname</span>
-          <span>Aufgaben · {{ periodLabel }}</span>
-          <span>Gesamt</span>
-          <span>Punkte</span>
+          <span>{{ t('Rang') }}</span>
+          <span>{{ t('Nickname') }}</span>
+          <span>{{ t('Aufgaben ·') }} {{ t(periodLabel) }}</span>
+          <span>{{ t('Gesamt') }}</span>
+          <span>{{ t('Punkte') }}</span>
           <span />
         </div>
 
         <div class="leaderboard__stage q-crossfade">
         <transition name="q-crossfade">
-        <QLoadingPanel v-if="loading" key="loading" label="Leaderboard wird geladen …" class="leaderboard__loading" />
+        <QLoadingPanel v-if="loading" key="loading" :label="t('Leaderboard wird geladen …')" class="leaderboard__loading" />
         <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty">
-          Noch keine Einträge.
+          {{ t('Noch keine Einträge.') }}
         </div>
         <div v-else key="rows" class="leaderboard__rows">
           <LeaderboardRow
@@ -255,25 +268,26 @@ onMounted(() => {
 
       <div v-if="canLoadMore" class="leaderboard__more">
         <QButton variant="ghost" :disabled="loadingMore" @click="loadList(false)">
-          {{ loadingMore ? 'Wird geladen …' : 'Mehr anzeigen' }}
+          {{ loadingMore ? t('Wird geladen …') : t('Mehr anzeigen') }}
         </QButton>
       </div>
 
       <section v-if="!isParticipating" class="leaderboard__profile">
         <form class="leaderboard__join" @submit.prevent="saveProfile">
-          <label for="leaderboard-nickname">Nickname</label>
+          <label for="leaderboard-nickname">{{ t('Nickname') }}</label>
           <input
             id="leaderboard-nickname"
+            class="q-input"
             v-model="nickname"
             autocomplete="nickname"
             maxlength="32"
             :disabled="savingProfile"
           />
           <QButton type="submit" :disabled="savingProfile">
-            {{ savingProfile ? 'Wird gespeichert …' : 'Beitreten' }}
+            {{ savingProfile ? t('Wird gespeichert …') : t('Beitreten') }}
           </QButton>
         </form>
-        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ profileError }}</div>
+        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
 
       <section v-else class="leaderboard__profile leaderboard__profile--joined">
@@ -289,27 +303,28 @@ onMounted(() => {
           <div class="leaderboard__profile-buttons">
             <QButton variant="secondary" @click="editingNickname = true">
               <Pencil aria-hidden="true" />
-              Ändern
+              {{ t('Ändern') }}
             </QButton>
             <QButton variant="danger" :disabled="savingProfile" @click="leaveLeaderboard">
               <LogOut aria-hidden="true" />
-              Verlassen
+              {{ t('Verlassen') }}
             </QButton>
           </div>
         </div>
         <form v-else class="leaderboard__join" @submit.prevent="saveProfile">
-          <label for="leaderboard-nickname-edit">Nickname</label>
+          <label for="leaderboard-nickname-edit">{{ t('Nickname') }}</label>
           <input
             id="leaderboard-nickname-edit"
+            class="q-input"
             v-model="nickname"
             autocomplete="nickname"
             maxlength="32"
             :disabled="savingProfile"
           />
-          <QButton type="submit" :disabled="savingProfile">Speichern</QButton>
-          <QButton variant="ghost" @click="editingNickname = false; syncNicknameField()">Abbrechen</QButton>
+          <QButton type="submit" :disabled="savingProfile">{{ t('Speichern') }}</QButton>
+          <QButton variant="ghost" :disabled="savingProfile" @click="editingNickname = false; syncNicknameField()">{{ t('Abbrechen') }}</QButton>
         </form>
-        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ profileError }}</div>
+        <div v-if="profileError" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
     </template>
 
@@ -317,7 +332,7 @@ onMounted(() => {
       :open="selectedProfileId !== undefined"
       :detail="selectedDetail"
       :loading="detailLoading"
-      :error="detailError"
+      :error="t(detailError)"
       @close="closeDetail"
       @retry="retryDetail"
     />
@@ -358,7 +373,7 @@ onMounted(() => {
 }
 
 .leaderboard__segments button {
-  min-height: 36px;
+  min-height: var(--q-control-height);
   padding: 0 16px;
   border: 0;
   border-radius: 7px;
@@ -438,7 +453,7 @@ onMounted(() => {
   border-radius: 11px;
   background: var(--q-card);
   color: var(--q-mut);
-  font-size: 13px;
+  font-size: var(--q-font-ui);
   text-align: center;
 }
 
@@ -469,30 +484,12 @@ onMounted(() => {
 
 .leaderboard__join label {
   color: var(--q-mut);
-  font-size: 11px;
+  font-size: var(--q-font-small);
   font-weight: 700;
 }
 
 .leaderboard__join input {
   width: 100%;
-  min-height: 40px;
-  box-sizing: border-box;
-  padding: 9px 12px;
-  border: 1px solid var(--q-border-3);
-  border-radius: 8px;
-  background: var(--q-card);
-  color: var(--q-ink);
-  font: 500 14px 'Public Sans', system-ui, sans-serif;
-}
-
-.leaderboard__join input:focus {
-  border-color: var(--q-accent);
-  outline: 2px solid var(--q-accent-ring);
-  outline-offset: 1px;
-}
-
-.leaderboard__join :deep(.q-btn) {
-  min-height: 40px;
 }
 
 .leaderboard__profile-actions {
@@ -564,7 +561,7 @@ onMounted(() => {
 .leaderboard__profile-error {
   margin-top: 10px;
   color: var(--q-err);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
 }
 
@@ -579,7 +576,7 @@ onMounted(() => {
   border-radius: 8px;
   background: var(--q-err-bg);
   color: var(--q-err-text);
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .leaderboard__notice button {
   border: 0;

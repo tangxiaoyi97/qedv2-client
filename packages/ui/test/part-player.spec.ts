@@ -53,6 +53,24 @@ type GradedPayload = {
 };
 
 describe('PartPlayer (chromeless shell contract)', () => {
+  it('uses Enter between interval bounds without grading an unfinished IME candidate', async () => {
+    const wrapper = mount(PartPlayer, { attachTo: document.body, props: { part: intervalPart, chromeless: true } });
+    const inputs = wrapper.findAll<HTMLInputElement>('input');
+    await inputs[0]!.setValue('-12');
+    await inputs[1]!.setValue('-8');
+    inputs[0]!.element.focus();
+    inputs[0]!.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }));
+    await nextTick();
+    expect(states(wrapper).at(-1)!.phase).toBe('answering');
+    expect(document.activeElement).toBe(inputs[0]!.element);
+    await inputs[0]!.trigger('keydown', { key: 'Enter' });
+    expect(document.activeElement).toBe(inputs[1]!.element);
+    expect(wrapper.emitted('graded')).toBeUndefined();
+    await inputs[1]!.trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('graded')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
   it('emits state on mount and tracks canSubmit while the user answers', async () => {
     const wrapper = mount(PartPlayer, {
       props: { part: choicePart, label: 'Teil a', chromeless: true },
@@ -243,7 +261,6 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(states(wrapper).at(-1)!.answerPreview).toEqual({
       label: 'Ergebnis',
       value: '( −∞ ; ∞ )',
-      hint: 'leer/∞: unbeschränkt · , oder .',
     });
 
     const inputs = wrapper.findAll('input.q-interval__input');

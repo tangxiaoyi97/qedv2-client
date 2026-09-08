@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * "Lösung" accordion (prototype 1d): official solution steps/alternatives.
  * Each alternative renders steps, result, short alternatives and figures.
@@ -11,6 +13,8 @@ import CollapsePanel from '../shared/CollapsePanel.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
+
+const { t } = useI18n();
 
 const props = withDefaults(
   defineProps<{
@@ -33,13 +37,13 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   <CollapsePanel
     v-if="entries.length > 0"
     class="q-solution"
-    title="Lösung"
+    :title="t('Lösung')"
     :default-open="defaultOpen"
   >
     <div class="q-solution__body">
       <template v-for="(entry, i) in entries" :key="i">
         <div v-if="i > 0" class="q-solution__divider" role="separator">
-          <span class="q-solution__divider-label">Alternative</span>
+          <span class="q-solution__divider-label">{{ t('Alternative') }}</span>
         </div>
         <div class="q-solution__entry">
           <RichTextView
@@ -57,14 +61,14 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
             :key="`${entry.id ?? i}-alternative-${ai}`"
             class="q-solution__alternative"
           >
-            <span class="q-solution__alternative-label">Alternative</span>
+            <span class="q-solution__alternative-label">{{ t('Alternative') }}</span>
             <RichTextView :nodes="alternative" />
           </div>
           <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
             <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
           </figure>
           <div v-if="entry.note" class="q-solution__note">
-            <span class="q-solution__note-label">Beurteilungshinweis</span>
+            <span class="q-solution__note-label">{{ t('Beurteilungshinweis') }}</span>
             <span class="q-solution__note-text">{{ entry.note }}</span>
           </div>
         </div>

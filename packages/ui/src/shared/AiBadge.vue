@@ -1,4 +1,8 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
+const { t } = useI18n();
+
 /**
  * The mark that says "a machine wrote this".
  *
@@ -32,7 +36,7 @@ withDefaults(
     <svg class="q-aibadge__spark" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
       <path d="M6 0 7.1 4.9 12 6 7.1 7.1 6 12 4.9 7.1 0 6 4.9 4.9Z" fill="currentColor" />
     </svg>
-    <span class="q-aibadge__text">KI</span>
+    <span class="q-aibadge__text">{{ t('KI') }}</span>
   </span>
 </template>
 

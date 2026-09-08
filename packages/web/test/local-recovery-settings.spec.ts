@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, type App } from 'vue';
+import { setUiLocale } from '@qed2/ui';
 import {
   accountStorageIdentity,
   userLocalProfileId,
@@ -69,7 +70,9 @@ const mocks = vi.hoisted(() => ({
     clear: vi.fn(),
   },
   progressStore: {
-    syncStatus: { state: 'idle' as const },
+    syncStatus: { state: 'idle' } as SyncStatus,
+    attemptUploadStatus: { state: 'idle', pendingCount: 0 } as AttemptUploadStatus,
+    syncCloudNow: vi.fn(async () => undefined),
     syncNow: vi.fn(async () => undefined),
     refresh: vi.fn(async () => undefined),
     claimGuestAttempts: vi.fn(async () => 0),
@@ -135,6 +138,7 @@ vi.mock('../src/routes/settings/AiSettings.vue', () => ({
 }));
 
 import SettingsView from '../src/routes/SettingsView.vue';
+import type { SyncStatus, AttemptUploadStatus } from '../src/stores/progress.js';
 
 let mounted: { app: App; host: HTMLElement } | undefined;
 
@@ -176,6 +180,8 @@ function emptyInventory(): LocalRecoveryInventory {
 
 describe('local recovery settings', () => {
   beforeEach(() => {
+    appStore.setTheme.mockReset();
+    appStore.setAccentTheme.mockReset();
     inventory.mockReset();
     inventory.mockResolvedValue(emptyInventory());
     assign.mockClear();
@@ -186,6 +192,9 @@ describe('local recovery settings', () => {
     progressStore.claimGuestAttempts.mockClear();
     progressStore.flushAttemptOutbox.mockClear();
     progressStore.syncNow.mockClear();
+    progressStore.syncCloudNow.mockReset();
+    progressStore.syncStatus = { state: 'idle' };
+    progressStore.attemptUploadStatus = { state: 'idle', pendingCount: 0 };
     progressStore.refresh.mockClear();
     pendingGuestClaimRoute.mockReset();
     pendingGuestClaimRoute.mockResolvedValue(undefined);
@@ -202,6 +211,7 @@ describe('local recovery settings', () => {
   });
 
   afterEach(() => {
+    setUiLocale('de');
     mounted?.app.unmount();
     mounted = undefined;
     document.body.innerHTML = '';
@@ -213,6 +223,78 @@ describe('local recovery settings', () => {
 
     expect(host.textContent).not.toContain('Lokale Daten');
     expect(inventory).toHaveBeenCalledWith(ACCOUNT_PROFILE);
+  });
+
+  it('does not claim full sync while answer history is still pending', async () => {
+    progressStore.syncStatus = { state: 'synced', at: new Date() };
+    progressStore.attemptUploadStatus = { state: 'pending', pendingCount: 2 };
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(progressStore.syncCloudNow).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain('2 Antworten warten auf Upload.');
+    expect(host.textContent).not.toContain('✓ Synchronisiert');
+  });
+
+  it('surfaces history authentication failures even when archive sync succeeded', async () => {
+    progressStore.syncStatus = { state: 'synced' };
+    progressStore.attemptUploadStatus = {
+      state: 'error', pendingCount: 1,
+      message: 'Der Antwortverlauf wartet auf eine erneute Anmeldung.',
+    };
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(host.textContent).toContain('Der Antwortverlauf wartet auf eine erneute Anmeldung.');
+    expect(host.textContent).not.toContain('✓ Synchronisiert');
+  });
+
+  it('reports local upload failures and permits retry instead of leaving a spinner', async () => {
+    progressStore.syncCloudNow.mockRejectedValueOnce(new Error('storage temporarily unavailable'));
+    const host = mountSettings();
+    await settle();
+    button('Synchronisieren').click();
+    await settle();
+    expect(host.textContent).toContain('Synchronisierung fehlgeschlagen. Erneut versuchen.');
+    expect(button('Synchronisieren').disabled).toBe(false);
+  });
+
+  it('offers English and updates the appearance labels live', async () => {
+    const host = mountSettings();
+    setUiLocale('en');
+    await nextTick();
+    expect(host.querySelector('h1')?.textContent).toBe('Settings');
+    expect(host.textContent).toContain('Appearance');
+    expect(host.textContent).toContain('Light');
+    expect(host.textContent).toContain('Dark');
+    const language = host.querySelector<HTMLSelectElement>('.settings__select')!;
+    expect(language.querySelector<HTMLOptionElement>('option[value="en"]')?.disabled).toBe(false);
+    language.value = 'en';
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(uiStore.setLocale).toHaveBeenCalledWith('en');
+    setUiLocale('de');
+    await nextTick();
+    expect(host.textContent).toContain('Aussehen');
+    expect(host.textContent).toContain('Dunkel');
+  });
+
+  it('keeps the durable appearance selection when saving fails', async () => {
+    let reject!: (error: Error) => void;
+    appStore.setTheme.mockImplementation(() => new Promise<void>((_resolve, fail) => { reject = fail; }));
+    const host = mountSettings();
+    const light = host.querySelector<HTMLInputElement>('input[name="settings-appearance"][value="light"]')!;
+    const dark = host.querySelector<HTMLInputElement>('input[name="settings-appearance"][value="dark"]')!;
+    dark.click();
+    await nextTick();
+    expect(dark.disabled).toBe(true);
+    reject(new Error('storage unavailable'));
+    await settle();
+    expect(dark.disabled).toBe(false);
+    expect(light.checked).toBe(true);
+    expect(dark.checked).toBe(false);
+    expect(host.textContent).toContain('Aussehen konnte nicht gespeichert werden.');
   });
 
   it('claims unassigned guest data only after the explicit confirmation', async () => {

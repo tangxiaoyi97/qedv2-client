@@ -77,6 +77,7 @@ function options(): DesktopIpcOptions {
     openDesktopWindow: vi.fn(),
     applyThemePreference: vi.fn(),
     applyAccentPreference: vi.fn(),
+    applyLocalePreference: vi.fn(),
   } as unknown as DesktopIpcOptions;
 }
 
@@ -112,6 +113,24 @@ describe('Desktop IPC native-shell boundary', () => {
     electronMocks.handlers.clear();
     electronMocks.windows.length = 0;
     vi.clearAllMocks();
+  });
+
+  it('applies native language only after storage commits and still broadcasts if menus fail', async () => {
+    const desktop = options();
+    const peer = browserWindow(202);
+    electronMocks.windows.push(browserWindow(101), peer);
+    installDesktopIpc(desktop);
+    vi.mocked(desktop.applyLocalePreference!).mockImplementation(() => { throw new Error('menu unavailable'); });
+    await expect(invoke(IPC.storageSet, 'config', 'locale', 'en')).resolves.toBeUndefined();
+    expect(desktop.storage.set).toHaveBeenCalledWith('config', 'locale', 'en');
+    expect(desktop.applyLocalePreference).toHaveBeenCalledWith('en');
+    expect(peer.webContents.send).toHaveBeenCalledWith(IPC.storageChange, { collection: 'config', key: 'locale', operation: 'set' });
+    vi.mocked(desktop.applyLocalePreference!).mockClear();
+    vi.mocked(desktop.storage.commitBatch).mockReturnValue({ committed: false });
+    await invoke(IPC.storageCommitBatch, { ifRevisions: [{ collection: 'config', key: 'locale', revision: 1 }], mutations: [{ collection: 'config', key: 'locale', operation: 'set', value: 'de' }] });
+    expect(desktop.applyLocalePreference).not.toHaveBeenCalled();
+    await invoke(IPC.storageDelete, 'config', 'locale');
+    expect(desktop.applyLocalePreference).toHaveBeenCalledWith('de');
   });
 
   it('maps selected and source-pinned Core endpoints without exposing native ports', async () => {

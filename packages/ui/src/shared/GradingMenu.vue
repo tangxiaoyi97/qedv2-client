@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from '../i18n.js';
+
 /**
  * Ever-present grading control (supplement §1.2): a GradingCapsule trigger
  * that opens an anchored popover listing the FIVE selectable states
@@ -8,13 +10,14 @@
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import {
-  GRADING_HINTS,
   SELECTABLE_GRADINGS,
   type Grading,
   type GradingOrUnseen,
 } from '@qed2/core-logic';
 import GradingCapsule from './GradingCapsule.vue';
 import GradingDot, { GRADING_LABELS } from './GradingDot.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   grading: GradingOrUnseen;
@@ -118,7 +121,7 @@ onBeforeUnmount(() => {
       :disabled="disabled || undefined"
       aria-haspopup="menu"
       :aria-expanded="open ? 'true' : 'false'"
-      title="Bewertung ändern"
+      :title="t('Bewertung ändern')"
       @click="toggle"
     />
 
@@ -128,7 +131,7 @@ onBeforeUnmount(() => {
       class="q-grading-menu__popover"
       :class="{ 'q-grading-menu__popover--right': alignRight, 'q-grading-menu__popover--up': openUp }"
       role="menu"
-      aria-label="Bewertung"
+      :aria-label="t('Bewertung')"
       @keydown="onPopoverKeydown"
     >
       <button
@@ -143,8 +146,7 @@ onBeforeUnmount(() => {
       >
         <GradingDot :grading="g" :size="14" />
         <span class="q-grading-menu__texts">
-          <span class="q-grading-menu__label">{{ GRADING_LABELS[g] }}</span>
-          <span class="q-grading-menu__hint">{{ GRADING_HINTS[g] }}</span>
+          <span class="q-grading-menu__label">{{ t(GRADING_LABELS[g]) }}</span>
         </span>
         <span v-if="g === grading" class="q-grading-menu__check" aria-hidden="true">✓</span>
       </button>
