@@ -14,6 +14,11 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.3.4 — 2026-09-10
+
+- **login:** clear errors, no reset, retry in place
+- **accounts:** steady sign-in across tabs & password managers
+
 ## 2.3.3 — 2026-09-09
 
 - **learning:** Korrektur removed; hints & explanations stay

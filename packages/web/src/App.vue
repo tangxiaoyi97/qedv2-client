@@ -237,10 +237,12 @@ watch(
 
     <div v-if="!auth.transitioning">
       <ConflictDialog />
-      <AuthModal />
       <ArchiveChoiceDialog />
       <ChangelogDialog />
     </div>
+    <!-- Keep form state alive while the account lock owns the screen. A
+         failed login must return to its inputs and error, not a new modal. -->
+    <AuthModal />
     <div
       v-if="auth.transitioning"
       class="app__account-lock q-modal-backdrop"

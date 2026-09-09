@@ -105,7 +105,7 @@ async function boot(): Promise<void> {
   const removeShellCommandListener = installShellCommandRouter(router);
   const revalidateAccount = () => {
     if (document.visibilityState === 'hidden') return;
-    void auth.refreshFromStorage();
+    void auth.revalidateFromStorage();
   };
   // Final cross-window safety net for browsers whose privacy policy disables
   // both BroadcastChannel and storage events.

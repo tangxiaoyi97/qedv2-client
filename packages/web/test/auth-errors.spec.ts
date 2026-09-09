@@ -21,4 +21,9 @@ describe('authErrorMessage', () => {
       .not.toContain(serverText);
     expect(authErrorMessage(new Error(internalText), 'invite')).not.toContain(internalText);
   });
+
+  it.each(['login', 'invite'] as const)('explains throttling for %s without blaming credentials', (action) => {
+    expect(authErrorMessage(new ApiError(429, 'AUTH_RATE_LIMITED', 'raw limiter details'), action))
+      .toBe('Zu viele Versuche — bitte später erneut versuchen.');
+  });
 });
