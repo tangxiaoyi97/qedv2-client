@@ -43,6 +43,7 @@ export const useAuthStore = defineStore('auth', () => {
   let storageSubscribed = false;
   let externalSessionTail: Promise<void> = Promise.resolve();
   let authGeneration = 0;
+  let activeAuthAction: PendingAuthAction | undefined;
 
   const isLoggedIn = computed(() =>
     !transitioning.value
@@ -50,8 +51,13 @@ export const useAuthStore = defineStore('auth', () => {
     && issuerOf(session.value) === canonicalCurrentServer());
   const username = computed(() => session.value?.user.username);
 
-  interface AuthActionContext {
+  interface PendingAuthAction {
     generation: number;
+    authSnapshot?: AuthSessionSnapshot;
+    committingSession?: Session;
+  }
+
+  interface AuthActionContext extends PendingAuthAction {
     issuer: string;
     authSnapshot: AuthSessionSnapshot;
     previousSession: Session | undefined;
@@ -88,6 +94,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function beginTransition(): number {
     const generation = ++authGeneration;
+    activeAuthAction = undefined;
     transitioning.value = true;
     transitionError.value = false;
     checking.value = true;
@@ -101,6 +108,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   function finishTransition(generation: number): void {
     if (generation !== authGeneration || transitionError.value) return;
+    activeAuthAction = undefined;
     checking.value = false;
     transitioning.value = false;
     transitionError.value = false;
@@ -141,13 +149,16 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function startAuthAction(issuer: string): Promise<AuthActionContext> {
     const generation = beginTransition();
+    activeAuthAction = { generation };
     const authSnapshot = await authStorage.snapshot().catch((error) =>
       failTransition(generation, session.value, error));
     if (!transitionIsCurrent(generation, issuer)) {
       finishTransition(generation);
       throw new Error('Account operation was superseded');
     }
-    return { generation, issuer, authSnapshot, previousSession: session.value };
+    const context = { generation, issuer, authSnapshot, previousSession: session.value };
+    activeAuthAction = context;
+    return context;
   }
 
   async function rollbackDurableAuth(
@@ -269,6 +280,53 @@ export const useAuthStore = defineStore('auth', () => {
     });
     externalSessionTail = guarded;
     return guarded;
+  }
+
+  function snapshotMatchesSession(
+    snapshot: AuthSessionSnapshot,
+    expected: AuthSession | undefined,
+  ): boolean {
+    if (snapshot.inspection.status === 'missing') return expected === undefined;
+    if (snapshot.inspection.status !== 'valid' || !expected) return false;
+    const stored = snapshot.inspection.session;
+    return stored.token === expected.token
+      && stored.expiresAt === expected.expiresAt
+      && stored.user.id === expected.user.id
+      && stored.user.username === expected.user.username
+      && issuerOf(stored) === issuerOf(expected);
+  }
+
+  /** Focus is only a fallback probe, not evidence that the account changed. */
+  async function revalidateFromStorage(): Promise<void> {
+    const generation = authGeneration;
+    let snapshot: AuthSessionSnapshot;
+    try {
+      snapshot = await authStorage.snapshot();
+    } catch {
+      // The authoritative refresh retains its fail-closed storage handling.
+      if (generation === authGeneration) await refreshFromStorage();
+      return;
+    }
+    if (generation !== authGeneration || transitionError.value) return;
+    const action = activeAuthAction;
+    if (action?.generation === generation) {
+      const before = action.authSnapshot;
+      const unchanged = before ? snapshot.revision === before.revision
+        && snapshot.inspection.status === before.inspection.status
+        && snapshotMatchesSession(
+          snapshot,
+          before.inspection.status === 'valid' ? before.inspection.session : undefined,
+        ) : snapshotMatchesSession(snapshot, session.value);
+      // Password-manager focus and mobile visibility events can arrive while
+      // login/redeem waits for the Server or opens its newly committed profile.
+      // Neither the original row nor our exact in-flight write is an external
+      // account change. CAS and the final read still fence genuine changes.
+      if (unchanged || (action.committingSession
+        && snapshotMatchesSession(snapshot, action.committingSession))) return;
+    } else if (!transitioning.value && snapshotMatchesSession(snapshot, session.value)) {
+      return;
+    }
+    await refreshFromStorage();
   }
 
   function subscribeStorageChanges(): void {
@@ -422,6 +480,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (!transitionIsCurrent(context.generation, context.issuer)) {
         throw new Error('Account response was superseded');
       }
+      context.committingSession = s;
       const committed = await authStorage.setSessionIfUnchanged(s, context.authSnapshot);
       if (!committed) {
         finishTransition(context.generation);
@@ -639,5 +698,6 @@ export const useAuthStore = defineStore('auth', () => {
     redeem,
     logout,
     refreshFromStorage,
+    revalidateFromStorage,
   };
 });

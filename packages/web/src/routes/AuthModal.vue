@@ -18,6 +18,7 @@ import { useUiStore } from '../stores/ui.js';
 
 const ui = useUiStore();
 const auth = useAuthStore();
+const visible = computed(() => ui.authModalOpen && !auth.transitioning);
 
 const loginUser = ref('');
 const loginPass = ref('');
@@ -69,12 +70,12 @@ function switchMode(mode: 'login' | 'register'): void {
 }
 
 function onBackdrop(): void {
-  if (!loginPending.value && !invitePending.value) ui.closeAuthModal();
+  if (visible.value && !loginPending.value && !invitePending.value) ui.closeAuthModal();
 }
 
 /* Focus trap + Esc + scroll-lock + focus restore (shared modal baseline). */
 const box = ref<HTMLElement | null>(null);
-useModalA11y(box, computed(() => ui.authModalOpen), onBackdrop);
+useModalA11y(box, visible, onBackdrop);
 
 watch(
   () => ui.authModalOpen,
@@ -82,8 +83,14 @@ watch(
     if (open) {
       loginError.value = '';
       inviteError.value = '';
+    } else {
+      // A failed transition only hides this instance; an actual dismissal
+      // (including successful authentication) releases its credentials.
+      loginPass.value = '';
+      invitePass.value = '';
     }
   },
+  { flush: 'sync' },
 );
 
 /* login ↔ register redraws the same card in place — re-focus the first
@@ -92,6 +99,7 @@ watch(
   () => ui.authModalMode,
   async () => {
     await nextTick();
+    if (!visible.value) return;
     box.value?.querySelector<HTMLElement>('[data-autofocus]')?.focus();
   },
 );
@@ -102,10 +110,13 @@ watch(
     <transition name="modal-fade">
       <div
         v-if="ui.authModalOpen"
+        v-show="!auth.transitioning"
       ref="box"
       class="authm q-modal-scrim q-modal-backdrop"
       role="dialog"
       aria-modal="true"
+      :aria-hidden="!visible || undefined"
+      :inert="!visible || undefined"
       :aria-label="ui.authModalMode === 'login' ? t('Anmelden') : t('Registrieren')"
       @click.self="onBackdrop"
     >

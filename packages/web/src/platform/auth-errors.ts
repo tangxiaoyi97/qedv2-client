@@ -13,12 +13,14 @@ export function authErrorMessage(error: unknown, action: AuthAction): string {
   }
 
   if (error instanceof ApiError) {
+    if (error.status === 429) {
+      return 'Zu viele Versuche — bitte später erneut versuchen.';
+    }
     if (action === 'login' && error.status === 401) {
       return 'Benutzername oder Passwort falsch.';
     }
     if (action === 'invite') {
       if (error.status === 409) return 'Der Benutzername ist bereits vergeben.';
-      if (error.status === 429) return 'Zu viele Versuche — bitte später erneut versuchen.';
       if ([400, 401, 403, 404, 410, 422].includes(error.status)) {
         return 'Einladungscode oder Angaben sind ungültig.';
       }
