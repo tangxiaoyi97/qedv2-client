@@ -12,7 +12,7 @@ const { t, locale, formatNumber } = useI18n();
  *  - invite redemption claims the durable guest-attempt outbox for the new
  *    account; ordinary login does not, which protects shared devices.
  */
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   ApiError,
@@ -69,6 +69,8 @@ const loading = ref(false);
 const error = ref<string | undefined>();
 const titles = ref<Map<string, string>>(new Map());
 const selectedDate = ref<string | null>(null);
+const historyStage = ref<HTMLElement | null>(null);
+const filterStageHeight = ref(0);
 const legacyRedo = ref<Row | null>(null);
 const legacyRedoCard = ref<HTMLElement | null>(null);
 let loadRequest = 0;
@@ -216,12 +218,15 @@ async function joinTitles(sourceRows: Row[]): Promise<void> {
   titles.value = next;
 }
 
-async function loadPage(reset: boolean): Promise<void> {
+async function loadPage(reset: boolean, preserveHeight = false): Promise<void> {
   const request = ++loadRequest;
   const context = captureHistoryRequestContext();
   const isCurrentRequest = () =>
     request === loadRequest && isCurrentHistoryRequestContext(context);
   if (reset) {
+    // Do not collapse a long day while another date is loading: the browser
+    // would clamp scrollY before the replacement rows can arrive.
+    filterStageHeight.value = preserveHeight ? Math.max(160, historyStage.value?.getBoundingClientRect().height ?? 0) : 0;
     rows.value = [];
     total.value = 0;
     page.value = 1;
@@ -319,7 +324,13 @@ async function loadPage(reset: boolean): Promise<void> {
           ? e.message
           : String(e);
   } finally {
-    if (isCurrentRequest()) loading.value = false;
+    if (isCurrentRequest()) {
+      loading.value = false;
+      // Vue's leave transition measures layout during the DOM patch. Keep
+      // the old footprint until the replacement rows are actually mounted.
+      await nextTick();
+      if (isCurrentRequest()) filterStageHeight.value = 0;
+    }
   }
 }
 
@@ -421,13 +432,13 @@ const selectedDateLabel = computed(() =>
 
 function selectDate(dayKey: string): void {
   selectedDate.value = selectedDate.value === dayKey ? null : dayKey;
-  void loadPage(true);
+  void loadPage(true, true);
 }
 
 function clearDateFilter(): void {
   if (!selectedDate.value) return;
   selectedDate.value = null;
-  void loadPage(true);
+  void loadPage(true, true);
 }
 
 const groups = computed(() => {
@@ -502,7 +513,7 @@ function confirmLegacyRedo(): void {
   <div class="hist q-page">
     <div class="hist__head">
       <h1 class="hist__title q-page-title">{{ t('Verlauf') }}</h1>
-      <span v-if="total > 0" class="hist__count">
+      <span class="hist__count" :aria-hidden="total === 0 || undefined">
         {{ total }} {{ total === 1 ? t('Antwort') : t('Antworten') }}
       </span>
     </div>
@@ -510,14 +521,6 @@ function confirmLegacyRedo(): void {
     <section class="hist__section">
       <div class="hist__section-head">
         <h2 class="hist__section-title">{{ t('Aktivität') }}</h2>
-        <button
-          v-if="selectedDate"
-          type="button"
-          class="hist__filter-clear"
-          @click="clearDateFilter"
-        >
-          {{ t('Alle Tage') }}
-        </button>
       </div>
       <ActivityHeatmap
         v-show="!activityLoading && !activityError && !attemptHistoryMessage"
@@ -544,12 +547,24 @@ function confirmLegacyRedo(): void {
           {{ t('Erneut versuchen') }}
         </QButton>
       </div>
-      <p v-if="selectedDate" class="hist__filter-status" role="status">
-        {{ t('Verlauf gefiltert:') }} {{ selectedDateLabel }}
-      </p>
+      <div class="hist__filter-bar">
+        <p class="hist__filter-status" role="status" :title="selectedDateLabel || undefined">
+          <span v-if="selectedDate" class="hist__filter-label">{{ t('Verlauf gefiltert:') }} </span>
+          {{ selectedDate ? selectedDateLabel : t('Alle Tage') }}
+        </p>
+        <button
+          type="button"
+          class="hist__filter-clear"
+          :disabled="!selectedDate"
+          :aria-hidden="!selectedDate || undefined"
+          @click="clearDateFilter"
+        >
+          {{ t('Alle Tage') }}
+        </button>
+      </div>
     </section>
 
-    <div class="hist__stage q-crossfade">
+    <div ref="historyStage" class="hist__stage q-crossfade" :aria-busy="loading" :style="filterStageHeight ? { minHeight: `${filterStageHeight}px` } : undefined">
     <transition name="q-crossfade">
     <div v-if="error && rows.length === 0" key="error" class="hist__error">
       {{ t(error) }}
@@ -559,7 +574,7 @@ function confirmLegacyRedo(): void {
     <QSkeleton
       v-else-if="loading && rows.length === 0"
       key="loading"
-      :rows="6"
+      :rows="3"
       height="42px"
       :label="t('Verlauf wird geladen …')"
     />
@@ -652,6 +667,7 @@ function confirmLegacyRedo(): void {
   font-size: var(--q-font-ui);
   color: var(--q-mut-2);
 }
+.hist__count[aria-hidden='true'] { visibility: hidden; }
 .hist__section {
   min-width: 0;
   max-width: 100%;
@@ -677,13 +693,22 @@ function confirmLegacyRedo(): void {
   gap: 12px;
 }
 .hist__filter-clear {
-  margin: 0 0 12px;
-  padding: 2px 0;
+  flex: none;
+  min-height: 44px;
+  padding: 0 8px;
   border: 0;
   background: transparent;
   color: var(--q-accent-strong);
   cursor: pointer;
   font: 700 10.5px 'Public Sans', system-ui, sans-serif;
+}
+.hist__filter-clear[aria-hidden='true'] { visibility: hidden; }
+.hist__filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  margin-top: 8px;
 }
 .hist__filter-clear:hover {
   color: var(--q-ink);
@@ -693,10 +718,28 @@ function confirmLegacyRedo(): void {
   outline-offset: 3px;
 }
 .hist__filter-status {
-  margin: 10px 0 0;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--q-mut);
   font-size: var(--q-font-small);
   font-weight: 650;
+}
+.hist__filter-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.hist__stage {
+  /* A short/empty day and its compact loader share the same footprint. */
+  min-height: 160px;
+  align-items: start;
 }
 .hist__day {
   margin-bottom: 14px;

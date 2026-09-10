@@ -22,6 +22,7 @@ const period = ref<LeaderboardPeriod>('today');
 const response = ref<LeaderboardResponse | undefined>();
 const loading = ref(false);
 const showRefreshing = ref(false);
+const showProfileLoading = ref(false);
 const loadingMore = ref(false);
 const loadError = ref('');
 const nickname = ref('');
@@ -74,6 +75,14 @@ async function loadList(reset = true): Promise<void> {
   if (reset) loadingMore.value = false;
   loadError.value = '';
   try {
+    let cacheScope: ReturnType<typeof leaderboard.captureListScope>;
+    do {
+      const ready = await leaderboard.waitForListMutation();
+      if (!ready || request !== listRequest || requestScope !== scope || disposed) return;
+      cacheScope = leaderboard.captureListScope();
+      // A second write may begin while the previous waiter's microtask is
+      // being resumed. Start the GET only after capturing a write-free scope.
+    } while (!cacheScope);
     const next = await app.serverClient.getLeaderboard({
       period: requestedPeriod,
       page,
@@ -88,6 +97,7 @@ async function loadList(reset = true): Promise<void> {
       [...new Map([...response.value.items, ...next.items].map((item) => [item.profileId, item])).values()]
         .sort((left, right) => left.rank - right.rank);
     response.value = { ...next, items };
+    if (reset && cacheScope) leaderboard.rememberList(next, cacheScope);
   } catch (error) {
     if (request !== listRequest || requestScope !== scope || disposed) return;
     if (reset && response.value) period.value = response.value.period;
@@ -121,7 +131,7 @@ async function initialize(): Promise<void> {
   if (!auth.isLoggedIn || disposed) return;
   // The requested default is useful immediately, even before the profile
   // request returns on a slow connection.
-  if (!nickname.value) nickname.value = auth.username ?? '';
+  if (!nickname.value) syncNicknameField();
   await Promise.all([retryProfile(), loadList(true)]);
 }
 
@@ -246,8 +256,20 @@ function resetRequests(): void {
 
 watch(() => [auth.session?.user.id, auth.session?.token, app.config.serverBaseUrl, auth.isLoggedIn], () => {
   resetRequests();
+  const cached = leaderboard.cachedList();
+  if (cached) {
+    response.value = cached;
+    period.value = cached.period;
+    lastPageLength = cached.items.length;
+  }
   if (auth.isLoggedIn) void initialize();
 }, { immediate: true, flush: 'sync' });
+
+watch(() => leaderboard.listMutationRevision, () => {
+  // A write started on the previous route can finish after this instance
+  // mounts. Its old caller is disposed and can no longer refresh our list.
+  if (!savingProfile.value && auth.isLoggedIn && !disposed) void loadList(true);
+});
 
 watch(loading, (pending, _previous, onCleanup) => {
   showRefreshing.value = false;
@@ -255,7 +277,14 @@ watch(loading, (pending, _previous, onCleanup) => {
   // Fast reads update in place without a one-frame loading flash.
   const timer = setTimeout(() => { showRefreshing.value = true; }, 160);
   onCleanup(() => clearTimeout(timer));
-});
+}, { immediate: true, flush: 'sync' });
+
+watch(() => leaderboard.loadingProfile && !profile.value, (pending, _previous, onCleanup) => {
+  showProfileLoading.value = false;
+  if (!pending) return;
+  const timer = setTimeout(() => { showProfileLoading.value = true; }, 160);
+  onCleanup(() => clearTimeout(timer));
+}, { immediate: true, flush: 'sync' });
 
 onBeforeUnmount(() => {
   disposed = true;
@@ -315,13 +344,12 @@ onBeforeUnmount(() => {
           <span />
         </div>
 
-        <div class="leaderboard__stage q-crossfade">
-        <transition name="q-crossfade">
-        <QLoadingPanel v-if="loading && !response" key="loading" :label="t('Leaderboard wird geladen …')" class="leaderboard__loading" />
+        <div class="leaderboard__stage">
+        <QLoadingPanel v-if="loading && !response && showRefreshing" :label="t('Leaderboard wird geladen …')" class="leaderboard__loading" />
         <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty" role="status">
           {{ t('Noch keine Einträge.') }}
         </div>
-        <div v-else key="rows" class="leaderboard__rows" :class="{ 'leaderboard__rows--refreshing': showRefreshing }">
+        <div v-else key="rows" class="leaderboard__rows" :class="{ 'leaderboard__rows--refreshing': showRefreshing && displayedPeriod !== period }">
           <LeaderboardRow
             v-for="item in response?.items"
             :key="item.profileId"
@@ -330,7 +358,6 @@ onBeforeUnmount(() => {
             @open="openDetail"
           />
         </div>
-        </transition>
         </div>
       </section>
 
@@ -340,7 +367,7 @@ onBeforeUnmount(() => {
         </QButton>
       </div>
 
-      <section v-if="!profile && leaderboard.loadingProfile" class="leaderboard__profile">
+      <section v-if="!profile && leaderboard.loadingProfile && showProfileLoading" class="leaderboard__profile">
         <QLoadingPanel bare :label="t('Wird geladen …')" />
       </section>
       <section v-else-if="!profile && profileLoadError" class="leaderboard__notice leaderboard__notice--error leaderboard__profile-status" role="alert">
@@ -490,6 +517,8 @@ onBeforeUnmount(() => {
 .leaderboard__list {
   min-width: 0;
 }
+
+.leaderboard__stage { min-height: 160px; }
 
 .leaderboard__columns {
   min-height: 40px;

@@ -7,6 +7,10 @@ body {
   margin: 0;
   height: 100%;
 }
+html {
+  /* Filtering and route changes may add a scrollbar without moving the page. */
+  scrollbar-gutter: stable;
+}
 #app {
   min-height: 100vh;
   min-height: 100dvh; /* iOS Safari: 100vh includes the dynamic toolbar area */

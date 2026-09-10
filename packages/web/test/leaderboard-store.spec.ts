@@ -5,6 +5,7 @@ import { localProfileStore } from '../src/services.js';
 import { useAppStore } from '../src/stores/app.js';
 import { useAuthStore } from '../src/stores/auth.js';
 import { useLeaderboardStore } from '../src/stores/leaderboard.js';
+import type { LeaderboardResponse } from '@qed2/core-logic';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -32,10 +33,102 @@ beforeEach(async () => {
   setActivePinia(pinia);
 });
 afterEach(async () => {
+  vi.useRealTimers();
   await vi.waitFor(() => expect(useAuthStore().transitioning).toBe(false));
   disposePinia(pinia);
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('leaderboard route snapshots', () => {
+  const response: LeaderboardResponse = {
+    period: 'week', timeZone: 'Europe/Vienna', generatedAt: '2026-09-08T12:00:00Z',
+    items: [], page: 1, pageSize: 50, totalParticipants: 0, me: { participating: false },
+  };
+
+  it('retains a bounded first-page snapshot for one minute without a second-page overwrite', () => {
+    vi.useFakeTimers();
+    signIn();
+    const store = useLeaderboardStore();
+    const scope = store.captureListScope()!;
+    store.rememberList(response, scope);
+    expect(store.cachedList()).toEqual(response);
+    store.rememberList({ ...response, page: 2 }, scope);
+    expect(store.cachedList()?.page).toBe(1);
+    vi.advanceTimersByTime(59_999);
+    expect(store.cachedList()).toEqual(response);
+    vi.advanceTimersByTime(1);
+    expect(store.cachedList()).toBeUndefined();
+  });
+
+  it.each(['logout', 'switch-user', 'switch-server', 'token-refresh', 'clear'] as const)(
+    'removes old list content and rejects late cache publication after %s', async (change) => {
+      signIn();
+      const store = useLeaderboardStore();
+      const scope = store.captureListScope()!;
+      store.rememberList(response, scope);
+      if (change === 'logout') useAuthStore().session = undefined;
+      else if (change === 'switch-user') signIn('user-2');
+      else if (change === 'switch-server') useAppStore().config.serverBaseUrl = 'https://different.test';
+      else if (change === 'token-refresh') useAuthStore().session!.token = 'refreshed';
+      else store.clear();
+      expect(store.cachedList()).toBeUndefined();
+      store.rememberList(response, scope);
+      expect(store.cachedList()).toBeUndefined();
+    },
+  );
+
+  it.each(['save', 'leave'] as const)('invalidates the snapshot and earlier list reads when %s begins', async (action) => {
+    signIn();
+    const pending = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(() => pending.promise));
+    const store = useLeaderboardStore();
+    const scope = store.captureListScope()!;
+    store.rememberList(response, scope);
+    const mutation = action === 'save' ? store.saveNickname('Mira') : store.leave();
+    expect(store.cachedList()).toBeUndefined();
+    store.rememberList(response, scope);
+    expect(store.cachedList()).toBeUndefined();
+    pending.resolve(action === 'save' ? json(publicProfile) : new Response(null, { status: 204 }));
+    await mutation;
+    expect(store.cachedList()).toBeUndefined();
+  });
+
+  it('waits for an ongoing write even after its first cache invalidation, then permits a fresh scope', async () => {
+    signIn();
+    const pending = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(() => pending.promise));
+    const store = useLeaderboardStore();
+    const saving = store.saveNickname('Mira');
+    let ready = false;
+    const reading = store.waitForListMutation().then((result) => { ready = result; });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    expect(store.captureListScope()).toBeUndefined();
+    pending.resolve(json(publicProfile));
+    await saving;
+    await reading;
+    expect(ready).toBe(true);
+    const freshScope = store.captureListScope()!;
+    store.rememberList(response, freshScope);
+    expect(store.cachedList()).toEqual(response);
+  });
+
+  it('does not block or invalidate another account while the previous owner\'s write finishes', async () => {
+    signIn();
+    const pending = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(() => pending.promise));
+    const store = useLeaderboardStore();
+    const saving = store.saveNickname('Mira');
+    const oldRead = store.waitForListMutation();
+    signIn('user-2');
+    expect(await store.waitForListMutation()).toBe(true);
+    store.rememberList(response, store.captureListScope()!);
+    pending.resolve(json(publicProfile));
+    await saving;
+    expect(await oldRead).toBe(false);
+    expect(store.cachedList()).toEqual(response);
+  });
 });
 
 describe('leaderboard profile request isolation', () => {

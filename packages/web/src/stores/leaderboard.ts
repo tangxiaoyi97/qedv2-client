@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
-import { accountStorageIdentity, type LeaderboardProfile } from '@qed2/core-logic';
+import { accountStorageIdentity, type LeaderboardProfile, type LeaderboardResponse } from '@qed2/core-logic';
 import { useAppStore } from './app.js';
 import { useAuthStore } from './auth.js';
+
+interface ListScope { owner: string; token: string; revision: number }
 
 export const useLeaderboardStore = defineStore('leaderboard', () => {
   const profile = ref<LeaderboardProfile | undefined>();
@@ -14,6 +16,42 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
   let controller: AbortController | undefined;
   let refresh: Promise<LeaderboardProfile | undefined> | undefined;
   const mutations = new Map<string, Promise<void>>();
+  // One short-lived first page avoids replacing a warm route with a loader.
+  // It is never persisted or shared across authentication scopes.
+  let listSnapshot: { owner: string; token: string; savedAt: number; response: LeaderboardResponse } | undefined;
+  let listRevision = 0;
+  const listMutationRevision = ref(0);
+
+  async function waitForListMutation(): Promise<boolean> {
+    const owner = currentOwner();
+    const token = auth.session?.token;
+    if (!owner || !token) return false;
+    let pending: Promise<void> | undefined;
+    while ((pending = mutations.get(owner))) {
+      // A failed write can also have reached the server; reread afterwards.
+      await pending.catch(() => undefined);
+      if (currentOwner() !== owner || auth.session?.token !== token) return false;
+    }
+    return currentOwner() === owner && auth.session?.token === token;
+  }
+
+  function captureListScope(): ListScope | undefined {
+    const owner = currentOwner();
+    const token = auth.session?.token;
+    return owner && token && !mutations.has(owner) ? { owner, token, revision: listRevision } : undefined;
+  }
+
+  function cachedList(): LeaderboardResponse | undefined {
+    if (!listSnapshot || listSnapshot.owner !== currentOwner() || listSnapshot.token !== auth.session?.token
+      || Date.now() - listSnapshot.savedAt >= 60_000) return undefined;
+    return listSnapshot.response;
+  }
+
+  function rememberList(response: LeaderboardResponse, scope: ListScope): void {
+    if (scope.revision !== listRevision || scope.owner !== currentOwner()
+      || mutations.has(scope.owner) || scope.token !== auth.session?.token || response.page !== 1) return;
+    listSnapshot = { owner: scope.owner, token: scope.token, savedAt: Date.now(), response: { ...response, items: [...response.items] } };
+  }
 
   function currentOwner(): string | undefined {
     const session = auth.session;
@@ -30,6 +68,8 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     loadingProfile.value = false;
     profile.value = undefined;
     profileError.value = '';
+    listSnapshot = undefined;
+    listRevision += 1;
     // Clearing displayed data cannot cancel an already sent write. Keep its
     // owner lock until it settles, even across token refreshes or sign-out.
   }
@@ -83,6 +123,8 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     const owner = currentOwner();
     if (!owner) throw new Error('Bitte melde dich erneut an.');
     if (mutations.has(owner)) throw new Error('Eine Änderung wird bereits gespeichert.');
+    listSnapshot = undefined;
+    listRevision += 1;
     generation += 1;
     controller?.abort();
     controller = undefined;
@@ -93,7 +135,14 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
 
   function trackMutation(owner: string, operation: Promise<void>): Promise<void> {
     const pending = operation.finally(() => {
-      if (mutations.get(owner) === pending) mutations.delete(owner);
+      if (mutations.get(owner) === pending) {
+        mutations.delete(owner);
+        if (currentOwner() === owner) {
+          listSnapshot = undefined;
+          listRevision += 1;
+          listMutationRevision.value += 1;
+        }
+      }
     });
     mutations.set(owner, pending);
     return pending;
@@ -120,5 +169,8 @@ export const useLeaderboardStore = defineStore('leaderboard', () => {
     }));
   }
 
-  return { profile, loadingProfile, profileError, refreshProfile, saveNickname, leave, clear };
+  return {
+    profile, loadingProfile, profileError, refreshProfile, saveNickname, leave, clear,
+    cachedList, captureListScope, rememberList, waitForListMutation, listMutationRevision,
+  };
 });

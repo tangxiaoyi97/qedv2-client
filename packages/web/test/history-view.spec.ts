@@ -131,6 +131,116 @@ describe('HistoryView activity filter', () => {
     app.unmount();
   });
 
+  it('keeps the latest date and its height reservation through out-of-order filter responses', async () => {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    const days = [2, 1, 0].map(offset => new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset, 12));
+    const keys = days.map(localDayKey);
+    const pending = new Map<string, (response: Response) => void>();
+    const historyResponse = (day: Date, questions: string[]) => new Response(JSON.stringify({
+      items: questions.map(questionId => ({
+        id: `attempt-${questionId}`, questionId, partId: `part-${questionId}`,
+        correct: true, awardedPoints: 1, gradedAt: day.toISOString(),
+      })),
+      page: 1, pageSize: 50, total: questions.length,
+    }), { status: 200 });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/me/history/activity')) {
+        return new Response(JSON.stringify({ activity: Object.fromEntries(keys.map(key => [key, 2])) }), { status: 200 });
+      }
+      if (url.pathname.endsWith('/me/history')) {
+        const since = url.searchParams.get('since');
+        if (!since) return historyResponse(today, ['initial-history']);
+        return new Promise<Response>(resolve => { pending.set(localDayKey(new Date(since)), resolve); });
+      }
+      throw new Error(`unexpected request ${url}`);
+    }));
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = useAuthStore();
+    auth.session = {
+      token: 'filter-test-token', expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'filter-user', username: 'tester' }, serverBaseUrl: useAppStore().config.serverBaseUrl,
+    };
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/history', component: HistoryView },
+        { path: '/practice', component: { template: '<div />' } },
+      ],
+    });
+    await router.push('/history');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const vueApp = createApp(HistoryView).use(pinia).use(router);
+    vueApp.mount(host);
+    let observer: MutationObserver | undefined;
+    let restoreRect: (() => void) | undefined;
+    try {
+      await vi.waitFor(() => expect(host.querySelector('.hist__row')?.textContent).toContain('initial-history'));
+      const stage = host.querySelector<HTMLElement>('.hist__stage')!;
+      await vi.waitFor(() => expect(stage.getAttribute('aria-busy')).toBe('false'));
+      // jsdom has no layout; simulate the already-scrolled long result list.
+      const rect = vi.spyOn(stage, 'getBoundingClientRect').mockReturnValue({ height: 960 } as DOMRect);
+      restoreRect = () => rect.mockRestore();
+      for (const key of keys) {
+        host.querySelector<SVGGElement>(`[data-key="${key}"]`)!
+          .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await nextTick();
+      }
+      await vi.waitFor(() => expect(pending.size).toBe(3));
+      expect(stage.style.minHeight).toBe('960px');
+      expect(stage.getAttribute('aria-busy')).toBe('true');
+      await vi.waitFor(() => expect(stage.querySelectorAll('.hist__row')).toHaveLength(0));
+
+      // The oldest response must not dismiss the final date's loader or
+      // release its footprint while that final request is still pending.
+      pending.get(keys[0]!)!(historyResponse(days[0]!, ['obsolete-oldest']));
+      await settle();
+      expect(stage.getAttribute('aria-busy')).toBe('true');
+      expect(stage.style.minHeight).toBe('960px');
+      expect(stage.querySelectorAll('.hist__row')).toHaveLength(0);
+      expect(host.querySelector(`[data-key="${keys[2]}"]`)?.getAttribute('aria-pressed')).toBe('true');
+
+      const replacements: Array<{ minHeight: string; busy: string | null }> = [];
+      observer = new MutationObserver(() => {
+        if (stage.textContent?.includes('latest-one')) {
+          replacements.push({ minHeight: stage.style.minHeight, busy: stage.getAttribute('aria-busy') });
+        }
+      });
+      observer.observe(stage, { attributes: true, childList: true, subtree: true });
+      pending.get(keys[2]!)!(historyResponse(days[2]!, ['latest-one', 'latest-two']));
+      await vi.waitFor(() => {
+        expect(stage.querySelectorAll('.hist__row')).toHaveLength(2);
+        expect(stage.style.minHeight).toBe('');
+        expect(stage.getAttribute('aria-busy')).toBe('false');
+      });
+      // Observe actual DOM commits: new rows must mount with the old height
+      // still held. Releasing it in the same patch can clamp browser scrollY.
+      expect(replacements[0]).toEqual({ minHeight: '960px', busy: 'false' });
+      expect(replacements.at(-1)).toEqual({ minHeight: '', busy: 'false' });
+
+      // The middle request arrives last, after the final results are visible.
+      pending.get(keys[1]!)!(historyResponse(days[1]!, ['obsolete-middle']));
+      await settle();
+      expect([...stage.querySelectorAll('.hist__row-title')].map(row => row.textContent)).toEqual(['latest-one', 'latest-two']);
+      expect(host.querySelector('.hist__count')?.textContent).toContain('2 Antworten');
+      expect(host.querySelector(`[data-key="${keys[2]}"]`)?.getAttribute('aria-pressed')).toBe('true');
+      expect(host.querySelector(`[data-key="${keys[1]}"]`)?.getAttribute('aria-pressed')).toBe('false');
+      expect(stage.getAttribute('aria-busy')).toBe('false');
+      expect(stage.style.minHeight).toBe('');
+      expect(host.textContent).not.toContain('obsolete-');
+    } finally {
+      observer?.disconnect();
+      restoreRect?.();
+      vueApp.unmount();
+      pending.forEach(resolve => resolve(historyResponse(today, [])));
+      await settle();
+    }
+  });
+
   it('reopens a local history row through its original Core source and revision', async () => {
     const commit = 'c'.repeat(40);
     await historyLog.append({

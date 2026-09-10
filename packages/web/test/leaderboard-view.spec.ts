@@ -34,10 +34,17 @@ async function mountSignedIn(cachedPrivateProfile = false) {
   if (cachedPrivateProfile) useLeaderboardStore().profile = { participating: false, suggestedNickname: 'tester' };
   const host = document.createElement('div');
   document.body.appendChild(host);
-  const app = createApp(LeaderboardView).use(pinia).use(router);
+  let app = createApp(LeaderboardView).use(pinia).use(router);
   app.mount(host);
   await settle();
-  return { host, auth, unmount: () => app.unmount() };
+  return {
+    host, auth, unmount: () => app.unmount(),
+    remount: () => {
+      app.unmount();
+      app = createApp(LeaderboardView).use(pinia).use(router);
+      app.mount(host);
+    },
+  };
 }
 
 function json(body: unknown): Response {
@@ -56,8 +63,127 @@ async function settle(): Promise<void> {
 
 describe('LeaderboardView', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     document.body.innerHTML = '';
+  });
+
+  it('does not flash loading cards or a second crossfade for a fast first visit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input) => String(input).endsWith('/me/leaderboard-profile')
+      ? json({ participating: false, suggestedNickname: 'tester' }) : json(board())));
+    const mounted = await mountSignedIn();
+    try {
+      expect(mounted.host.querySelector('.leader-row')).not.toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__profile .q-loadpanel')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__stage .q-crossfade-leave-active')).toBeNull();
+    } finally { mounted.unmount(); }
+  });
+
+  it('restores the last completed period and warm profile immediately on re-entry while refreshing in place', async () => {
+    const refresh = deferred<Response>();
+    let returning = false;
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      if (returning) return refresh.promise;
+      if (String(input).endsWith('/me/leaderboard-profile')) return json({
+        participating: true, profileId: 'self', nickname: 'Mira', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+      });
+      return json(board(String(input).includes('period=week') ? 'week' : 'today'));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')).not.toBeNull());
+      mounted.host.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1]!.click();
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')?.getAttribute('aria-label')).toContain('Diese Woche'));
+      returning = true;
+      vi.useFakeTimers();
+      mounted.remount();
+      expect(mounted.host.querySelector('.leader-row')).not.toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__profile .q-loadpanel')).toBeNull();
+      expect(mounted.host.querySelectorAll('[role="radio"]')[1]?.getAttribute('aria-checked')).toBe('true');
+      expect(mounted.host.querySelector('.leaderboard__profile-identity')?.textContent).toContain('Mira');
+      [...mounted.host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Ändern'))!.click();
+      await nextTick();
+      expect(mounted.host.querySelector<HTMLInputElement>('#leaderboard-nickname-edit')?.value).toBe('Mira');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(mounted.host.querySelector('.leaderboard__rows--refreshing')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__profile .q-loadpanel')).toBeNull();
+    } finally {
+      mounted.unmount();
+      refresh.resolve(new Response(null, { status: 204 }));
+      await settle();
+    }
+  });
+
+  it('shows delayed feedback for a slow first visit without assuming an unknown profile has opted out', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn(() => pending.promise));
+    const mounted = await mountSignedIn();
+    try {
+      expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__profile')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__join')).toBeNull();
+      await vi.advanceTimersByTimeAsync(159);
+      expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mounted.host.querySelector('.leaderboard__loading')).not.toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__profile .q-loadpanel')).not.toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__join')).toBeNull();
+    } finally {
+      mounted.unmount();
+      pending.resolve(new Response(null, { status: 204 }));
+      await settle();
+    }
+  });
+
+  it.each(['save', 'leave'] as const)('waits for a %s started on the previous route before reading and caching the list', async (action) => {
+    const mutation = deferred<Response>();
+    let changed = false;
+    let listReads = 0;
+    const initialProfile = {
+      participating: true, profileId: 'self', nickname: 'Old nickname', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      if (String(input).endsWith('/me/leaderboard-profile')) {
+        if (init?.method === 'PUT' || init?.method === 'DELETE') return mutation.promise;
+        return json(changed ? (action === 'leave'
+          ? { participating: false, suggestedNickname: 'tester' }
+          : { ...initialProfile, nickname: 'New nickname' }) : initialProfile);
+      }
+      listReads += 1;
+      const result = board('today', 1, changed && action === 'leave' ? ['other'] : ['self']);
+      if (result.items[0]?.profileId === 'self') {
+        result.items[0].nickname = changed ? 'New nickname' : 'Old nickname';
+        result.items[0].isMe = true;
+      }
+      return json(result);
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')?.textContent).toContain('Old nickname'));
+      const saving = action === 'save' ? useLeaderboardStore().saveNickname('New nickname') : useLeaderboardStore().leave();
+      const readsBeforeReturn = listReads;
+      mounted.remount();
+      await settle();
+      expect(listReads).toBe(readsBeforeReturn);
+      expect(useLeaderboardStore().captureListScope()).toBeUndefined();
+      expect(useLeaderboardStore().cachedList()).toBeUndefined();
+      changed = true;
+      mutation.resolve(action === 'save' ? json({ ...initialProfile, nickname: 'New nickname' }) : new Response(null, { status: 204 }));
+      await saving;
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')?.textContent).toContain(action === 'save' ? 'New nickname' : 'other'));
+      expect(listReads).toBe(readsBeforeReturn + 1);
+      expect(mounted.host.querySelector('.leader-row')?.textContent).not.toContain('Old nickname');
+      expect(useLeaderboardStore().cachedList()?.items.map((item) => item.nickname)).toEqual([action === 'save' ? 'New nickname' : 'other']);
+      mounted.remount();
+      expect(mounted.host.querySelector('.leader-row')?.textContent).toContain(action === 'save' ? 'New nickname' : 'other');
+    } finally {
+      mounted.unmount();
+      mutation.resolve(new Response(null, { status: 204 }));
+      await settle();
+    }
   });
 
   it('keeps the signed-out state action-only', async () => {
