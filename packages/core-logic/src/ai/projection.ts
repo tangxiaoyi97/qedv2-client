@@ -115,20 +115,20 @@ function solutionText(part: QuestionPart): Pick<AiQuestionContext, 'officialSolu
   const first = entries[0];
   const steps = entries.flatMap((entry) => {
     if (isRichTextEmpty(entry.steps)) return [];
-    const text = richTextToPlain(entry.steps);
+    const text = answerTextForAi(entry.steps);
     if (!text) return [];
     return [{ ...(entry.id ? { id: entry.id } : {}), text }];
   });
   const firstResult = first && !isRichTextEmpty(first.result)
-    ? richTextToPlain(first.result)
+    ? answerTextForAi(first.result)
     : undefined;
   const alternatives = entries.flatMap((entry, index) => [
-    ...(index > 0 && !isRichTextEmpty(entry.result) ? [richTextToPlain(entry.result)] : []),
-    ...(entry.alternatives ?? []).map((text) => richTextToPlain(text)),
+    ...(index > 0 && !isRichTextEmpty(entry.result) ? [answerTextForAi(entry.result)] : []),
+    ...(entry.alternatives ?? []).map((text) => answerTextForAi(text)),
   ]).filter(Boolean);
   const officialParts = entries.flatMap((entry) => [entry.steps, entry.result, ...(entry.alternatives ?? [])])
     .filter((text): text is RichText => !isRichTextEmpty(text))
-    .map((text) => richTextToPlain(text))
+    .map((text) => answerTextForAi(text))
     .filter(Boolean);
   const gradingNote = entries.map((entry) => entry.note?.trim()).find(Boolean);
   const structured: NonNullable<AiQuestionContext['solution']> = {};
@@ -263,6 +263,81 @@ function containsProtectedAnswer(shown: string, answer: string): boolean {
   return false;
 }
 
+/** Matches the broker's per-field budget; never buy a hint for a fragment. */
+const MAX_ANSWER_CONTEXT = 8000;
+
+export class AiQuestionContextError extends Error {
+  readonly code = 'AI_PAYLOAD_TOO_LARGE';
+
+  constructor() {
+    super('Die Antwortoptionen dieser Aufgabe sind für eine vollständige KI-Anfrage zu umfangreich.');
+    this.name = 'AiQuestionContextError';
+  }
+}
+
+/** Preserve the meaning of fractions, roots and grouping in option formulas. */
+function answerTextForAi(text: RichText | undefined): string {
+  return (text ?? []).map((node) => {
+    if (node.t === 'text') return node.v;
+    if (node.t === 'math') return `\\(${node.v}\\)`;
+    const alt = node.alt?.trim();
+    return alt
+      ? `[Abbildung nicht übermittelt; Beschreibung: ${alt}]`
+      : '[Abbildung nicht übermittelt; keine Beschreibung vorhanden]';
+  }).join('').trim();
+}
+
+/**
+ * The inputs visible alongside the Angabe are question material too. Project
+ * only their public fields: never spread an Answer, whose siblings contain
+ * correct indices, pairs, numeric values, canonical expressions and rubrics.
+ */
+export function answerContextForPart(part: QuestionPart): string | undefined {
+  const answer = part.answer;
+  if (!answer || answer.kind === 'open') return undefined;
+  const letter = (index: number) => String.fromCharCode(65 + index);
+  let context: string;
+  switch (answer.kind) {
+    case 'choice':
+      context = [
+        `Auswahl: ${answer.selectCount} von ${answer.options.length} Optionen auswählen.`,
+        ...answer.options.map((option, index) => `${letter(index)}) ${answerTextForAi(option)}`),
+      ].join('\n');
+      break;
+    case 'matching':
+      context = [
+        'Zuordnung: Jedem nummerierten Eintrag eine der angegebenen Optionen zuordnen.',
+        'Einträge:',
+        ...answer.left.map((entry, index) => `${index + 1}) ${answerTextForAi(entry)}`),
+        'Optionen:',
+        ...answer.right.map((option, index) => `${letter(index)}) ${answerTextForAi(option)}`),
+        ...(answer.candidateGroups?.length ? [
+          'Zulässige Auswahlgruppen (keine Lösungszuordnungen):',
+          ...answer.candidateGroups.map((group, index) =>
+            `${group.label ? answerTextForAi(group.label) : `Gruppe ${index + 1}`}: `
+            + `${group.leftIndices.map((i) => i + 1).join(', ')} → ${group.rightIndices.map(letter).join(', ')}`),
+        ] : []),
+      ].join('\n');
+      break;
+    case 'numeric':
+      context = [
+        'Eingabe: Zahlenwerte für diese Felder.',
+        ...answer.blanks.map((blank) => `${blank.id}${blank.unit ? ` (Einheit: ${blank.unit})` : ''}`),
+      ].join('\n');
+      break;
+    case 'expression':
+      context = 'Eingabe: Mathematischer Ausdruck.'
+        + (answer.vars.length ? `\nVariablen: ${answer.vars.join(', ')}` : '');
+      break;
+    case 'interval':
+      context = 'Eingabe: Intervall mit unterer und oberer Grenze; jede Grenze offen oder geschlossen. '
+        + 'Eine leere Grenze steht für unbeschränkt.';
+      break;
+  }
+  if (context.length > MAX_ANSWER_CONTEXT) throw new AiQuestionContextError();
+  return context;
+}
+
 function shared(
   question: Question,
   part: QuestionPart,
@@ -273,13 +348,15 @@ function shared(
   const alts = figureAlts(question, part);
   const includesFigures = hasFigures(question, part);
   const solutionIncludesFigures = hasSolutionFigures(part);
-  const questionPrompt = richTextToPlain(question.prompt);
-  const partPrompt = richTextToPlain(part.prompt);
+  const questionPrompt = answerTextForAi(question.prompt);
+  const partPrompt = answerTextForAi(part.prompt);
+  const answerContext = answerContextForPart(part);
   return {
     questionId: question.id,
     partId: part.id,
     ...(questionPrompt ? { questionPrompt } : {}),
     ...(partPrompt ? { partPrompt } : {}),
+    ...(answerContext ? { answerContext } : {}),
     ...(part.format ? { format: part.format } : {}),
     ...(alts.length > 0 ? { figureAlts: alts } : {}),
     ...(includesFigures ? { hasFigures: true } : {}),
@@ -437,7 +514,7 @@ export function buildAssessRequest(input: {
   const answer = part.answer;
   const rubricText =
     answer?.kind === 'open' && !isRichTextEmpty(answer.rubric)
-      ? richTextToPlain(answer.rubric)
+      ? answerTextForAi(answer.rubric)
       : undefined;
 
   if (part.scoring?.mode === 'rubric') {
@@ -497,7 +574,7 @@ export function submittedText(
       // was given". So resolve them against the option texts.
       return answer?.kind === 'choice'
         ? submission.selected
-            .map((i) => `${String.fromCharCode(65 + i)}) ${richTextToPlain(answer.options[i])}`)
+            .map((i) => `${String.fromCharCode(65 + i)}) ${answerTextForAi(answer.options[i])}`)
             .filter(Boolean)
             .join('\n')
         : submission.selected.map((i) => String.fromCharCode(65 + i)).join(', ');
@@ -509,7 +586,7 @@ export function submittedText(
             .map((right, left) =>
               right === null
                 ? null
-                : `${richTextToPlain(answer.left[left])} → ${richTextToPlain(answer.right[right])}`,
+                : `${answerTextForAi(answer.left[left])} → ${answerTextForAi(answer.right[right])}`,
             )
             .filter((line): line is string => Boolean(line))
             .join('\n')

@@ -150,7 +150,7 @@ defineExpose({
           variant="secondary"
           @click="emit('requestHint')"
         >
-          {{ t(hasContent ? 'Nächster Hinweis' : 'Hinweis 1') }}
+          {{ hasContent ? t('Nächster Hinweis') : t('Hinweis {level}', { level: hintLevel ?? 1 }) }}
         </QButton>
         <QButton
           v-if="stage !== 'hint' && (stage === 'explanation' ? canRequestExplanation : canRequestDiagnosis) && !diagnosis && !markdown"

@@ -62,7 +62,7 @@ async function settle() {
   for (let i = 0; i < 8; i += 1) { await Promise.resolve(); await nextTick(); }
 }
 let unmount: (() => void) | undefined;
-async function mountPractice(status = ready, options: { enabled?: boolean; loggedIn?: boolean; cached?: boolean; legacyCorrectionCache?: boolean } = {}) {
+async function mountPractice(status = ready, options: { enabled?: boolean; loggedIn?: boolean; cached?: boolean; legacyCorrectionCache?: boolean; missingCachedHint?: boolean; deliveredHintLevel?: 1 | 2 | 3 } = {}) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const app = useAppStore();
@@ -92,6 +92,7 @@ async function mountPractice(status = ready, options: { enabled?: boolean; logge
     items: [{
       questionId: 'q1', partId: 'q1-a', reason: 'manual',
       learningInteractionId: '11111111-1111-4111-8111-111111111111',
+      ...(options.deliveredHintLevel ? { deliveredHintLevel: options.deliveredHintLevel } : {}),
       ...(options.cached ? { cachedAiHint: {
         cacheKey: 'cached', partId: 'q1-a', mode: 'hint',
         attemptPhase: options.legacyCorrectionCache ? 'correction' : 'first',
@@ -104,7 +105,7 @@ async function mountPractice(status = ready, options: { enabled?: boolean; logge
     hint: { level: 1, markdown: 'Ein hilfreicher Hinweis', nextAction: 'Denke weiter', advisoryOnly: true },
     model: 'test-model', promptVersion: 'v2', source: 'pool', taskVersion: 'hint.v1', cached: true,
   });
-  if (options.cached) vi.spyOn(ai, 'replayExplain').mockResolvedValue({
+  if (options.cached) vi.spyOn(ai, 'replayExplain').mockResolvedValue(options.missingCachedHint ? undefined : {
     mode: 'hint', markdown: 'Gespeicherte KI-Antwort',
     hint: { level: 1, markdown: 'Gespeicherte KI-Antwort', nextAction: 'Denke weiter', advisoryOnly: true },
     model: 'test-model', promptVersion: 'v2', source: 'pool', taskVersion: 'hint.v1', cached: true,
@@ -207,6 +208,30 @@ describe('practice AI entries', () => {
     player.emit!(state('correct'));
     await settle();
     expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
+  });
+
+  it('lets the learner explicitly request a missing final hint without changing its delivered level', async () => {
+    const { host, ai } = await mountPractice(ready, {
+      cached: true, missingCachedHint: true, deliveredHintLevel: 3,
+    });
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    expect(ai.explain).not.toHaveBeenCalled();
+    expect(usePracticeStore().items[0]?.deliveredHintLevel).toBe(3);
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await vi.waitFor(() => expect(ai.explain).toHaveBeenCalled());
+    expect(vi.mocked(ai.explain).mock.calls[0]?.[0]).toMatchObject({ mode: 'hint', hintLevel: 3, submitted: '' });
+  });
+
+  it('explains an oversized context without replacing the practice screen', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    vi.mocked(ai.explain).mockRejectedValueOnce(Object.assign(new Error('Too much context'), {
+      code: 'AI_PAYLOAD_TOO_LARGE',
+    }));
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await vi.waitFor(() => expect(host.textContent).toContain('für eine vollständige KI-Anfrage zu umfangreich'));
+    expect(host.textContent).toContain('keine Anfrage an den Anbieter gesendet');
+    expect(host.querySelector('.test-player')).not.toBeNull();
   });
 
   it('retains authorized diagnosis as an explanation of the original answer, without a correction action', async () => {

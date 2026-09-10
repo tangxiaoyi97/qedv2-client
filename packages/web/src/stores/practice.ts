@@ -510,6 +510,8 @@ function isAiExplainCacheLocator(value: unknown): value is AiExplainCacheLocator
   return Object.keys(row).every((key) => [
     'version',
     'cacheKey',
+    'answerContextDigest',
+    'projectionVersion',
     'mode',
     'hintLevel',
     'partId',
@@ -522,6 +524,9 @@ function isAiExplainCacheLocator(value: unknown): value is AiExplainCacheLocator
     && row.version === 1
     && typeof row.cacheKey === 'string'
     && /^v2:[0-9a-f]{64}$/u.test(row.cacheKey)
+    && (row.answerContextDigest === undefined
+      || (typeof row.answerContextDigest === 'string' && /^v2:[0-9a-f]{64}$/u.test(row.answerContextDigest)))
+    && (row.projectionVersion === undefined || row.projectionVersion === 2)
     && (row.mode === 'hint' || row.mode === 'diagnosis')
     && (row.mode === 'hint'
       ? row.hintLevel === 1 || row.hintLevel === 2 || row.hintLevel === 3

@@ -235,10 +235,10 @@ export class ServerClient {
     return requestJson<AiStatus>(this.baseUrl, '/me/ai/status', this.authed({}));
   }
 
-  /** PUT /me/ai/credential — store a user-supplied key (encrypted at rest). */
+  /** PUT /me/ai/credential — store a key or update its model, retaining the saved key. */
   saveAiCredential(input: {
     provider: AiProviderId;
-    apiKey: string;
+    apiKey?: string;
     model?: string;
   }): Promise<AiStatus> {
     return requestJson<AiStatus>(

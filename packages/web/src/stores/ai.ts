@@ -12,7 +12,9 @@ import {
   aiCacheDigest,
   AI_CACHE_META_KEY,
   AiCacheWriteInvalidatedError,
+  AiQuestionContextError,
   accountStorageIdentity,
+  answerContextForPart,
   buildAssessRequest,
   buildExplainRequest,
   cacheableAiAssessResponse,
@@ -491,7 +493,7 @@ export const useAiStore = defineStore('ai', () => {
 
   async function saveCredential(input: {
     provider: 'openai' | 'gemini';
-    apiKey: string;
+    apiKey?: string;
     model?: string;
   }): Promise<void> {
     const context = captureAuthenticatedOperation();
@@ -555,6 +557,14 @@ export const useAiStore = defineStore('ai', () => {
       throw new Error('Der eigene KI-Schlüssel ist nicht testbereit.');
     }
     const fingerprint = credentialFingerprint(context, route, taskVersion);
+    const assertCredentialCurrent = (): void => {
+      assertOperationCurrent(context);
+      const currentRoute = status.value?.byo;
+      if (!currentRoute?.configured
+        || credentialFingerprint(context, currentRoute, taskVersion) !== fingerprint) {
+        throw staleRequestError();
+      }
+    };
     if (credentialTestInFlight?.fingerprint === fingerprint) {
       return credentialTestInFlight.promise;
     }
@@ -565,7 +575,7 @@ export const useAiStore = defineStore('ai', () => {
       const completed = route.credentialRevision
         ? await aiCredentialTestJournal.completed(fingerprint)
         : undefined;
-      assertOperationCurrent(context);
+      assertCredentialCurrent();
       if (completed && !options.newRequest) return completed;
       const interactionId = secureRandomUuidV4();
       const base = { interactionId, taskVersion, preferPool: false as const };
@@ -582,7 +592,7 @@ export const useAiStore = defineStore('ai', () => {
             candidate,
           )
         : await aiCredentialTestJournal.getOrCreate(fingerprint, candidate);
-      assertOperationCurrent(context);
+      assertCredentialCurrent();
       try {
         const response = await context.client.testAiCredential(pending.request);
         // A paid success must still reach the UI if IndexedDB/quota cleanup
@@ -590,7 +600,7 @@ export const useAiStore = defineStore('ai', () => {
         await aiCredentialTestJournal
           .complete(fingerprint, response)
           .catch(() => undefined);
-        assertOperationCurrent(context);
+        assertCredentialCurrent();
         void refreshStatus();
         return response;
       } catch (error) {
@@ -749,6 +759,8 @@ export const useAiStore = defineStore('ai', () => {
     const prefs = { ...promptPrefs.value };
     const stable = {
       source,
+      provider: route?.provider,
+      model: route?.model,
       promptPrefs: prefs,
     };
     return {
@@ -770,14 +782,26 @@ export const useAiStore = defineStore('ai', () => {
   function paidOperationIsCurrent(context: PaidOperationContext): boolean {
     if (!operationIsCurrent(context)) return false;
     const source = mode.value;
+    const route = source === 'pool' ? status.value?.pool : status.value?.byo;
     return aiCacheDigest({
       source,
+      provider: route?.provider,
+      model: route?.model,
       promptPrefs: { ...promptPrefs.value },
     }) === context.fingerprint;
   }
 
   function assertPaidOperationCurrent(context: PaidOperationContext): void {
     if (!paidOperationIsCurrent(context)) throw staleRequestError();
+  }
+
+  function paidCacheRouteUnchanged(context: PaidOperationContext): boolean {
+    // An already-paid reply for another account/server may still be retained
+    // under its original private scope. For the current owner, a known route
+    // change must not populate a cache based on the previous model/settings.
+    const sameOwner = auth.session?.user.id === context.userId
+      && app.config.serverBaseUrl === context.serverBaseUrl;
+    return !sameOwner || paidOperationIsCurrent(context);
   }
 
   function persistentKey(
@@ -788,6 +812,7 @@ export const useAiStore = defineStore('ai', () => {
     const source = context?.source ?? mode.value;
     const route = context ?? (source === 'pool' ? status.value?.pool : status.value?.byo);
     return aiCacheDigest({
+      projectionVersion: 2,
       kind,
       userId: context?.userId ?? auth.session?.user.id ?? 'guest',
       serverUrl: context?.serverBaseUrl ?? app.config.serverBaseUrl,
@@ -830,6 +855,7 @@ export const useAiStore = defineStore('ai', () => {
     context?: PaidOperationContext,
   ): string {
     return aiCacheDigest({
+      projectionVersion: 2,
       kind,
       userId: context?.userId ?? auth.session?.user.id ?? 'guest',
       serverUrl: context?.serverBaseUrl ?? app.config.serverBaseUrl,
@@ -924,11 +950,11 @@ export const useAiStore = defineStore('ai', () => {
     }
     assertHintDoesNotRevealAnswer(input, answer);
     const reusable = cacheableAiExplainResponse(answer);
-    if (requestCacheGeneration === cacheClearGeneration) {
+    if (requestCacheGeneration === cacheClearGeneration && paidCacheRouteUnchanged(context)) {
       if (cacheWriteToken !== undefined) {
         try {
           await aiCache.set(key, reusable, new Date(), scope, cacheWriteToken);
-          if (requestCacheGeneration === cacheClearGeneration) {
+          if (requestCacheGeneration === cacheClearGeneration && paidCacheRouteUnchanged(context)) {
             explainCache.value.set(key, reusable);
             cacheWarning.value = null;
           }
@@ -936,6 +962,7 @@ export const useAiStore = defineStore('ai', () => {
           if (
             !(error instanceof AiCacheWriteInvalidatedError)
             && requestCacheGeneration === cacheClearGeneration
+            && paidCacheRouteUnchanged(context)
           ) {
             explainCache.value.set(key, reusable);
             cacheWarning.value = 'KI-Antwort sichtbar, aber nicht absturzsicher gespeichert.';
@@ -962,6 +989,8 @@ export const useAiStore = defineStore('ai', () => {
     return {
       version: 1,
       cacheKey: persistentKey('explain', request),
+      projectionVersion: 2,
+      ...(request.answerContext ? { answerContextDigest: aiCacheDigest(request.answerContext) } : {}),
       mode,
       ...(mode === 'hint' ? { hintLevel: input.hintLevel } : {}),
       partId: input.part.id,
@@ -978,6 +1007,14 @@ export const useAiStore = defineStore('ai', () => {
     part: QuestionPart,
   ): Promise<AiExplainResult | undefined> {
     if (locator.partId !== part.id) throw new Error('AI cache locator belongs to another part');
+    // Legacy prompts used a lossy preview formatter even for the Angabe.
+    // Preserve the cache record, but do not replay a mathematically different task.
+    if (locator.projectionVersion !== 2) return undefined;
+    // Old pickable-question replies were bought without their options. Keep
+    // their stored content, but do not present them as help for the full task.
+    const answerContext = answerContextForPart(part);
+    const contextDigest = answerContext ? aiCacheDigest(answerContext) : undefined;
+    if (locator.answerContextDigest !== contextDigest) return undefined;
     const context = cacheReplayContext();
     if (!context) return undefined;
     const cacheReadGeneration = cacheClearGeneration;
@@ -1100,11 +1137,11 @@ export const useAiStore = defineStore('ai', () => {
       if (paidOperationIsCurrent(context)) void refreshStatus();
     }
     const reusable = cacheableAiAssessResponse(answer);
-    if (requestCacheGeneration === cacheClearGeneration) {
+    if (requestCacheGeneration === cacheClearGeneration && paidCacheRouteUnchanged(context)) {
       if (cacheWriteToken !== undefined) {
         try {
           await aiCache.set(key, reusable, new Date(), scope, cacheWriteToken);
-          if (requestCacheGeneration === cacheClearGeneration) {
+          if (requestCacheGeneration === cacheClearGeneration && paidCacheRouteUnchanged(context)) {
             assessCache.value.set(key, reusable);
             cacheWarning.value = null;
           }
@@ -1112,6 +1149,7 @@ export const useAiStore = defineStore('ai', () => {
           if (
             !(error instanceof AiCacheWriteInvalidatedError)
             && requestCacheGeneration === cacheClearGeneration
+            && paidCacheRouteUnchanged(context)
           ) {
             assessCache.value.set(key, reusable);
             cacheWarning.value = 'KI-Antwort sichtbar, aber nicht absturzsicher gespeichert.';
@@ -1193,12 +1231,19 @@ export const useAiStore = defineStore('ai', () => {
    */
   function cached(input: ExplainInput): AiExplainResult | undefined {
     const mode = input.mode ?? 'answer';
-    const request = buildExplainRequest({
-      ...input,
-      mode,
-      options: promptPrefs.value,
-    });
-    return explainCache.value.get(persistentKey('explain', request));
+    try {
+      const request = buildExplainRequest({
+        ...input,
+        mode,
+        options: promptPrefs.value,
+      });
+      return explainCache.value.get(persistentKey('explain', request));
+    } catch (error) {
+      // Rendering an oversized bank question must still work. The explicit
+      // request action reports this readable error before any provider I/O.
+      if (error instanceof AiQuestionContextError) return undefined;
+      throw error;
+    }
   }
 
   /** Belongs next to „Schlüssel entfernen": forgetting should mean all of it. */
@@ -1321,12 +1366,15 @@ function withoutClientRequestId(request: unknown): unknown {
 async function withStableRequestId<T extends { interactionId?: string; taskVersion?: string }>(
   request: T,
   options: PaidAiRequestOptions = {},
-  context?: Pick<PaidOperationContext, 'userId' | 'serverBaseUrl' | 'serverCommit'>,
+  context?: Pick<PaidOperationContext, 'userId' | 'serverBaseUrl' | 'serverCommit' | 'provider' | 'model'>,
 ): Promise<StablePaidRequest<T & { clientRequestId?: string }>> {
   if (!request.interactionId || !request.taskVersion) return { request };
   const app = context ? undefined : useAppStore();
   const auth = context ? undefined : useAuthStore();
   const logical = aiCacheDigest({
+    projectionVersion: 2,
+    provider: context?.provider,
+    model: context?.model,
     userId: context?.userId ?? auth?.session?.user.id ?? 'guest',
     serverUrl: context?.serverBaseUrl ?? app?.config.serverBaseUrl,
     serverCommit: context

@@ -26,6 +26,8 @@ export interface AiQuestionContext {
   partId: string;
   questionPrompt?: string;
   partPrompt?: string;
+  /** Learner-visible options and input constraints, never the grading answer. */
+  answerContext?: string;
   format?: string;
   /** Non-empty means the model is working blind on a figure this question uses. */
   figureAlts?: string[];
@@ -197,6 +199,10 @@ export type AiExplainResult = AiExplainResponse | AiCachedExplainResponse;
 export interface AiExplainCacheLocator {
   version: 1;
   cacheKey: string;
+  /** Version 2 preserves mathematical source and the complete input controls. */
+  projectionVersion?: 2;
+  /** Public answer context used for the paid reply; absent in legacy locators. */
+  answerContextDigest?: string;
   mode: 'hint' | 'diagnosis';
   hintLevel?: 1 | 2 | 3;
   partId: string;

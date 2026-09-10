@@ -30,6 +30,7 @@ const credentialEditorDismissed = ref(false);
 const savingCredential = ref(false);
 const credentialError = ref<string | null>(null);
 const credentialSaved = ref(false);
+const credentialSavedWithKey = ref(false);
 const confirmingRemoval = ref(false);
 const testingCredential = ref(false);
 const credentialTestResult = ref<string | null>(null);
@@ -67,6 +68,13 @@ watch(() => ai.customInstructions, (value) => {
 
 const status = computed(() => ai.status);
 const configured = computed(() => status.value?.byo.configured === true);
+const canKeepCredential = computed(() => configured.value && status.value?.byo.provider === provider.value);
+const credentialDraftChanged = computed(() => apiKey.value.trim() !== ''
+  || provider.value !== status.value?.byo.provider
+  || model.value.trim() !== (status.value?.byo.model ?? ''));
+const canSaveCredential = computed(() => !savingCredential.value && !testingCredential.value
+  && availableProviders.value.some((item) => item.id === provider.value)
+  && (apiKey.value.trim() !== '' || (canKeepCredential.value && credentialDraftChanged.value)));
 const pool = computed(() => status.value?.pool);
 const showCredentialEditor = computed(
   () =>
@@ -84,6 +92,28 @@ const showSourceChooser = computed(
 const sourceUnavailable = computed(
   () => !!status.value && ai.mode === 'pool' && !ai.poolOffered && ai.byoOffered,
 );
+
+function clearCredentialTest(): void {
+  credentialTestResult.value = null;
+  credentialTestError.value = null;
+  credentialRenewRequestId.value = null;
+}
+
+watch(provider, () => {
+  // A key/model typed for one vendor must never be submitted to another.
+  apiKey.value = '';
+  model.value = canKeepCredential.value ? status.value?.byo.model ?? '' : '';
+}, { flush: 'sync' });
+watch([provider, apiKey, model], () => {
+  credentialSaved.value = false;
+  credentialError.value = null;
+  confirmingRemoval.value = false;
+  clearCredentialTest();
+}, { flush: 'sync' });
+watch(() => {
+  const route = status.value?.byo;
+  return JSON.stringify([route?.configured, route?.provider, route?.model, route?.credentialRevision]);
+}, clearCredentialTest);
 
 type ReadinessTone = 'accent' | 'neutral' | 'warn';
 
@@ -188,7 +218,7 @@ function toggleCredentialEditor(): void {
     provider.value = availableProviders.value.some((item) => item.id === configuredProvider)
       ? configuredProvider as 'openai' | 'gemini'
       : availableProviders.value[0]?.id ?? 'openai';
-    model.value = status.value?.byo.model ?? '';
+    model.value = canKeepCredential.value ? status.value?.byo.model ?? '' : '';
   }
   credentialError.value = null;
   credentialSaved.value = false;
@@ -197,6 +227,8 @@ function toggleCredentialEditor(): void {
 
 function togglePreferences(): void {
   preferencesOpen.value = !preferencesOpen.value;
+  language.value = app.config.aiLanguage ?? '';
+  customInstructions.value = ai.customInstructions ?? '';
   preferencesError.value = null;
   preferencesSaved.value = false;
 }
@@ -212,23 +244,23 @@ async function retryStatus(): Promise<void> {
 }
 
 async function saveCredential(): Promise<void> {
-  if (
-    !apiKey.value.trim()
-    || savingCredential.value
-    || testingCredential.value
-    || !availableProviders.value.some((item) => item.id === provider.value)
-  ) return;
+  if (!canSaveCredential.value) return;
   savingCredential.value = true;
   credentialError.value = null;
   credentialSaved.value = false;
+  clearCredentialTest();
   try {
+    const newKey = apiKey.value.trim();
     await ai.saveCredential({
       provider: provider.value,
-      apiKey: apiKey.value.trim(),
-      ...(model.value.trim() ? { model: model.value.trim() } : {}),
+      ...(newKey ? { apiKey: newKey } : {}),
+      // An explicit empty string resets a custom model to the server default.
+      model: model.value.trim(),
     });
     // Secrets must not remain in the DOM after reaching the server.
     apiKey.value = '';
+    model.value = status.value?.byo.model ?? '';
+    credentialSavedWithKey.value = newKey !== '';
     credentialSaved.value = true;
   } catch (error) {
     credentialError.value = messageOf(error, t('Der Schlüssel konnte nicht gespeichert werden.'));
@@ -244,6 +276,8 @@ async function removeCredential(): Promise<void> {
   try {
     await ai.deleteCredential();
     apiKey.value = '';
+    model.value = '';
+    clearCredentialTest();
     credentialSaved.value = false;
     confirmingRemoval.value = false;
     credentialEditorOpen.value = false;
@@ -256,7 +290,8 @@ async function removeCredential(): Promise<void> {
 }
 
 async function testCredential(options: { newRequest?: boolean } = {}): Promise<void> {
-  if (testingCredential.value || savingCredential.value) return;
+  if (testingCredential.value || savingCredential.value
+    || (showCredentialEditor.value && credentialDraftChanged.value)) return;
   testingCredential.value = true;
   credentialTestResult.value = null;
   credentialTestError.value = null;
@@ -415,7 +450,7 @@ async function clearCache(): Promise<void> {
           <template #description>{{ credentialSummary }}</template>
           <template #status>
             <span v-if="credentialSaved" class="ai-settings__saved" role="status">
-              {{ t('Schlüssel gespeichert.') }}
+              {{ credentialSavedWithKey ? t('Schlüssel gespeichert.') : t('Modell gespeichert.') }}
             </span>
             <span v-else-if="configured && !ai.byoOffered" class="ai-settings__secure">
               <ShieldCheck :size="14" aria-hidden="true" />
@@ -466,7 +501,10 @@ async function clearCache(): Promise<void> {
           <template v-if="credentialTestResult" #description>
             <span role="status">{{ credentialTestResult }}</span>
           </template>
-          <QButton variant="secondary" :disabled="testingCredential || savingCredential" :aria-busy="testingCredential" @click="testCredential()">
+          <template v-else-if="showCredentialEditor && credentialDraftChanged" #description>
+            {{ t('Änderungen zuerst speichern.') }}
+          </template>
+          <QButton variant="secondary" :disabled="testingCredential || savingCredential || (showCredentialEditor && credentialDraftChanged)" :aria-busy="testingCredential" @click="testCredential()">
             {{ testingCredential ? t('Wird getestet …') : t('Verbindung testen') }}
           </QButton>
         </SettingsRow>
@@ -476,7 +514,7 @@ async function clearCache(): Promise<void> {
           <template v-if="credentialRenewRequestId" #action>
             <QButton
               variant="secondary"
-              :disabled="testingCredential"
+              :disabled="testingCredential || savingCredential || (showCredentialEditor && credentialDraftChanged)"
               @click="testCredential({ newRequest: true })"
             >
               {{ t('Neu testen (kann erneut kosten)') }}
@@ -493,7 +531,7 @@ async function clearCache(): Promise<void> {
         >
           <SettingsRow :label="t('Anbieter')">
             <template #default="{ labelId }">
-              <select v-model="provider" class="ai-settings__input q-settings-field" :aria-labelledby="labelId" :disabled="savingCredential">
+              <select v-model="provider" class="ai-settings__input q-settings-field" :aria-labelledby="labelId" :disabled="savingCredential || testingCredential">
                 <option v-for="item in availableProviders" :key="item.id" :value="item.id">
                   {{ item.label }}
                 </option>
@@ -502,6 +540,9 @@ async function clearCache(): Promise<void> {
           </SettingsRow>
 
           <SettingsRow :label="configured ? t('Neuer API-Schlüssel') : t('API-Schlüssel')">
+            <template v-if="canKeepCredential" #description>
+              {{ t('Leer lassen, um den gespeicherten Schlüssel zu behalten.') }}
+            </template>
             <template #default="{ labelId }">
               <input
                 id="ai-key"
@@ -511,7 +552,7 @@ async function clearCache(): Promise<void> {
                 maxlength="512"
                 autocomplete="off"
                 autocapitalize="off"
-                :disabled="savingCredential"
+                :disabled="savingCredential || testingCredential"
                 spellcheck="false"
                 :placeholder="t('API-Schlüssel')"
                 :aria-labelledby="labelId"
@@ -530,7 +571,7 @@ async function clearCache(): Promise<void> {
                 class="ai-settings__input q-settings-field"
                 spellcheck="false"
                 :placeholder="t('Standardmodell')"
-                :disabled="savingCredential"
+                :disabled="savingCredential || testingCredential"
                 :aria-labelledby="labelId"
               />
             </template>
@@ -568,7 +609,7 @@ async function clearCache(): Promise<void> {
                   {{ t('Entfernen') }}
                 </span>
               </QButton>
-              <QButton type="submit" :disabled="!apiKey.trim() || savingCredential || testingCredential">
+              <QButton type="submit" :disabled="!canSaveCredential">
                 {{ savingCredential ? t('Wird gespeichert …') : t('Speichern') }}
               </QButton>
             </template>

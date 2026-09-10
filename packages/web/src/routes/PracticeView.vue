@@ -521,10 +521,12 @@ const learningNextAction = computed(() =>
   (visibleLearningResponse.value?.mode === 'hint' ? visibleLearningResponse.value.hint.nextAction : undefined)
     ?? (hintLevel.value > 0 ? t('Versuche jetzt den nächsten eigenen Schritt.') : undefined),
 );
+const missingDeliveredHint = computed(() => hintLevel.value > 0
+  && !visibleLearningResponse.value && !authoredHint.value);
 const canRequestHint = computed(() =>
   learningStage.value === 'hint'
   && playerState.value.phase === 'answering'
-  && hintLevel.value < 3
+  && (hintLevel.value < 3 || missingDeliveredHint.value)
   && (bankHints.value.some((hint) => hint.level > hintLevel.value)
     || (aiLearningAllowed.value && ai.canHint)),
 );
@@ -553,6 +555,7 @@ async function requestHint(options: { newRequest?: boolean; expectedGeneration?:
   const level = (!aiLearningAllowed.value || !ai.canHint) && nextAuthored
     ? nextAuthored.level
     : pendingHintLevel.value
+      ?? (missingDeliveredHint.value ? hintLevel.value as 1 | 2 | 3 : undefined)
       ?? (Math.min(3, hintLevel.value + 1) as 1 | 2 | 3);
   const bankHint = bankHints.value.find((hint) => hint.level === level);
   learningError.value = null;
@@ -1057,6 +1060,8 @@ function explainMessage(e: unknown): string {
       return 'Die Aufgabe oder KI-Einstellung hat sich geändert. Bitte die Hilfe neu öffnen.';
     case 'AI_TASK_VERSION_MISMATCH':
       return 'Client und Server verwenden unterschiedliche KI-Versionen. Bitte QED2 aktualisieren.';
+    case 'AI_PAYLOAD_TOO_LARGE':
+      return 'Der Inhalt ist für eine vollständige KI-Anfrage zu umfangreich. Es wurde keine Anfrage an den Anbieter gesendet.';
     default:
       return 'Die KI-Hilfe konnte nicht erzeugt werden.';
   }

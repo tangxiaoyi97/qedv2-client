@@ -10,6 +10,7 @@ interface TestAiStatus {
     provider?: 'openai' | 'gemini';
     model?: string;
     last4?: string;
+    credentialRevision?: string;
   };
   pool: {
     eligible: boolean;
@@ -321,6 +322,97 @@ describe('AI settings view', () => {
     expect(getElement(host, '#ai-credential-editor')).toBeTruthy();
   });
 
+  it('saves a changed model without requiring or sending the stored key', async () => {
+    aiStore.saveCredential.mockImplementationOnce(async () => {
+      aiStore.status = readyStatus({ byo: { ...aiStore.status!.byo, model: 'new-model', credentialRevision: 'new' } });
+    });
+    const host = mountSettings();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    const save = getElement<HTMLButtonElement>(host, '#ai-credential-editor button[type="submit"]');
+    expect(save.disabled).toBe(true);
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), ' new-model ');
+    await nextTick();
+    expect(save.disabled).toBe(false);
+    expect(host.textContent).toContain('Leer lassen, um den gespeicherten Schlüssel zu behalten.');
+    save.click();
+    await settle();
+    expect(aiStore.saveCredential).toHaveBeenCalledWith({ provider: 'openai', model: 'new-model' });
+    expect(getElement<HTMLInputElement>(host, '#ai-key').value).toBe('');
+    expect(host.textContent).toContain('Modell gespeichert.');
+    expect(save.disabled).toBe(true);
+  });
+
+  it('sends an explicit empty model to restore the server default', async () => {
+    const host = mountSettings();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), '  ');
+    await nextTick();
+    getElement<HTMLButtonElement>(host, '#ai-credential-editor button[type="submit"]').click();
+    await settle();
+    expect(aiStore.saveCredential).toHaveBeenCalledWith({ provider: 'openai', model: '' });
+  });
+
+  it('clears vendor-specific drafts and requires a new key for another provider', async () => {
+    const host = mountSettings();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-key'), 'openai-replacement');
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), 'openai-model');
+    const provider = getElement<HTMLSelectElement>(host, 'select[aria-labelledby]');
+    provider.value = 'gemini';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    expect(getElement<HTMLInputElement>(host, '#ai-key').value).toBe('');
+    expect(getElement<HTMLInputElement>(host, '#ai-model').value).toBe('');
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), 'gemini-model');
+    await nextTick();
+    expect(getElement<HTMLButtonElement>(host, '#ai-credential-editor button[type="submit"]').disabled).toBe(true);
+    getElement<HTMLFormElement>(host, '#ai-credential-editor').dispatchEvent(new Event('submit', { cancelable: true }));
+    await settle();
+    expect(aiStore.saveCredential).not.toHaveBeenCalled();
+    provider.value = 'openai';
+    provider.dispatchEvent(new Event('change', { bubbles: true }));
+    await nextTick();
+    expect(getElement<HTMLInputElement>(host, '#ai-model').value).toBe('gpt-test');
+  });
+
+  it('restores saved fields after closing a failed edit and clears its stale message', async () => {
+    aiStore.saveCredential.mockRejectedValueOnce(new Error('Modell ungültig'));
+    const host = mountSettings();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), 'bad-model');
+    await nextTick();
+    getElement<HTMLButtonElement>(host, '#ai-credential-editor button[type="submit"]').click();
+    await settle();
+    expect(host.textContent).toContain('Modell ungültig');
+    expect(getElement<HTMLInputElement>(host, '#ai-model').value).toBe('bad-model');
+    buttonWithText(host, 'Schließen').click();
+    await nextTick();
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    expect(getElement<HTMLInputElement>(host, '#ai-model').value).toBe('gpt-test');
+    expect(host.textContent).not.toContain('Modell ungültig');
+  });
+
+  it('does not test unsaved model drafts or retain a stale connection success after saving', async () => {
+    const host = mountSettings();
+    buttonWithText(host, 'Verbindung testen').click();
+    await settle();
+    expect(host.textContent).toContain('Verbunden · OpenAI · gpt-test');
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-model'), 'other-model');
+    await nextTick();
+    expect(buttonWithText(host, 'Verbindung testen').disabled).toBe(true);
+    getElement<HTMLButtonElement>(host, '#ai-credential-editor button[type="submit"]').click();
+    await settle();
+    expect(aiStore.testCredential).toHaveBeenCalledTimes(1);
+    expect(host.textContent).not.toContain('Verbunden · OpenAI · gpt-test');
+  });
+
   it('filters providers by server capability and tests BYOK only on an explicit click', async () => {
     aiStore.capabilities = {
       explain: true,
@@ -333,7 +425,11 @@ describe('AI settings view', () => {
     await nextTick();
     const options = [...getElement<HTMLSelectElement>(host, 'select[aria-labelledby]').options];
     expect(options.map((option) => option.value)).toEqual(['gemini']);
+    expect(getElement<HTMLInputElement>(host, '#ai-model').value).toBe('');
     expect(aiStore.testCredential).not.toHaveBeenCalled();
+
+    buttonWithText(host, 'Schließen').click();
+    await nextTick();
 
     buttonWithText(host, 'Verbindung testen').click();
     await settle();

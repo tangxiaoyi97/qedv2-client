@@ -113,14 +113,14 @@ describe('explain request', () => {
     });
   });
 
-  it('flattens KaTeX into readable text', () => {
+  it('preserves KaTeX source instead of using a lossy preview', () => {
     const req = buildExplainRequest({
       question: question({ prompt: [{ t: 'math', v: '\\mathbb{R}' }] }),
       part: part(),
       submitted: 'x',
       result,
     });
-    expect(req.questionPrompt).toContain('ℝ');
+    expect(req.questionPrompt).toContain('\\(\\mathbb{R}\\)');
   });
 
   it('keeps every official answer field out of a first-attempt hint', () => {

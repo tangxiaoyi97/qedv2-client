@@ -510,6 +510,13 @@ describe('AI store release guards', () => {
       ...ai.status!,
       byo: { ...ai.status!.byo, model: 'gpt-new' },
     };
+    // The server's subsequent quota/status refresh must agree with the saved
+    // route; an old route here correctly invalidates the in-flight response.
+    const updatedRoute = ai.status;
+    const fetchBeforeModelChange = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => String(input).endsWith('/me/ai/status')
+      ? Promise.resolve(json(updatedRoute))
+      : fetchBeforeModelChange(input, init));
     await ai.explain(explainInput);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'))).toHaveLength(3);
 
@@ -985,7 +992,10 @@ describe('AI store release guards', () => {
     expect(providerCalls).toBe(2);
   });
 
-  it('invalidates a completed credential probe when a same-last4 key is replaced', async () => {
+  it.each([
+    { apiKey: 'new-secret-with-1234' },
+    { model: 'gpt-next' },
+  ])('invalidates a completed credential probe after updating %j', async (update) => {
     const { ai } = setup();
     await vi.waitFor(() => expect(ai.canTestCredential).toBe(true));
     let currentStatus = status();
@@ -994,9 +1004,10 @@ describe('AI store release guards', () => {
       const url = String(input);
       if (url.endsWith('/me/ai/status')) return json(currentStatus);
       if (url.endsWith('/me/ai/credential') && init?.method === 'PUT') {
+        expect(JSON.parse(String(init.body))).toEqual({ provider: 'openai', ...update });
         currentStatus = {
           ...currentStatus,
-          byo: { ...currentStatus.byo, last4: '1234', credentialRevision: 'opaque-revision-b' },
+          byo: { ...currentStatus.byo, ...(update.model ? { model: update.model } : {}), last4: '1234', credentialRevision: 'opaque-revision-b' },
         };
         return json(currentStatus);
       }
@@ -1006,7 +1017,7 @@ describe('AI store release guards', () => {
       return json({
         ok: true,
         provider: 'openai',
-        model: 'gpt-test',
+        model: currentStatus.byo.model,
         source: 'byo',
         taskVersion: request.taskVersion,
         clientRequestId: request.clientRequestId,
@@ -1018,9 +1029,128 @@ describe('AI store release guards', () => {
     await ai.testCredential();
     await ai.testCredential();
     expect(providerCalls).toBe(1);
-    await ai.saveCredential({ provider: 'openai', apiKey: 'new-secret-with-1234' });
+    await ai.saveCredential({ provider: 'openai', ...update });
     await ai.testCredential();
     expect(providerCalls).toBe(2);
+  });
+
+  it('starts a separate paid request only on an explicit hint click after changing the saved model', async () => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    const calls = installLearningResponses();
+    let currentStatus = status();
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/me/ai/status')) return json(currentStatus);
+      if (url.endsWith('/me/ai/credential') && init?.method === 'PUT') {
+        expect(JSON.parse(String(init.body))).toEqual({ provider: 'openai', model: 'gpt-new' });
+        currentStatus = { ...currentStatus, byo: { ...currentStatus.byo, model: 'gpt-new', credentialRevision: 'new' } };
+        return json(currentStatus);
+      }
+      return originalFetch(input, init);
+    });
+    await ai.explain(paidHintInput);
+    await ai.saveCredential({ provider: 'openai', model: 'gpt-new' });
+    expect(calls.hintCalls()).toBe(1);
+    expect(ai.cached(paidHintInput)).toBeUndefined();
+    await ai.explain(paidHintInput);
+    await ai.explain(paidHintInput);
+    expect(calls.hintCalls()).toBe(2);
+    const bodies = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'))
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[0].clientRequestId).not.toBe(bodies[1].clientRequestId);
+  });
+
+  it('does not display an old-model reply after the saved model changes during a request', async () => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canExplain).toBe(true));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/me/ai-explain')) await gate;
+      return originalFetch(input, init);
+    });
+    const pending = ai.explain(explainInput);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/me/ai-explain'))).toBe(true));
+    ai.status = { ...ai.status!, byo: { ...ai.status!.byo, model: 'gpt-new' } };
+    release();
+    await rejected;
+    expect(ai.cached(explainInput)).toBeUndefined();
+    expect((await storage.keys(STORAGE.aiCache)).filter((key) => key.startsWith('answer-v4/'))).toHaveLength(0);
+  });
+
+  it.each(['hint', 'assess'] as const)('does not cache a delayed %s after observing a model change', async (kind) => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    installLearningResponses();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    const endpoint = kind === 'hint' ? '/me/ai-explain' : '/me/ai-grade';
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(endpoint)) await gate;
+      return originalFetch(input, init);
+    });
+    const cacheWrite = vi.spyOn(aiCache, 'set');
+    const pending = kind === 'hint' ? ai.explain(paidHintInput) : ai.assess(paidAssessInput);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith(endpoint))).toBe(true));
+    ai.status = { ...ai.status!, byo: { ...ai.status!.byo, model: 'gpt-other-model' } };
+    release();
+    await rejected;
+    expect(cacheWrite).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { model: 'gpt-other-model' },
+    { credentialRevision: 'replacement-key-revision' },
+  ])('aborts credential receipt replay before networking when %j changes during journal recovery', async (change) => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canTestCredential).toBe(true));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const completed = vi.spyOn(aiCredentialTestJournal, 'completed').mockImplementationOnce(async () => {
+      await gate;
+      return undefined;
+    });
+    const pending = ai.testCredential();
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(completed).toHaveBeenCalled());
+    ai.status = { ...ai.status!, byo: { ...ai.status!.byo, ...change } };
+    release();
+    await rejected;
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai/credential/test'))).toHaveLength(0);
+  });
+
+  it.each([
+    { model: 'gpt-other-model' },
+    { credentialRevision: 'replacement-key-revision' },
+  ])('does not publish a delayed connection test after %j changes', async (change) => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canTestCredential).toBe(true));
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/me/ai/status')) return json(status());
+      if (!String(input).endsWith('/me/ai/credential/test')) throw new Error('unexpected request');
+      const request = JSON.parse(String(init?.body));
+      await gate;
+      return json({
+        ok: true, provider: 'openai', model: 'gpt-test-snapshot', source: 'byo',
+        taskVersion: request.taskVersion, clientRequestId: request.clientRequestId,
+        interactionId: request.interactionId, accounting: 'settled',
+      });
+    });
+    const pending = ai.testCredential();
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/me/ai/credential/test'))).toBe(true));
+    ai.status = { ...ai.status!, byo: { ...ai.status!.byo, ...change } };
+    release();
+    await rejected;
+    expect(ai.status!.byo).toMatchObject(change);
   });
 
   it('does not replay a completed credential result from a legacy status without a revision', async () => {
@@ -1249,6 +1379,50 @@ describe('AI store release guards', () => {
       identity: { ...assessInput.identity, attemptPhase: 'correction' },
     })).rejects.toThrow('no longer matches this answer');
     expect(requests).toHaveLength(2);
+  });
+
+  it('binds cached hints and paid request ids to the complete options without deleting legacy replies', async () => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    const calls = installLearningResponses();
+    const choicePart: QuestionPart = { ...part, answer: {
+      kind: 'choice', selectCount: 1, correct: [0],
+      options: [[{ t: 'text', v: 'Option A' }], [{ t: 'text', v: 'Option B' }]],
+    } };
+    const input = { ...paidHintInput, part: choicePart };
+    const first = await ai.explain(input);
+    const locator = ai.explainCacheLocator(input, first)!;
+    expect(locator.projectionVersion).toBe(2);
+    expect(locator.answerContextDigest).toMatch(/^v2:[0-9a-f]{64}$/u);
+    await expect(ai.replayExplain(locator, choicePart)).resolves.toMatchObject({ markdown: 'Erster Hinweis.' });
+    const { projectionVersion: _projection, answerContextDigest: _digest, ...legacy } = locator;
+    await expect(ai.replayExplain(legacy, choicePart)).resolves.toBeUndefined();
+    await expect(aiCache.get(locator.cacheKey, new Date(), await activeAiCacheScope())).resolves.toBeDefined();
+
+    const changed: QuestionPart = { ...choicePart, answer: { ...choicePart.answer as Extract<NonNullable<QuestionPart['answer']>, { kind: 'choice' }>,
+      options: [[{ t: 'text', v: 'Andere Option A' }], [{ t: 'text', v: 'Option B' }]],
+    } };
+    await expect(ai.replayExplain(locator, changed)).resolves.toBeUndefined();
+    expect(ai.cached({ ...input, part: changed })).toBeUndefined();
+    await expect(ai.explain({ ...input, part: changed })).resolves.toMatchObject({ markdown: 'Neuer Hinweis.' });
+    await ai.explain({ ...input, part: changed });
+    expect(calls.hintCalls()).toBe(2);
+    const bodies = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'))
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[0].answerContext).toContain('B) Option B');
+    expect(bodies[0].clientRequestId).not.toBe(bodies[1].clientRequestId);
+  });
+
+  it('renders an oversized question safely and rejects its explicit AI request before provider I/O', async () => {
+    const { ai } = setup();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    const input = { ...paidHintInput, part: { ...part, answer: { kind: 'choice' as const,
+      correct: [0], selectCount: 1, options: [[{ t: 'text' as const, v: 'x'.repeat(8100) }]],
+    } } };
+    expect(() => ai.cached(input)).not.toThrow();
+    expect(ai.cached(input)).toBeUndefined();
+    await expect(ai.explain(input)).rejects.toMatchObject({ code: 'AI_PAYLOAD_TOO_LARGE' });
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'))).toHaveLength(0);
   });
 
   it('returns a paid result when persistent cache reads or writes fail', async () => {
