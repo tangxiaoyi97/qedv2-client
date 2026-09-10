@@ -128,41 +128,144 @@ describe('MatchingControl', () => {
     expect(wrapper.find('.q-match__echo').exists()).toBe(false);
   });
 
-  it('marks rows per breakdown in review mode and shows the correct item on error', async () => {
+  it('compares correct, wrong and unassigned matches in a read-only table', async () => {
     const result: GradeResult = {
       verdict: 'partial',
       correct: false,
       awardedPoints: 1,
       maxPoints: 2,
       breakdown: [
+        // The result identifies rows by ref, not breakdown order.
+        { ref: '2', correct: false, note: 'unassigned' },
         { ref: '0', correct: true },
         { ref: '1', correct: false, note: 'wrong-match' },
-        { ref: '2', correct: false, note: 'unassigned' },
       ],
     };
     const wrapper = mount(MatchingControl, {
       props: { answer, modelValue: [0, 3, null], result },
     });
-    const rows = wrapper.findAll('.q-match__row');
-    expect(rows[0]!.classes()).toContain('q-match__row--ok');
-    expect(rows[1]!.classes()).toContain('q-match__row--err');
+    const table = wrapper.get('table');
+    // Responsive block/grid styling must retain the table's accessible roles.
+    expect(table.attributes('role')).toBe('table');
+    expect(table.findAll('[role="rowgroup"]')).toHaveLength(2);
+    expect(table.findAll('[role="columnheader"]')).toHaveLength(3);
+    expect(table.findAll('[role="rowheader"]')).toHaveLength(3);
+    expect(table.findAll('[role="cell"]')).toHaveLength(6);
+    expect(table.attributes('aria-label')).toBe('Zuordnungen vergleichen');
+    expect(table.findAll('thead th[scope="col"]').map(cell => cell.text())).toEqual([
+      'Zuordnung', 'Gewählt', 'Lösung',
+    ]);
+    const rows = table.findAll('tbody tr');
+    expect(rows).toHaveLength(3);
+    expect(rows.every(row => row.find('th[scope="row"]').exists())).toBe(true);
 
-    // correct row: single compact confirmation line with the chosen letter
-    expect(rows[0]!.find('.q-match__cmp-line--ok').exists()).toBe(true);
-    expect(rows[0]!.find('.q-match__cmp-letter').text()).toBe('A');
+    // Index 0 remains A. A correct answer is confirmed without repeating it.
+    const correctCells = rows[0]!.findAll('td');
+    expect(correctCells[0]!.text()).toContain('A');
+    expect(correctCells[0]!.text()).toContain('Exponentialfunktion');
+    expect(correctCells[1]!.text()).toContain('Richtig');
+    expect(rows[0]!.text().match(/Exponentialfunktion/g)).toHaveLength(1);
 
-    // wrong row: Gewählt/Richtig comparison lines, correct item rendered with math
-    const wrong = rows[1]!;
-    expect(wrong.find('.q-match__cmp-line--user').text()).toContain('Gewählt');
-    const fix = wrong.find('.q-match__cmp-line--ok');
-    expect(fix.exists()).toBe(true);
-    expect(fix.text()).toContain('Richtig');
-    expect(fix.text()).toContain('B');
-    expect(fix.find('.katex').exists()).toBe(true);
+    // A wrong match keeps the chosen answer alongside its rich-text solution.
+    const wrongCells = rows[1]!.findAll('td');
+    expect(wrongCells[0]!.text()).toContain('D');
+    expect(wrongCells[0]!.text()).toContain('Hyperbel');
+    expect(wrongCells[1]!.text()).toContain('B');
+    expect(wrongCells[1]!.text()).toContain('Parabel');
+    expect(wrongCells[1]!.find('.katex').exists()).toBe(true);
+    expect(wrongCells[0]!.find('.q-state-icon--incorrect').exists()).toBe(true);
+    expect(wrongCells[0]!.find('[role="img"][aria-label="Falsch"]').exists()).toBe(true);
 
-    // review is form-free and pool-free — no dead controls, less noise
+    const unassignedCells = rows[2]!.findAll('td');
+    expect(unassignedCells[0]!.text()).toContain('Keine Auswahl');
+    expect(unassignedCells[1]!.text()).toContain('C');
+    expect(unassignedCells[1]!.text()).toContain('Gerade');
+
+    // Review cannot mutate the submission, including through drag/drop.
     expect(wrapper.findAll('select')).toHaveLength(0);
     expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+    await rows[1]!.trigger('drop', { dataTransfer: { getData: () => '0' } });
+    await wrongCells[0]!.trigger('click');
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
+  it.each([
+    ['missing breakdown', undefined],
+    ['missing row marks', [{ ref: '2', correct: false }]],
+  ] as const)('keeps ungraded choices visible and neutral with %s', (_, breakdown) => {
+    const wrapper = mount(MatchingControl, {
+      props: {
+        answer,
+        modelValue: [0, 1, null],
+        result: {
+          verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1,
+          ...(breakdown ? { breakdown: [...breakdown] } : {}),
+        },
+      },
+    });
+    const rows = wrapper.findAll('tbody tr');
+    const firstCells = rows[0]!.findAll('td');
+    expect(firstCells[0]!.text()).toContain('A');
+    expect(firstCells[0]!.text()).toContain('Exponentialfunktion');
+    expect(firstCells[1]!.text()).toContain('Nicht bewertet');
+    const secondCells = rows[1]!.findAll('td');
+    expect(secondCells[0]!.text()).toContain('B');
+    expect(secondCells[0]!.text()).toContain('Parabel');
+    expect(secondCells[0]!.find('.katex').exists()).toBe(true);
+    expect(secondCells[1]!.text()).toContain('Nicht bewertet');
+    for (const row of rows.slice(0, 2)) {
+      // A failing overall result does not imply that each ungraded row is wrong.
+      expect(row.find('.q-state-icon--incorrect').exists()).toBe(false);
+      expect(row.find('.q-state-icon--correct').exists()).toBe(false);
+    }
+    expect(wrapper.find('select').exists()).toBe(false);
+    expect(wrapper.find('.q-match__pool').exists()).toBe(false);
+  });
+
+  it('treats missing submission entries as unassigned while retaining answer index zero', () => {
+    const wrapper = mount(MatchingControl, {
+      props: {
+        answer, modelValue: [0],
+        result: {
+          verdict: 'partial', correct: false, awardedPoints: 1, maxPoints: 3,
+          breakdown: [
+            { ref: '0', correct: true },
+            { ref: '1', correct: false, note: 'unassigned' },
+            { ref: '2', correct: false, note: 'unassigned' },
+          ],
+        },
+      },
+    });
+    const rows = wrapper.findAll('tbody tr');
+    expect(rows[0]!.findAll('td')[0]!.text()).toContain('A');
+    expect(rows[0]!.findAll('td')[0]!.text()).toContain('Exponentialfunktion');
+    expect(rows[0]!.text()).not.toContain('Keine Auswahl');
+    for (const row of rows.slice(1)) expect(row.findAll('td')[0]!.text()).toContain('Keine Auswahl');
+    expect(rows[1]!.findAll('td')[1]!.text()).toContain('Parabel');
+    expect(rows[2]!.findAll('td')[1]!.text()).toContain('Gerade');
+  });
+
+  it('renders safe placeholders for invalid indices in legacy results', () => {
+    const wrapper = mount(MatchingControl, {
+      props: {
+        answer: { ...answer, pairs: [[0, 99], [1, -1], [2, 0.5]] },
+        modelValue: [99, -1, 0.5],
+        result: {
+          verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1,
+          breakdown: answer.left.map((_, index) => ({ ref: String(index), correct: false })),
+        },
+      },
+    });
+    const rows = wrapper.findAll('tbody tr');
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      const cells = row.findAll('td');
+      expect(cells[0]!.text()).toContain('Keine Auswahl');
+      expect(cells[1]!.text()).toContain('Keine Zuordnung');
+      // Invalid values must not render a bogus letter or an empty RichText node.
+      expect(row.findAll('td .q-richtext')).toHaveLength(0);
+      expect(row.find('.q-match-review__letter').exists()).toBe(false);
+    }
   });
 
   it('uses v3 candidateGroups to render isolated option groups', async () => {
@@ -220,7 +323,8 @@ describe('MatchingControl', () => {
     expect(first[0]!.text()).toContain('Richtig');
     const second = rows[1]!.findAll('.q-match__inline-choice');
     expect(second[1]!.classes()).toContain('q-match__inline-choice--ok');
-    // no classic comparison lines, no pool in grouped review
+    // The classic comparison table must not replace grouped in-place feedback.
+    expect(wrapper.find('table').exists()).toBe(false);
     expect(wrapper.find('.q-match__cmp').exists()).toBe(false);
     expect(wrapper.find('.q-match__pool').exists()).toBe(false);
     // Feedback belongs to each option; the group heading must not announce

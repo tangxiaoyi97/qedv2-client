@@ -17,18 +17,17 @@ import { useI18n } from '../i18n.js';
  * Default one-to-one: a right item used by another row is disabled in the
  * other selects.
  *
- * Review (result set): the form controls and the pool disappear — each row
- * collapses to the state icon + compact comparison lines (Gewählt/Richtig),
- * so the feedback stays scannable even with long German option texts.
+ * Classic review replaces the form and pool with a responsive comparison.
  */
 import { computed, ref } from 'vue';
-import type { BreakdownItem, GradeResult, MatchingAnswer, RichText } from '@qed2/core-logic';
+import type { GradeResult, MatchingAnswer, RichText } from '@qed2/core-logic';
 import { richTextToPlain } from '@qed2/core-logic';
 import ChevronDown from '../shared/ChevronDown.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import { onRadioGroupKeydown } from '../shared/radio-group.js';
 import { createOptionActivation } from './option-activation.js';
+import MatchingReview from './MatchingReview.vue';
 
 const { t } = useI18n();
 
@@ -153,15 +152,6 @@ function onDrop(leftIdx: number, ev: DragEvent): void {
   assign(leftIdx, rightIdx, true);
 }
 
-/** result.breakdown by left index. */
-const marks = computed<(BreakdownItem | null)[]>(() => {
-  const r = props.result;
-  if (!r) return props.answer.left.map(() => null);
-  const byRef = new Map<string, BreakdownItem>();
-  for (const b of r.breakdown ?? []) byRef.set(b.ref, b);
-  return props.answer.left.map((_, i) => byRef.get(String(i)) ?? null);
-});
-
 /** Expected right index per left index (from answer.pairs). */
 const expectedRight = computed<Map<number, number>>(() => new Map(props.answer.pairs));
 
@@ -184,16 +174,15 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
 <template>
   <div class="q-match">
+    <MatchingReview v-if="result && !groupedOptionMode" :answer="answer" :model-value="modelValue" :result="result" />
     <!-- Grouped review keeps feedback on the options. Repeating it in the
          heading would both crowd the group and move its label sideways. -->
-    <div class="q-match__rows" :class="{ 'q-match__rows--grouped': groupedOptionMode }">
+    <div v-else class="q-match__rows" :class="{ 'q-match__rows--grouped': groupedOptionMode }">
       <div
         v-for="(leftItem, i) in answer.left"
         :key="i"
         class="q-match__row"
         :class="{
-          'q-match__row--ok': !groupedOptionMode && marks[i]?.correct === true,
-          'q-match__row--err': !groupedOptionMode && marks[i]?.correct === false,
           'q-match__row--dragover': dragOverRow === i,
         }"
         @dragover.prevent="!review && !groupedOptionMode && (dragOverRow = i)"
@@ -201,7 +190,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
         @drop.prevent="onDrop(i, $event)"
       >
         <div class="q-match__main">
-          <StateIcon v-if="!groupedOptionMode && marks[i]" :state="marks[i]!.correct ? 'correct' : 'incorrect'" :size="20" />
           <span class="q-match__left">
             <RichTextView :nodes="leftItem" inline-only />
           </span>
@@ -284,26 +272,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
             <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
           </button>
         </div>
-
-        <!-- review (classic mode): compact comparison lines -->
-        <div v-if="review && !groupedOptionMode" class="q-match__cmp">
-          <div v-if="marks[i]?.correct && chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--ok">
-            <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
-            <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
-          </div>
-          <template v-else-if="marks[i] && !marks[i]!.correct">
-            <div v-if="chosen(i) !== null" class="q-match__cmp-line q-match__cmp-line--user">
-              <span class="q-match__cmp-tag">{{ t('Gewählt') }}</span>
-              <span class="q-match__cmp-letter">{{ letter(chosen(i)!) }}</span>
-              <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
-            </div>
-            <div v-if="expectedRight.has(i)" class="q-match__cmp-line q-match__cmp-line--ok">
-              <span class="q-match__cmp-tag q-match__cmp-tag--ok">{{ t('Richtig') }}</span>
-              <span class="q-match__cmp-letter">{{ letter(expectedRight.get(i)!) }}</span>
-              <RichTextView :nodes="answer.right[expectedRight.get(i)!]" inline-only />
-            </div>
-          </template>
-        </div>
       </div>
     </div>
 
@@ -365,16 +333,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border: 1px solid var(--q-border-2);
   border-radius: 10px;
   background: var(--q-card);
-  /* The result landing is the one moment worth easing into. */
   transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
-}
-.q-match__row--ok {
-  border-color: var(--q-ok);
-  background: var(--q-ok-bg);
-}
-.q-match__row--err {
-  border-color: var(--q-err);
-  background: var(--q-err-bg);
 }
 .q-match__row--dragover {
   border-color: var(--q-accent);
@@ -556,51 +515,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   font: 600 11px ui-monospace, Menlo, monospace;
   color: var(--q-faint);
   margin-right: 4px;
-}
-
-.q-match__cmp {
-  margin-top: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-left: 30px; /* align under the left item, past the state icon */
-}
-.q-match__cmp-line {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-size: 13px;
-  min-width: 0;
-}
-.q-match__cmp-line > :deep(.q-richtext) {
-  min-width: 0;
-  flex: 1;
-}
-.q-match__cmp-line--user {
-  color: var(--q-mut-2);
-}
-.q-match__cmp-line--ok {
-  color: var(--q-ink);
-}
-.q-match__cmp-tag {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--q-faint);
-  width: 52px;
-  flex: none;
-}
-.q-match__cmp-tag--ok {
-  color: var(--q-ok);
-}
-.q-match__cmp-letter {
-  font: 700 11px ui-monospace, Menlo, monospace;
-  color: var(--q-mut);
-  flex: none;
-}
-.q-match__cmp-line--ok .q-match__cmp-letter {
-  color: var(--q-ok);
 }
 
 .q-match__pool {

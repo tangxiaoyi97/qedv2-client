@@ -1,5 +1,10 @@
 /** Shared controls. Question-bank content retains its original language. */
 export const en: Record<string, string> = {
+  'Zuordnungen vergleichen': 'Compare matches',
+  'Zuordnung': 'Match',
+  'Keine Auswahl': 'No selection',
+  'Keine Zuordnung': 'No match',
+  'Nicht bewertet': 'Not assessed',
   'Grundkompetenz': 'Core competency',
   'Grundkompetenz {code} anzeigen': 'Show core competency {code}',
   'Grundkompetenz schließen': 'Close core competency',

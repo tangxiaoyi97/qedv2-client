@@ -1,2 +1,3 @@
 - **kompetenzen:** offizielle erklärungen per klick, deutsch & englisch
 - **oberfläche:** ruhiger wechsel ins leaderboard, stabile verlaufsfilter
+- **zuordnungen:** klare antwortvergleiche, auch auf kleinen bildschirmen
