@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import type { GradeResult, MatchingAnswer } from '@qed2/core-logic';
 import MatchingControl from '../src/question/MatchingControl.vue';
 
@@ -45,6 +46,78 @@ const groupedAnswer: MatchingAnswer = {
 };
 
 describe('MatchingControl', () => {
+  it('keeps grouped image zoom independent of radio navigation and review selection', async () => {
+    const imageAnswer: MatchingAnswer = {
+      ...groupedAnswer,
+      right: groupedAnswer.right.map((item, index) => index === 0
+        ? [{ t: 'fig' as const, src: 'assets/matching-graph.png', alt: 'Steigender Graph' }] : item),
+    };
+    const wrapper = mount(MatchingControl, {
+      attachTo: document.body,
+      props: { answer: imageAnswer, modelValue: [null, null] },
+      global: { stubs: { FigureViewer: true } },
+    });
+    try {
+      const option = wrapper.get('.q-match__inline-choice');
+      const select = option.get('button[role="radio"]');
+      const zoom = option.get('button.q-zfig');
+      expect(option.element.tagName).toBe('DIV');
+      expect(option.attributes('role')).toBeUndefined();
+      expect(wrapper.find('button button').exists()).toBe(false);
+      expect(select.attributes('aria-label')).toBe('A · Steigender Graph');
+
+      (zoom.element as HTMLButtonElement).focus();
+      await zoom.trigger('keydown', { key: 'ArrowRight' });
+      expect(document.activeElement).toBe(zoom.element);
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+      zoom.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      await nextTick();
+      expect(wrapper.get('figure-viewer-stub').attributes('src')).toBe('assets/matching-graph.png');
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+      wrapper.findComponent({ name: 'FigureViewer' }).vm.$emit('close');
+
+      // Radio arrows still select within their group and never land on zoom.
+      (select.element as HTMLButtonElement).focus();
+      await select.trigger('keydown', { key: 'ArrowRight' });
+      expect(document.activeElement).toBe(wrapper.findAll('button[role="radio"]')[1]!.element);
+      expect(wrapper.emitted('update:modelValue')!.at(-1)![0]).toEqual([1, null]);
+      await wrapper.setProps({
+        modelValue: [1, 4],
+        result: { verdict: 'partial', correct: false, awardedPoints: 0.5, maxPoints: 1 },
+      });
+      const before = wrapper.emitted('update:modelValue')!.length;
+      await zoom.trigger('click');
+      expect(wrapper.find('figure-viewer-stub').exists()).toBe(true);
+      await select.trigger('click');
+      expect(wrapper.emitted('update:modelValue')).toHaveLength(before);
+      expect(select.attributes('aria-disabled')).toBe('true');
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
+  it('opens classic pool figures without assigning and retains drag/drop assignment', async () => {
+    const imageAnswer: MatchingAnswer = {
+      ...answer,
+      right: [[{ t: 'fig', src: 'assets/pool-graph.png', alt: 'Funktionsgraph A' }], ...answer.right.slice(1)],
+    };
+    const wrapper = mount(MatchingControl, {
+      props: { answer: imageAnswer, modelValue: [null, null, null] },
+      global: { stubs: { FigureViewer: true } },
+    });
+    try {
+      const poolItem = wrapper.get('.q-match__pool-item');
+      await poolItem.get('button.q-zfig').trigger('click');
+      expect(wrapper.find('figure-viewer-stub').exists()).toBe(true);
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+      expect(poolItem.attributes('draggable')).toBe('true');
+      await wrapper.get('.q-match__row').trigger('drop', { dataTransfer: { getData: () => '0' } });
+      expect(wrapper.emitted('update:modelValue')!.at(-1)![0]).toEqual([0, null, null]);
+    } finally {
+      wrapper.unmount();
+    }
+  });
+
   it('does not change a grouped match when the learner scrolls inside an option', async () => {
     const wrapper = mount(MatchingControl, { props: { answer: groupedAnswer, modelValue: [null, null] } });
     const option = wrapper.get('.q-match__inline-choice');

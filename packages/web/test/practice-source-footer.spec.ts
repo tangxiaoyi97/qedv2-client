@@ -190,7 +190,7 @@ describe('practice question-bank footer', () => {
     const practice = usePracticeStore();
     try {
       const saveDraft = vi.spyOn(practice, 'saveAnswerDraft').mockResolvedValue({ status: 'saved' });
-      const option = mounted.host.querySelector<HTMLButtonElement>('.q-choice__opt')!;
+      const option = mounted.host.querySelector<HTMLButtonElement>('.q-choice__select')!;
       option.click();
       await settle();
       expect(saveDraft).toHaveBeenCalledTimes(1);
@@ -213,7 +213,7 @@ describe('practice question-bank footer', () => {
       expect(mounted.host.querySelector('.practice--rail-collapsed')).not.toBeNull();
       expect(window.localStorage.getItem('qed2.practice.rail-collapsed')).toBe('true');
       expect(document.body.classList.contains('q-modal-open')).toBe(false);
-      expect(mounted.host.querySelector('.q-choice__opt')).toBe(option);
+      expect(mounted.host.querySelector('.q-choice__select')).toBe(option);
       expect(option.getAttribute('aria-pressed')).toBe('true');
       expect(JSON.stringify(saveDraft.mock.calls[0])).toBe(draft);
       expect(saveDraft).toHaveBeenCalledTimes(1);
@@ -228,7 +228,7 @@ describe('practice question-bank footer', () => {
       expect(rail.hasAttribute('inert')).toBe(false);
       expect(rail.hasAttribute('aria-hidden')).toBe(false);
       expect(rail.querySelector('.q-sitems')).toBe(list);
-      expect(mounted.host.querySelector('.q-choice__opt')).toBe(option);
+      expect(mounted.host.querySelector('.q-choice__select')).toBe(option);
       expect(JSON.stringify(saveDraft.mock.calls[0])).toBe(draft);
       expect(saveDraft).toHaveBeenCalledTimes(1);
     } finally { mounted.unmount(); }

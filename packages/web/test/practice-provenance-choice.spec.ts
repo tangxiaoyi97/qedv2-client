@@ -38,7 +38,7 @@ describe('Practice legacy provenance choice', () => {
     app.mount(host);
     await nextTick();
 
-    expect(host.textContent).toContain('Aufgabenversion unbekannt');
+    await vi.waitFor(() => expect(host.textContent).toContain('Aufgabenversion unbekannt'));
     expect(host.textContent).toContain('Die Aufgaben können sich geändert haben.');
     expect(resume).not.toHaveBeenCalled();
     const button = [...host.querySelectorAll<HTMLButtonElement>('button')]

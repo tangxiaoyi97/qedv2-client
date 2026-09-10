@@ -16,9 +16,9 @@ import { useI18n } from '../i18n.js';
  * double-click) to toggle, wheel/trackpad to zoom, all anchored on the point
  * under the cursor or the pinch midpoint.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import QIconButton from './QIconButton.vue';
-import { lockBodyScroll, unlockBodyScroll } from './scroll-lock.js';
+import { useModalA11y } from './useModalA11y.js';
 
 const { t } = useI18n();
 
@@ -37,9 +37,10 @@ const DOUBLE_TAP_SCALE = 2.5;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_SLOP_PX = 24;
 
+const panel = ref<HTMLElement | null>(null);
 const stage = ref<HTMLElement | null>(null);
 const image = ref<HTMLImageElement | null>(null);
-const closeButton = ref<{ focus: (options?: FocusOptions) => void } | null>(null);
+useModalA11y(panel, ref(true), () => emit('close'));
 
 const scale = ref(1);
 const tx = ref(0);
@@ -221,38 +222,16 @@ function onStageKeydown(event: KeyboardEvent): void {
   event.preventDefault();
 }
 
-/* --- overlay lifecycle ---------------------------------------------------- */
-
-let previousFocus: HTMLElement | null = null;
-
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.stopPropagation();
-    event.preventDefault();
-    emit('close');
-  }
-}
-
-onMounted(() => {
-  previousFocus = document.activeElement as HTMLElement | null;
-  lockBodyScroll();
-  document.addEventListener('keydown', onKeydown, true);
-  closeButton.value?.focus({ preventScroll: true });
-});
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onKeydown, true);
-  unlockBodyScroll();
-  previousFocus?.focus({ preventScroll: true });
-});
 </script>
 
 <template>
   <Teleport to="body">
     <div
+      ref="panel"
       class="q-figview q-modal-backdrop"
       role="dialog"
       aria-modal="true"
+      tabindex="-1"
       :aria-label="alt ? t('Abbildung: {alt}', { alt }) : t('Abbildung')"
     >
       <div class="q-figview__bar">
@@ -293,8 +272,8 @@ onBeforeUnmount(() => {
           {{ t('Zurücksetzen') }}
         </button>
         <QIconButton
-          ref="closeButton"
           class="q-figview__close"
+          data-autofocus
           :aria-label="t('Schließen')"
           @click="emit('close')"
         />
@@ -330,7 +309,8 @@ onBeforeUnmount(() => {
 .q-figview {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  /* Figures can open from help (200) or competency details (220). */
+  z-index: 240;
   display: flex;
   flex-direction: column;
   background: var(--q-page);

@@ -1,8 +1,51 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mount, type VueWrapper } from '@vue/test-utils';
+import { defineComponent, nextTick, ref } from 'vue';
 import FigureViewer from '../src/shared/FigureViewer.vue';
 import ZoomableFigure from '../src/shared/ZoomableFigure.vue';
+import PracticeHelpDialog from '../src/practice/PracticeHelpDialog.vue';
 import { bodyScrollLockDepth } from '../src/shared/scroll-lock.js';
+
+const views: VueWrapper[] = [];
+const frames = new Map<number, FrameRequestCallback>();
+let frameId = 0;
+
+function track<T extends VueWrapper>(view: T): T {
+  views.push(view);
+  return view;
+}
+
+beforeEach(() => {
+  vi.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockReturnValue(document.body);
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    const id = ++frameId;
+    frames.set(id, callback);
+    return id;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  // Removing DOM alone leaves document listeners, focus frames and locks alive.
+  for (const view of views.splice(0).reverse()) {
+    if (!view.vm.$.isUnmounted) view.unmount();
+  }
+  frames.clear();
+  vi.restoreAllMocks();
+  document.body.innerHTML = '';
+  expect(bodyScrollLockDepth()).toBe(0);
+});
+
+function runFrames(): void {
+  const pending = [...frames.values()];
+  frames.clear();
+  pending.forEach(callback => callback(0));
+}
+
+function key(value: string, shiftKey = false): void {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: value, shiftKey, bubbles: true, cancelable: true }));
+}
 
 const STAGE = { width: 400, height: 400, left: 0, top: 0 };
 /** Layout size of the <img> before any transform — drives the pan clamp. */
@@ -24,13 +67,13 @@ function stubLayout(): void {
     ['offsetWidth', IMAGE.width],
     ['offsetHeight', IMAGE.height],
   ] as const) {
-    Object.defineProperty(HTMLImageElement.prototype, prop, { value, configurable: true });
+    vi.spyOn(HTMLImageElement.prototype, prop, 'get').mockReturnValue(value);
   }
   for (const [prop, value] of [
     ['clientWidth', STAGE.width],
     ['clientHeight', STAGE.height],
   ] as const) {
-    Object.defineProperty(HTMLDivElement.prototype, prop, { value, configurable: true });
+    vi.spyOn(HTMLDivElement.prototype, prop, 'get').mockReturnValue(value);
   }
 }
 
@@ -52,11 +95,11 @@ const INLINE_TELEPORT = { global: { stubs: { teleport: true } } };
 
 function mountViewer() {
   stubLayout();
-  return mount(FigureViewer, {
+  return track(mount(FigureViewer, {
     props: { src: '/figures/graph.png', alt: 'Graph von f' },
     attachTo: document.body,
     ...INLINE_TELEPORT,
-  });
+  }));
 }
 
 /**
@@ -76,9 +119,71 @@ function translationOf(wrapper: ReturnType<typeof mountViewer>): string {
 }
 
 describe('FigureViewer', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    document.body.innerHTML = '';
+  it('initially focuses close and traps both directions of Tab inside the viewer', async () => {
+    const wrapper = mountViewer();
+    runFrames();
+    const close = wrapper.get('.q-figview__close').element;
+    const first = wrapper.get('button[aria-label="Vergrößern"]').element as HTMLButtonElement;
+    const last = wrapper.get('.q-figview__stage').element as HTMLElement;
+    expect(document.activeElement).toBe(close);
+    last.focus();
+    key('Tab');
+    expect(document.activeElement).toBe(first);
+    key('Tab', true);
+    expect(document.activeElement).toBe(last);
+
+    // Once zoomed, the now-enabled minus button becomes the first tab stop.
+    await wrapper.get('button[aria-label="Vergrößern"]').trigger('click');
+    last.focus();
+    key('Tab');
+    expect(document.activeElement).toBe(wrapper.get('button[aria-label="Verkleinern"]').element);
+  });
+
+  it.each(['Escape', 'close button'])('closes only the viewer nested inside help via %s and restores focus and locks', async (closeVia) => {
+    const outside = document.createElement('button');
+    document.body.append(outside);
+    outside.focus();
+    const Host = defineComponent({
+      components: { PracticeHelpDialog, ZoomableFigure },
+      setup: () => ({ helpOpen: ref(true) }),
+      template: `<PracticeHelpDialog v-if="helpOpen" title="KI-Erklärung" return-label="Zurück" @close="helpOpen = false">
+        <ZoomableFigure src="/figures/graph.png" alt="Graph von f" />
+      </PracticeHelpDialog>`,
+    });
+    // Real Teleports and a real parent modal exercise document listener order.
+    const wrapper = track(mount(Host, { attachTo: document.body }));
+    runFrames();
+    const help = wrapper.getComponent(PracticeHelpDialog);
+    const imageTrigger = document.querySelector<HTMLButtonElement>('.practice-help .q-zfig')!;
+    expect(bodyScrollLockDepth()).toBe(1);
+    imageTrigger.focus();
+    imageTrigger.click();
+    await nextTick();
+    runFrames();
+    const close = document.querySelector<HTMLButtonElement>('.q-figview__close')!;
+    expect(document.activeElement).toBe(close);
+    expect(bodyScrollLockDepth()).toBe(2);
+
+    // The parent's trap must not intercept Tab from its teleported child.
+    document.querySelector<HTMLElement>('.q-figview__stage')!.focus();
+    key('Tab');
+    expect(document.activeElement).toBe(document.querySelector('.q-figview button[aria-label="Vergrößern"]'));
+    if (closeVia === 'Escape') key('Escape');
+    else close.click();
+    await nextTick();
+    expect(document.querySelector('.q-figview')).toBeNull();
+    expect(document.querySelector('.practice-help')).not.toBeNull();
+    expect(help.emitted('close')).toBeUndefined();
+    expect(document.activeElement).toBe(imageTrigger);
+    expect(bodyScrollLockDepth()).toBe(1);
+    expect(document.body.classList.contains('q-modal-open')).toBe(true);
+
+    key('Escape');
+    await nextTick();
+    expect(document.querySelector('.practice-help')).toBeNull();
+    expect(document.activeElement).toBe(outside);
+    expect(bodyScrollLockDepth()).toBe(0);
+    expect(document.body.classList.contains('q-modal-open')).toBe(false);
   });
 
   it('pinches to zoom about the midpoint of the two fingers', async () => {
@@ -241,18 +346,13 @@ describe('FigureViewer', () => {
 });
 
 describe('ZoomableFigure', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    document.body.innerHTML = '';
-  });
-
   it('opens the viewer for its own image and labels the trigger', async () => {
     stubLayout();
-    const wrapper = mount(ZoomableFigure, {
+    const wrapper = track(mount(ZoomableFigure, {
       props: { src: '/figures/graph.png', alt: 'Graph von f' },
       attachTo: document.body,
       ...INLINE_TELEPORT,
-    });
+    }));
 
     expect(wrapper.get('button').attributes('aria-label')).toBe('Graph von f — vergrößern');
     expect(wrapper.find('.q-figview').exists()).toBe(false);
@@ -267,8 +367,42 @@ describe('ZoomableFigure', () => {
 
   it('falls back to a generic label when the figure has no alt text', () => {
     stubLayout();
-    const wrapper = mount(ZoomableFigure, { props: { src: '/figures/x.png' }, ...INLINE_TELEPORT });
+    const wrapper = track(mount(ZoomableFigure, { props: { src: '/figures/x.png' }, ...INLINE_TELEPORT }));
     expect(wrapper.get('button').attributes('aria-label')).toBe('Abbildung vergrößern');
     wrapper.unmount();
+  });
+
+  it('opens its dialog without activating an enclosing answer option', async () => {
+    const onChoice = vi.fn();
+    const Host = defineComponent({
+      components: { ZoomableFigure },
+      setup: () => ({ onChoice }),
+      template: '<div @click="onChoice"><ZoomableFigure src="/figures/x.png" /></div>',
+    });
+    const wrapper = track(mount(Host, { attachTo: document.body, ...INLINE_TELEPORT }));
+    const trigger = wrapper.get('.q-zfig');
+    expect(trigger.attributes('aria-haspopup')).toBe('dialog');
+    await trigger.trigger('click');
+    expect(wrapper.find('.q-figview').exists()).toBe(true);
+    expect(onChoice).not.toHaveBeenCalled();
+  });
+
+  it('ignores a scroll gesture ending on the image and accepts the next deliberate click', async () => {
+    const wrapper = track(mount(ZoomableFigure, {
+      props: { src: '/figures/x.png' }, attachTo: document.body, ...INLINE_TELEPORT,
+    }));
+    const trigger = wrapper.get('.q-zfig');
+    await trigger.trigger('pointerdown', { ...pointer(1, 200, 200), pointerType: 'touch', isPrimary: true, button: 0 });
+    await trigger.trigger('pointermove', pointer(1, 180, 150));
+    await trigger.trigger('pointerup', pointer(1, 180, 150));
+    trigger.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    await nextTick();
+    expect(wrapper.find('.q-figview').exists()).toBe(false);
+
+    await trigger.trigger('pointerdown', { ...pointer(2, 200, 200), pointerType: 'touch', isPrimary: true, button: 0 });
+    await trigger.trigger('pointerup', pointer(2, 200, 200));
+    trigger.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    await nextTick();
+    expect(wrapper.find('.q-figview').exists()).toBe(true);
   });
 });

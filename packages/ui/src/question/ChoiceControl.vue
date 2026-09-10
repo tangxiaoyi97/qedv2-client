@@ -13,8 +13,9 @@ import { useI18n } from '../i18n.js';
  * result.breakdown (ref = option index, note correct-pick|wrong-pick|missed).
  * Never color-only: StateIcon + text label per mark.
  */
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, useId } from 'vue';
 import type { BreakdownItem, ChoiceAnswer, GradeResult } from '@qed2/core-logic';
+import { richTextToPlain } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QChip from '../shared/QChip.vue';
@@ -34,6 +35,7 @@ const review = computed(() => props.result != null);
 const single = computed(() => props.answer.selectCount === 1);
 const full = computed(() => props.modelValue.length >= props.answer.selectCount);
 const activation = createOptionActivation();
+const controlId = `q-choice-${useId()}`;
 
 const hint = computed(() => {
   const chosen = props.modelValue.length;
@@ -120,6 +122,15 @@ function toggle(i: number): void {
   }
   emit('update:modelValue', [...props.modelValue, i].sort((a, b) => a - b));
 }
+
+function onOptionClick(i: number, event: MouseEvent): void {
+  const action = event.target instanceof Element
+    ? event.target.closest('button,a,input,textarea,select,summary,[role="button"]') : null;
+  if (action && !action.classList.contains('q-choice__select')) return;
+  if (!activation.accepts(event)) return;
+  (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>('.q-choice__select')?.focus({ preventScroll: true });
+  toggle(i);
+}
 </script>
 
 <template>
@@ -136,10 +147,9 @@ function toggle(i: number): void {
     </div>
 
     <div class="q-choice__list">
-      <button
+      <div
         v-for="(option, i) in answer.options"
         :key="i"
-        type="button"
         class="q-choice__opt"
         :class="{
           'q-choice__opt--selected': !review && isSelected(i),
@@ -148,14 +158,22 @@ function toggle(i: number): void {
           'q-choice__opt--err': marks[i]?.state === 'incorrect',
           'q-choice__opt--missed': marks[i]?.state === 'missed',
         }"
-        :aria-pressed="isSelected(i)"
-        :aria-disabled="review || capBlocked(i) || undefined"
         @pointerdown="activation.pointerDown"
         @pointermove="activation.pointerMove"
         @pointerup="activation.pointerMove"
         @pointercancel="activation.pointerCancel"
-        @click="activation.accepts($event) && toggle(i)"
+        @click="onOptionClick(i, $event)"
       >
+        <!-- The card-wide select target and image zoom buttons are siblings.
+             Rich text stays above this target so selection and panning remain native. -->
+        <button
+          type="button"
+          class="q-choice__select"
+          :aria-label="`${letter(i)} · ${richTextToPlain(option)}`"
+          :aria-pressed="isSelected(i)"
+          :aria-disabled="review || capBlocked(i) || undefined"
+          :aria-describedby="marks[i] ? `${controlId}-mark-${i}` : undefined"
+        />
         <StateIcon v-if="marks[i]" :state="marks[i]!.state" />
         <span
           v-else
@@ -172,13 +190,14 @@ function toggle(i: number): void {
 
         <span
           v-if="marks[i]"
+          :id="`${controlId}-mark-${i}`"
           class="q-choice__mark-label"
           :class="`q-choice__mark-label--${marks[i]!.state}`"
         >
           {{ marks[i]!.label }}
         </span>
         <span class="q-choice__letter" aria-hidden="true">{{ letter(i) }}</span>
-      </button>
+      </div>
     </div>
   </div>
 </template>
@@ -210,6 +229,8 @@ function toggle(i: number): void {
 }
 
 .q-choice__opt {
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -227,7 +248,16 @@ function toggle(i: number): void {
    * override it with a slower ease, since that IS the result being shown. */
   transition: border-color 0.1s ease, background 0.1s ease;
 }
-.q-choice__opt:focus-visible {
+.q-choice__select {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  cursor: inherit;
+}
+.q-choice__select:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
@@ -285,6 +315,7 @@ function toggle(i: number): void {
 }
 
 .q-choice__content {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;

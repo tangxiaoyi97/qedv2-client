@@ -11,6 +11,7 @@ import { useI18n } from '../i18n.js';
 import { ref } from 'vue';
 import { Maximize2 } from 'lucide-vue-next';
 import FigureViewer from './FigureViewer.vue';
+import { createOptionActivation } from '../question/option-activation.js';
 
 const { t } = useI18n();
 
@@ -20,16 +21,23 @@ const props = defineProps<{
 }>();
 
 const open = ref(false);
+const activation = createOptionActivation();
 </script>
 
 <template>
   <button
     type="button"
     class="q-zfig"
+    aria-haspopup="dialog"
     :aria-label="props.alt ? t('{alt} — vergrößern', { alt: props.alt }) : t('Abbildung vergrößern')"
-    @click="open = true"
+    @pointerdown="activation.pointerDown"
+    @pointermove="activation.pointerMove"
+    @pointerup="activation.pointerMove"
+    @pointercancel="activation.pointerCancel"
+    @dragstart="activation.pointerCancel"
+    @click.stop="activation.accepts($event) && (open = true)"
   >
-    <img class="q-zfig__img" :src="props.src" :alt="props.alt ?? ''" loading="lazy" />
+    <img class="q-zfig__img" :src="props.src" :alt="props.alt ?? ''" loading="lazy" draggable="false" />
     <span class="q-zfig__badge" aria-hidden="true">
       <Maximize2 :size="14" :stroke-width="2.4" />
     </span>
@@ -48,7 +56,13 @@ const open = ref(false);
   border: none;
   background: none;
   cursor: zoom-in;
+  pointer-events: auto;
   line-height: 0;
+}
+.q-zfig:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 3px;
+  border-radius: 10px;
 }
 
 .q-zfig__img {

@@ -109,8 +109,8 @@ describe('practice draft winner convergence', () => {
     app.use(pinia);
     app.use(router);
     app.mount(host);
-    await nextTick();
-    const answer = host.querySelector<HTMLButtonElement>('button.q-choice__opt');
+    await vi.waitFor(() => expect(host.querySelector('button.q-choice__select')).not.toBeNull());
+    const answer = host.querySelector<HTMLButtonElement>('button.q-choice__select');
     expect(answer).not.toBeNull();
     answer!.click();
     await vi.waitFor(() => expect(save).toHaveBeenCalled());
@@ -162,7 +162,7 @@ describe('practice draft winner convergence', () => {
     app.use(pinia);
     app.use(router);
     app.mount(host);
-    await nextTick();
+    await vi.waitFor(() => expect(host.querySelector('.practice__content')).not.toBeNull());
     expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('true');
     const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent?.trim() === 'Prüfen');
@@ -288,7 +288,7 @@ describe('practice draft winner convergence', () => {
     const app = createApp({ render: () => h(RouterView) }).use(pinia).use(router);
     app.mount(host);
     try {
-      await nextTick();
+      await vi.waitFor(() => expect(host.querySelector('.practice__content')).not.toBeNull());
       Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Prüfen')!.click();
       await vi.waitFor(() => expect(host.textContent).toContain('Offizieller Lösungsweg'));
       expect(host.querySelector('.q-selfassess')).not.toBeNull();

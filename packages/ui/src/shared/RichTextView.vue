@@ -10,6 +10,7 @@
 import { computed } from 'vue';
 import type { RichText, InlineNode } from '@qed2/core-logic';
 import MathText from './MathText.vue';
+import ZoomableFigure from './ZoomableFigure.vue';
 import { useAssetResolver } from './assets.js';
 
 const props = defineProps<{
@@ -48,11 +49,9 @@ const items = computed(() =>
       <template v-if="item.node.t === 'text'">{{ item.node.v }}</template>
       <MathText v-else-if="item.node.t === 'math'" :src="item.node.v" :display="item.display" />
       <span v-else class="q-richtext__fig">
-        <img
-          class="q-richtext__img"
+        <ZoomableFigure
           :src="resolveAsset(item.node.src)"
           :alt="item.node.alt ?? ''"
-          loading="lazy"
         />
       </span>
     </template>
@@ -67,13 +66,5 @@ const items = computed(() =>
 .q-richtext__fig {
   display: block;
   margin: 12px 0;
-}
-.q-richtext__img {
-  max-width: 100%;
-  border: 1px solid var(--q-border);
-  border-radius: 10px;
-  background: #fff;
-  display: block;
-  margin: 0 auto;
 }
 </style>

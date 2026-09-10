@@ -68,7 +68,12 @@ provideAssetResolver((src) => practice.assetUrl(src));
 
 const preparedHandoff = ref<'ready' | 'loading' | 'missing'>(route.query.prepared !== undefined ? 'loading' : 'ready');
 const preparedBlocked = computed(() => preparedHandoff.value !== 'ready');
-const current = computed(() => preparedBlocked.value ? undefined : practice.current);
+// Ownership / restore reads happen before the store enters its loading phase.
+// Keep the previous programme off screen throughout that initial handoff.
+const initializing = ref(true);
+const contentLoading = computed(() => initializing.value || preparedHandoff.value === 'loading'
+  || (preparedHandoff.value === 'ready' && practice.phase === 'loading'));
+const current = computed(() => preparedBlocked.value || initializing.value ? undefined : practice.current);
 // A part can occur again in a new attempt, or under the same user ID on a
 // different server. Neither its player state nor pending responses can cross
 // that boundary. The epoch also rejects a rapid switch away and back.
@@ -1225,17 +1230,14 @@ async function startHistoryProgram(sequence: number): Promise<void> {
 
 async function initializePractice(): Promise<void> {
   const sequence = ++initializationSequence;
-  if (route.query.prepared !== undefined) {
-    try {
+  initializing.value = true;
+  try {
+    if (route.query.prepared !== undefined) {
       const id = route.query.prepared;
       const restored = typeof id === 'string' && await practice.restoreSession('manual', id);
       if (isCurrentInitialization(sequence)) preparedHandoff.value = restored ? 'ready' : 'missing';
-    } catch {
-      if (isCurrentInitialization(sequence)) preparedHandoff.value = 'missing';
+      return;
     }
-    return;
-  }
-  try {
     preparedHandoff.value = 'ready';
     const hasQuery = route.query.source === 'history' || typeof route.query.questions === 'string' || typeof route.query.year === 'string'
       || typeof route.query.term === 'string' || typeof route.query.part === 'string' || typeof route.query.gk === 'string';
@@ -1251,6 +1253,8 @@ async function initializePractice(): Promise<void> {
     await start(sequence);
   } catch {
     if (isCurrentInitialization(sequence)) preparedHandoff.value = 'missing';
+  } finally {
+    if (isCurrentInitialization(sequence)) initializing.value = false;
   }
 }
 
@@ -1508,7 +1512,7 @@ const syncNote = computed(() => {
       return '';
   }
 });
-const showProgramRail = computed(() => !preparedBlocked.value && practice.total > 1);
+const showProgramRail = computed(() => !preparedBlocked.value && !contentLoading.value && practice.total > 1);
 const desktopShell = ports.shell.capabilities.desktop;
 const bankSourceIsLocal = computed(
   () => desktopShell && practice.contentSource === 'local',
@@ -1629,15 +1633,15 @@ const currentCompetencyCodes = computed(() =>
       />
       <div class="practice__progress">
         <div class="practice__progress-label">
-          <template v-if="!preparedBlocked && practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
-          <template v-else-if="!preparedBlocked && practice.phase === 'summary' && practice.sessionAccessible">{{ t('Programm abgeschlossen') }}</template>
+          <template v-if="!preparedBlocked && !contentLoading && practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
+          <template v-else-if="!preparedBlocked && !contentLoading && practice.phase === 'summary' && practice.sessionAccessible">{{ t('Programm abgeschlossen') }}</template>
           <template v-else>QED<span class="practice__logo-accent">2</span></template>
         </div>
         <SessionProgressBar
-          :items="!preparedBlocked && practice.sessionAccessible ? practice.items : []"
-          :graded="!preparedBlocked && practice.sessionAccessible ? progressGraded : []"
+          :items="!preparedBlocked && !contentLoading && practice.sessionAccessible ? practice.items : []"
+          :graded="!preparedBlocked && !contentLoading && practice.sessionAccessible ? progressGraded : []"
           :current-index="practice.index"
-          :active="practice.phase === 'running' && practice.sessionAccessible"
+          :active="!contentLoading && practice.phase === 'running' && practice.sessionAccessible"
         />
       </div>
       <div
@@ -1670,11 +1674,19 @@ const currentCompetencyCodes = computed(() =>
       <span v-else class="practice__spacer" />
     </div>
 
-    <div class="practice__stage q-crossfade">
-    <transition name="q-crossfade">
-      <div v-if="preparedBlocked" key="prepared-handoff" class="practice__center">
-        <div v-if="preparedHandoff === 'loading'" role="status">{{ t('Aufgaben werden geladen …') }}</div>
-        <div v-else class="practice__error" role="alert">
+    <div class="practice__stage q-crossfade" :aria-busy="contentLoading">
+    <transition name="q-crossfade" :css="!contentLoading">
+      <div v-if="contentLoading" key="loading" class="practice__center practice__loading" role="status">
+        <div class="practice__skeleton" aria-hidden="true">
+          <div class="practice__skeleton-bar" style="width: 40%" />
+          <div class="practice__skeleton-bar" style="width: 90%" />
+          <div class="practice__skeleton-bar" style="width: 75%" />
+          <div class="practice__skeleton-bar" style="width: 85%" />
+        </div>
+        <div class="practice__loading-text">{{ t('Aufgaben werden geladen …') }}</div>
+      </div>
+      <div v-else-if="preparedBlocked" key="prepared-handoff" class="practice__center">
+        <div class="practice__error" role="alert">
           <h1 class="practice__error-title">{{ t('Auswahl nicht verfügbar') }}</h1>
           <p class="practice__error-text">{{ t('Bitte wähle die Aufgaben erneut aus.') }}</p>
           <QButton variant="secondary" @click="exitNow">{{ t('Zurück zu Aufgaben') }}</QButton>
@@ -1695,17 +1707,6 @@ const currentCompetencyCodes = computed(() =>
           </div>
           <QButton variant="secondary" @click="closeLockedSession">{{ t('Schließen') }}</QButton>
         </div>
-      </div>
-
-      <!-- loading -->
-      <div v-else-if="practice.phase === 'loading'" key="loading" class="practice__center">
-        <div class="practice__skeleton">
-          <div class="practice__skeleton-bar" style="width: 40%" />
-          <div class="practice__skeleton-bar" style="width: 90%" />
-          <div class="practice__skeleton-bar" style="width: 75%" />
-          <div class="practice__skeleton-bar" style="width: 85%" />
-        </div>
-        <div class="practice__loading-text">{{ t('Aufgaben werden geladen …') }}</div>
       </div>
 
       <!-- Legacy snapshots did not record a bank revision. They stay intact
@@ -1854,7 +1855,7 @@ const currentCompetencyCodes = computed(() =>
             </div>
           </Teleport>
 
-          <div class="practice__content" :class="{ 'practice__content--review-space': solutionReserve > 0 }">
+          <div :key="currentInteraction" class="practice__content" :class="{ 'practice__content--review-space': solutionReserve > 0 }">
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
@@ -2323,6 +2324,13 @@ const currentCompetencyCodes = computed(() =>
   width: 100%;
   flex: 1;
   min-width: 0;
+  /* Only the question's interaction key remounts this surface. Answer edits,
+     grading and drawer movements keep it in place without replaying. */
+  animation: practice-question-enter 180ms ease-out;
+}
+@keyframes practice-question-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 .practice__content.practice__content--review-space {
   padding-bottom: calc(var(--practice-sheet-height, 0px) + 180px + var(--q-keyboard-inset, 0px));
@@ -2563,6 +2571,10 @@ const currentCompetencyCodes = computed(() =>
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .practice__content,
+  .practice__skeleton-bar {
+    animation: none;
+  }
   .practice__session-rail-shell,
   .practice__session-rail-contents,
   .practice :deep(.practice-bar) {

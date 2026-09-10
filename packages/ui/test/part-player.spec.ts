@@ -129,7 +129,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(wrapper.find('.q-part__points').exists()).toBe(false);
 
     // one pick of two → still incomplete
-    const options = wrapper.findAll('button.q-choice__opt');
+    const options = wrapper.findAll('button.q-choice__select');
     expect(options).toHaveLength(5);
     await options[1]!.trigger('click');
     await nextTick();
@@ -147,7 +147,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     const wrapper = mount(PartPlayer, {
       props: { part: choicePart, label: 'Teil a', chromeless: true },
     });
-    const options = wrapper.findAll('button.q-choice__opt');
+    const options = wrapper.findAll('button.q-choice__select');
     await options[1]!.trigger('click');
     await options[3]!.trigger('click');
 
@@ -442,7 +442,7 @@ describe('PartPlayer (chromeless shell contract)', () => {
     const wrapper = mount(PartPlayer, {
       props: { part: choicePart, chromeless: true },
     });
-    const options = wrapper.findAll('button.q-choice__opt');
+    const options = wrapper.findAll('button.q-choice__select');
     await options[0]!.trigger('click');
     await options[2]!.trigger('click');
     exposed(wrapper).submit();
@@ -557,7 +557,7 @@ describe('PartPlayer (default, non-chromeless — legacy behavior)', () => {
     expect(button.exists()).toBe(true);
     expect(button.text()).toContain('Überprüfen');
 
-    const options = wrapper.findAll('button.q-choice__opt');
+    const options = wrapper.findAll('button.q-choice__select');
     await options[1]!.trigger('click');
     await options[3]!.trigger('click');
     await wrapper.find('.q-part__actions button').trigger('click');

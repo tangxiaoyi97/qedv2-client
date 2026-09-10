@@ -19,7 +19,7 @@ import { useI18n } from '../i18n.js';
  *
  * Classic review replaces the form and pool with a responsive comparison.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, useId } from 'vue';
 import type { GradeResult, MatchingAnswer, RichText } from '@qed2/core-logic';
 import { richTextToPlain } from '@qed2/core-logic';
 import ChevronDown from '../shared/ChevronDown.vue';
@@ -41,6 +41,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: (number | null)[]] }>();
 
 const review = computed(() => props.result != null);
 const activation = createOptionActivation();
+const controlId = `q-match-${useId()}`;
 
 function letter(i: number): string {
   return String.fromCharCode(65 + i);
@@ -134,6 +135,15 @@ function assign(leftIdx: number, rightIdx: number | null, move: boolean): void {
   emit('update:modelValue', next);
 }
 
+function onOptionClick(leftIdx: number, rightIdx: number, event: MouseEvent): void {
+  const action = event.target instanceof Element
+    ? event.target.closest('button,a,input,textarea,select,summary,[role="button"]') : null;
+  if (action && !action.classList.contains('q-match__option-select')) return;
+  if (!activation.accepts(event)) return;
+  (event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>('.q-match__option-select')?.focus({ preventScroll: true });
+  if (!review.value) assign(leftIdx, chosen(leftIdx) === rightIdx ? null : rightIdx, false);
+}
+
 /* --- drag & drop enhancement (desktop) --- */
 const dragOverRow = ref<number | null>(null);
 
@@ -219,26 +229,32 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
         <!-- grouped ("Lückentext") mode: the gap IS a single-choice question —
              option cards like ChoiceControl, feedback in place, no pool. -->
         <div v-if="groupedOptionMode" class="q-match__inline-choices" role="radiogroup" :aria-label="t('Optionen für {text}', { text: richTextToPlain(leftItem) })" @keydown="onRadioGroupKeydown">
-          <button
+          <div
             v-for="option in optionsForLeft(i)"
             :key="option.idx"
-            type="button"
             class="q-match__inline-choice"
             :class="{
               'q-match__inline-choice--on': gapOptionState(i, option.idx) === 'on',
               'q-match__inline-choice--ok': gapOptionState(i, option.idx) === 'ok',
               'q-match__inline-choice--err': gapOptionState(i, option.idx) === 'err',
               'q-match__inline-choice--missed': gapOptionState(i, option.idx) === 'missed',
+              'q-match__inline-choice--review': review,
             }"
-            role="radio"
-            :aria-checked="chosen(i) === option.idx"
-            :aria-disabled="review || undefined"
             @pointerdown="activation.pointerDown"
             @pointermove="activation.pointerMove"
             @pointerup="activation.pointerMove"
             @pointercancel="activation.pointerCancel"
-            @click="activation.accepts($event) && !review && assign(i, chosen(i) === option.idx ? null : option.idx, false)"
+            @click="onOptionClick(i, option.idx, $event)"
           >
+            <button
+              type="button"
+              class="q-match__option-select"
+              role="radio"
+              :aria-label="`${letter(option.idx)} · ${richTextToPlain(option.item)}`"
+              :aria-checked="chosen(i) === option.idx"
+              :aria-disabled="review || undefined"
+              :aria-describedby="review && gapOptionState(i, option.idx) ? `${controlId}-mark-${i}-${option.idx}` : undefined"
+            />
             <StateIcon
               v-if="review && gapOptionState(i, option.idx) === 'ok'"
               state="correct"
@@ -263,6 +279,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
             <span class="q-match__oc-content"><RichTextView :nodes="option.item" inline-only /></span>
             <span
               v-if="review && gapOptionState(i, option.idx)"
+              :id="`${controlId}-mark-${i}-${option.idx}`"
               class="q-match__oc-label"
               :class="`q-match__oc-label--${gapOptionState(i, option.idx)}`"
             >
@@ -270,7 +287,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
               {{ t(gapOptionState(i, option.idx) === 'err' ? 'Falsch' : 'Richtig') }}
             </span>
             <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
-          </button>
+          </div>
         </div>
       </div>
     </div>
@@ -421,6 +438,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   gap: 8px;
 }
 .q-match__inline-choice {
+  position: relative;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -440,7 +459,16 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
     border-color: var(--q-accent);
   }
 }
-.q-match__inline-choice:focus-visible {
+.q-match__option-select {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  cursor: inherit;
+}
+.q-match__option-select:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
@@ -464,7 +492,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border-style: dashed;
   cursor: default;
 }
-.q-match__inline-choice[aria-disabled='true'] {
+.q-match__inline-choice--review {
   cursor: default;
 }
 .q-match__oc-radio {
@@ -481,6 +509,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border: 6px solid var(--q-accent-strong);
 }
 .q-match__oc-content {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
