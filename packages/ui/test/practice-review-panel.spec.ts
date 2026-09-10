@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import type { PartPlayerState } from '../src/index.js';
-import { formatIntervalSubmissionPreview } from '../src/question/submission-preview.js';
 import PracticeReviewPanel from '../src/practice/PracticeReviewPanel.vue';
 
 const state: PartPlayerState = {
@@ -16,10 +15,10 @@ const state: PartPlayerState = {
 const solution = [{ result: [{ t: 'text' as const, v: 'Die offizielle Begründung' }], note: 'Ein Punkt für die Begründung.' }];
 
 describe('PracticeReviewPanel', () => {
-  it('separates the submitted answer from the official solution and assessment', () => {
+  it('shows the official solution and assessment without repeating the submitted answer', () => {
     const view = mount(PracticeReviewPanel, { props: { state, solution, ready: true } });
-    expect(view.get('.practice-review__answer').text()).toContain('Meine eigene Begründung');
-    expect(view.get('.practice-review__answer').text()).not.toContain('Die offizielle Begründung');
+    expect(view.text()).not.toContain('Meine Antwort');
+    expect(view.text()).not.toContain('Meine eigene Begründung');
     expect(view.get('.practice-review__solution').text()).toContain('Die offizielle Begründung');
     expect(view.find('.q-solution button[aria-expanded]').exists()).toBe(false);
     expect(view.find('textarea, input').exists()).toBe(false);
@@ -29,7 +28,7 @@ describe('PracticeReviewPanel', () => {
 
   it('does not reveal the solution before the submitted draft is durable', async () => {
     const view = mount(PracticeReviewPanel, { props: { state, solution, ready: false } });
-    expect(view.text()).toContain('Meine eigene Begründung');
+    expect(view.text()).toContain('Antwort wird gesichert …');
     expect(view.text()).not.toContain('Die offizielle Begründung');
     expect(view.find('.q-selfassess').exists()).toBe(false);
     await view.setProps({ ready: true });
@@ -51,17 +50,6 @@ describe('PracticeReviewPanel', () => {
     const view = mount(PracticeReviewPanel, { props: { state: { ...state, submittedText: '' }, ready: true, submissionUnavailable: true } });
     expect(view.text()).toContain('Deine gespeicherte Antwort ist auf diesem Gerät nicht verfügbar.');
     expect(view.text()).not.toContain('Keine schriftliche Antwort');
-  });
-
-  it.each([
-    { lower: '1', upper: '2', lowerClosed: false, upperClosed: true, expected: '( 1 ; 2 ]' },
-    { lower: '', upper: '2', lowerClosed: true, upperClosed: false, expected: '( −∞ ; 2 )' },
-  ])('preserves interval endpoints in the submitted answer: $expected', (example) => {
-    const preview = formatIntervalSubmissionPreview({ kind: 'interval', ...example });
-    const view = mount(PracticeReviewPanel, { props: {
-      state: { ...state, submittedText: '1 … 2', answerPreview: { label: 'Ergebnis', value: preview } }, ready: true,
-    } });
-    expect(view.get('.practice-review__submitted').text()).toBe(example.expected);
   });
 
 });

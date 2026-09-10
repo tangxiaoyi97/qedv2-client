@@ -31,8 +31,6 @@ const emit = defineEmits<{
 }>();
 const { t } = useI18n();
 const result = computed(() => props.state.result);
-// Interval previews retain open/closed and unbounded endpoints, unlike the AI text projection.
-const answerText = computed(() => props.state.answerPreview?.value ?? props.state.submittedText);
 </script>
 
 <template>
@@ -43,12 +41,7 @@ const answerText = computed(() => props.state.answerPreview?.value ?? props.stat
       <span>{{ formatUiScoreRatio(result.awardedPoints, result.maxPoints) }}</span>
     </div>
 
-    <section class="practice-review__answer" :aria-label="t('Meine Antwort')">
-      <h2>{{ t('Meine Antwort') }}</h2>
-      <p v-if="submissionUnavailable" class="practice-review__empty" role="status">{{ t('Deine gespeicherte Antwort ist auf diesem Gerät nicht verfügbar.') }}</p>
-      <p v-else-if="answerText.trim()" class="practice-review__submitted">{{ answerText }}</p>
-      <p v-else class="practice-review__empty">{{ t('Keine schriftliche Antwort') }}</p>
-    </section>
+    <p v-if="submissionUnavailable" class="practice-review__empty" role="status">{{ t('Deine gespeicherte Antwort ist auf diesem Gerät nicht verfügbar.') }}</p>
 
     <template v-if="ready">
       <section class="practice-review__solution" :aria-label="t('Offizieller Lösungsweg')">
@@ -92,9 +85,6 @@ const answerText = computed(() => props.state.answerPreview?.value ?? props.stat
 .practice-review__result--correct { color: var(--q-ok-ink); }
 .practice-review__result--partial { color: var(--q-part-ink); }
 .practice-review__result--incorrect { color: var(--q-err-ink); }
-.practice-review__answer { padding-bottom: 24px; border-bottom: 1px solid var(--q-border-soft); }
-.practice-review__answer h2 { color: var(--q-faint); font-size: 12px; }
-.practice-review__submitted { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.7; }
 .practice-review__empty { margin: 0; color: var(--q-faint); font-size: 13px; }
 .practice-review__assessment { padding-top: 24px; border-top: 1px solid var(--q-border-soft); }
 .practice-review__rubric { color: var(--q-mut); font-size: 13px; line-height: 1.7; margin-bottom: 16px; }

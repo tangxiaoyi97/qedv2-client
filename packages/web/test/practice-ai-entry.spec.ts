@@ -289,7 +289,9 @@ describe('practice AI entries', () => {
     await settle();
     expect(task.style.display).not.toBe('none');
     expect(sheet.getAttribute('aria-hidden')).toBe('false');
-    expect(sheet.querySelector('.practice-review__answer')?.textContent).toContain('x = 3');
+    expect(sheet.textContent).not.toContain('Meine Antwort');
+    expect(sheet.textContent).not.toContain('x = 3');
+    expect(sheet.querySelector('.practice-review__solution')).not.toBeNull();
     expect(task.querySelector('.practice-review')).toBeNull();
     const handle = host.querySelector<HTMLButtonElement>('.q-ssheet__handle')!;
     expect(handle.textContent).toContain('Lösung & Bewertung');

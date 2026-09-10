@@ -49,7 +49,7 @@ describe('practice review drawer', () => {
   it('places the simplified solution and manual grading inside the drawer exactly once', () => {
     const view = mountReviewBar();
     const sheet = view.get('.q-ssheet');
-    expect(sheet.get('.practice-review__answer').text()).toContain('Meine eigene Antwort');
+    expect(sheet.text()).not.toContain('Meine eigene Antwort');
     expect(sheet.get('.practice-review__solution').text()).toContain('Die offizielle Lösung');
     expect(sheet.findAll('.q-selfassess')).toHaveLength(1);
     expect(sheet.findAll('.q-gpick')).toHaveLength(1);
@@ -151,7 +151,7 @@ describe('practice review drawer', () => {
     });
     const view = mount(SolutionSheet, {
       props: { solution: [], detent: 'default', handle: true, handleTitle: 'Lösung & Bewertung', topReserve: 56 },
-      slots: { review: '<div>Meine Antwort, Lösung und Bewertung</div>' },
+      slots: { review: '<div>Lösung und Bewertung</div>' },
     });
     mounted.push(view);
     await nextTick(); await nextTick();
