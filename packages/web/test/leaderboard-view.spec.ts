@@ -325,6 +325,8 @@ describe('LeaderboardView', () => {
 
     expect(host.textContent).toContain('Mira');
     expect(host.textContent).toContain('Beitreten');
+    expect(host.querySelector('.leaderboard--joined')).toBeNull();
+    expect(host.querySelector('.leaderboard__profile-dock')).toBeNull();
     const input = host.querySelector<HTMLInputElement>('#leaderboard-nickname')!;
     expect(input.value).toBe('tester');
 
@@ -341,6 +343,7 @@ describe('LeaderboardView', () => {
     expect(host.textContent).not.toContain('Dein Nickname');
     expect(host.querySelector('.leaderboard__profile-avatar .lucide-user-round')).not.toBeNull();
     expect(host.querySelector('.leaderboard__profile-copy strong')?.textContent).toBe('tester');
+    expect(host.querySelector('.leaderboard--joined .leaderboard__profile-dock > .leaderboard__profile--joined')).not.toBeNull();
     const profileButtons = host.querySelectorAll<HTMLButtonElement>('.leaderboard__profile-buttons .q-btn');
     expect(profileButtons).toHaveLength(2);
     expect(profileButtons[0]?.classList.contains('q-btn--secondary')).toBe(true);
@@ -356,6 +359,47 @@ describe('LeaderboardView', () => {
     expect(document.body.querySelector('.leader-detail__periods .lucide-calendar-range')).not.toBeNull();
 
     app.unmount();
+  });
+
+  it('keeps the joined dock and pagination mounted while editing, switching periods and cancelling a failed rename', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input) => String(input).endsWith('/me/leaderboard-profile')
+      ? json({ participating: true, profileId: 'self', nickname: 'tester',
+        createdAt: '2026-07-23T12:00:00Z', updatedAt: '2026-07-23T12:00:00Z' })
+      : json(board(String(input).includes('period=week') ? 'week' : 'today', 1, ['mira'], 2))));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leaderboard__profile-dock')).not.toBeNull());
+      const dock = mounted.host.querySelector('.leaderboard__profile-dock')!;
+      const card = dock.querySelector('.leaderboard__profile--joined')!;
+      const more = mounted.host.querySelector('.leaderboard__more')!;
+      expect(more.compareDocumentPosition(dock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const save = vi.spyOn(useLeaderboardStore(), 'saveNickname').mockRejectedValue(new Error('offline'));
+      card.querySelector<HTMLButtonElement>('.leaderboard__profile-buttons button')!.click();
+      await nextTick();
+      const input = card.querySelector<HTMLInputElement>('#leaderboard-nickname-edit')!;
+      input.value = 'New nickname';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      mounted.host.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1]!.click();
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')?.getAttribute('aria-label')).toContain('Diese Woche'));
+      expect(card.querySelector('#leaderboard-nickname-edit')).toBe(input);
+      expect(input.value).toBe('New nickname');
+      card.querySelector<HTMLFormElement>('form')!.requestSubmit();
+      await vi.waitFor(() => expect(card.querySelector('[role="alert"]')?.textContent).toContain('Die Änderung konnte nicht gespeichert werden.'));
+      expect(save).toHaveBeenCalledExactlyOnceWith('New nickname');
+      expect(input.getAttribute('aria-describedby')).toBe('leaderboard-profile-error');
+      expect(input.getAttribute('aria-invalid')).toBe('true');
+      expect(mounted.host.querySelector('.leaderboard__profile-dock')).toBe(dock);
+      expect(dock.querySelector('.leaderboard__profile--joined')).toBe(card);
+      expect(mounted.host.querySelector('.leaderboard__more')).toBe(more);
+
+      [...card.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Abbrechen'))!.click();
+      await nextTick();
+      expect(card.querySelector('#leaderboard-nickname-edit')).toBeNull();
+      expect(card.querySelector('.leaderboard__profile-copy strong')?.textContent).toBe('tester');
+      expect(mounted.host.querySelector('.leaderboard__profile-dock')).toBe(dock);
+      expect(save).toHaveBeenCalledTimes(1);
+    } finally { mounted.unmount(); }
   });
 
   it('keeps the detail dialog open after a failed request and retries in place', async () => {

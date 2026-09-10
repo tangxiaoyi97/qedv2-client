@@ -898,9 +898,9 @@ async function collapseFromKeyboard(): Promise<void> {
   min-height: 0;
   flex: 0 1 auto;
   overflow-y: auto;
-  /* Reserve no empty gutter: on medium screens it would indent the solution
-   * away from the question and action row. Wide content keeps native scroll. */
-  scrollbar-gutter: auto;
+  /* Opening crosses the overflow threshold. Reserve both sides throughout
+   * the motion so native scrollbars cannot rewrap or recenter the answer. */
+  scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
   overscroll-behavior: contain;
   transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1);

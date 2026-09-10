@@ -293,7 +293,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="leaderboard q-page">
+  <div class="leaderboard q-page" :class="{ 'leaderboard--joined': auth.isLoggedIn && isParticipating }">
     <template v-if="!auth.isLoggedIn">
       <section class="leaderboard__auth">
         <span class="leaderboard__auth-icon" aria-hidden="true"><Trophy /></span>
@@ -398,7 +398,8 @@ onBeforeUnmount(() => {
         <div v-if="profileError" id="leaderboard-profile-error" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
 
-      <section v-else-if="isParticipating" class="leaderboard__profile leaderboard__profile--joined">
+      <div v-else-if="isParticipating" class="leaderboard__profile-dock">
+      <section class="leaderboard__profile leaderboard__profile--joined">
         <div v-if="!editingNickname" class="leaderboard__profile-actions">
           <div class="leaderboard__profile-identity">
             <span class="leaderboard__profile-avatar" aria-hidden="true">
@@ -442,6 +443,7 @@ onBeforeUnmount(() => {
         </form>
         <div v-if="profileError" id="leaderboard-profile-error" class="leaderboard__profile-error" role="alert">{{ t(profileError) }}</div>
       </section>
+      </div>
     </template>
 
     <LeaderboardDetailDrawer
@@ -460,6 +462,14 @@ onBeforeUnmount(() => {
   max-width: 980px;
   margin: 0 auto;
   padding: 32px 24px 40px;
+}
+
+.leaderboard.leaderboard--joined {
+  --leaderboard-dock-bottom: max(16px, calc(var(--q-keyboard-inset, 0px) + 12px));
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding-bottom: 16px;
 }
 
 .leaderboard__header {
@@ -589,6 +599,25 @@ onBeforeUnmount(() => {
   background: var(--q-card);
 }
 
+.leaderboard__profile-dock {
+  /* Sticky keeps its own space after the last row / pagination button.
+     The auto margin also anchors the profile on short leaderboards. */
+  position: sticky;
+  bottom: var(--leaderboard-dock-bottom);
+  z-index: 20;
+  flex: none;
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.leaderboard__profile-dock .leaderboard__profile--joined {
+  margin-top: 0;
+  max-height: calc(100dvh - var(--leaderboard-dock-bottom) - 24px - env(safe-area-inset-top));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 4px 24px color-mix(in srgb, var(--q-ink) 8%, transparent);
+}
+
 .leaderboard__join {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -691,6 +720,7 @@ onBeforeUnmount(() => {
   color: var(--q-err);
   font-size: var(--q-font-small);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .leaderboard__notice {
@@ -828,6 +858,15 @@ onBeforeUnmount(() => {
 
   .leaderboard__notice :deep(.q-btn) {
     align-self: end;
+  }
+}
+
+@media (max-width: 899px) {
+  .leaderboard.leaderboard--joined {
+    /* Match the shell's 80px reserve, including its mobile tab bar / safe area. */
+    --leaderboard-dock-bottom: max(calc(80px + env(safe-area-inset-bottom)), calc(var(--q-keyboard-inset, 0px) + 12px));
+    min-height: calc(100dvh - 80px - env(safe-area-inset-bottom) - env(safe-area-inset-top));
+    padding-bottom: 0;
   }
 }
 
