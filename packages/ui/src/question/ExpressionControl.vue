@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { expressionPreviewLatex } from '@qed2/core-logic';
+import { expressionPreviewLatex, VERDICT_LABELS } from '@qed2/core-logic';
 import type { ExpressionAnswer, GradeResult } from '@qed2/core-logic';
 import MathText from '../shared/MathText.vue';
 import StateIcon from '../shared/StateIcon.vue';
@@ -17,7 +17,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const review = computed(() => props.result != null || props.indeterminate === true);
-const previewLatex = computed(() => expressionPreviewLatex(props.modelValue));
+const previewLatex = computed(() => expressionPreviewLatex(props.modelValue, props.answer.vars));
 
 function onInput(event: Event): void {
   if (review.value || (event as InputEvent).isComposing) return;
@@ -31,8 +31,8 @@ function onInput(event: Event): void {
       class="q-expr__input q-input"
       :class="{
         'q-expr__input--ok': result?.verdict === 'correct',
-        'q-expr__input--err': result != null && result.verdict !== 'correct',
-        'q-expr__input--indet': indeterminate,
+        'q-expr__input--err': result?.verdict === 'incorrect',
+        'q-expr__input--indet': result?.verdict === 'partial' || (indeterminate && !result),
       }"
       type="text"
       inputmode="text"
@@ -56,8 +56,8 @@ function onInput(event: Event): void {
 
     <template v-if="review">
       <div v-if="result" class="q-expr__verdict-note">
-        <StateIcon :state="result.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
-        <span>{{ t(result.verdict === 'correct' ? 'Richtig' : 'Falsch') }}</span>
+        <StateIcon :state="result.verdict" :size="20" />
+        <span>{{ t(VERDICT_LABELS[result.verdict]) }}</span>
       </div>
       <div class="q-expr__canonical">
         <span class="q-expr__preview-label">{{ t('Richtige Antwort') }}</span>

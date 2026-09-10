@@ -949,6 +949,8 @@ export const usePracticeStore = defineStore('practice', () => {
   const answerDraftWritePipelines = new Map<string, AnswerDraftWritePipeline>();
   /** Fixed for the whole live session; auth changes cannot retarget it. */
   let sessionOwner: AttemptOwnerSnapshot | undefined;
+  /** Invalidates callbacks from a programme that was replaced or aborted. */
+  let sessionMutationEpoch = 0;
   let sessionStorageKey: string | undefined;
   let sessionResolvedOwnerId: string | undefined;
   let sessionCoreClient: CoreClient | undefined;
@@ -999,6 +1001,9 @@ export const usePracticeStore = defineStore('practice', () => {
           useAppStore().releaseCoreContentPin();
         }
         activeContentLoad = undefined;
+        // Explicit abort queues a conditional durable deletion. Do not report
+        // the cancelled load settled while that cleanup is still in flight.
+        if (epoch !== contentLoadEpoch) await sessionPersistenceTail;
       }
     });
     contentLoadTail = run.then(() => undefined, () => undefined);
@@ -1375,6 +1380,7 @@ export const usePracticeStore = defineStore('practice', () => {
     options: { key?: string; resolvedOwnerId?: string } = {},
   ): AttemptOwnerSnapshot {
     const profileId = requiredOwnerProfile(owner);
+    sessionMutationEpoch += 1;
     sessionOwner = { ...owner, localProfileId: profileId };
     sessionStorageKey = options.key ?? storageKeyForProfile(profileId);
     sessionResolvedOwnerId = options.resolvedOwnerId ?? owner.userId;
@@ -1594,6 +1600,70 @@ export const usePracticeStore = defineStore('practice', () => {
       });
   }
 
+  /** Every session writer must merge the same durable per-part evidence. */
+  function mergeSessionItems(
+    current: readonly SessionItem[],
+    pending: readonly SessionItem[],
+    gradedPartIds: ReadonlySet<string>,
+    savedAt: string,
+  ): SessionItem[] {
+    return pending.map((item, itemIndex): SessionItem => {
+      const currentItem = current[itemIndex];
+      const deliveredHintLevel = Math.max(
+        item.deliveredHintLevel ?? 0,
+        currentItem?.deliveredHintLevel ?? 0,
+      ) as 0 | LearningHintLevel;
+      const cachedAiHint = laterHintLevel(
+        currentItem?.cachedAiHint ?? currentItem?.cachedAiHelp,
+        item.cachedAiHint ?? item.cachedAiHelp,
+      );
+      const cachedAiDiagnosis = newerAiHelp(
+        currentItem?.cachedAiDiagnosis
+          ?? (currentItem?.cachedAiHelp?.mode === 'diagnosis' ? currentItem.cachedAiHelp : undefined),
+        item.cachedAiDiagnosis
+          ?? (item.cachedAiHelp?.mode === 'diagnosis' ? item.cachedAiHelp : undefined),
+      );
+      const currentAssessment = currentItem?.cachedAiAssessment;
+      const pendingAssessment = item.cachedAiAssessment;
+      const cachedAiAssessment = !currentAssessment
+        ? pendingAssessment
+        : !pendingAssessment || currentAssessment.savedAt >= pendingAssessment.savedAt
+          ? currentAssessment
+          : pendingAssessment;
+      const currentGrading = currentItem?.pendingGrading;
+      const pendingGrading = item.pendingGrading;
+      const durableGrading = !currentGrading
+        ? pendingGrading
+        : !pendingGrading || currentGrading.savedAt >= pendingGrading.savedAt
+          ? currentGrading
+          : pendingGrading;
+      const settledGrading = gradedPartIds.has(item.partId)
+        ? {
+            grading: null,
+            savedAt: [currentGrading?.savedAt, pendingGrading?.savedAt, savedAt]
+              .filter((value): value is string => value !== undefined).sort().at(-1)!,
+          }
+        : durableGrading;
+      const answerDraft = mergeAnswerDraft(
+        currentItem?.answerDraft, item.answerDraft, gradedPartIds.has(item.partId), savedAt,
+      );
+      const {
+        cachedAiHelp: _legacyHelp,
+        answerDraft: _pendingAnswerDraft,
+        ...itemWithoutLegacyHelp
+      } = item;
+      return {
+        ...itemWithoutLegacyHelp,
+        ...(deliveredHintLevel ? { deliveredHintLevel } : {}),
+        ...(cachedAiHint ? { cachedAiHint: { ...cachedAiHint } } : {}),
+        ...(cachedAiDiagnosis ? { cachedAiDiagnosis: { ...cachedAiDiagnosis } } : {}),
+        ...(cachedAiAssessment ? { cachedAiAssessment: { ...cachedAiAssessment } } : {}),
+        ...(settledGrading ? { pendingGrading: { ...settledGrading } } : {}),
+        ...(answerDraft ? { answerDraft } : {}),
+      };
+    });
+  }
+
   function mergeSessionGradeRecords(
     current: readonly GradedRecord[],
     pending: readonly GradedRecord[],
@@ -1688,68 +1758,7 @@ export const usePracticeStore = defineStore('practice', () => {
           const gradedPartIds = new Set(mergedGraded.map((record) => record.partId));
           next = {
             ...snapshotWithoutDraft,
-            items: snapshot.items.map((item, itemIndex): SessionItem => {
-              const deliveredHintLevel = Math.max(
-                item.deliveredHintLevel ?? 0,
-                current.items[itemIndex]?.deliveredHintLevel ?? 0,
-              ) as 0 | LearningHintLevel;
-              const currentItem = current.items[itemIndex];
-              const cachedAiHint = laterHintLevel(
-                currentItem?.cachedAiHint ?? currentItem?.cachedAiHelp,
-                item.cachedAiHint ?? item.cachedAiHelp,
-              );
-              const cachedAiDiagnosis = newerAiHelp(
-                currentItem?.cachedAiDiagnosis
-                  ?? (currentItem?.cachedAiHelp?.mode === 'diagnosis'
-                    ? currentItem.cachedAiHelp
-                    : undefined),
-                item.cachedAiDiagnosis
-                  ?? (item.cachedAiHelp?.mode === 'diagnosis' ? item.cachedAiHelp : undefined),
-              );
-              const currentAssessment = current.items[itemIndex]?.cachedAiAssessment;
-              const pendingAssessment = item.cachedAiAssessment;
-              const cachedAiAssessment = !currentAssessment
-                ? pendingAssessment
-                : !pendingAssessment || currentAssessment.savedAt >= pendingAssessment.savedAt
-                  ? currentAssessment
-                  : pendingAssessment;
-              const currentGrading = current.items[itemIndex]?.pendingGrading;
-              const pendingGrading = item.pendingGrading;
-              const durableGrading = !currentGrading
-                ? pendingGrading
-                : !pendingGrading || currentGrading.savedAt >= pendingGrading.savedAt
-                  ? currentGrading
-                  : pendingGrading;
-              const settledGrading = gradedPartIds.has(item.partId)
-                ? {
-                    grading: null,
-                    savedAt: [currentGrading?.savedAt, pendingGrading?.savedAt, snapshot.savedAt]
-                      .filter((value): value is string => value !== undefined)
-                      .sort()
-                      .at(-1)!,
-                  }
-                : durableGrading;
-              const answerDraft = mergeAnswerDraft(
-                currentItem?.answerDraft,
-                item.answerDraft,
-                gradedPartIds.has(item.partId),
-                snapshot.savedAt,
-              );
-              const {
-                cachedAiHelp: _legacyHelp,
-                answerDraft: _pendingAnswerDraft,
-                ...itemWithoutLegacyHelp
-              } = item;
-              return {
-                ...itemWithoutLegacyHelp,
-                ...(deliveredHintLevel ? { deliveredHintLevel } : {}),
-                ...(cachedAiHint ? { cachedAiHint: { ...cachedAiHint } } : {}),
-                ...(cachedAiDiagnosis ? { cachedAiDiagnosis: { ...cachedAiDiagnosis } } : {}),
-                ...(cachedAiAssessment ? { cachedAiAssessment: { ...cachedAiAssessment } } : {}),
-                ...(settledGrading ? { pendingGrading: { ...settledGrading } } : {}),
-                ...(answerDraft ? { answerDraft } : {}),
-              };
-            }),
+            items: mergeSessionItems(current.items, snapshot.items, gradedPartIds, snapshot.savedAt),
             graded: mergedGraded,
             ...mergeSessionDraft(current, snapshot),
             savedAt: current.savedAt > snapshot.savedAt ? current.savedAt : snapshot.savedAt,
@@ -1769,23 +1778,16 @@ export const usePracticeStore = defineStore('practice', () => {
         });
         if (committed.committed) return next;
       } catch (cause) {
-        // The browser/IPC may lose the response after COMMIT. A matching
-        // session must contain every grade and any requested review closure;
-        // an existing first grade alone cannot prove the close was saved.
+        // The browser/IPC may lose the response after COMMIT. Confirm the
+        // complete merged write, including drafts, AI locators and position.
+        // Older grades (or an empty grade list) do not prove this mutation
+        // reached storage. An uncertain result stays retryable.
         const [durable] = await storage.readBatch([address]).catch(() => []);
         const durableSession = durable?.value;
         if (
           durable
           && isPersistedPracticeSession(durableSession)
-          && sameSessionDefinition(durableSession, snapshot)
-          && snapshot.graded.every((record) =>
-            durableSession.graded.some((saved) =>
-              saved.clientAttemptId === record.clientAttemptId
-              && (!record.reviewClosedAt || (
-                saved.reviewClosedAt !== undefined
-                && saved.reviewClosedAt >= record.reviewClosedAt
-                && saved.pendingSubmission === undefined
-              ))))
+          && JSON.stringify(durableSession) === JSON.stringify(next)
         ) {
           return durableSession;
         }
@@ -1797,9 +1799,10 @@ export const usePracticeStore = defineStore('practice', () => {
 
   async function persistSession(options: { replaceExisting?: boolean } = {}): Promise<boolean> {
     if (phase.value !== 'running' || items.value.length === 0) return false;
+    const epoch = sessionMutationEpoch;
     const owner = await ensureSessionIdentity();
     assertContentLoadCurrent();
-    if (!activeProfileCanAccessSession()) return false;
+    if (epoch !== sessionMutationEpoch || !activeProfileCanAccessSession()) return false;
     const key = sessionStorageKey!;
     const snapshot = buildPersistedSession(owner, graded.value, new Date().toISOString());
     try {
@@ -1808,6 +1811,7 @@ export const usePracticeStore = defineStore('practice', () => {
         return commitSessionSnapshot(key, snapshot, options.replaceExisting === true);
       });
       assertContentLoadCurrent();
+      if (epoch !== sessionMutationEpoch) return false;
       items.value = committed.items.map(cloneSessionItem);
       graded.value = committed.graded.map(cloneGradedRecord);
       draftRevision.value = committed.draftRevision ?? 0;
@@ -1819,23 +1823,66 @@ export const usePracticeStore = defineStore('practice', () => {
       return true;
     } catch {
       assertContentLoadCurrent();
+      if (epoch !== sessionMutationEpoch) return false;
       warning.value = 'Das laufende Programm konnte lokal nicht gespeichert werden.';
       return false;
     }
   }
 
-  async function clearPersistedSession(): Promise<void> {
+  async function clearPersistedSession(
+    expected?: PersistedPracticeSession,
+    normalized?: PersistedPracticeSession,
+  ): Promise<void> {
     const key = sessionStorageKey;
+    const epoch = sessionMutationEpoch;
     // An auth/profile switch can leave an old Pinia instance alive for a few
     // frames. Never let the newly active account abort or expire somebody
     // else's durable programme through that stale in-memory reference.
     if (!key || !activeProfileCanAccessSession()) return;
+    const snapshot = expected ?? (sessionOwner
+      ? buildPersistedSession(sessionOwner, graded.value, new Date().toISOString())
+      : undefined);
+    if (!snapshot) return;
+    const capturedSnapshots = normalized ? [snapshot, normalized] : [snapshot];
+    const matchesCapturedSession = (value: unknown): boolean =>
+      isPersistedPracticeSession(value)
+      && capturedSnapshots.some((captured) => sameSessionDefinition(value, captured)
+      // Merge compatibility permits absent legacy ids, but deletion must
+      // never use that absence as a wildcard for a new attempt's identity.
+      && value.items.every((item, index) =>
+        item.clientAttemptId === captured.items[index]?.clientAttemptId
+        && item.learningInteractionId === captured.items[index]?.learningInteractionId));
     try {
-      await enqueueSessionPersistence(() => storage.delete(STORAGE.app, key));
+      await enqueueSessionPersistence(async () => {
+        const address = { collection: STORAGE.app, key } as const;
+        if (!hasAtomicStorage(storage)) {
+          const current = await storage.get<unknown>(STORAGE.app, key);
+          if (matchesCapturedSession(current)) {
+            await storage.delete(STORAGE.app, key);
+          }
+          return;
+        }
+        // Another window may have replaced this key with a new programme,
+        // even for the same question. Only delete the captured attempt lineage.
+        for (let attempt = 0; attempt < 6; attempt += 1) {
+          const [entry] = await storage.readBatch([address]);
+          if (!entry) throw new Error('Practice session revision read returned no entry');
+          if (entry.value === undefined) return;
+          if (!matchesCapturedSession(entry.value)) return;
+          const result = await storage.commitBatch({
+            ifRevisions: [{ ...address, revision: entry.revision }],
+            mutations: [{ ...address, operation: 'delete' }],
+          });
+          if (result.committed) return;
+        }
+        throw new Error('Practice session changed too often to remove safely');
+      });
+      if (epoch !== sessionMutationEpoch) return;
       selfAssessmentDraft.value = undefined;
       draftRevision.value = 0;
       pendingGradeRecords.clear();
     } catch {
+      if (epoch !== sessionMutationEpoch) return;
       warning.value = 'Der lokal gespeicherte Programmstand konnte nicht entfernt werden.';
     }
   }
@@ -2309,6 +2356,7 @@ export const usePracticeStore = defineStore('practice', () => {
     hintLevel?: LearningHintLevel;
     manualGrading?: Grading;
   }): Promise<GradedRecord | undefined> {
+    const epoch = sessionMutationEpoch;
     const cur = current.value;
     if (!cur || cur.part.id !== payload.part.id) return;
     const progress = useProgressStore();
@@ -2317,6 +2365,7 @@ export const usePracticeStore = defineStore('practice', () => {
     // let a cross-window account switch put an old guest snapshot into a new
     // user's key even if the audit outbox itself retained the old owner.
     const attemptOwner = await ensureSessionIdentity();
+    if (epoch !== sessionMutationEpoch) throw new Error('Das Programm wurde inzwischen ersetzt.');
     if (!activeProfileCanAccessSession()) {
       throw new Error('Dieses Programm gehört zu einem anderen lokalen Profil.');
     }
@@ -2358,6 +2407,7 @@ export const usePracticeStore = defineStore('practice', () => {
     // snapshot. They may fail, but they can never race and overwrite the grade
     // after its transaction commits.
     await sessionPersistenceTail;
+    if (epoch !== sessionMutationEpoch) throw new Error('Das Programm wurde inzwischen ersetzt.');
     const savedAt = new Date().toISOString();
     const draftForPart = selfAssessmentDraft.value?.partId === payload.part.id
       ? selfAssessmentDraft.value
@@ -2381,9 +2431,9 @@ export const usePracticeStore = defineStore('practice', () => {
       : item);
     let committed;
     try {
-      committed = await progress.commitGradeEvent({
+      committed = await enqueueSessionPersistence(() => progress.commitGradeEvent({
         owner: attemptOwner,
-        attempt: toAttemptRecord(record),
+        attempt: toAttemptRecord(record, nextSession),
         grade: {
           partId: payload.part.id,
           competencyCodes: payload.part.competencies.map((competency) => competency.code),
@@ -2433,19 +2483,7 @@ export const usePracticeStore = defineStore('practice', () => {
               const gradedPartIds = new Set(mergedGraded.map((record) => record.partId));
               return {
                 ...nextWithoutDraft,
-                items: preparedNext.items.map((item, itemIndex) => {
-                  const answerDraft = mergeAnswerDraft(
-                    current.items[itemIndex]?.answerDraft,
-                    item.answerDraft,
-                    gradedPartIds.has(item.partId),
-                    preparedNext.savedAt,
-                  );
-                  const { answerDraft: _pendingAnswerDraft, ...withoutAnswerDraft } = item;
-                  return {
-                    ...withoutAnswerDraft,
-                    ...(answerDraft ? { answerDraft } : {}),
-                  };
-                }),
+                items: mergeSessionItems(current.items, preparedNext.items, gradedPartIds, preparedNext.savedAt),
                 graded: mergedGraded,
                 ...draftState,
                   savedAt: current.savedAt > preparedNext.savedAt ? current.savedAt : preparedNext.savedAt,
@@ -2462,10 +2500,10 @@ export const usePracticeStore = defineStore('practice', () => {
             const record = current.graded.find(
               (candidate) => candidate.clientAttemptId === attempt.clientAttemptId,
             );
-            return !!record && JSON.stringify(toAttemptRecord(record)) === JSON.stringify(attempt);
+            return !!record && JSON.stringify(toAttemptRecord(record, nextSession)) === JSON.stringify(attempt);
           },
         },
-      });
+      }));
     } catch (cause) {
       // The item reserves one logical attempt for every renderer. If another
       // window reached storage first with a different answer, adopt that
@@ -2477,6 +2515,7 @@ export const usePracticeStore = defineStore('practice', () => {
       }
       const winner = durable.graded.find((candidate) => candidate.clientAttemptId === clientAttemptId);
       if (!winner) throw cause;
+      if (epoch !== sessionMutationEpoch) return cloneGradedRecord(winner);
       graded.value = durable.graded.map(cloneGradedRecord);
       items.value = durable.items.map(cloneSessionItem);
       draftRevision.value = durable.draftRevision ?? draftRevision.value;
@@ -2495,17 +2534,19 @@ export const usePracticeStore = defineStore('practice', () => {
     if (!isPersistedPracticeSession(committed.session)) {
       throw new Error('Committed practice session is malformed');
     }
-    sessionResolvedOwnerId = committed.ownerId;
-    graded.value = committed.session.graded.map(cloneGradedRecord);
-    items.value = committed.session.items.map(cloneSessionItem);
-    draftRevision.value = committed.session.draftRevision ?? clearedDraftRevision;
-    selfAssessmentDraft.value = committed.session.selfAssessmentDraft
-      ? cloneSelfAssessmentDraft(committed.session.selfAssessmentDraft)
-      : undefined;
-    pendingGradeRecords.delete(clientAttemptId);
-    lastActivityAt.value = committed.session.savedAt;
-    const durableRecord = graded.value.find((candidate) => candidate.clientAttemptId === clientAttemptId);
-    preAnswerFsrs.set(payload.part.id, durableRecord?.preAnswerFsrs ?? committed.previousFsrs);
+    const durableRecord = committed.session.graded.find((candidate) => candidate.clientAttemptId === clientAttemptId);
+    if (epoch === sessionMutationEpoch) {
+      sessionResolvedOwnerId = committed.ownerId;
+      graded.value = committed.session.graded.map(cloneGradedRecord);
+      items.value = committed.session.items.map(cloneSessionItem);
+      draftRevision.value = committed.session.draftRevision ?? clearedDraftRevision;
+      selfAssessmentDraft.value = committed.session.selfAssessmentDraft
+        ? cloneSelfAssessmentDraft(committed.session.selfAssessmentDraft)
+        : undefined;
+      pendingGradeRecords.delete(clientAttemptId);
+      lastActivityAt.value = committed.session.savedAt;
+      preAnswerFsrs.set(payload.part.id, durableRecord?.preAnswerFsrs ?? committed.previousFsrs);
+    }
     const learningProfile = attemptOwner.localProfileId;
     if (learningProfile) {
       try {
@@ -2514,11 +2555,11 @@ export const usePracticeStore = defineStore('practice', () => {
           partId: record.partId,
           outcome: record.result.verdict,
           ...(record.hintLevel ? { hintLevel: record.hintLevel } : {}),
-          ...(contentId.value ? { contentId: contentId.value } : {}),
+          ...(nextSession.contentId ? { contentId: nextSession.contentId } : {}),
           at: record.gradedAt,
         });
       } catch {
-        warning.value = 'Die Lernempfehlung konnte lokal nicht gespeichert werden.';
+        if (epoch === sessionMutationEpoch) warning.value = 'Die Lernempfehlung konnte lokal nicht gespeichert werden.';
       }
     }
     // Guests retain the staged event under their local-only owner. Authenticated
@@ -2526,10 +2567,10 @@ export const usePracticeStore = defineStore('practice', () => {
     void progress.flushStagedAttempt(committed.ownerId).catch(() => {
       progress.scheduleCloudRecovery();
     });
-    if (progress.isActiveAccountOwner(committed.ownerId) && graded.value.length % SYNC_EVERY_N_GRADES === 0) {
+    if (progress.isActiveAccountOwner(committed.ownerId) && committed.session.graded.length % SYNC_EVERY_N_GRADES === 0) {
       void progress.syncNow({ quiet: true });
     }
-    return graded.value.find((candidate) => candidate.clientAttemptId === record.clientAttemptId);
+    return durableRecord ? cloneGradedRecord(durableRecord) : undefined;
   }
 
   /** Repair only the requested attempt, never replay grading or historical rows. */
@@ -2626,6 +2667,7 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   async function recordHintLevel(partId: string, level: LearningHintLevel): Promise<void> {
+    const epoch = sessionMutationEpoch;
     const itemIndex = items.value.findIndex((candidate) => candidate.partId === partId);
     const item = items.value[itemIndex];
     if (!item || (item.deliveredHintLevel ?? 0) >= level) return;
@@ -2634,12 +2676,13 @@ export const usePracticeStore = defineStore('practice', () => {
       ? { ...candidate, deliveredHintLevel: level }
       : candidate);
     if (!(await persistSession())) {
-      items.value = previous;
+      if (epoch === sessionMutationEpoch) items.value = previous;
       throw new Error('Der Hinweis konnte lokal nicht gespeichert werden.');
     }
   }
 
   async function recordCachedAiHelp(partId: string, locator: AiExplainCacheLocator): Promise<void> {
+    const epoch = sessionMutationEpoch;
     if (!isAiExplainCacheLocator(locator)) throw new TypeError('AI cache locator is malformed');
     const itemIndex = items.value.findIndex((candidate) => candidate.partId === partId);
     if (itemIndex < 0) return;
@@ -2650,7 +2693,7 @@ export const usePracticeStore = defineStore('practice', () => {
         : { ...candidate, cachedAiDiagnosis: { ...locator } }
       : candidate);
     if (!(await persistSession())) {
-      items.value = previous;
+      if (epoch === sessionMutationEpoch) items.value = previous;
       throw new Error('Die gespeicherte Hilfe konnte dem Programm nicht zugeordnet werden.');
     }
   }
@@ -2665,6 +2708,7 @@ export const usePracticeStore = defineStore('practice', () => {
     locator: AiExplainCacheLocator,
     deliveredHintLevel?: LearningHintLevel,
   ): Promise<void> {
+    const epoch = sessionMutationEpoch;
     if (!isAiExplainCacheLocator(locator) || locator.partId !== partId) {
       throw new TypeError('AI cache locator is malformed');
     }
@@ -2689,7 +2733,7 @@ export const usePracticeStore = defineStore('practice', () => {
         }
       : candidate);
     if (!(await persistSession())) {
-      items.value = previous;
+      if (epoch === sessionMutationEpoch) items.value = previous;
       throw new Error('Die gespeicherte Hilfe konnte dem Programm nicht zugeordnet werden.');
     }
   }
@@ -2698,6 +2742,7 @@ export const usePracticeStore = defineStore('practice', () => {
     partId: string,
     locator: AiAssessCacheLocator,
   ): Promise<void> {
+    const epoch = sessionMutationEpoch;
     if (!isAiAssessCacheLocator(locator) || locator.partId !== partId) {
       throw new TypeError('AI assessment cache locator is malformed');
     }
@@ -2708,12 +2753,13 @@ export const usePracticeStore = defineStore('practice', () => {
       ? { ...candidate, cachedAiAssessment: { ...locator } }
       : candidate);
     if (!(await persistSession())) {
-      items.value = previous;
+      if (epoch === sessionMutationEpoch) items.value = previous;
       throw new Error('Der gespeicherte KI-Vergleich konnte nicht zugeordnet werden.');
     }
   }
 
   async function savePendingGrading(partId: string, grading: Grading | null): Promise<boolean> {
+    const epoch = sessionMutationEpoch;
     if (grading !== null && !isGrading(grading)) throw new TypeError('Invalid pending grading');
     const itemIndex = items.value.findIndex((candidate) => candidate.partId === partId);
     if (itemIndex < 0 || graded.value.some((record) => record.partId === partId)) return false;
@@ -2725,7 +2771,7 @@ export const usePracticeStore = defineStore('practice', () => {
       ? { ...candidate, pendingGrading: { grading, savedAt } }
       : candidate);
     if (!(await persistSession())) {
-      items.value = previous;
+      if (epoch === sessionMutationEpoch) items.value = previous;
       return false;
     }
     return items.value[itemIndex]?.pendingGrading?.grading === grading;
@@ -2875,6 +2921,7 @@ export const usePracticeStore = defineStore('practice', () => {
     partId: string,
     payload: Omit<SelfAssessmentDraft, 'version' | 'revision' | 'partId' | 'savedAt'>,
   ): Promise<boolean> {
+    const epoch = sessionMutationEpoch;
     if (!isPersistableSubmission(payload.submission)
       || !isPersistableSelfAssessment(payload.assessment)
       || (payload.selectedPoints !== null && !Number.isFinite(payload.selectedPoints))
@@ -2883,6 +2930,7 @@ export const usePracticeStore = defineStore('practice', () => {
       throw new TypeError('Self-assessment draft is malformed');
     }
     return enqueueSessionPersistence(async () => {
+      if (epoch !== sessionMutationEpoch) return false;
       const currentItem = items.value[index.value];
       if (phase.value !== 'running' || !currentItem || currentItem.partId !== partId) return false;
       if (graded.value.some((record) => record.partId === partId)) return false;
@@ -2904,7 +2952,7 @@ export const usePracticeStore = defineStore('practice', () => {
         indeterminateMax: previous.indeterminateMax,
       }) === JSON.stringify(comparable)) return true;
       const owner = await ensureSessionIdentity();
-      if (!activeProfileCanAccessSession() || !sessionStorageKey) return false;
+      if (epoch !== sessionMutationEpoch || !activeProfileCanAccessSession() || !sessionStorageKey) return false;
       const revision = draftRevision.value + 1;
       const savedAt = new Date().toISOString();
       const draft: SelfAssessmentDraft = {
@@ -2927,6 +2975,7 @@ export const usePracticeStore = defineStore('practice', () => {
       const snapshot = buildPersistedSession(owner, graded.value, savedAt, { revision, draft });
       try {
         const committed = await commitSessionSnapshot(sessionStorageKey, snapshot, false);
+        if (epoch !== sessionMutationEpoch) return false;
         draftRevision.value = committed.draftRevision ?? revision;
         selfAssessmentDraft.value = committed.selfAssessmentDraft
           ? cloneSelfAssessmentDraft(committed.selfAssessmentDraft)
@@ -2935,6 +2984,7 @@ export const usePracticeStore = defineStore('practice', () => {
         sessionIdentityDurable.value = true;
         return selfAssessmentDraft.value?.partId === partId;
       } catch {
+        if (epoch !== sessionMutationEpoch) return false;
         warning.value = 'Die Selbstbewertung konnte lokal nicht gespeichert werden.';
         return false;
       }
@@ -2948,6 +2998,9 @@ export const usePracticeStore = defineStore('practice', () => {
    * otherwise it acts as a standalone review event.
    */
   async function overrideGrading(partId: string, grading: Grading): Promise<void> {
+    if (!activeProfileCanAccessSession()) {
+      throw new Error('Dieses Programm gehört zu einem anderen lokalen Profil.');
+    }
     const progress = useProgressStore();
     const input: Parameters<typeof progress.setGrading>[0] = { partId, grading };
     const durableReview = graded.value.find((record) => record.partId === partId);
@@ -3004,6 +3057,7 @@ export const usePracticeStore = defineStore('practice', () => {
 
   /** Remove the short-lived answer snapshot before any deliberate navigation. */
   async function closeCurrentReview(): Promise<void> {
+    const epoch = sessionMutationEpoch;
     const review = currentReview.value;
     if (review && !review.reviewClosedAt) {
       const closedAt = new Date().toISOString();
@@ -3016,10 +3070,12 @@ export const usePracticeStore = defineStore('practice', () => {
         return cloneGradedRecord({ ...withoutPrivateAnswer, reviewClosedAt: closedAt });
       });
       const owner = await ensureSessionIdentity();
+      if (epoch !== sessionMutationEpoch) return;
       const key = sessionStorageKey;
       if (!key) throw new Error('Practice session has no durable storage identity');
       const snapshot = buildPersistedSession(owner, nextGraded, closedAt);
       const committed = await enqueueSessionPersistence(() => commitSessionSnapshot(key, snapshot, false));
+      if (epoch !== sessionMutationEpoch) return;
       graded.value = committed.graded.map(cloneGradedRecord);
       lastActivityAt.value = committed.savedAt;
     }
@@ -3027,7 +3083,9 @@ export const usePracticeStore = defineStore('practice', () => {
 
   /** Leave review only after removing its short-lived local answer snapshot. */
   async function completeReviewAndNext(): Promise<void> {
+    const epoch = sessionMutationEpoch;
     await closeCurrentReview();
+    if (epoch !== sessionMutationEpoch) return;
     next();
   }
 
@@ -3043,11 +3101,17 @@ export const usePracticeStore = defineStore('practice', () => {
     await syncSessionProgress();
   }
 
-  function toAttemptRecord(g: GradedRecord): QueuedAttempt {
-    return {
-      clientAttemptId: g.clientAttemptId,
+  function toAttemptRecord(
+    g: GradedRecord,
+    provenance: Pick<PersistedPracticeSession, 'contentSource' | 'contentId'> = {
       contentSource: contentSource.value,
       ...(contentId.value ? { contentId: contentId.value } : {}),
+    },
+  ): QueuedAttempt {
+    return {
+      clientAttemptId: g.clientAttemptId,
+      contentSource: provenance.contentSource,
+      ...(provenance.contentId ? { contentId: provenance.contentId } : {}),
       questionId: g.questionId,
       partId: g.partId,
       correct: g.result.correct,
@@ -3109,7 +3173,7 @@ export const usePracticeStore = defineStore('practice', () => {
           return true;
         }
         phase.value = 'idle';
-        await clearPersistedSession();
+        await clearPersistedSession(snapshot);
         return false;
       }
 
@@ -3163,7 +3227,7 @@ export const usePracticeStore = defineStore('practice', () => {
         index.value = restoredIndex;
         phase.value = 'summary';
         pendingUnprovenancedSession = undefined;
-        await clearPersistedSession();
+        await clearPersistedSession(snapshot);
         assertContentLoadCurrent();
         pendingExactRestore = undefined;
         return true;
@@ -3308,12 +3372,12 @@ export const usePracticeStore = defineStore('practice', () => {
       resolvedOwnerId: located.resolvedOwnerId,
     });
     if (snapshot.items.length === 0) {
-      await clearPersistedSession();
+      await clearPersistedSession(snapshot);
       return false;
     }
     if (want && snapshot.origin !== want) return false;
     if (!isResumable(snapshot.origin, snapshot.savedAt, new Date())) {
-      await clearPersistedSession();
+      await clearPersistedSession(snapshot);
       return false;
     }
     if (!hasExactContentProvenance(snapshot)) {
@@ -3375,7 +3439,16 @@ export const usePracticeStore = defineStore('practice', () => {
   }
 
   function abort(): void {
+    sessionMutationEpoch += 1;
     contentLoadEpoch += 1;
+    // Capture the old programme before clearing its in-memory identities.
+    const pending = pendingUnprovenancedSession?.snapshot ?? pendingExactRestore?.snapshot;
+    // A legacy restore may still be committing its newly reserved identities.
+    // Both known states belong to this restore; a new window's UUIDs do not.
+    const normalized = pending && phase.value === 'running' && sessionOwner
+      ? buildPersistedSession(sessionOwner, graded.value, new Date().toISOString())
+      : undefined;
+    void clearPersistedSession(pending, normalized);
     pendingExactRestore = undefined;
     phase.value = 'idle';
     warning.value = undefined;
@@ -3388,7 +3461,6 @@ export const usePracticeStore = defineStore('practice', () => {
     pendingGradeRecords.clear();
     preAnswerFsrs.clear();
     index.value = 0;
-    void clearPersistedSession();
     sessionOwner = undefined;
     sessionStorageKey = undefined;
     sessionResolvedOwnerId = undefined;

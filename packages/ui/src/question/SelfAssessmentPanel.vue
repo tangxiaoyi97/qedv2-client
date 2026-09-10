@@ -12,6 +12,7 @@ import { computed } from 'vue';
 import type { RichText, Scoring, SelfAssessment } from '@qed2/core-logic';
 import {
   sameScore,
+  selectedPointsFromAssessment,
   selfAssessmentOverallForScore,
   type SelfAssessmentScoreOption,
 } from '../practice/self-assessment.js';
@@ -49,36 +50,20 @@ const met = computed(() =>
   criteria.value.map((_, i) => props.modelValue.criteriaMet?.[i] === true),
 );
 
-const points = computed(() => {
-  if (typeof props.modelValue.awardedPoints === 'number' && Number.isFinite(props.modelValue.awardedPoints)) {
-    return props.modelValue.awardedPoints;
-  }
-  if (rubricMode.value) {
-    let sum = 0;
-    criteria.value.forEach((c, i) => {
-      if (met.value[i]) sum += c.points;
-    });
-    return Math.round(sum * 100) / 100;
-  }
-  const overall = props.modelValue.overall;
-  if (overall === 'full') return props.maxPoints;
-  if (overall === 'partial') return Math.round((props.maxPoints / 2) * 100) / 100;
-  return 0;
-});
+const points = computed(() => props.selectedPoints !== undefined
+  ? props.selectedPoints
+  : selectedPointsFromAssessment(props.modelValue, props.maxPoints, props.scoring ?? undefined));
 
 function toggleCriterion(i: number): void {
   if (props.disabled) return;
   const next = criteria.value.map((_, j) => (j === i ? !met.value[j] : met.value[j] === true));
-  emit('update:modelValue', { ...props.modelValue, criteriaMet: next });
+  emit('update:modelValue', { criteriaMet: next });
 }
 
 function selectNoCriteria(): void {
   if (props.disabled) return;
   emit('update:modelValue', {
-    ...props.modelValue,
     criteriaMet: criteria.value.map(() => false),
-    awardedPoints: 0,
-    overall: 'none',
   });
 }
 
@@ -91,7 +76,6 @@ const noCriteriaSelected = computed(() =>
 function setPoints(value: number): void {
   if (props.disabled) return;
   emit('update:modelValue', {
-    ...props.modelValue,
     awardedPoints: value,
     overall: selfAssessmentOverallForScore(value, props.maxPoints),
   });
@@ -103,7 +87,7 @@ function scoreTone(value: number): 'none' | 'partial' | 'full' {
 }
 
 function isSelectedScore(value: number): boolean {
-  return sameScore(props.modelValue.awardedPoints, value);
+  return sameScore(points.value, value);
 }
 
 const selectedScoreIndex = computed(() =>
@@ -180,7 +164,7 @@ function scoreTabIndex(index: number): 0 | -1 {
 
     <div class="q-selfassess__total">
       <span>{{ t('Deine Punkte') }}</span>
-      <b>{{ selectedPoints === null ? '–' : formatScore(selectedPoints ?? points) }} / {{ formatScore(maxPoints) }}</b>
+      <b>{{ points === null ? '–' : formatScore(points) }} / {{ formatScore(maxPoints) }}</b>
     </div>
   </div>
 </template>

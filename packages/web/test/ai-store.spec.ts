@@ -1387,6 +1387,43 @@ describe('AI store release guards', () => {
     expect(calls.assessCalls()).toBe(1);
   });
 
+  it.each(['account', 'server', 'profile'] as const)(
+    'does not expose cached help after the %s changes during an offline replay',
+    async (changed) => {
+      const { ai, app, auth } = setup();
+      await vi.waitFor(() => expect(ai.canHint && ai.canAssess(part)).toBe(true));
+      installLearningResponses();
+      const [hint, assessment] = await Promise.all([
+        ai.explain(paidHintInput),
+        ai.assess(paidAssessInput),
+      ]);
+      const hintLocator = ai.explainCacheLocator(paidHintInput, hint)!;
+      const assessLocator = ai.assessCacheLocator(paidAssessInput, assessment!)!;
+      const originalGet = aiCache.get.bind(aiCache);
+      let reads = 0;
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      vi.spyOn(aiCache, 'get').mockImplementation(async (...args) => {
+        const candidate = await originalGet(...args);
+        reads += 1;
+        await held;
+        return candidate;
+      });
+      const pendingHint = ai.replayExplain(hintLocator, part);
+      const pendingAssess = ai.replayAssess(assessLocator, paidAssessInput);
+      await vi.waitFor(() => expect(reads).toBe(2));
+      if (changed === 'account') await switchAccount(auth, 'u2');
+      else if (changed === 'server') app.config = { ...app.config, serverBaseUrl: 'https://server-b.test' };
+      else await localProfileStore.activateUser(accountStorageIdentity('https://server-a.test', 'u2'));
+      release();
+      await expect(pendingHint).resolves.toBeUndefined();
+      await expect(pendingAssess).resolves.toBeUndefined();
+      // Server changes also start Auth's durable guest-profile transition.
+      // Finish that real transition before the next test reinitializes storage.
+      if (changed === 'server') await vi.waitFor(() => expect(auth.transitioning).toBe(false));
+    },
+  );
+
   it('does not resurrect a delayed paid hint after cache clear completes', async () => {
     const { ai } = setup();
     await vi.waitFor(() => expect(ai.canHint).toBe(true));

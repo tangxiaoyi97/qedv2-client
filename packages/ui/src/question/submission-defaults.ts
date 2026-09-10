@@ -30,9 +30,11 @@ export function isSubmissionComplete(answer: Answer, submission: Submission): bo
     case 'choice':
       return answer.kind === 'choice' && submission.selected.length === answer.selectCount;
     case 'matching':
-      return submission.matches.every((m) => m !== null);
+      return answer.kind === 'matching'
+        && answer.left.every((_, index) => submission.matches[index] != null);
     case 'numeric':
-      return Object.values(submission.values).every((v) => v.trim() !== '');
+      return answer.kind === 'numeric'
+        && answer.blanks.every((blank) => (submission.values[blank.id]?.trim() ?? '') !== '');
     case 'interval':
       // empty bound is legal (= unbounded); at least one bound must be present
       return submission.lower.trim() !== '' || submission.upper.trim() !== '';

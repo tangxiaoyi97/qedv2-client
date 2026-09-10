@@ -483,6 +483,62 @@ describe('practice session persistence', () => {
     expect(durable?.selfAssessmentDraft?.submission?.text).toBe('Fenster A');
   });
 
+  it.each(['before-write', 'after-write'] as const)(
+    'confirms the updated self-assessment rather than an older draft after %s failure', async (failure) => {
+      const { practice } = await freshStores();
+      await practice.startQuestions(['q3']);
+      const draft = {
+        submission: { kind: 'open' as const, text: 'Meine Begründung', selfAssessment: {} },
+        assessment: {},
+        selectedPoints: null,
+        grading: null,
+        indeterminate: false,
+        indeterminateMax: 1,
+      };
+      await expect(practice.saveSelfAssessmentDraft('q3-a', draft)).resolves.toBe(true);
+      const commit = atomicStorage.commitBatch.bind(atomicStorage);
+      vi.spyOn(atomicStorage, 'commitBatch').mockImplementationOnce(async (request) => {
+        if (failure === 'after-write') await commit(request);
+        throw new Error('local write interrupted');
+      });
+
+      await expect(practice.saveSelfAssessmentDraft('q3-a', {
+        ...draft, assessment: { awardedPoints: 1 }, selectedPoints: 1, grading: 'good',
+      })).resolves.toBe(failure === 'after-write');
+      expect(practice.currentSelfAssessmentDraft?.selectedPoints).toBe(failure === 'after-write' ? 1 : null);
+      const restored = await freshStores();
+      await expect(restored.practice.restoreSession()).resolves.toBe(true);
+      expect(restored.practice.currentSelfAssessmentDraft?.selectedPoints).toBe(failure === 'after-write' ? 1 : null);
+    },
+  );
+
+  it.each(['before-write', 'after-write'] as const)(
+    'confirms the paid hint locator and level after %s failure', async (failure) => {
+      const { practice } = await freshStores();
+      await practice.startQuestions(['q3']);
+      const locator: AiExplainCacheLocator = {
+        version: 1, cacheKey: `v2:${'a'.repeat(64)}`, mode: 'hint', hintLevel: 1,
+        partId: 'q3-a', attemptPhase: 'first', taskVersion: 'hint.v1', promptVersion: 'ai-v2',
+        source: 'byo', savedAt: new Date().toISOString(),
+      };
+      const commit = atomicStorage.commitBatch.bind(atomicStorage);
+      vi.spyOn(atomicStorage, 'commitBatch').mockImplementationOnce(async (request) => {
+        if (failure === 'after-write') await commit(request);
+        throw new Error('local write interrupted');
+      });
+      const save = practice.recordAiHelp('q3-a', locator, 1);
+      if (failure === 'before-write') await expect(save).rejects.toThrow('nicht zugeordnet');
+      else await expect(save).resolves.toBeUndefined();
+
+      const restored = await freshStores();
+      await expect(restored.practice.restoreSession()).resolves.toBe(true);
+      expect(restored.practice.current!.item.cachedAiHint?.cacheKey)
+        .toBe(failure === 'after-write' ? locator.cacheKey : undefined);
+      expect(restored.practice.current!.item.deliveredHintLevel)
+        .toBe(failure === 'after-write' ? 1 : undefined);
+    },
+  );
+
   it.each(['hint', 'assessment'] as const)(
     'saves a manual assessment after receiving AI %s, then restores the committed review',
     async (mode) => {
@@ -574,6 +630,47 @@ describe('practice session persistence', () => {
     expect(practice.graded).toHaveLength(2);
     expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(2);
     expect(await historyLog.count()).toBe(2);
+  });
+
+  it('keeps another window’s paid help and pending grading when committing a different part', async () => {
+    const firstPinia = createPinia();
+    setActivePinia(firstPinia);
+    await useProgressStore().init();
+    const first = usePracticeStore();
+    await first.startQuestions(['q1', 'q3']);
+    const secondPinia = createPinia();
+    setActivePinia(secondPinia);
+    await useProgressStore().init();
+    const second = usePracticeStore();
+    await second.restoreSession();
+
+    setActivePinia(firstPinia);
+    await first.recordAiHelp('q3-a', {
+      version: 1, cacheKey: `v2:${'c'.repeat(64)}`, mode: 'hint', hintLevel: 2,
+      partId: 'q3-a', attemptPhase: 'first', taskVersion: 'hint.v1', promptVersion: 'ai-v2',
+      source: 'byo', savedAt: new Date().toISOString(),
+    }, 2);
+    await first.recordAiHelp('q3-a', {
+      version: 1, cacheKey: `v2:${'d'.repeat(64)}`, mode: 'diagnosis',
+      partId: 'q3-a', attemptPhase: 'first', taskVersion: 'diagnosis.v1', promptVersion: 'ai-v2',
+      source: 'byo', savedAt: new Date().toISOString(),
+    });
+    await first.recordCachedAiAssessment('q3-a', {
+      version: 1, cacheKey: `v2:${'e'.repeat(64)}`, requestDigest: `v2:${'f'.repeat(64)}`,
+      partId: 'q3-a', attemptPhase: 'first', taskVersion: 'assessment.v1', promptVersion: 'ai-v2',
+      source: 'byo', savedAt: new Date().toISOString(), contentSource: 'local', contentId: TEST_COMMIT,
+    });
+    await expect(first.savePendingGrading('q3-a', 'good')).resolves.toBe(true);
+    const before = await storage.get<{ items: SessionItem[] }>(STORAGE.app, activeSessionKey());
+    const preserved = before!.items.find((item) => item.partId === 'q3-a')!;
+
+    setActivePinia(secondPinia);
+    await gradeCurrent(second);
+    const durable = await storage.get<{ items: SessionItem[] }>(STORAGE.app, activeSessionKey());
+    expect(durable!.items.find((item) => item.partId === 'q3-a')).toEqual(preserved);
+    expect(second.items.find((item) => item.partId === 'q3-a')).toEqual(preserved);
+    expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(1);
+    expect(await historyLog.count()).toBe(1);
   });
 
   it('restores legacy AI help and grades while another part retains a manual grading pick', async () => {
@@ -857,6 +954,144 @@ describe('practice session persistence', () => {
     const restored = await freshStores();
     await expect(restored.practice.restoreSession()).resolves.toBe(true);
     expect(restored.practice.currentAnswerDraft).toMatchObject({ text: 'überlebt den Unmount' });
+  });
+
+  it.each(['committed', 'failed'] as const)(
+    'does not restore an aborted programme when its pending metadata write is %s', async (outcome) => {
+      const { practice } = await freshStores();
+      await practice.startQuestions(['q3']);
+      const commit = atomicStorage.commitBatch.bind(atomicStorage);
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      vi.spyOn(atomicStorage, 'commitBatch').mockImplementationOnce(async (request) => {
+        entered();
+        await gate;
+        if (outcome === 'failed') throw new Error('local write interrupted');
+        return commit(request);
+      });
+      const saving = practice.savePendingGrading('q3-a', 'good');
+      await started;
+      practice.abort();
+      release();
+      await saving;
+
+      expect(practice.phase).toBe('idle');
+      expect(practice.items).toEqual([]);
+      expect(practice.currentPendingGrading).toBeNull();
+      await vi.waitFor(async () => expect(await storage.get(STORAGE.app, activeSessionKey())).toBeUndefined());
+    },
+  );
+
+  it('does not apply a queued self-assessment to a new attempt of the same question', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q3']);
+    const oldAttempt = practice.items[0]!.clientAttemptId;
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementationOnce(async (request) => {
+      entered();
+      await gate;
+      return commit(request);
+    });
+    const saving = practice.savePendingGrading('q3-a', 'good');
+    await started;
+    const assessing = practice.saveSelfAssessmentDraft('q3-a', {
+      submission: { kind: 'open', text: 'Antwort aus dem alten Versuch', selfAssessment: {} },
+      assessment: { awardedPoints: 1 }, selectedPoints: 1, grading: 'good',
+      indeterminate: false, indeterminateMax: 1,
+    });
+    const restarting = practice.startQuestions(['q3']);
+    try {
+      await vi.waitFor(() => expect(practice.items[0]?.clientAttemptId).not.toBe(oldAttempt));
+    } finally {
+      release();
+    }
+    await saving;
+    await expect(assessing).resolves.toBe(false);
+    await restarting;
+    expect(practice.currentSelfAssessmentDraft).toBeUndefined();
+    expect(practice.currentPendingGrading).toBeNull();
+    expect(practice.currentAnswerDraft).toBeUndefined();
+    const snapshot = await storage.get(STORAGE.app, activeSessionKey());
+    expect(JSON.stringify(snapshot)).not.toContain('Antwort aus dem alten Versuch');
+  });
+
+  it('keeps a committed grade but does not resurrect its programme after aborting during the write', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1']);
+    const key = activeSessionKey();
+    const commit = atomicStorage.commitBatch.bind(atomicStorage);
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let held = false;
+    vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+      if (!held && request.mutations.some((mutation) => mutation.collection === STORAGE.history)) {
+        held = true;
+        entered();
+        await gate;
+      }
+      return commit(request);
+    });
+    const grading = gradeCurrent(practice);
+    await started;
+    practice.abort();
+    release();
+    await grading;
+
+    expect(practice.phase).toBe('idle');
+    expect(practice.items).toEqual([]);
+    expect(practice.graded).toEqual([]);
+    await vi.waitFor(async () => expect(await storage.get(STORAGE.app, key)).toBeUndefined());
+    expect(await historyLog.count()).toBe(1);
+    expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(1);
+  });
+
+  it('does not apply a hidden programme’s manual override to another account', async () => {
+    const { practice, progress } = await freshStores();
+    await practice.startQuestions(['q1']);
+    await gradeCurrent(practice);
+    await progress.activateUserProfile('profile-b');
+    useAuthStore().session = {
+      token: 'profile-b-token', expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'profile-b', username: 'profile-b' },
+    };
+    expect(practice.sessionAccessible).toBe(false);
+
+    await expect(practice.overrideGrading('q1-a', 'good')).rejects.toThrow('anderen lokalen Profil');
+    expect((await archiveStore.load()).content.perPart).toEqual([]);
+  });
+
+  it.each(['q1', 'q2'])('does not delete another window’s replacement programme for %s when aborting', async (nextQuestion) => {
+    const firstPinia = createPinia();
+    setActivePinia(firstPinia);
+    await useProgressStore().init();
+    const first = usePracticeStore();
+    await first.startQuestions(['q1']);
+    const secondPinia = createPinia();
+    setActivePinia(secondPinia);
+    await useProgressStore().init();
+    const second = usePracticeStore();
+    await second.startPrepared([nextQuestion]);
+    const key = activeSessionKey();
+    const replacement = await storage.get(STORAGE.app, key);
+    const replacementAttempt = second.items[0]!.clientAttemptId;
+    expect(replacementAttempt).not.toBe(first.items[0]!.clientAttemptId);
+
+    setActivePinia(firstPinia);
+    first.abort();
+    // restoreSession waits for this instance's outstanding deletion queue.
+    await expect(first.restoreSession()).resolves.toBe(true);
+    expect(first.items[0]!.clientAttemptId).toBe(replacementAttempt);
+    expect(await storage.get(STORAGE.app, key)).toMatchObject({
+      items: (replacement as { items: SessionItem[] }).items,
+    });
   });
 
   it('coalesces a burst behind one in-flight draft and persists only the latest text', async () => {
@@ -1327,6 +1562,104 @@ describe('practice session persistence', () => {
     await expect(restored.practice.restoreSession()).resolves.toBe(false);
     expect(restored.practice.phase).toBe('idle');
   });
+
+  it.each(['provenance-choice', 'failed exact restore'] as const)(
+    'can deliberately discard the saved programme from %s before items are hydrated', async (state) => {
+      const first = await freshStores();
+      await first.practice.startQuestions(['q1']);
+      const key = activeSessionKey();
+      if (state === 'provenance-choice') {
+        const snapshot = (await storage.get<Record<string, unknown>>(STORAGE.app, key))!;
+        delete snapshot.contentId;
+        await storage.set(STORAGE.app, key, snapshot);
+      } else {
+        ports.coreRuntime = {
+          capabilities: { localCore: true },
+          getEndpoint: async () => { throw new Error('Core is unavailable'); },
+        } satisfies CoreRuntimePort;
+      }
+      const restored = await freshStores();
+      await restored.practice.restoreSession();
+      expect(restored.practice.phase).toBe(state === 'provenance-choice' ? state : 'error');
+      expect(restored.practice.items).toEqual([]);
+
+      restored.practice.abort();
+      await vi.waitFor(async () => {
+        expect(await storage.get(STORAGE.app, key)).toBeUndefined();
+      }, { timeout: 300 });
+    },
+  );
+
+  it('never treats a missing legacy attempt identity as permission to delete a replacement', async () => {
+    const first = await freshStores();
+    await first.practice.startQuestions(['q1']);
+    const key = activeSessionKey();
+    const legacy = (await storage.get<{ items: SessionItem[] }>(STORAGE.app, key))!;
+    delete legacy.items[0]!.clientAttemptId;
+    delete legacy.items[0]!.learningInteractionId;
+    await storage.set(STORAGE.app, key, legacy);
+    const runtime = ports.coreRuntime;
+    ports.coreRuntime = {
+      capabilities: { localCore: true },
+      getEndpoint: async () => { throw new Error('Core is unavailable'); },
+    } satisfies CoreRuntimePort;
+    const oldPinia = createPinia();
+    setActivePinia(oldPinia);
+    await useProgressStore().init();
+    const old = usePracticeStore();
+    await old.restoreSession();
+    expect(old.phase).toBe('error');
+
+    ports.coreRuntime = runtime;
+    const replacement = await freshStores();
+    await replacement.practice.startPrepared(['q1']);
+    const replacementAttempt = replacement.practice.items[0]!.clientAttemptId;
+    setActivePinia(oldPinia);
+    old.abort();
+    await expect(old.restoreSession()).resolves.toBe(true);
+    expect(old.items[0]!.clientAttemptId).toBe(replacementAttempt);
+  });
+
+  it.each(['committed', 'failed'] as const)(
+    'discards its legacy programme when aborted while normalized identities are %s', async (outcome) => {
+      const first = await freshStores();
+      await first.practice.startQuestions(['q1']);
+      const key = activeSessionKey();
+      const legacy = (await storage.get<{ items: SessionItem[] }>(STORAGE.app, key))!;
+      delete legacy.items[0]!.clientAttemptId;
+      delete legacy.items[0]!.learningInteractionId;
+      await storage.set(STORAGE.app, key, legacy);
+      const restored = await freshStores();
+      const commit = atomicStorage.commitBatch.bind(atomicStorage);
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let held = false;
+      vi.spyOn(atomicStorage, 'commitBatch').mockImplementation(async (request) => {
+        if (!held && request.mutations.some((mutation) =>
+          mutation.collection === STORAGE.app && mutation.key === key && mutation.operation === 'set'
+          && (mutation.value as { items: SessionItem[] }).items[0]?.clientAttemptId)) {
+          held = true;
+          entered();
+          await gate;
+          if (outcome === 'failed') throw new Error('local write interrupted');
+        }
+        return commit(request);
+      });
+      const restoring = restored.practice.restoreSession();
+      await started;
+      expect(restored.practice.phase).toBe('running');
+      expect(restored.practice.items[0]!.clientAttemptId).toBeDefined();
+      restored.practice.abort();
+      release();
+      await Promise.allSettled([restoring]);
+
+      expect(restored.practice.phase).toBe('idle');
+      expect(restored.practice.items).toEqual([]);
+      await expect(storage.get(STORAGE.app, key)).resolves.toBeUndefined();
+    },
+  );
 
   it.each([
     { label: 'v2', version: 2, dropOwner: true, dropSource: true },

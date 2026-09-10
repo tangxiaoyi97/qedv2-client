@@ -53,6 +53,42 @@ type GradedPayload = {
 };
 
 describe('PartPlayer (chromeless shell contract)', () => {
+  it('keeps a restored numeric draft incomplete while a required blank is absent', async () => {
+    const wrapper = mount(PartPlayer, { props: {
+      part: {
+        ...openPart,
+        answer: { kind: 'numeric', blanks: [{ id: 'a', value: 1, tol: 0 }, { id: 'b', value: 2, tol: 0 }] },
+      },
+      chromeless: true,
+      restoredAnswerDraft: { kind: 'numeric', values: { a: '1' } },
+    } });
+    expect(wrapper.findAll<HTMLInputElement>('input')[1]!.element.value).toBe('');
+    expect(states(wrapper).at(-1)!.canSubmit).toBe(false);
+    exposed(wrapper).submit();
+    expect(wrapper.emitted('graded')).toBeUndefined();
+    await wrapper.findAll('input')[1]!.setValue('2');
+    expect(states(wrapper).at(-1)!.canSubmit).toBe(true);
+  });
+
+  it('keeps a restored matching draft incomplete while a required row is absent', () => {
+    const wrapper = mount(PartPlayer, { props: {
+      part: {
+        ...openPart,
+        answer: {
+          kind: 'matching',
+          left: [[{ t: 'text', v: 'First' }], [{ t: 'text', v: 'Second' }]],
+          right: [[{ t: 'text', v: 'A' }], [{ t: 'text', v: 'B' }]],
+          pairs: [[0, 0], [1, 1]],
+        },
+      },
+      chromeless: true,
+      restoredAnswerDraft: { kind: 'matching', matches: [0] },
+    } });
+    expect(states(wrapper).at(-1)!.canSubmit).toBe(false);
+    exposed(wrapper).submit();
+    expect(wrapper.emitted('graded')).toBeUndefined();
+  });
+
   it('uses Enter between interval bounds without grading an unfinished IME candidate', async () => {
     const wrapper = mount(PartPlayer, { attachTo: document.body, props: { part: intervalPart, chromeless: true } });
     const inputs = wrapper.findAll<HTMLInputElement>('input');
@@ -340,6 +376,66 @@ describe('PartPlayer (chromeless shell contract)', () => {
     expect(self?.assessment.criteriaMet).toEqual([true, false]);
     expect(self?.selectedPoints).toBe(1);
     expect(self?.grading).toBe('meh');
+
+    exposed(wrapper).confirmSelfAssessment();
+    await nextTick();
+    expect((wrapper.emitted('graded')!.at(-1)![0] as GradedPayload).result.breakdown).toEqual([
+      { ref: '0', correct: true, awardedPoints: 1 },
+      { ref: '1', correct: false, awardedPoints: 0 },
+    ]);
+  });
+
+  it('updates suggested mastery with changed points until the learner explicitly chooses it', async () => {
+    const wrapper = mount(PartPlayer, { props: { part: openPart, chromeless: true } });
+    exposed(wrapper).submit();
+    exposed(wrapper).setSelfAssessmentScore(0);
+    await nextTick();
+    expect(states(wrapper).at(-1)!.selfAssessment?.grading).toBe('baffled');
+    exposed(wrapper).setSelfAssessmentScore(1);
+    await nextTick();
+    expect(states(wrapper).at(-1)!.selfAssessment?.grading).toBe('good');
+    exposed(wrapper).setSelfAssessmentGrading('careless');
+    exposed(wrapper).setSelfAssessmentScore(0);
+    await nextTick();
+    expect(states(wrapper).at(-1)!.selfAssessment?.grading).toBe('careless');
+    exposed(wrapper).confirmSelfAssessment();
+    expect((wrapper.emitted('graded')!.at(-1)![0] as GradedPayload).manualGrading).toBe('careless');
+  });
+
+  it('replaces criterion selection when a shell explicitly selects a rubric point total', async () => {
+    const wrapper = mount(PartPlayer, { props: {
+      part: { ...openPart, points: 3, scoring: { mode: 'rubric', criteria: [{ desc: 'Ansatz', points: 1 }, { desc: 'Rechnung', points: 2 }] } },
+      chromeless: true,
+    } });
+    exposed(wrapper).submit();
+    exposed(wrapper).setSelfAssessment({ criteriaMet: [true, false] });
+    exposed(wrapper).setSelfAssessmentScore(3);
+    await nextTick();
+    expect(states(wrapper).at(-1)!.selfAssessment?.assessment.criteriaMet).toBeUndefined();
+    exposed(wrapper).confirmSelfAssessment();
+    expect((wrapper.emitted('graded')!.at(-1)![0] as GradedPayload).result).toMatchObject({ verdict: 'correct', awardedPoints: 3 });
+  });
+
+  it.each([null, 'careless'] as const)('restores %s mastery in a draft and keeps suggestions distinct from explicit choices', async (grading) => {
+    const wrapper = mount(PartPlayer, { props: {
+      part: openPart,
+      chromeless: true,
+      restoredDraft: {
+        submission: { kind: 'open', text: 'Mein Entwurf', selfAssessment: {} },
+        assessment: { awardedPoints: 0, overall: 'none' },
+        selectedPoints: 0,
+        grading,
+        indeterminate: false,
+        indeterminateMax: 1,
+      },
+    } });
+    expect(states(wrapper).at(-1)!.selfAssessment?.grading).toBe(grading ?? 'baffled');
+    exposed(wrapper).setSelfAssessmentScore(1);
+    await nextTick();
+    expect(states(wrapper).at(-1)!.selfAssessment?.grading).toBe(grading ?? 'good');
+    expect((wrapper.emitted('draft')!.at(-1)![0] as PartPlayerDraft).grading).toBe(grading);
+    exposed(wrapper).confirmSelfAssessment();
+    expect((wrapper.emitted('graded')!.at(-1)![0] as GradedPayload).manualGrading).toBe(grading ?? 'good');
   });
 
   it('keeps an incorrect result read-only with no correction action or second grade', async () => {

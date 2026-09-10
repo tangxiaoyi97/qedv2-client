@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mount } from '@vue/test-utils';
 import type { IntervalAnswer, IntervalSubmission } from '@qed2/core-logic';
 import IntervalControl from '../src/question/IntervalControl.vue';
+import StateIcon from '../src/shared/StateIcon.vue';
 
 const answer: IntervalAnswer = {
   kind: 'interval',
@@ -20,6 +21,20 @@ const modelValue: IntervalSubmission = {
 };
 
 describe('IntervalControl', () => {
+  it('preserves a partially correct interval verdict', () => {
+    const wrapper = mount(IntervalControl, { props: {
+      answer, modelValue, result: { verdict: 'partial', correct: false, awardedPoints: 1, maxPoints: 2 },
+    } });
+    expect(wrapper.getComponent(StateIcon).props('state')).toBe('partial');
+  });
+
+  it.each(['+inf', '+oo', '+∞', '−∞', '−INF'])('renders accepted infinity token %s as an open endpoint', (token) => {
+    const wrapper = mount(IntervalControl, {
+      props: { answer, showPreview: true, modelValue: { ...modelValue, lower: token, upper: token, lowerClosed: true, upperClosed: true } },
+    });
+    expect(wrapper.get('.q-interval__preview').text()).toBe('( −∞ ; ∞ )');
+  });
+
   it('uses one interval row with accessible unbounded placeholders', () => {
     const wrapper = mount(IntervalControl, {
       props: { answer, modelValue, showPreview: true },

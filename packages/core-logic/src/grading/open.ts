@@ -37,7 +37,11 @@ export function gradeOpen(
 ): GradeResult {
   void answer; // rubric RichText + grader flag are presentation-only in v1
   const manualPoints = submission.selfAssessment.awardedPoints;
-  if (typeof manualPoints === 'number' && Number.isFinite(manualPoints)) {
+  // A criterion selection is authoritative. UI drafts can also carry a
+  // cached point total from an earlier selection; it must neither override
+  // the checked criteria nor discard their breakdown when grading.
+  const hasCriteria = scoring?.mode === 'rubric' && submission.selfAssessment.criteriaMet !== undefined;
+  if (!hasCriteria && typeof manualPoints === 'number' && Number.isFinite(manualPoints)) {
     const maxPoints = maxPointsFor(scoring, points);
     const awardedPoints = roundPoints(Math.min(Math.max(manualPoints, 0), maxPoints));
     const full = awardedPoints >= maxPoints - EPS;

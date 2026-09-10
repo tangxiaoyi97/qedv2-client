@@ -812,6 +812,18 @@ export const useAiStore = defineStore('ai', () => {
     });
   }
 
+  /** Offline replay still belongs to one local account, even without a token. */
+  function cacheReplayContext(): { scope: string; profileId: LocalProfileId } | undefined {
+    const profileId = localProfileStore.currentIfInitialized();
+    if (!profileId || expectedAuthenticatedProfile() !== profileId) return undefined;
+    return { scope: cacheScope(), profileId };
+  }
+
+  function cacheReplayIsCurrent(context: { scope: string; profileId: LocalProfileId }): boolean {
+    const current = cacheReplayContext();
+    return current?.scope === context.scope && current.profileId === context.profileId;
+  }
+
   function displayContextKey(
     kind: 'explain' | 'assess',
     request: unknown,
@@ -966,9 +978,11 @@ export const useAiStore = defineStore('ai', () => {
     part: QuestionPart,
   ): Promise<AiExplainResult | undefined> {
     if (locator.partId !== part.id) throw new Error('AI cache locator belongs to another part');
+    const context = cacheReplayContext();
+    if (!context) return undefined;
     const cacheReadGeneration = cacheClearGeneration;
-    const candidate = await aiCache.get<unknown>(locator.cacheKey, new Date(), cacheScope());
-    if (cacheReadGeneration !== cacheClearGeneration) return undefined;
+    const candidate = await aiCache.get<unknown>(locator.cacheKey, new Date(), context.scope);
+    if (cacheReadGeneration !== cacheClearGeneration || !cacheReplayIsCurrent(context)) return undefined;
     if (candidate === undefined) return undefined;
     const receipt = {
       interactionId: '00000000-0000-4000-8000-000000000000',
@@ -1145,6 +1159,8 @@ export const useAiStore = defineStore('ai', () => {
     input: AssessInput,
   ): Promise<AiAssessResult | undefined> {
     if (locator.partId !== input.part.id) throw new Error('AI assessment belongs to another part');
+    const context = cacheReplayContext();
+    if (!context) return undefined;
     const request = buildAssessRequest({
       ...input,
       identity: {
@@ -1164,8 +1180,8 @@ export const useAiStore = defineStore('ai', () => {
       throw new Error('AI assessment no longer matches this answer');
     }
     const cacheReadGeneration = cacheClearGeneration;
-    const candidate = await aiCache.get<unknown>(locator.cacheKey, new Date(), cacheScope());
-    if (cacheReadGeneration !== cacheClearGeneration) return undefined;
+    const candidate = await aiCache.get<unknown>(locator.cacheKey, new Date(), context.scope);
+    if (cacheReadGeneration !== cacheClearGeneration || !cacheReplayIsCurrent(context)) return undefined;
     if (candidate === undefined) return undefined;
     return parseCachedAiAssessResponse(candidate, request, locator.promptVersion);
   }

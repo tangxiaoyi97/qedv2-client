@@ -11,6 +11,7 @@
  * that has to be testable without a browser.
  */
 import type { GradeResult, Submission } from '../grading/types.js';
+import { parseBoundInput } from '../grading/interval.js';
 import type { Answer, Figure, Question, QuestionPart, RubricScoring } from '../model/question.js';
 import { isRichTextEmpty, richTextToPlain } from '../model/richtext.js';
 import type { FigNode, RichText } from '../model/richtext.js';
@@ -513,19 +514,26 @@ export function submittedText(
             .filter((line): line is string => Boolean(line))
             .join('\n')
         : '';
-    case 'interval':
-      return [submission.lower, submission.upper]
-        .map((v) => (v ?? '').toString().trim())
-        .filter(Boolean)
-        .join(' … ');
-    case 'numeric':
-      // Blank id → raw input. Join in a stable order so the same answer always
-      // produces the same prompt, and therefore the same cache key.
-      return Object.keys(submission.values)
-        .sort()
-        .map((k) => submission.values[k]?.trim() ?? '')
-        .filter(Boolean)
-        .join(' · ');
+    case 'interval': {
+      // Endpoint inclusion is part of the answer, not merely presentation.
+      // Follow the grader for unbounded endpoints, whose brackets are open.
+      const lower = parseBoundInput(submission.lower);
+      const upper = parseBoundInput(submission.upper);
+      const lowerUnbounded = 'value' in lower && lower.value === null;
+      const upperUnbounded = 'value' in upper && upper.value === null;
+      const left = submission.lowerClosed && !lowerUnbounded ? '[' : ']';
+      const right = submission.upperClosed && !upperUnbounded ? ']' : '[';
+      return `${left}${lowerUnbounded ? '−∞' : submission.lower.trim()}; ${upperUnbounded ? '+∞' : submission.upper.trim()}${right}`;
+    }
+    case 'numeric': {
+      const ids = answer?.kind === 'numeric'
+        ? answer.blanks.map((blank) => blank.id)
+        : Object.keys(submission.values).sort();
+      if (!ids.some((id) => submission.values[id]?.trim())) return '';
+      // Preserve which field was filled and which was left empty. Otherwise
+      // answers in different blanks can buy/replay the same explanation.
+      return ids.map((id) => `${id}: ${submission.values[id]?.trim() || '(leer)'}`).join('\n');
+    }
     default:
       return '';
   }

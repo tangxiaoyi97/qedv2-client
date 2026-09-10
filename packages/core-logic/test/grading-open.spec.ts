@@ -83,6 +83,16 @@ describe('gradeOpen — multi-criterion rubric sums', () => {
     const r = gradeOpen(answer, sub({ criteriaMet: [false, false, false] }), rubric, undefined);
     expect(r).toMatchObject({ verdict: 'incorrect', awardedPoints: 0, maxPoints: 4 });
   });
+
+  it('keeps criterion scoring authoritative when a previous point selection is carried along', () => {
+    const r = gradeOpen(answer, sub({ criteriaMet: [true, false, true], awardedPoints: 0, overall: 'none' }), rubric, undefined);
+    expect(r).toMatchObject({ verdict: 'partial', awardedPoints: 3, maxPoints: 4 });
+    expect(r.breakdown).toEqual([
+      { ref: '0', correct: true, awardedPoints: 2 },
+      { ref: '1', correct: false, awardedPoints: 0 },
+      { ref: '2', correct: true, awardedPoints: 1 },
+    ]);
+  });
 });
 
 describe('gradeOpen — overall self-assessment (non-rubric)', () => {

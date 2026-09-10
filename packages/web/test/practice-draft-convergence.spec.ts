@@ -173,4 +173,40 @@ describe('practice draft winner convergence', () => {
     expect(host.textContent).not.toContain('Speichert …');
     app.unmount();
   });
+
+  it('starts a fresh player when a new interaction reuses the same part', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    await useProgressStore().init();
+    const practice = usePracticeStore();
+    vi.spyOn(practice, 'restoreSession').mockResolvedValue(true);
+    vi.spyOn(practice, 'saveSelfAssessmentDraft').mockResolvedValue(true);
+    practice.$patch({
+      phase: 'running',
+      items: [{ questionId: openQuestion.id, partId: openQuestion.parts[0]!.id, reason: 'manual', learningInteractionId: '11111111-1111-4111-8111-111111111111' }],
+      questions: new Map([[openQuestion.id, openQuestion]]), index: 0, graded: [],
+    });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/practice', component: PracticeView }] });
+    await router.push('/practice');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp({ render: () => h(RouterView) }).use(pinia).use(router);
+    app.mount(host);
+    try {
+      await nextTick();
+      Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === 'Prüfen')!.click();
+      await vi.waitFor(() => expect(host.textContent).toContain('Offizieller Lösungsweg'));
+      expect(host.querySelector('.q-selfassess')).not.toBeNull();
+      practice.items = [{ ...practice.items[0]!, learningInteractionId: '22222222-2222-4222-8222-222222222222' }];
+      await nextTick();
+      await nextTick();
+      expect(host.querySelector('.q-selfassess')).toBeNull();
+      expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('true');
+      expect(Array.from(host.querySelectorAll<HTMLButtonElement>('button')).some(button => button.textContent?.trim() === 'Prüfen')).toBe(true);
+      expect(host.textContent).not.toContain('Bewertung übernehmen');
+    } finally {
+      app.unmount();
+    }
+  });
 });

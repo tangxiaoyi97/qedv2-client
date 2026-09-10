@@ -97,6 +97,20 @@ describe('gradeExpression — real canonical x_n\\cdot 1{,}03', () => {
 });
 
 describe('gradeExpression — algebraic equivalence', () => {
+  it('accepts scientific notation without turning its exponent into an unknown symbol', () => {
+    expect(grade('2000', [], '2e3').verdict).toBe('correct');
+    expect(grade('0.002', [], '2e-3').verdict).toBe('correct');
+    expect(grade('2000x', ['x'], '2e3x').verdict).toBe('correct');
+  });
+  it('does not let an assignment change the canonical sampling scope', () => {
+    expect(grade('x', ['x'], '(x=2)').verdict).not.toBe('correct');
+    expect(grade('x', ['x'], '(x=2)+0').verdict).not.toBe('correct');
+  });
+
+  it('does not accept a periodic expression merely because it vanishes on decimal-tenth samples', () => {
+    expect(grade('0', ['x'], 'sin(20*pi*x)').verdict).toBe('incorrect');
+  });
+
   it('(x-2)(x+2) ≡ x^2-4', () => {
     expect(grade('(x-2)(x+2)', ['x'], 'x^2-4').verdict).toBe('correct');
   });

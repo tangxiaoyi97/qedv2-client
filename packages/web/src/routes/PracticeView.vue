@@ -69,6 +69,15 @@ provideAssetResolver((src) => practice.assetUrl(src));
 const preparedHandoff = ref<'ready' | 'loading' | 'missing'>(route.query.prepared !== undefined ? 'loading' : 'ready');
 const preparedBlocked = computed(() => preparedHandoff.value !== 'ready');
 const current = computed(() => preparedBlocked.value ? undefined : practice.current);
+// A part can occur again in a new attempt, or under the same user ID on a
+// different server. Neither its player state nor pending responses can cross
+// that boundary. The epoch also rejects a rapid switch away and back.
+const currentInteraction = computed(() => JSON.stringify([
+  auth.session?.serverBaseUrl, auth.session?.user.id, practice.contentId,
+  current.value?.part.id,
+  current.value?.item.learningInteractionId ?? current.value?.item.clientAttemptId,
+]));
+let interactionEpoch = 0;
 /** Verdict per graded part — the segmented top bar's only input besides items. */
 const progressGraded = computed(() =>
   practice.graded.map((record) => ({ partId: record.partId, verdict: record.result.verdict })),
@@ -281,7 +290,7 @@ async function commitGrade(payload: GradeCommitPayload): Promise<void> {
   if (commitBusy.value) return;
   const part: QuestionPart | undefined = current.value?.part;
   if (!part || part.id !== payload.partId) return;
-  const interactionId = current.value?.item.learningInteractionId;
+  const epoch = interactionEpoch;
   commitBusy.value = true;
   commitError.value = null;
   try {
@@ -293,7 +302,7 @@ async function commitGrade(payload: GradeCommitPayload): Promise<void> {
       ...(hintLevel.value > 0 ? { hintLevel: hintLevel.value as 1 | 2 | 3 } : {}),
       ...(manual ? { manualGrading: manual } : {}),
     });
-    if (current.value?.item.learningInteractionId !== interactionId) return;
+    if (interactionEpoch !== epoch) return;
     firstAttemptId.value = record?.clientAttemptId ?? null;
     if (record && JSON.stringify(record.result) !== JSON.stringify(payload.result)) {
       playerCommand.value = {
@@ -318,11 +327,11 @@ async function commitGrade(payload: GradeCommitPayload): Promise<void> {
     pendingAnswerDraft.value = null;
     selfAssessmentDraftDurable.value = true;
   } catch {
-    if (current.value?.item.learningInteractionId === interactionId) {
+    if (interactionEpoch === epoch) {
       commitError.value = 'Der Versuch wurde nicht gespeichert.';
     }
   } finally {
-    commitBusy.value = false;
+    if (interactionEpoch === epoch) commitBusy.value = false;
   }
 }
 
@@ -340,14 +349,15 @@ const PRIMARY_COOLDOWN_MS = 500;
 
 async function advanceAfterReview(): Promise<void> {
   if (commitBusy.value) return;
+  const epoch = interactionEpoch;
   commitBusy.value = true;
   commitError.value = null;
   try {
     await practice.completeReviewAndNext();
   } catch {
-    commitError.value = 'Der Programmstand wurde nicht gespeichert.';
+    if (interactionEpoch === epoch) commitError.value = 'Der Programmstand wurde nicht gespeichert.';
   } finally {
-    commitBusy.value = false;
+    if (interactionEpoch === epoch) commitBusy.value = false;
   }
 }
 
@@ -756,10 +766,18 @@ const assist = computed(() => ({
   error: assistError.value ?? undefined,
 }));
 
-/** Abort and reset when the part or signed-in identity changes. */
+let cachedAssessmentReplay = 0;
+let cachedHelpReplay = 0;
+/** Abort and reset when the interaction or signed-in identity changes. */
 watch(
-  [() => current.value?.part.id, () => auth.session?.user.id],
+  currentInteraction,
   () => {
+    interactionEpoch += 1;
+    cachedAssessmentReplay += 1;
+    cachedHelpReplay += 1;
+    draftSaveSequence += 1;
+    playerCommand.value = null;
+    commitBusy.value = false;
     const restored = practice.currentReview;
     solutionDetent.value = restored ? 'default' : practice.currentSelfAssessmentDraft ? 'full' : 'collapsed';
     helpOpen.value = false;
@@ -796,10 +814,9 @@ watch(
     answerDraftSaveError.value = null;
     pendingAnswerDraft.value = null;
   },
-  { immediate: true },
+  { immediate: true, flush: 'sync' },
 );
 
-let cachedAssessmentReplay = 0;
 watch(
   () => playerState.value.phase,
   (phase, previousPhase) => {
@@ -820,7 +837,8 @@ watch(
     () => playerState.value.phase,
     () => playerState.value.submittedText,
     () => playerState.value.selfAssessment?.selectedPoints,
-    () => auth.session?.user.id,
+    () => playerState.value.selfAssessment?.grading,
+    currentInteraction,
   ],
   async () => {
     const marker = current.value?.item.cachedAiAssessment;
@@ -860,7 +878,6 @@ watch(
   { immediate: true },
 );
 
-let cachedHelpReplay = 0;
 const cachedHelpForStage = computed(() => {
   const item = current.value?.item;
   if (!item) return undefined;
@@ -891,7 +908,7 @@ watch(
   [
     () => cachedHelpForStage.value?.cacheKey,
     () => current.value?.part.id,
-    () => auth.session?.user.id,
+    currentInteraction,
     learningStage,
   ],
   async () => {
@@ -958,7 +975,9 @@ async function askForAssessment(options: { newRequest?: boolean; expectedGenerat
       const locator = ai.assessCacheLocator(requestInput, answer);
       if (locator) {
         const replayable = await ai.replayAssess(locator, requestInput).catch(() => undefined);
-        if (replayable) {
+        if (replayable && !controller.signal.aborted && assistController === controller
+          && current.value?.part.id === partId && auth.session?.user.id === userId
+          && playerState.value.phase === 'self-assessing') {
           await practice.recordCachedAiAssessment(partId, locator).catch(() => undefined);
         }
       }
@@ -1061,20 +1080,20 @@ const gradingOverrideDisabled = computed(() =>
 async function commitGradingOverride(grading: Grading): Promise<void> {
   const partId = current.value?.part.id;
   if (!partId || commitBusy.value || !gradingReviewReplaceable.value) return;
-  const interactionId = current.value?.item.learningInteractionId;
+  const epoch = interactionEpoch;
   pendingOverrideGrading.value = grading;
   commitBusy.value = true;
   commitError.value = null;
   try {
     await practice.overrideGrading(partId, grading);
-    if (current.value?.item.learningInteractionId !== interactionId) return;
+    if (interactionEpoch !== epoch) return;
     pendingOverrideGrading.value = null;
   } catch {
-    if (current.value?.item.learningInteractionId === interactionId) {
+    if (interactionEpoch === epoch) {
       commitError.value = 'Die Bewertung wurde nicht gespeichert.';
     }
   } finally {
-    commitBusy.value = false;
+    if (interactionEpoch === epoch) commitBusy.value = false;
   }
 }
 
@@ -1384,6 +1403,12 @@ onMounted(() => window.addEventListener('keydown', onKeydown));
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload));
 onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown));
 onBeforeUnmount(() => {
+  interactionEpoch += 1;
+  draftSaveSequence += 1;
+  answerDraftSaveSequence += 1;
+  pendingGradingSaveSequence += 1;
+  cachedAssessmentReplay += 1;
+  cachedHelpReplay += 1;
   practiceDisposed = true;
   ++initializationSequence;
   assistController?.abort();
@@ -1483,6 +1508,7 @@ const railItems = computed<SessionItem[]>(() => {
 });
 
 async function jumpToSessionItem(index: number): Promise<void> {
+  const epoch = interactionEpoch;
   if (
     commitBusy.value
     || commitError.value
@@ -1493,15 +1519,17 @@ async function jumpToSessionItem(index: number): Promise<void> {
     || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value)
   ) return;
   if (answerDraftSaveBusy.value && !(await flushAnswerDraft())) return;
+  if (interactionEpoch !== epoch) return;
   commitBusy.value = true;
   try {
     if (playerState.value.phase === 'reviewed') await practice.closeCurrentReview();
+    if (interactionEpoch !== epoch) return;
     practice.jumpTo(index);
     mobileRailOpen.value = false;
   } catch {
-    commitError.value = 'Der Programmstand wurde nicht gespeichert.';
+    if (interactionEpoch === epoch) commitError.value = 'Der Programmstand wurde nicht gespeichert.';
   } finally {
-    commitBusy.value = false;
+    if (interactionEpoch === epoch) commitBusy.value = false;
   }
 }
 
@@ -1772,7 +1800,7 @@ const currentCompetencyCodes = computed(() =>
             <FigureList :figures="current.question.figures" />
 
             <PartPlayer
-              :key="current.part.id"
+              :key="currentInteraction"
               :part="current.part"
               :label="multiPart ? t('Teil {label}', { label: current.part.label ?? '' }) : undefined"
               :command="playerCommand"

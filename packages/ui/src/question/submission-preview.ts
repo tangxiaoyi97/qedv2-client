@@ -1,4 +1,5 @@
 import type { Answer, IntervalSubmission, Submission } from '@qed2/core-logic';
+import { parseBoundInput } from '@qed2/core-logic';
 
 export interface AnswerPreview {
   label: string;
@@ -23,23 +24,11 @@ export function formatIntervalSubmissionPreview(submission: IntervalSubmission):
 }
 
 export function intervalBoundText(raw: string, side: 'lower' | 'upper'): string {
-  const t = raw.trim().toLowerCase();
-  if (isUnboundedToken(t)) return side === 'lower' ? '−∞' : '∞';
+  if (isUnbounded(raw)) return side === 'lower' ? '−∞' : '∞';
   return raw.trim();
 }
 
 function isUnbounded(raw: string): boolean {
-  return isUnboundedToken(raw.trim().toLowerCase());
-}
-
-function isUnboundedToken(value: string): boolean {
-  return (
-    value === ''
-    || value === 'inf'
-    || value === '-inf'
-    || value === 'oo'
-    || value === '-oo'
-    || value === '∞'
-    || value === '-∞'
-  );
+  const parsed = parseBoundInput(raw);
+  return 'value' in parsed && parsed.value === null;
 }

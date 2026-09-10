@@ -164,13 +164,20 @@ const maxPointsForSelf = computed(() => {
 });
 const selfScoreOptions = computed(() => scoreOptionsForPart(props.part, indeterminate.value ? indeterminateMax.value : undefined));
 const canConfirmSelfAssessment = computed(() => selfAssessmentPoints.value != null);
+// Suggested mastery follows the current score until the learner explicitly
+// selects a value. Persist only that explicit choice so a restored draft can
+// continue updating its suggestion when the score changes.
+const suggestedSelfGrading = computed(() => selfAssessmentGrading.value
+  ?? (selfAssessmentPoints.value != null
+    ? defaultGradingForScore(selfAssessmentPoints.value, maxPointsForSelf.value)
+    : null));
 const selfAssessmentState = computed(() =>
   phase.value === 'self-assessing'
     ? {
         maxPoints: maxPointsForSelf.value,
         scoreOptions: selfScoreOptions.value,
         selectedPoints: selfAssessmentPoints.value,
-        grading: selfAssessmentGrading.value,
+        grading: suggestedSelfGrading.value,
         assessment: selfAssessment.value,
       }
     : null,
@@ -273,11 +280,9 @@ function setSelfAssessmentScore(points: number): void {
   selfAssessmentPoints.value = option.points;
   const max = maxPointsForSelf.value;
   selfAssessment.value = {
-    ...selfAssessment.value,
     awardedPoints: option.points,
     overall: selfAssessmentOverallForScore(option.points, max),
   };
-  selfAssessmentGrading.value ??= defaultGradingForScore(option.points, max);
   emitSelfAssessmentDraft();
 }
 
@@ -291,7 +296,6 @@ function onSelfAssessmentUpdate(value: SelfAssessment): void {
   selfAssessment.value = value;
   const selected = selectedPointsFromAssessment(value, maxPointsForSelf.value, props.part.scoring);
   selfAssessmentPoints.value = selected;
-  if (selected != null) selfAssessmentGrading.value ??= defaultGradingForScore(selected, maxPointsForSelf.value);
   emitSelfAssessmentDraft();
 }
 

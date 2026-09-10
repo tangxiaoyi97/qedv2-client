@@ -11,6 +11,14 @@ const answer: ExpressionAnswer = {
 };
 
 describe('ExpressionControl', () => {
+  it('keeps a manually awarded partial result distinct from an incorrect answer', () => {
+    const wrapper = mount(ExpressionControl, { props: {
+      answer, modelValue: 'x+1', result: { verdict: 'partial', correct: false, awardedPoints: 1, maxPoints: 2 },
+    } });
+    expect(wrapper.get('.q-expr__verdict-note').text()).toContain('Teilweise richtig');
+    expect(wrapper.get('.q-expr__verdict-note').text()).not.toContain('Falsch');
+  });
+
   it('uses a native full-keyboard input without symbol controls or hints', () => {
     const wrapper = mount(ExpressionControl, {
       props: { answer, modelValue: '' },

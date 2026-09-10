@@ -94,8 +94,12 @@ const correctNotation = computed(() => {
     </div>
     <div v-if="!review && showPreview !== false" class="q-interval__preview" :aria-label="t('Vorschau')">{{ preview }}</div>
     <div v-else-if="review" class="q-interval__review">
-      <div class="q-interval__verdict q-reveal" :class="result!.verdict === 'correct' ? 'q-interval__verdict--ok' : 'q-interval__verdict--err'">
-        <StateIcon :state="result!.verdict === 'correct' ? 'correct' : 'incorrect'" :size="20" />
+      <div class="q-interval__verdict q-reveal" :class="{
+        'q-interval__verdict--ok': result!.verdict === 'correct',
+        'q-interval__verdict--partial': result!.verdict === 'partial',
+        'q-interval__verdict--err': result!.verdict === 'incorrect',
+      }">
+        <StateIcon :state="result!.verdict" :size="20" />
         <span>{{ t('Deine Antwort') }}: <b>{{ preview }}</b></span>
       </div>
       <div v-if="result!.verdict !== 'correct'" class="q-interval__correct">
@@ -115,6 +119,7 @@ const correctNotation = computed(() => {
 .q-interval__review { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
 .q-interval__verdict, .q-interval__correct { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--q-radius-control, 10px); font-size: 14px; }
 .q-interval__verdict--ok { border: 1px solid var(--q-ok); background: var(--q-ok-bg); }
+.q-interval__verdict--partial { border: 1px solid var(--q-part-border); background: var(--q-part-bg); }
 .q-interval__verdict--err { border: 1px solid var(--q-err); background: var(--q-err-bg); }
 .q-interval__correct { border: 1px dashed var(--q-ok); }
 </style>

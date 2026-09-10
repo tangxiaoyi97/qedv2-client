@@ -379,6 +379,34 @@ describe('assess gating', () => {
  * projection that actually reads what the user wrote.
  */
 describe('submittedText', () => {
+  it('keeps interval endpoint choices distinct in AI request identity', () => {
+    const bounds = { kind: 'interval' as const, lower: '2', upper: '5' };
+    const projections = [false, true].flatMap((lowerClosed) => [false, true].map((upperClosed) =>
+      submittedText({ ...bounds, lowerClosed, upperClosed })));
+    expect(new Set(projections).size).toBe(4);
+  });
+
+  it('keeps numeric blank identities and empty positions distinct', () => {
+    const first = submittedText({ kind: 'numeric', values: { a: '1', b: '' } });
+    const second = submittedText({ kind: 'numeric', values: { a: '', b: '1' } });
+    expect(first).not.toBe(second);
+    expect(first).toContain('a');
+    expect(second).toContain('b');
+  });
+
+  it('represents unbounded interval endpoints using the same meaning as the grader', () => {
+    expect(submittedText({ kind: 'interval', lower: '', upper: 'inf', lowerClosed: true, upperClosed: true }))
+      .toBe(']−∞; +∞[');
+    expect(submittedText({ kind: 'interval', lower: '-inf', upper: '5', lowerClosed: true, upperClosed: true }))
+      .toBe(']−∞; 5]');
+  });
+
+  it('includes missing authored numeric blanks without treating an empty answer as filled', () => {
+    const answer = { kind: 'numeric' as const, blanks: [{ id: 'x', value: 1, tol: 0 }, { id: 'y', value: 2, tol: 0 }] };
+    expect(submittedText({ kind: 'numeric', values: { y: '2' } }, answer)).toBe('x: (leer)\ny: 2');
+    expect(submittedText({ kind: 'numeric', values: {} }, answer)).toBe('');
+  });
+
   it('reads an open answer', () => {
     expect(submittedText({ kind: 'open', text: '  x = 4 ', selfAssessment: {} })).toBe('x = 4');
   });
@@ -390,8 +418,8 @@ describe('submittedText', () => {
   it('joins numeric blanks in a stable order', () => {
     // Stable, because the text is part of the AI cache key.
     const values = { b: '2', a: '1' };
-    expect(submittedText({ kind: 'numeric', values })).toBe('1 · 2');
-    expect(submittedText({ kind: 'numeric', values: { a: '1', b: '2' } })).toBe('1 · 2');
+    expect(submittedText({ kind: 'numeric', values })).toBe('a: 1\nb: 2');
+    expect(submittedText({ kind: 'numeric', values: { a: '1', b: '2' } })).toBe('a: 1\nb: 2');
   });
 
   it('is empty when there is no submission at all', () => {
@@ -488,7 +516,7 @@ describe('submittedText for pickable answers', () => {
 
   it('reads an interval', () => {
     expect(submittedText({ kind: 'interval', lower: '2', upper: '5', lowerClosed: true, upperClosed: false })).toBe(
-      '2 … 5',
+      '[2; 5[',
     );
   });
 });

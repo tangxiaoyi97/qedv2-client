@@ -34,6 +34,9 @@ const COUNTEREXAMPLE_TOL = 1e-6;
  */
 const SAMPLE_VALUES = [
   -3, -2.3, -1.6, -1.1, -0.5, 0.1, 0.3, 0.5, 0.9, 1.2, 1.7, 2.3, 2.9, 3.7, 5.1, 7.3,
+  // Decimal-tenth samples alone alias periodic expressions such as
+  // sin(20*pi*x). Mix in nonuniform values while keeping sampling stable.
+  -Math.SQRT2, Math.SQRT1_2, Math.E, Math.PI,
 ];
 /** Minimum agreeing valid points for sampling alone to declare "correct". */
 const MIN_VALID_POINTS = 8;
@@ -95,7 +98,10 @@ function normalizeDecimalCommas(s: string): string {
  */
 function insertImplicitMultiplication(s: string): string {
   return s
-    .replace(/(?<![\w.])(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*(?=[A-Za-z(])/g, '$1*')
+    // Consume the complete number first. A look-ahead in this regex lets
+    // it backtrack from 2e3 to 2 and incorrectly insert a star before e3.
+    .replace(/(?<![\w.])\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token: string, offset: number, source: string) =>
+      /^\s*[A-Za-z(]/.test(source.slice(offset + token.length)) ? `${token}*` : token)
     .replace(/\)\s*(?=[\w(])/g, ')*');
 }
 
@@ -118,14 +124,15 @@ function normalizeUnicode(s: string): string {
     .replace(/√\s*(\d+(?:\.\d+)?|[A-Za-z][A-Za-z0-9_]*)/g, 'sqrt($1)');
 }
 
-/** Full user-input normalization pipeline (order matters — see steps). */
-function normalizeUserInput(raw: string, vars: string[]): string {
+/** Shared by grading and live preview so the displayed expression is the
+ * expression actually compared with the answer (order matters). */
+export function normalizeExpressionInput(raw: string, vars: string[] = []): string {
   let s = raw.trim();
   s = normalizeUnicode(s);
   s = stripLeftHandSide(s);
   s = normalizeDecimalCommas(s);
   s = flattenSubscripts(s);
-  s = separateVarCalls(s, vars);
+  s = separateVarCalls(s, vars.map(flattenSubscripts));
   s = insertImplicitMultiplication(s);
   return s;
 }
@@ -155,11 +162,22 @@ interface Evaluable {
 
 function evaluateAt(fn: Evaluable, scope: Record<string, number>): number | undefined {
   try {
-    const v = fn.evaluate(scope);
+    const v = fn.evaluate({ ...scope });
     return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
   } catch {
     return undefined; // singular point / undefined symbol → skip
   }
+}
+
+/** Assignment/program nodes are not scalar answers. Evaluating them can
+ * mutate variables instead of comparing a mathematical expression. Keep
+ * the normal leading f(x)= notation, which is stripped before parsing. */
+function hasStatefulNodes(node: MathNode): boolean {
+  let stateful = false;
+  node.traverse((child) => {
+    if (['AssignmentNode', 'FunctionAssignmentNode', 'BlockNode'].includes(child.type)) stateful = true;
+  });
+  return stateful;
 }
 
 function sample(user: MathNode, canonical: MathNode, vars: string[]): SamplingResult {
@@ -169,7 +187,7 @@ function sample(user: MathNode, canonical: MathNode, vars: string[]): SamplingRe
   const n = SAMPLE_VALUES.length;
   for (let i = 0; i < n; i++) {
     const scope: Record<string, number> = {};
-    // Stride 7 (coprime with 16) decorrelates variables at each point.
+    // Stride 7 (coprime with 20) decorrelates variables at each point.
     vars.forEach((v, j) => {
       scope[v] = SAMPLE_VALUES[(i + 7 * j) % n]!;
     });
@@ -249,10 +267,14 @@ export function gradeExpression(
   let userNode: MathNode;
   let userSrc: string;
   try {
-    userSrc = normalizeUserInput(submission.expr, vars);
+    userSrc = normalizeExpressionInput(submission.expr, vars);
     userNode = math.parse(userSrc);
   } catch {
     return { verdict: 'indeterminate', reason: 'cas-parse-error', maxPoints };
+  }
+
+  if (hasStatefulNodes(userNode) || hasStatefulNodes(canonicalNode)) {
+    return { verdict: 'indeterminate', reason: 'cas-unreliable', maxPoints };
   }
 
   // 3) Equivalence. Constant expressions (no vars) are fully determined by a

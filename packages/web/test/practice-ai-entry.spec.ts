@@ -3,8 +3,8 @@ import { createApp, defineComponent, h, nextTick, onMounted } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { accountStorageIdentity, STORAGE, type AiCapabilities, type AiExplainCacheLocator, type AiStatus, type Question } from '@qed2/core-logic';
-import type { PartPlayerState } from '@qed2/ui';
+import { accountStorageIdentity, STORAGE, type AiAssessResult, type AiCapabilities, type AiExplainCacheLocator, type AiStatus, type Question } from '@qed2/core-logic';
+import type { PartPlayerDraft, PartPlayerState } from '@qed2/ui';
 import PracticeView from '../src/routes/PracticeView.vue';
 import { localProfileStore, storage } from '../src/services.js';
 import { useAiStore } from '../src/stores/ai.js';
@@ -13,13 +13,19 @@ import { useAuthStore } from '../src/stores/auth.js';
 import { usePracticeStore } from '../src/stores/practice.js';
 import { useProgressStore } from '../src/stores/progress.js';
 
-const player = vi.hoisted(() => ({ emit: undefined as ((state: PartPlayerState) => void) | undefined }));
+const player = vi.hoisted(() => ({
+  emit: undefined as ((state: PartPlayerState) => void) | undefined,
+  draft: undefined as ((draft: PartPlayerDraft) => void) | undefined,
+}));
 vi.mock('@qed2/ui', async (importOriginal) => ({
   ...await importOriginal<typeof import('@qed2/ui')>(),
   PartPlayer: defineComponent({
-    emits: ['state'],
+    emits: ['state', 'draft'],
     setup(_, { emit }) {
-      onMounted(() => { player.emit = (state) => emit('state', state); });
+      onMounted(() => {
+        player.emit = (state) => emit('state', state);
+        player.draft = (draft) => emit('draft', draft);
+      });
       return () => h('div', { class: 'test-player' });
     },
   }),
@@ -385,6 +391,88 @@ describe('practice AI entries', () => {
     expect(host.querySelector('.practice-bar__learning-toggle')).not.toBeNull();
     expect(host.querySelector('.practice__help-modes')).toBeNull();
     expect(host.querySelector('.q-learning__actions')?.textContent).toContain('Erklärung anfordern');
+  });
+
+  it.each(['interaction', 'server'] as const)('discards pending help and remounts the same question after a %s change', async (change) => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canHint).toBe(true));
+    let resolve!: (value: Awaited<ReturnType<typeof ai.explain>>) => void;
+    const explain = vi.mocked(ai.explain).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const previousPlayer = host.querySelector('.test-player');
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledTimes(1);
+    if (change === 'interaction') {
+      usePracticeStore().items = [{ ...usePracticeStore().items[0]!, learningInteractionId: '22222222-2222-4222-8222-222222222222' }];
+    } else {
+      useAuthStore().session = { ...useAuthStore().session!, serverBaseUrl: 'https://other.test' };
+    }
+    await settle();
+    resolve({ mode: 'hint', markdown: 'Veraltete Antwort', hint: { level: 1, markdown: 'Veraltete Antwort', nextAction: 'Alt', advisoryOnly: true }, model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'hint.v1', cached: true });
+    await settle();
+    expect(explain.mock.calls[0]![1]!.aborted).toBe(true);
+    expect(host.querySelector('.test-player')).not.toBe(previousPlayer);
+    expect(host.textContent).not.toContain('Veraltete Antwort');
+  });
+
+  it('does not save an AI assessment locator after its pending replay outlives self-assessment', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canAssess(question.parts[0]!, question)).toBe(true));
+    const practice = usePracticeStore();
+    const record = vi.spyOn(practice, 'recordCachedAiAssessment').mockResolvedValue();
+    const answer: AiAssessResult = { overall: { points: 1, confidence: 0.9, quote: 'Mein Ansatz', reason: 'Passt.', quoteVerified: true }, source: 'pool', model: 'test', promptVersion: 'v2', taskVersion: 'assess.v1', cached: true, advisoryOnly: true };
+    vi.spyOn(ai, 'assess').mockResolvedValue(answer);
+    vi.spyOn(ai, 'assessCacheLocator').mockReturnValue({ cacheKey: 'late-assessment', partId: 'q1-a', attemptPhase: 'first' } as ReturnType<typeof ai.assessCacheLocator>);
+    let resolve!: (value: AiAssessResult) => void;
+    const replay = vi.spyOn(ai, 'replayAssess').mockImplementation(() => new Promise(done => { resolve = done; }));
+    vi.spyOn(practice, 'saveSelfAssessmentDraft').mockResolvedValue(true);
+    player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Mein Ansatz', selfAssessment: { maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }], selectedPoints: 1, grading: 'good', assessment: { awardedPoints: 1 } } });
+    player.draft!({ submission: { kind: 'open', text: 'Mein Ansatz', selfAssessment: { awardedPoints: 1 } }, assessment: { awardedPoints: 1 }, selectedPoints: 1, grading: 'good', indeterminate: false, indeterminateMax: 1 });
+    await settle();
+    const compare = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Mit KI vergleichen'));
+    expect(compare).toBeDefined();
+    compare!.click();
+    await vi.waitFor(() => expect(replay).toHaveBeenCalledTimes(1));
+    player.emit!(state('correct'));
+    await settle();
+    resolve(answer);
+    await settle();
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an old draft failure into a new interaction with the same question', async () => {
+    const { host } = await mountPractice();
+    const practice = usePracticeStore();
+    let resolve!: (saved: boolean) => void;
+    vi.spyOn(practice, 'saveSelfAssessmentDraft').mockImplementation(() => new Promise(done => { resolve = done; }));
+    player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Alter Entwurf' });
+    player.draft!({ submission: { kind: 'open', text: 'Alter Entwurf', selfAssessment: {} }, assessment: {}, selectedPoints: null, grading: null, indeterminate: false, indeterminateMax: 1 });
+    await settle();
+    practice.items = [{ ...practice.items[0]!, learningInteractionId: '22222222-2222-4222-8222-222222222222' }];
+    await settle();
+    player.emit!(state());
+    resolve(false);
+    await settle();
+    expect(host.textContent).not.toContain('Die Selbstbewertung konnte nicht lokal gespeichert werden.');
+    expect(host.textContent).not.toContain('Speichern wiederholen');
+  });
+
+  it('does not attach a delayed review-close failure to a replacement interaction', async () => {
+    const { host } = await mountPractice();
+    const practice = usePracticeStore();
+    let reject!: (error: Error) => void;
+    const close = vi.spyOn(practice, 'completeReviewAndNext').mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    player.emit!(state('correct'));
+    await settle();
+    [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.trim() === 'Weiter →')!.click();
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    practice.items = [{ ...practice.items[0]!, learningInteractionId: '22222222-2222-4222-8222-222222222222' }];
+    await settle();
+    player.emit!(state());
+    reject(new Error('Old session failed'));
+    await settle();
+    expect(host.textContent).not.toContain('Der Programmstand wurde nicht gespeichert.');
+    expect(host.textContent).not.toContain('Speichern wiederholen');
   });
 
 });
