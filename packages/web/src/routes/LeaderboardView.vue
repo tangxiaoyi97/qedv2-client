@@ -21,6 +21,7 @@ const ui = useUiStore();
 const period = ref<LeaderboardPeriod>('today');
 const response = ref<LeaderboardResponse | undefined>();
 const loading = ref(false);
+const showRefreshing = ref(false);
 const loadingMore = ref(false);
 const loadError = ref('');
 const nickname = ref('');
@@ -38,15 +39,19 @@ let disposed = false;
 let listController: AbortController | undefined;
 let detailController: AbortController | undefined;
 let failedListReset = true;
+let failedListPeriod: LeaderboardPeriod = 'today';
 let lastPageLength = 0;
 
 const profile = computed(() => leaderboard.profile);
 const profileLoadError = computed(() => leaderboard.profileError);
 const isParticipating = computed(() => profile.value?.participating === true);
-const periodLabel = computed(() => (period.value === 'today' ? 'heute' : 'diese Woche'));
+// Keep the displayed columns and counts tied to the last completed request.
+// Selecting a period must not relabel yesterday's rows while its request runs.
+const displayedPeriod = computed(() => response.value?.period ?? period.value);
+const periodLabel = computed(() => (displayedPeriod.value === 'today' ? 'heute' : 'diese Woche'));
 const canLoadMore = computed(
   () =>
-    !loading.value && response.value !== undefined && response.value.page < 1000 && lastPageLength > 0 &&
+    response.value !== undefined && response.value.page < 1000 && lastPageLength > 0 &&
     response.value.items.length < response.value.totalParticipants,
 );
 
@@ -64,7 +69,6 @@ async function loadList(reset = true): Promise<void> {
   listController?.abort();
   listController = new AbortController();
   const page = reset ? 1 : (response.value?.page ?? 0) + 1;
-  if (reset && response.value?.period !== requestedPeriod) response.value = undefined;
   if (reset) loading.value = true;
   else loadingMore.value = true;
   if (reset) loadingMore.value = false;
@@ -86,7 +90,9 @@ async function loadList(reset = true): Promise<void> {
     response.value = { ...next, items };
   } catch (error) {
     if (request !== listRequest || requestScope !== scope || disposed) return;
+    if (reset && response.value) period.value = response.value.period;
     failedListReset = reset;
+    failedListPeriod = requestedPeriod;
     loadError.value =
       error instanceof ApiError && error.status === 401
         ? 'Bitte melde dich erneut an.'
@@ -100,6 +106,7 @@ async function loadList(reset = true): Promise<void> {
 }
 
 function retryList(): void {
+  period.value = failedListPeriod;
   void loadList(failedListReset);
 }
 
@@ -242,6 +249,14 @@ watch(() => [auth.session?.user.id, auth.session?.token, app.config.serverBaseUr
   if (auth.isLoggedIn) void initialize();
 }, { immediate: true, flush: 'sync' });
 
+watch(loading, (pending, _previous, onCleanup) => {
+  showRefreshing.value = false;
+  if (!pending) return;
+  // Fast reads update in place without a one-frame loading flash.
+  const timer = setTimeout(() => { showRefreshing.value = true; }, 160);
+  onCleanup(() => clearTimeout(timer));
+});
+
 onBeforeUnmount(() => {
   disposed = true;
   resetRequests();
@@ -294,7 +309,7 @@ onBeforeUnmount(() => {
         <div class="leaderboard__columns" aria-hidden="true">
           <span>{{ t('Rang') }}</span>
           <span>{{ t('Nickname') }}</span>
-          <span :title="`${t('Aufgaben ·')} ${t(periodLabel)}`">{{ t(period === 'today' ? 'Heute' : 'Diese Woche') }}</span>
+          <span :title="`${t('Aufgaben ·')} ${t(periodLabel)}`">{{ t(displayedPeriod === 'today' ? 'Heute' : 'Diese Woche') }}</span>
           <span>{{ t('Gesamt') }}</span>
           <span>{{ t('Punkte') }}</span>
           <span />
@@ -306,12 +321,12 @@ onBeforeUnmount(() => {
         <div v-else-if="response?.items.length === 0" key="empty" class="leaderboard__empty" role="status">
           {{ t('Noch keine Einträge.') }}
         </div>
-        <div v-else key="rows" class="leaderboard__rows" :class="{ 'leaderboard__rows--refreshing': loading }">
+        <div v-else key="rows" class="leaderboard__rows" :class="{ 'leaderboard__rows--refreshing': showRefreshing }">
           <LeaderboardRow
             v-for="item in response?.items"
             :key="item.profileId"
             :item="item"
-            :period="period"
+            :period="displayedPeriod"
             @open="openDetail"
           />
         </div>
@@ -320,7 +335,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div v-if="canLoadMore" class="leaderboard__more">
-        <QButton variant="ghost" :loading="loadingMore" @click="loadList(false)">
+        <QButton variant="ghost" :loading="loadingMore" :disabled="loading" @click="loadList(false)">
           {{ t('Mehr anzeigen') }}
         </QButton>
       </div>

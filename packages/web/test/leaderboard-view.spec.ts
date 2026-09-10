@@ -418,6 +418,90 @@ describe('LeaderboardView', () => {
     } finally { mounted.unmount(); }
   });
 
+  it('keeps rows, their period and pagination mounted while switching periods', async () => {
+    const week = deferred<Response>();
+    vi.stubGlobal('fetch', vi.fn((input) => {
+      const url = String(input);
+      if (url.endsWith('/me/leaderboard-profile')) return Promise.resolve(json({ participating: false, suggestedNickname: 'tester' }));
+      return url.includes('period=week') ? week.promise : Promise.resolve(json(board('today', 1, ['daily'], 2)));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => {
+        expect(mounted.host.querySelector('.leader-row')).not.toBeNull();
+        expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      });
+      const row = mounted.host.querySelector('.leader-row')!;
+      const more = mounted.host.querySelector<HTMLButtonElement>('.leaderboard__more button')!;
+      mounted.host.querySelectorAll<HTMLButtonElement>('[role="radio"]')[1]!.click();
+      await settle();
+      expect(mounted.host.querySelector('.leader-row')).toBe(row);
+      expect(row.getAttribute('aria-label')).toContain('Heute: 4');
+      expect(mounted.host.querySelector('.leaderboard__columns span:nth-child(3)')!.textContent).toBe('Heute');
+      expect(mounted.host.querySelector('.leaderboard__list')!.getAttribute('aria-busy')).toBe('true');
+      expect(mounted.host.querySelector('.leaderboard__loading')).toBeNull();
+      expect(mounted.host.querySelector('.leaderboard__more button')).toBe(more);
+      expect(more.disabled).toBe(true);
+      expect(mounted.host.querySelector('.leaderboard__rows--refreshing')).toBeNull();
+      week.resolve(json(board('week', 1, ['weekly'], 2)));
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('weekly'));
+      expect(mounted.host.querySelector('.leader-row')!.getAttribute('aria-label')).toContain('Diese Woche: 9');
+      expect(more.disabled).toBe(false);
+    } finally { mounted.unmount(); }
+  });
+
+  it('restores the displayed period after a failed switch and retries the requested period', async () => {
+    let weekCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/me/leaderboard-profile')) return json({ participating: false, suggestedNickname: 'tester' });
+      if (url.includes('period=week')) {
+        if (++weekCalls === 1) throw new TypeError('offline');
+        return json(board('week', 1, ['weekly']));
+      }
+      return json(board('today', 1, ['daily']));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')).not.toBeNull());
+      const row = mounted.host.querySelector('.leader-row');
+      const radios = mounted.host.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+      radios[1]!.click();
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('Das Leaderboard konnte nicht geladen werden.'));
+      expect(mounted.host.querySelector('.leader-row')).toBe(row);
+      expect(radios[0]!.getAttribute('aria-checked')).toBe('true');
+      mounted.host.querySelector<HTMLButtonElement>('.leaderboard__notice button')!.click();
+      await vi.waitFor(() => expect(mounted.host.textContent).toContain('weekly'));
+      expect(weekCalls).toBe(2);
+      expect(radios[1]!.getAttribute('aria-checked')).toBe('true');
+    } finally { mounted.unmount(); }
+  });
+
+  it('ignores a late period response when switching back to the visible period', async () => {
+    const week = deferred<Response>();
+    let weekSignal: AbortSignal | undefined;
+    vi.stubGlobal('fetch', vi.fn((input, init) => {
+      const url = String(input);
+      if (url.endsWith('/me/leaderboard-profile')) return Promise.resolve(json({ participating: false, suggestedNickname: 'tester' }));
+      if (url.includes('period=week')) { weekSignal = init.signal; return week.promise; }
+      return Promise.resolve(json(board('today', 1, ['daily'])));
+    }));
+    const mounted = await mountSignedIn();
+    try {
+      await vi.waitFor(() => expect(mounted.host.querySelector('.leader-row')).not.toBeNull());
+      const radios = mounted.host.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+      radios[1]!.click();
+      await settle();
+      radios[0]!.click();
+      await vi.waitFor(() => expect(weekSignal?.aborted).toBe(true));
+      week.resolve(json(board('week', 1, ['obsolete'])));
+      await settle();
+      expect(mounted.host.textContent).not.toContain('obsolete');
+      expect(mounted.host.querySelector('.leader-row')!.getAttribute('aria-label')).toContain('Heute: 4');
+      expect(radios[0]!.getAttribute('aria-checked')).toBe('true');
+    } finally { mounted.unmount(); }
+  });
+
   it('drops pending list responses after logout and direct account switches', async () => {
     const old = deferred<Response>();
     let calls = 0;

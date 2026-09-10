@@ -113,7 +113,7 @@ describe('AI settings information hierarchy', () => {
     expect(aiSettingsSource).toContain("import SettingsCard from './SettingsCard.vue';");
     expect(aiSettingsSource).toContain("import SettingsRow from './SettingsRow.vue';");
     expect(aiSettingsSource).toContain('<SettingsCard :title="t(\'KI-Erklärungen\')">');
-    expect(aiSettingsSource).toContain('<SettingsRow v-if="ai.byoOffered || configured" :label="t(\'API-Schlüssel\')">');
+    expect(aiSettingsSource).toContain('<SettingsRow :label="t(\'API-Schlüssel\')">');
     expect(aiSettingsSource).toContain('aria-controls="ai-credential-editor"');
     expect(aiSettingsSource).toContain('aria-controls="ai-preferences-editor"');
     expect(aiSettingsSource).toContain('aria-controls="ai-privacy-details"');

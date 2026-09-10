@@ -21,6 +21,7 @@ export const en: Record<string, string> = {
   'Wie sicher warst du?': 'How confident were you?',
   'Keine schriftliche Antwort': 'No written answer',
   'Meine Antwort': 'My answer',
+  'Eigene API-Schlüssel sind für dieses Konto nicht freigeschaltet.': 'Personal API keys are not enabled for this account.',
   'P': 'pts',
   'Formel konnte nicht angezeigt werden': 'Formula could not be displayed',
   'Abbildung': 'Figure',

@@ -14,7 +14,7 @@ const app = useAppStore();
 const { t, formatNumber } = useI18n();
 
 const PROVIDERS: { id: 'openai' | 'gemini'; label: string }[] = [
-  { id: 'openai', label: 'OpenAI / ChatGPT' },
+  { id: 'openai', label: 'OpenAI' },
   { id: 'gemini', label: 'Google Gemini' },
 ];
 
@@ -120,6 +120,7 @@ const featureLabel = computed(() => {
 });
 
 const credentialSummary = computed(() => {
+  if (!configured.value && !ai.byoOffered) return t('Eigene API-Schlüssel sind für dieses Konto nicht freigeschaltet.');
   if (!configured.value) return t('Nicht eingerichtet');
   const route = status.value?.byo;
   const parts = [t('Verschlüsselt'), providerLabel(route?.provider)];
@@ -410,10 +411,13 @@ async function clearCache(): Promise<void> {
           <span class="ai-settings__value" role="status">{{ poolQuotaLabel }}</span>
         </SettingsRow>
 
-        <SettingsRow v-if="ai.byoOffered || configured" :label="t('API-Schlüssel')">
+        <SettingsRow :label="t('API-Schlüssel')">
           <template #description>{{ credentialSummary }}</template>
-          <template v-if="configured && !ai.byoOffered" #status>
-            <span class="ai-settings__secure">
+          <template #status>
+            <span v-if="credentialSaved" class="ai-settings__saved" role="status">
+              {{ t('Schlüssel gespeichert.') }}
+            </span>
+            <span v-else-if="configured && !ai.byoOffered" class="ai-settings__secure">
               <ShieldCheck :size="14" aria-hidden="true" />
               {{ t('Gespeichert · nicht verfügbar') }}
             </span>
@@ -444,7 +448,7 @@ async function clearCache(): Promise<void> {
             </span>
           </QButton>
           <QButton
-            v-else
+            v-else-if="ai.byoOffered"
             variant="secondary"
             :aria-expanded="showCredentialEditor"
             :disabled="savingCredential"
@@ -537,10 +541,6 @@ async function clearCache(): Promise<void> {
           </QNotice>
 
           <div class="ai-settings__editor-actions">
-            <span v-if="credentialSaved" class="ai-settings__saved" role="status">
-              {{ t('Schlüssel gespeichert.') }}
-            </span>
-
             <div
               v-if="confirmingRemoval"
               class="ai-settings__confirm"

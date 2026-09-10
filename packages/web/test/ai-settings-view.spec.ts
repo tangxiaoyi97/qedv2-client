@@ -287,6 +287,26 @@ describe('AI settings view', () => {
     expect(host.textContent).toContain('Schlüssel gespeichert');
   });
 
+  it('keeps the save confirmation visible when first-time setup closes after saving', async () => {
+    aiStore.status = readyStatus({ byo: { configured: false }, pool: { eligible: false }, active: 'none' });
+    aiStore.poolOffered = false;
+    aiStore.saveCredential.mockImplementationOnce(async () => {
+      aiStore.status = readyStatus({ pool: { eligible: false } });
+    });
+    const host = mountSettings();
+    inputValue(getElement<HTMLInputElement>(host, '#ai-key'), 'test-secret');
+    getElement<HTMLFormElement>(host, '#ai-credential-editor').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    );
+    await settle();
+
+    expect(host.querySelector('#ai-credential-editor')).toBeNull();
+    expect(getElement(host, '.ai-settings__saved[role="status"]').textContent).toContain('Schlüssel gespeichert.');
+    buttonWithText(host, 'Ändern').click();
+    await nextTick();
+    expect(getElement<HTMLInputElement>(host, '#ai-key').value).toBe('');
+  });
+
   it('does not auto-open the own-key editor while the entitled server source is selected', async () => {
     aiStore.status = readyStatus({
       byo: { configured: false },
@@ -383,6 +403,13 @@ describe('AI settings view', () => {
     await settle();
     expect(aiStore.deleteCredential).toHaveBeenCalledTimes(1);
     expect(aiStore.saveCredential).not.toHaveBeenCalled();
+
+    aiStore.status = readyStatus({ byo: { configured: false }, active: 'pool' });
+    await nextTick();
+    expect(host.textContent).toContain('Eigene API-Schlüssel sind für dieses Konto nicht freigeschaltet.');
+    expect(host.querySelector('#ai-credential-editor')).toBeNull();
+    expect(host.textContent).not.toContain('Einrichten');
+    expect(host.textContent).not.toContain('Ändern');
   });
 
   it('expands response and privacy details only on request and saves preferences', async () => {
