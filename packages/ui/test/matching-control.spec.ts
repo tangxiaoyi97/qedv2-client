@@ -45,6 +45,19 @@ const groupedAnswer: MatchingAnswer = {
 };
 
 describe('MatchingControl', () => {
+  it('does not change a grouped match when the learner scrolls inside an option', async () => {
+    const wrapper = mount(MatchingControl, { props: { answer: groupedAnswer, modelValue: [null, null] } });
+    const option = wrapper.get('.q-match__inline-choice');
+    await option.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 150, clientY: 100 });
+    await option.trigger('pointermove', { pointerId: 1, clientX: 100, clientY: 95 });
+    await option.trigger('pointerup', { pointerId: 1, clientX: 100, clientY: 95 });
+    option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    // Keyboard selection is independent of the previous pointer gesture.
+    option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+    expect(wrapper.emitted('update:modelValue')!.at(-1)![0]).toEqual([0, null]);
+  });
+
   it('renders a lettered select per left row plus the Optionen pool', () => {
     const wrapper = mount(MatchingControl, {
       props: { answer, modelValue: [null, null, null] },

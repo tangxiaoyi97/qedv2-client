@@ -77,6 +77,7 @@ describe('ActivityHeatmap', () => {
       expect(scroll.scrollLeft).toBe(svgWidth - 320);
 
       scroll.scrollLeft = 80;
+      scroll.dispatchEvent(new Event('scroll'));
       await wrapper.setProps({ data: { '2026-09-08': 1 } });
       expect(scroll.scrollLeft).toBe(80);
     } finally {

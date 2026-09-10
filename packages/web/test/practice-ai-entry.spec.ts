@@ -134,6 +134,33 @@ describe('practice AI entries', () => {
     vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.innerHTML = '';
   });
 
+  it('lets Escape cancel exit confirmation without leaving the current answer', async () => {
+    const { host, router } = await mountPractice();
+    const close = host.querySelector<HTMLButtonElement>('[data-practice-exit]')!;
+    close.click();
+    await settle();
+    expect(close.getAttribute('aria-label')).toBe('Programm verlassen bestätigen');
+    const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    close.dispatchEvent(escape);
+    await settle();
+    expect(close.getAttribute('aria-label')).toBe('Programm verlassen');
+    expect(escape.defaultPrevented).toBe(true);
+    expect(router.currentRoute.value.path).toBe('/practice');
+  });
+
+  it('does not carry an armed exit into a new attempt at the same question', async () => {
+    const { host } = await mountPractice();
+    const close = host.querySelector<HTMLButtonElement>('[data-practice-exit]')!;
+    close.click();
+    await settle();
+    expect(close.classList.contains('practice__close--armed')).toBe(true);
+    const practice = usePracticeStore();
+    practice.items = [{ ...practice.items[0]!, learningInteractionId: '22222222-2222-4222-8222-222222222222' }];
+    await settle();
+    expect(close.classList.contains('practice__close--armed')).toBe(false);
+    expect(close.getAttribute('aria-label')).toBe('Programm verlassen');
+  });
+
   it.each([{ enabled: false }, { loggedIn: false }])('has no AI or setup entry when unavailable: %o', async (options) => {
     const { host, ai } = await mountPractice(ready, options);
     ai.status = ready;

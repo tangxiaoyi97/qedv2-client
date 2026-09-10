@@ -102,7 +102,7 @@ const emit = defineEmits<{
       :detent="solutionDetent"
       :solution="solution"
       :show-solution="state.phase !== 'answering' && solutionReady !== false"
-      content-max-width="860px"
+      content-max-width="var(--practice-content-max-width)"
       :handle="state.phase !== 'answering' || (!independentLearning && learningAvailable)"
       :handle-title="$slots.review ? t('Lösung & Bewertung') : undefined"
       :top-reserve="topReserve"
@@ -207,12 +207,16 @@ const emit = defineEmits<{
 
 <style scoped>
 .practice-bar {
+  --practice-content-max-width: 860px;
+  --practice-content-gutter: 28px;
+  box-sizing: border-box;
+  min-width: 0;
   position: fixed;
   /* iOS Safari leaves fixed chrome anchored to the layout viewport, i.e.
    * underneath the on-screen keyboard — which would bury the primary action
    * the moment the user starts typing an answer. See useKeyboardInset. */
   bottom: var(--q-keyboard-inset, 0px);
-  left: var(--practice-rail-width);
+  left: var(--practice-rail-width, 0px);
   right: 0;
   z-index: 40;
   background: var(--q-card);
@@ -254,10 +258,13 @@ const emit = defineEmits<{
 /* Only the sheet shrinks under the bar's ceiling; the action row keeps its
  * size so the primary button never gets squeezed. */
 .practice-bar__sheet {
+  min-width: 0;
   min-height: 0;
   flex: 0 1 auto;
 }
 .practice-bar__row {
+  box-sizing: border-box;
+  min-width: 0;
   flex: none;
   /*
    * Not redundant with the `auto` margins: the bar is a column flex container,
@@ -267,9 +274,9 @@ const emit = defineEmits<{
    * do the centring once max-width binds on a wide screen.
    */
   width: 100%;
-  max-width: 1040px;
+  max-width: var(--practice-content-max-width);
   margin: 0 auto;
-  padding: 12px 28px calc(12px + env(safe-area-inset-bottom));
+  padding: 12px max(var(--practice-content-gutter), env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(var(--practice-content-gutter), env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -301,11 +308,16 @@ const emit = defineEmits<{
 }
 
 .practice-bar__right {
+  min-width: 0;
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 12px;
   margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
+.practice-bar__right > :deep(.q-btn) { max-width: 100%; }
 
 .practice-bar__preview {
   display: flex;
@@ -328,6 +340,8 @@ const emit = defineEmits<{
 }
 
 .practice-bar__preview-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--q-ink);
   font-size: 15px;
 }
@@ -426,9 +440,8 @@ const emit = defineEmits<{
 }
 
 @media (max-width: 640px) {
+  .practice-bar { --practice-content-gutter: 16px; }
   .practice-bar__row {
-    padding-left: 16px;
-    padding-right: 16px;
     /* No wrapping: the row is one line of controls that must all fit, which
      * is what the dense grading capsule and the dropped Lösung button buy. */
     flex-wrap: nowrap;
@@ -465,7 +478,6 @@ const emit = defineEmits<{
 @media (prefers-reduced-motion: reduce) {
   .practice-bar--review { transition: none; }
 }
-:is(.practice-bar--inline, .practice-bar--review) .practice-bar__row { max-width: 860px; }
 :is(.practice-bar--inline, .practice-bar--review) .practice-bar__learning-toggle { border-color: transparent; background: transparent; color: var(--q-accent-strong); font-size: 13px; }
 @media (max-width: 640px) {
   :is(.practice-bar--inline, .practice-bar--review) .practice-bar__row { flex-wrap: wrap; gap: 8px; }

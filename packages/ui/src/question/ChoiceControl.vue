@@ -18,6 +18,7 @@ import type { BreakdownItem, ChoiceAnswer, GradeResult } from '@qed2/core-logic'
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QChip from '../shared/QChip.vue';
+import { createOptionActivation } from './option-activation.js';
 
 const { t } = useI18n();
 
@@ -32,6 +33,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: number[]] }>();
 const review = computed(() => props.result != null);
 const single = computed(() => props.answer.selectCount === 1);
 const full = computed(() => props.modelValue.length >= props.answer.selectCount);
+const activation = createOptionActivation();
 
 const hint = computed(() => {
   const chosen = props.modelValue.length;
@@ -145,7 +147,11 @@ function toggle(i: number): void {
         }"
         :aria-pressed="isSelected(i)"
         :aria-disabled="review || capBlocked(i) || undefined"
-        @click="toggle(i)"
+        @pointerdown="activation.pointerDown"
+        @pointermove="activation.pointerMove"
+        @pointerup="activation.pointerMove"
+        @pointercancel="activation.pointerCancel"
+        @click="activation.accepts($event) && toggle(i)"
       >
         <StateIcon v-if="marks[i]" :state="marks[i]!.state" />
         <span
@@ -290,8 +296,12 @@ function toggle(i: number): void {
 .q-choice__content {
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  /* The option grows with its text. Only a genuinely wide formula needs
+   * horizontal scrolling; making this flex item scroll creates a second,
+   * vertical scrollbar for tall KaTeX struts as well. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .q-choice__mark-label {

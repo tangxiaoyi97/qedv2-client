@@ -778,6 +778,7 @@ watch(
     draftSaveSequence += 1;
     playerCommand.value = null;
     commitBusy.value = false;
+    exitArmed.value = false;
     const restored = practice.currentReview;
     solutionDetent.value = restored ? 'default' : practice.currentSelfAssessmentDraft ? 'full' : 'collapsed';
     helpOpen.value = false;
@@ -1304,6 +1305,11 @@ function onDocumentPointerDown(ev: PointerEvent): void {
 }
 
 function onKeydown(ev: KeyboardEvent): void {
+  if (ev.key === 'Escape' && !ev.defaultPrevented && exitArmed.value) {
+    exitArmed.value = false;
+    ev.preventDefault();
+    return;
+  }
   if (
     ev.defaultPrevented
     || ev.key !== 'ArrowRight'
@@ -2003,38 +2009,59 @@ const currentCompetencyCodes = computed(() =>
   z-index: 30;
 }
 .practice__close {
-  flex: 0 0 var(--q-icon-control-size);
+  --practice-exit-width: var(--q-icon-control-size);
+  width: var(--practice-exit-width);
+  min-width: 0;
+  flex: 0 0 var(--practice-exit-width);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 0;
+  font-size: var(--q-font-small);
   overflow: hidden;
   transition:
-    background var(--q-transition-fast),
+    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    gap 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color var(--q-transition-fast),
     color var(--q-transition-fast),
     opacity var(--q-transition-fast);
 }
+.practice__close :deep(.q-icon-btn__glyph) {
+  flex: none;
+}
 .practice__close--armed {
-  width: 88px;
-  min-width: 88px;
-  flex-basis: 88px;
+  --practice-exit-width: calc(var(--q-icon-control-size) + 8ch + 7px);
+  gap: 7px;
+}
+.practice__close.practice__close--armed:not(:disabled) {
   background: var(--q-err-bg);
   color: var(--q-err);
 }
-.practice__close--armed::after {
+.practice__close::after {
   content: attr(data-confirm-label);
+  max-width: 0;
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--q-font-small);
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity var(--q-transition-fast),
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
-@media (hover: hover) and (pointer: fine) {
-  .practice__close--armed:hover {
-    background: var(--q-err-bg);
-  }
+.practice__close--armed::after {
+  max-width: 12ch;
+  opacity: 1;
+  transform: translateX(0);
 }
 .practice__progress {
   flex: 1;
+  min-width: 0;
   max-width: 340px;
   margin: 0 auto;
   display: flex;

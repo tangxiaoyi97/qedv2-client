@@ -29,6 +29,7 @@ import ChevronDown from '../shared/ChevronDown.vue';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import { onRadioGroupKeydown } from '../shared/radio-group.js';
+import { createOptionActivation } from './option-activation.js';
 
 const { t } = useI18n();
 
@@ -41,6 +42,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: (number | null)[]] }>();
 
 const review = computed(() => props.result != null);
+const activation = createOptionActivation();
 
 function letter(i: number): string {
   return String.fromCharCode(65 + i);
@@ -249,7 +251,11 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
             role="radio"
             :aria-checked="chosen(i) === option.idx"
             :aria-disabled="review || undefined"
-            @click="!review && assign(i, chosen(i) === option.idx ? null : option.idx, false)"
+            @pointerdown="activation.pointerDown"
+            @pointermove="activation.pointerMove"
+            @pointerup="activation.pointerMove"
+            @pointercancel="activation.pointerCancel"
+            @click="activation.accepts($event) && !review && assign(i, chosen(i) === option.idx ? null : option.idx, false)"
           >
             <StateIcon
               v-if="review && gapOptionState(i, option.idx) === 'ok'"
@@ -366,6 +372,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 }
 
 .q-match__row {
+  min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--q-border-2);
   border-radius: 10px;
@@ -396,8 +403,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   flex: 1;
   min-width: 0;
   font-size: 14.5px;
-  overflow-x: auto;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* flat, underline-style dropdown — no boxed/nested-card look; the row
@@ -533,8 +539,9 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__oc-content {
   flex: 1;
   min-width: 0;
-  overflow-x: auto;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }
 .q-match__oc-label {
   font-size: 11.5px;
@@ -561,7 +568,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border-radius: 8px;
   background: var(--q-panel);
   font-size: 13.5px;
-  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 .q-match__echo-letter,
 .q-match__pool-letter {
@@ -583,6 +590,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   gap: 7px;
   font-size: 13px;
   min-width: 0;
+}
+.q-match__cmp-line > :deep(.q-richtext) {
+  min-width: 0;
+  flex: 1;
 }
 .q-match__cmp-line--user {
   color: var(--q-mut-2);
@@ -653,7 +664,15 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   font-size: 12.5px;
   font-weight: 600;
   max-width: 100%;
-  overflow-x: auto;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+.q-match__pool-item > :deep(.q-richtext) {
+  min-width: 0;
+}
+.q-match__pool-item > .q-match__pool-letter {
+  flex: none;
 }
 .q-match__pool-item--used {
   background: var(--q-panel-2);

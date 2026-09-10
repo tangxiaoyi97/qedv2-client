@@ -444,7 +444,10 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
           {{ t('Erneut versuchen') }}
         </button>
       </div>
-      <div v-else class="prog__activity">
+      <div
+        v-show="!activityStore.cloudIncompleteMessage && !activityStore.loading && !activityStore.error"
+        class="prog__activity"
+      >
         <div class="prog__activity-chart">
           <ActivityHeatmap
             :data="activity"
@@ -707,6 +710,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 
 <style scoped>
 .prog {
+  width: 100%;
   max-width: 860px;
 }
 .prog__title-row {
@@ -786,6 +790,8 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   margin-top: 2px;
 }
 .prog__section {
+  min-width: 0;
+  max-width: 100%;
   background: var(--q-card);
   border: 1px solid var(--q-border);
   border-radius: 12px;
@@ -847,6 +853,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog__activity {
   display: flex;
+  min-width: 0;
   flex-direction: row;
   flex-wrap: wrap;
   gap: 24px;
@@ -854,9 +861,9 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog__activity-chart {
   padding: 4px 2px 0;
-  flex: none;
-  /* clamp to the card interior so the heatmap's own scroll wrapper engages
-     on narrow screens instead of overflowing the card */
+  flex: 1 1 360px;
+  /* A definite, shrinkable basis lets the chart scroll inside its card.
+     The SVG's intrinsic width must not decide the page's minimum width. */
   min-width: 0;
   max-width: 100%;
 }
@@ -864,8 +871,9 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   display: flex;
   flex-direction: column;
   gap: 12px;
-  flex: 1;
-  min-width: min(280px, 100%);
+  flex: 1 1 280px;
+  min-width: 0;
+  max-width: 100%;
 }
 .prog__activity-metrics {
   display: grid;

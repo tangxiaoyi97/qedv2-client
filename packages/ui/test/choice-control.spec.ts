@@ -24,6 +24,48 @@ function lastEmitted(wrapper: ReturnType<typeof mount>): unknown {
 }
 
 describe('ChoiceControl', () => {
+  it('does not pick an option while swiping its formula, but accepts the next deliberate tap', async () => {
+    const wrapper = mount(ChoiceControl, { props: { answer, modelValue: [] } });
+    const option = wrapper.get('button.q-choice__opt');
+    await option.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 150, clientY: 100 });
+    await option.trigger('pointermove', { pointerId: 1, clientX: 95, clientY: 103 });
+    await option.trigger('pointerup', { pointerId: 1, clientX: 95, clientY: 103 });
+    option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+    await option.trigger('pointerdown', { pointerId: 2, pointerType: 'touch', isPrimary: true, button: 0, clientX: 100, clientY: 100 });
+    await option.trigger('pointerup', { pointerId: 2, clientX: 102, clientY: 101 });
+    option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(lastEmitted(wrapper)).toEqual([0]);
+  });
+
+  it('keeps native text selection from changing the answer and preserves keyboard activation', async () => {
+    const wrapper = mount(ChoiceControl, { attachTo: document.body, props: { answer, modelValue: [] } });
+    const option = wrapper.get('button.q-choice__opt');
+    const selection = window.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(option.get('.q-choice__content').element);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    try {
+      option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+      option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(lastEmitted(wrapper)).toEqual([0]);
+    } finally {
+      selection.removeAllRanges();
+      wrapper.unmount();
+    }
+  });
+
+  it('ignores the trailing click from a cancelled touch gesture', async () => {
+    const wrapper = mount(ChoiceControl, { props: { answer, modelValue: [] } });
+    const option = wrapper.get('button.q-choice__opt');
+    await option.trigger('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0, clientX: 100, clientY: 100 });
+    await option.trigger('pointercancel');
+    option.element.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined();
+  });
+
   it('renders one count chip, a compact selection status and lettered options', () => {
     const wrapper = mount(ChoiceControl, {
       props: { answer, modelValue: [0] },

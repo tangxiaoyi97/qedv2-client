@@ -41,12 +41,25 @@ const rendered = computed(() => {
 </template>
 
 <style scoped>
+.q-math {
+  /* Constrain the formula, not its surrounding sentence or answer card.
+   * Inline-block lets KaTeX line breaks determine the full natural height;
+   * an unbreakable matrix/fraction can still pan horizontally on a phone. */
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  vertical-align: middle;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* KaTeX's italic overhang and deep fraction/sum struts extend slightly
+   * outside their line box. Keep those ink edges inside the scrollport. */
+  padding: 0.15em 0.15em 0.45em;
+}
 .q-math--display {
   display: block;
   text-align: center;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 2px 0;
 }
 .q-math-fallback {
   font-family: ui-monospace, Menlo, monospace;

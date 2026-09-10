@@ -529,7 +529,7 @@ async function collapseFromKeyboard(): Promise<void> {
 </script>
 
 <template>
-  <div ref="wrapper" class="q-ssheet-wrap">
+  <div ref="wrapper" class="q-ssheet-wrap" :style="contentMaxWidth ? { '--q-sheet-content-max-width': contentMaxWidth } : undefined">
     <!-- Maximised, the grip and the verdict stop being two strips stacked on
          each other and become one banner carrying the result. -->
     <div
@@ -562,7 +562,7 @@ async function collapseFromKeyboard(): Promise<void> {
           :class="`q-ssheet__grip--${bannerVerdict ? 'on-banner' : (verdict ?? 'neutral')}`"
           aria-hidden="true"
         />
-        <span v-if="handleTitle" class="q-ssheet__handle-caption" :style="contentMaxWidth ? { maxWidth: contentMaxWidth } : undefined">
+        <span v-if="handleTitle" class="q-ssheet__handle-caption">
           <span>{{ handleTitle }}</span>
           <span v-if="verdict" class="q-ssheet__handle-result">
             <StateIcon :state="verdict" :size="16" />
@@ -572,7 +572,7 @@ async function collapseFromKeyboard(): Promise<void> {
           <ChevronDown :class="{ 'q-ssheet__handle-chevron--closed': detent === 'collapsed' }" />
         </span>
       </button>
-      <div v-if="bannerVerdict && !handleTitle" class="q-ssheet__banner q-reveal" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+      <div v-if="bannerVerdict && !handleTitle" class="q-ssheet__banner q-reveal">
         <StateIcon :state="bannerVerdict" :size="20" />
         <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
         <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
@@ -592,7 +592,7 @@ async function collapseFromKeyboard(): Promise<void> {
       @keydown.esc.prevent.stop="collapseFromKeyboard"
       @click.capture="onContentClick"
     >
-    <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+    <div ref="inner" class="q-ssheet__inner">
       <!-- The verdict lives here, not in the action row: on a phone it was
            colliding with the Lösung toggle and the primary button. Maximised
            it moves up into the banner instead. -->
@@ -704,6 +704,11 @@ async function collapseFromKeyboard(): Promise<void> {
 
 <style scoped>
 .q-ssheet-wrap {
+  --q-sheet-content-gutter: var(--practice-content-gutter, 16px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   background: var(--q-card);
   border-radius: inherit;
   /* Lets the bar's max-height actually squeeze the sheet rather than
@@ -716,6 +721,7 @@ async function collapseFromKeyboard(): Promise<void> {
 /* Header strip. Neutral normally; maximised it takes the verdict tint and
  * the grip + result read as one banner. */
 .q-ssheet__top {
+  min-width: 0;
   border-radius: inherit;
   transition: background 240ms ease, border-color 240ms ease;
   border-bottom: 1px solid transparent;
@@ -749,10 +755,14 @@ async function collapseFromKeyboard(): Promise<void> {
 }
 
 .q-ssheet__banner {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--q-sheet-content-max-width, 100%);
+  margin: 0 auto;
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 0 16px 12px;
+  padding: 0 max(var(--q-sheet-content-gutter), env(safe-area-inset-right)) 12px max(var(--q-sheet-content-gutter), env(safe-area-inset-left));
   font-size: 15px;
   font-weight: 700;
 }
@@ -767,6 +777,8 @@ async function collapseFromKeyboard(): Promise<void> {
 
 /* Full-width hit area; the grip is only the visible part of it. */
 .q-ssheet__handle {
+  box-sizing: border-box;
+  min-width: 0;
   display: block;
   width: 100%;
   border: none;
@@ -875,14 +887,17 @@ async function collapseFromKeyboard(): Promise<void> {
  * the transition only applies when the finger is NOT on the sheet, which is
  * what makes dragging feel attached and clicking feel eased. */
 .q-ssheet {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   height: 0;
   min-height: 0;
   flex: 0 1 auto;
   overflow-y: auto;
-  /* Without a reserved gutter the scrollbar appears as the sheet grows, the
-   * text re-wraps, and the measured answer height stops matching the open
-   * one — the content would visibly reflow mid-animation. */
-  scrollbar-gutter: stable;
+  /* Reserve no empty gutter: on medium screens it would indent the solution
+   * away from the question and action row. Wide content keeps native scroll. */
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
   overscroll-behavior: contain;
   transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1);
   border-bottom: 1px solid transparent;
@@ -904,11 +919,22 @@ async function collapseFromKeyboard(): Promise<void> {
   border-bottom: 1px solid var(--q-border);
 }
 .q-ssheet__inner {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--q-sheet-content-max-width, 100%);
+  min-width: 0;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 14px max(var(--q-sheet-content-gutter), env(safe-area-inset-right)) 14px max(var(--q-sheet-content-gutter), env(safe-area-inset-left));
+  overflow-wrap: anywhere;
 }
+.q-ssheet__inner > * { min-width: 0; max-width: 100%; }
+/* Long equations remain readable by panning their own line, never the whole
+ * drawer. This also covers rich text supplied through the review slot. */
+.q-ssheet__inner :deep(.q-richtext) { display: block; min-width: 0; max-width: 100%; overflow-x: auto; }
+.q-ssheet__inner :deep(.q-math--display) { min-width: 0; max-width: 100%; }
 .q-ssheet__head {
   display: flex;
   align-items: center;
@@ -1038,9 +1064,13 @@ async function collapseFromKeyboard(): Promise<void> {
   align-items: center;
   gap: 7px;
   min-height: 52px;
-  padding: 8px 16px;
+  padding: 8px 0;
 }
 .q-ssheet__handle-caption {
+  box-sizing: border-box;
+  max-width: var(--q-sheet-content-max-width, 100%);
+  min-width: 0;
+  padding: 0 max(var(--q-sheet-content-gutter), env(safe-area-inset-right)) 0 max(var(--q-sheet-content-gutter), env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1052,10 +1082,12 @@ async function collapseFromKeyboard(): Promise<void> {
   font-weight: 650;
   line-height: 1.5;
 }
+.q-ssheet__handle-caption > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .q-ssheet__handle-caption > svg {
   flex: none;
 }
 .q-ssheet__handle-result {
+  flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;

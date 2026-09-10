@@ -520,7 +520,7 @@ function confirmLegacyRedo(): void {
         </button>
       </div>
       <ActivityHeatmap
-        v-if="!activityLoading && !activityError && !attemptHistoryMessage"
+        v-show="!activityLoading && !activityError && !attemptHistoryMessage"
         :data="activity"
         :weeks="ACTIVITY_WEEKS"
         :selected-date="selectedDate"
@@ -639,6 +639,7 @@ function confirmLegacyRedo(): void {
 
 <style scoped>
 .hist {
+  width: 100%;
   max-width: 720px;
 }
 .hist__head {
@@ -652,6 +653,8 @@ function confirmLegacyRedo(): void {
   color: var(--q-mut-2);
 }
 .hist__section {
+  min-width: 0;
+  max-width: 100%;
   background: var(--q-card);
   border: 1px solid var(--q-border);
   border-radius: 12px;
@@ -668,6 +671,7 @@ function confirmLegacyRedo(): void {
 }
 .hist__section-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
