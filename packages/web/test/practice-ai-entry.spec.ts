@@ -467,6 +467,45 @@ describe('practice AI entries', () => {
     expect(record).not.toHaveBeenCalled();
   });
 
+  it('keeps AI actions mounted but disabled while an updated score draft is being saved', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canAssess(question.parts[0]!, question)).toBe(true));
+    const practice = usePracticeStore();
+    const draft: PartPlayerDraft = {
+      submission: { kind: 'open', text: 'Mein Ansatz', selfAssessment: { awardedPoints: 1 } },
+      assessment: { awardedPoints: 1 }, selectedPoints: 1, grading: 'good',
+      indeterminate: false, indeterminateMax: 1,
+    };
+    vi.spyOn(practice, 'currentSelfAssessmentDraft', 'get').mockReturnValue({
+      ...draft, version: 1, revision: 1, partId: 'q1-a', savedAt: new Date().toISOString(),
+    });
+    let finish!: (saved: boolean) => void;
+    vi.spyOn(practice, 'saveSelfAssessmentDraft').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const assess = vi.spyOn(ai, 'assess');
+    player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Mein Ansatz', selfAssessment: {
+      maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }],
+      selectedPoints: 1, grading: 'good', assessment: { awardedPoints: 1 },
+    } });
+    await settle();
+    const learning = host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!;
+    const compare = host.querySelector<HTMLButtonElement>('.practice-review__assist')!;
+    expect(learning.disabled).toBe(false);
+    expect(compare.disabled).toBe(false);
+    player.draft!(draft);
+    await settle();
+    expect(host.querySelector('.practice-bar__learning-toggle')).toBe(learning);
+    expect(host.querySelector('.practice-review__assist')).toBe(compare);
+    expect(learning.disabled).toBe(true);
+    expect(compare.disabled).toBe(true);
+    learning.click(); compare.click();
+    expect(ai.explain).not.toHaveBeenCalled();
+    expect(assess).not.toHaveBeenCalled();
+    finish(true);
+    await settle();
+    expect(learning.disabled).toBe(false);
+    expect(compare.disabled).toBe(false);
+  });
+
   it('does not publish an old draft failure into a new interaction with the same question', async () => {
     const { host } = await mountPractice();
     const practice = usePracticeStore();

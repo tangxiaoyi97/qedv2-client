@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
-import { afterEach, describe, expect, it } from 'vitest';
+import { mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SELECTABLE_GRADINGS } from '@qed2/core-logic';
 import type { PartPlayerState } from '../src/index.js';
 import PracticeBottomBar from '../src/practice/PracticeBottomBar.vue';
@@ -72,6 +73,7 @@ function mountBar(state: PartPlayerState, extra: Record<string, unknown> = {}) {
 describe('PracticeBottomBar', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    vi.useRealTimers();
   });
 
   it('puts self-assessment inside the sheet, under the solution it judges', () => {
@@ -183,5 +185,64 @@ describe('PracticeBottomBar', () => {
     expect(toggles).toBe(1);
     expect(host.textContent).not.toContain('Korrektur');
     unmount();
+  });
+
+  it('keeps the phase action in layout while saving, with an accessible busy state', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(PracticeBottomBar, {
+      props: {
+        state: selfAssessing, answerPreview: null, solutionDetent: 'full', grading: 'unseen',
+        primaryLabel: 'Bewertung übernehmen', primaryDisabled: false,
+      },
+    });
+    const button = wrapper.get('.practice-bar__right > .q-btn');
+    const content = button.get('.q-btn__content').element;
+    await wrapper.setProps({ primaryBusy: true, primaryDisabled: true });
+    expect(button.attributes('aria-busy')).toBe('true');
+    expect(button.attributes('aria-label')).toBe('Speichert …');
+    expect(button.get('.q-btn__content').element).toBe(content);
+    expect(button.get('.q-btn__content').text()).toBe('Bewertung übernehmen');
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(button.find('.q-btn__spinner').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(119);
+    expect(button.find('.q-btn__spinner').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(button.find('.q-btn__spinner').exists()).toBe(true);
+
+    // Entering review also adds a grading menu. The new phase's shorter
+    // action must take over immediately, even while the commit is finishing,
+    // so an obsolete long action cannot force an extra row in between.
+    await wrapper.setProps({ state: reviewed('correct'), primaryLabel: 'Weiter' });
+    expect(wrapper.find('.practice-bar__grading').exists()).toBe(true);
+    expect(button.get('.q-btn__content').text()).toBe('Weiter');
+    expect(button.attributes('aria-busy')).toBe('true');
+    expect(button.attributes('aria-label')).toBe('Speichert …');
+    await wrapper.setProps({ primaryBusy: false, primaryDisabled: false });
+    expect(button.get('.q-btn__content').text()).toBe('Weiter');
+    expect(button.find('.q-btn__spinner').exists()).toBe(false);
+    expect(button.attributes('aria-label')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('does not flash a spinner for a fast draft save or leave a delayed spinner behind', async () => {
+    vi.useFakeTimers();
+    const wrapper = mount(PracticeBottomBar, {
+      props: {
+        state: answering, answerPreview: null, solutionDetent: 'collapsed', grading: 'unseen',
+        primaryLabel: 'Prüfen', primaryDisabled: false,
+      },
+    });
+    const button = wrapper.get('.practice-bar__primary');
+    await wrapper.setProps({ primaryBusy: true });
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(button.attributes('aria-busy')).toBe('true');
+    expect(button.get('.q-btn__content').text()).toBe('Prüfen');
+    await vi.advanceTimersByTimeAsync(30);
+    await wrapper.setProps({ primaryBusy: false });
+    await vi.advanceTimersByTimeAsync(150);
+    expect(button.find('.q-btn__spinner').exists()).toBe(false);
+    expect(button.attributes('disabled')).toBeUndefined();
+    expect(button.attributes('aria-busy')).toBeUndefined();
+    wrapper.unmount();
   });
 });

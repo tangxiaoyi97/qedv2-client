@@ -183,6 +183,29 @@ describe('practice question-bank footer', () => {
     mounted.unmount();
   });
 
+  it('opens the next question at the top after the programme drawer releases its scroll lock', async () => {
+    const scroll = vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
+    vi.stubGlobal('scrollY', 350);
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
+    try {
+      mounted.host.querySelector<HTMLButtonElement>('.practice__session-button')!.click();
+      await settle();
+      expect(document.body.classList.contains('q-modal-open')).toBe(true);
+      const lockedDuringScroll: boolean[] = [];
+      scroll.mockClear().mockImplementation(() => {
+        lockedDuringScroll.push(document.body.classList.contains('q-modal-open'));
+      });
+      mounted.host.querySelectorAll<HTMLButtonElement>('.practice-session-drawer__panel .q-sitems__item')[1]!.click();
+      await settle();
+      expect(usePracticeStore().index).toBe(1);
+      expect(document.body.classList.contains('q-modal-open')).toBe(false);
+      expect(scroll.mock.calls.at(-1)?.[0]).toEqual(expect.objectContaining({ top: 0 }));
+      expect(lockedDuringScroll.at(-1)).toBe(false);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('keeps provenance visible for a single question and on the summary', async () => {
     const single = await mountPractice({
       shell: originalShell,

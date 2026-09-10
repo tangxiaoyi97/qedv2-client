@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from '../i18n.js';
 
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Lightbulb } from 'lucide-vue-next';
 import {
   VERDICT_LABELS,
@@ -40,10 +40,14 @@ const props = withDefaults(defineProps<{
   grading: GradingOrUnseen;
   /** Disabled while the answer commit is pending or a legacy review cannot be safely replaced. */
   gradingDisabled?: boolean;
+  /** Current phase's action; saving feedback is conveyed by primaryBusy. */
   primaryLabel: string;
   primaryDisabled: boolean;
+  /** Keep the action's dimensions while its durable save is in flight. */
+  primaryBusy?: boolean;
   /** One low-interruption entry for hints and explanations. */
   learningAvailable?: boolean;
+  learningDisabled?: boolean;
   /** Page-based review keeps solutions out of the fixed action bar. */
   inlineReview?: boolean;
   /** AI help owns a dialog independently of the solution drawer. */
@@ -56,6 +60,15 @@ const props = withDefaults(defineProps<{
 
 const assessing = computed(() => props.state.phase === 'self-assessing');
 const independentLearning = computed(() => props.learningDialog || props.inlineReview);
+const showBusySpinner = ref(false);
+watch(() => props.primaryBusy, (busy, _previous, onCleanup) => {
+  showBusySpinner.value = false;
+  if (!busy) return;
+  // Most local draft writes finish within a frame. Keep those saves quiet;
+  // a longer write still receives visible feedback without changing width.
+  const timer = setTimeout(() => { showBusySpinner.value = true; }, 120);
+  onCleanup(() => clearTimeout(timer));
+}, { immediate: true });
 
 /**
  * Running total while self-assessing. The panel that owns the choice now
@@ -175,6 +188,7 @@ const emit = defineEmits<{
       <div class="practice-bar__right">
         <button
           v-if="learningAvailable"
+          :disabled="learningDisabled"
           type="button"
           class="practice-bar__learning-toggle"
           :class="{ 'practice-bar__learning-toggle--on': independentLearning ? learningOpen : solutionDetent !== 'collapsed' }"
@@ -199,7 +213,15 @@ const emit = defineEmits<{
         >
           {{ t('Lösung') }} <ChevronDown class="practice-bar__solution-chevron" />
         </button>
-        <QButton :disabled="primaryDisabled" @click="emit('primary')">{{ primaryLabel }}</QButton>
+        <QButton
+          class="practice-bar__primary"
+          :class="{ 'practice-bar__primary--busy': primaryBusy }"
+          :disabled="primaryDisabled || primaryBusy"
+          :loading="showBusySpinner"
+          :aria-busy="primaryBusy || undefined"
+          :aria-label="primaryBusy ? t('Speichert …') : undefined"
+          @click="emit('primary')"
+        >{{ primaryLabel }}</QButton>
       </div>
     </div>
   </div>
@@ -318,6 +340,8 @@ const emit = defineEmits<{
   justify-content: flex-end;
 }
 .practice-bar__right > :deep(.q-btn) { max-width: 100%; }
+/* A brief save must not flash the normal disabled-state opacity on/off. */
+.practice-bar .practice-bar__primary--busy:disabled { opacity: 1; cursor: wait; }
 
 .practice-bar__preview {
   display: flex;

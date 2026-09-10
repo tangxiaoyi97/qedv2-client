@@ -223,14 +223,16 @@ describe('MatchingControl', () => {
     // no classic comparison lines, no pool in grouped review
     expect(wrapper.find('.q-match__cmp').exists()).toBe(false);
     expect(wrapper.find('.q-match__pool').exists()).toBe(false);
-    // the outer row frame must NOT double the feedback with an ok/err wash —
-    // the option cards already carry it; only the small StateIcon remains
+    // Feedback belongs to each option; the group heading must not announce
+    // a second, potentially conflicting verdict for the whole group.
     expect(rows[0]!.classes()).not.toContain('q-match__row--err');
     expect(rows[0]!.classes()).not.toContain('q-match__row--ok');
     expect(rows[1]!.classes()).not.toContain('q-match__row--ok');
     expect(rows[1]!.classes()).not.toContain('q-match__row--err');
-    expect(rows[0]!.find('.q-match__main .q-state-icon--incorrect').exists()).toBe(true);
-    expect(rows[1]!.find('.q-match__main .q-state-icon--correct').exists()).toBe(true);
+    expect(rows[0]!.find('.q-match__main .q-state-icon').exists()).toBe(false);
+    expect(rows[1]!.find('.q-match__main .q-state-icon').exists()).toBe(false);
+    expect(first[1]!.get('.q-match__oc-label').attributes('aria-hidden')).toBeUndefined();
+    expect(first[0]!.get('.q-match__oc-label').attributes('aria-hidden')).toBeUndefined();
   });
 
   it('rejects cross-group drag/drop assignments for v3 matching', async () => {

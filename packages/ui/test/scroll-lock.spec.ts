@@ -13,6 +13,8 @@ function scrolledTo(y: number): void {
 describe('body scroll lock', () => {
   beforeEach(() => {
     scrolledTo(0);
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1280);
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1280);
     vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   });
 
@@ -20,6 +22,7 @@ describe('body scroll lock', () => {
     while (bodyScrollLockDepth() > 0) unlockBodyScroll();
     document.body.className = '';
     document.body.style.top = '';
+    document.documentElement.style.removeProperty('scrollbar-gutter');
     vi.restoreAllMocks();
   });
 
@@ -57,6 +60,50 @@ describe('body scroll lock', () => {
     // The offset recorded by the FIRST lock is the one that gets restored —
     // an inner lock must not re-record a position the page no longer has.
     expect(window.scrollTo).toHaveBeenCalledWith(0, 320);
+  });
+
+  it('preserves an existing classic scrollbar gutter until the final release', () => {
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1265);
+    scrolledTo(640);
+    lockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('stable');
+
+    // The fixed body has no document overflow. An inner dialog must not
+    // overwrite the original gutter state with the already locked layout.
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1280);
+    lockBodyScroll();
+    unlockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('stable');
+    unlockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('');
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 640);
+  });
+
+  it('restores a pre-existing inline gutter value and its priority', () => {
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1265);
+    document.documentElement.style.setProperty('scrollbar-gutter', 'auto', 'important');
+    lockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('stable');
+    expect(document.documentElement.style.getPropertyPriority('scrollbar-gutter')).toBe('important');
+    unlockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('auto');
+    expect(document.documentElement.style.getPropertyPriority('scrollbar-gutter')).toBe('important');
+  });
+
+  it('keeps an existing two-sided stable gutter intact', () => {
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1265);
+    document.documentElement.style.setProperty('scrollbar-gutter', 'stable both-edges');
+    lockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('stable both-edges');
+    unlockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('stable both-edges');
+  });
+
+  it('does not introduce a gutter on short pages or with overlay scrollbars', () => {
+    lockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('');
+    unlockBodyScroll();
+    expect(document.documentElement.style.getPropertyValue('scrollbar-gutter')).toBe('');
   });
 
   it('does not scroll when the lock was taken at the top of the page', () => {

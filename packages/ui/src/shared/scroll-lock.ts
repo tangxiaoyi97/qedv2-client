@@ -13,14 +13,29 @@
  */
 
 const LOCK_CLASS = 'q-modal-open';
+const GUTTER_PROPERTY = 'scrollbar-gutter';
 
 let openCount = 0;
 let savedScrollY = 0;
+let savedGutter: { value: string; priority: string } | null = null;
 
 export function lockBodyScroll(): void {
   openCount += 1;
   if (openCount > 1) return;
   savedScrollY = window.scrollY;
+  const root = document.documentElement;
+  // Pinning the body removes the document scrollbar. Reserve its existing
+  // gutter so both normal content and viewport-fixed bars keep their width.
+  // Short pages and overlay scrollbars need no new space; an existing stable
+  // (possibly two-sided) gutter already handles this without an override.
+  if (window.innerWidth > root.clientWidth
+    && !getComputedStyle(root).getPropertyValue(GUTTER_PROPERTY).includes('stable')) {
+    savedGutter = {
+      value: root.style.getPropertyValue(GUTTER_PROPERTY),
+      priority: root.style.getPropertyPriority(GUTTER_PROPERTY),
+    };
+    root.style.setProperty(GUTTER_PROPERTY, 'stable', savedGutter.priority);
+  }
   document.body.style.top = `-${savedScrollY}px`;
   document.body.classList.add(LOCK_CLASS);
 }
@@ -30,6 +45,14 @@ export function unlockBodyScroll(): void {
   if (openCount > 0) return;
   document.body.classList.remove(LOCK_CLASS);
   document.body.style.top = '';
+  if (savedGutter) {
+    if (savedGutter.value) {
+      document.documentElement.style.setProperty(GUTTER_PROPERTY, savedGutter.value, savedGutter.priority);
+    } else {
+      document.documentElement.style.removeProperty(GUTTER_PROPERTY);
+    }
+    savedGutter = null;
+  }
   // Instant, not smooth: the reader must land exactly where they left off,
   // and a smooth scroll here reads as the page drifting after the close.
   // A lock taken at the very top moved nothing, so there is nothing to undo.

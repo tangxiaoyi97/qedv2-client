@@ -127,7 +127,10 @@ function toggle(i: number): void {
     <div class="q-choice__head">
       <QChip>{{ t('{count} aus {total}', { count: answer.selectCount, total: answer.options.length }) }}</QChip>
       <span v-if="!review" class="q-choice__hint" :class="{ 'q-choice__hint--nudge': capNotice }" role="status">
-        <template v-if="capNotice">{{ t('Maximal {count} — erst eine abwählen', { count: answer.selectCount }) }}</template>
+        <template v-if="capNotice">
+          <span aria-hidden="true">{{ t('Maximal') }} {{ answer.selectCount }}</span>
+          <span class="q-choice__sr-only">{{ t('Maximal {count} — erst eine abwählen', { count: answer.selectCount }) }}</span>
+        </template>
         <template v-else>{{ hint }}</template>
       </span>
     </div>
@@ -189,21 +192,12 @@ function toggle(i: number): void {
 }
 .q-choice__hint {
   font-size: 12px;
+  font-weight: 600;
   color: var(--q-mut-2);
   transition: color 0.15s ease;
 }
 .q-choice__hint--nudge {
   color: var(--q-err);
-  font-weight: 700;
-  animation: q-choice-nudge 0.3s ease;
-}
-@keyframes q-choice-nudge {
-  25% {
-    transform: translateX(-3px);
-  }
-  75% {
-    transform: translateX(3px);
-  }
 }
 .q-choice__hint b {
   color: var(--q-accent-strong);
@@ -238,10 +232,9 @@ function toggle(i: number): void {
   outline-offset: 2px;
 }
 .q-choice__opt--selected {
-  border: 2px solid var(--q-accent);
+  border-color: var(--q-accent);
   background: var(--q-accent-bg);
-  padding: 11px 13px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
+  box-shadow: inset 0 0 0 1px var(--q-accent), 0 0 0 3px var(--q-accent-ring);
 }
 .q-choice__opt--capped {
   opacity: 0.55;
@@ -253,21 +246,19 @@ function toggle(i: number): void {
   transition: border-color var(--q-transition-normal), background-color var(--q-transition-normal);
 }
 .q-choice__opt--ok {
-  border: 1.5px solid var(--q-ok);
+  border-color: var(--q-ok);
   background: var(--q-ok-bg);
-  padding: 11.5px 13.5px;
   cursor: default;
 }
 .q-choice__opt--err {
-  border: 1.5px solid var(--q-err);
+  border-color: var(--q-err);
   background: var(--q-err-bg);
-  padding: 11.5px 13.5px;
   cursor: default;
 }
 .q-choice__opt--missed {
-  border: 1.5px dashed var(--q-ok);
+  border-color: var(--q-ok);
+  border-style: dashed;
   background: var(--q-card);
-  padding: 11.5px 13.5px;
   cursor: default;
 }
 
@@ -304,13 +295,18 @@ function toggle(i: number): void {
   -webkit-user-select: text;
 }
 
-.q-choice__mark-label {
-  animation: q-reveal 0.26s cubic-bezier(0.2, 0.9, 0.3, 1.05) both;
-  animation-delay: 0.06s;
-  font-size: 11.5px;
-  font-weight: 700;
+.q-choice__mark-label,
+.q-choice__sr-only {
+  /* The check/cross conveys the visible verdict. Keep its spoken label
+   * without narrowing the answer and wrapping it again after grading. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
-  flex: none;
 }
 .q-choice__mark-label--correct,
 .q-choice__mark-label--missed {

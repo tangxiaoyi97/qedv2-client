@@ -295,7 +295,8 @@ function scoreTabIndex(index: number): 0 | -1 {
 .q-selfassess__segment {
   padding: 6px 12px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--q-mut-2);
   background: var(--q-card);
   border: none;
@@ -308,7 +309,6 @@ function scoreTabIndex(index: number): 0 | -1 {
 }
 .q-selfassess__segment--on {
   color: #fff;
-  font-weight: 700;
 }
 .q-selfassess__segment--none {
   background: var(--q-err);
@@ -335,5 +335,6 @@ function scoreTabIndex(index: number): 0 | -1 {
 .q-selfassess__total b {
   font-size: 15px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 </style>

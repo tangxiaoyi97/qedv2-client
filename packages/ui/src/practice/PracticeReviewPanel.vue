@@ -22,6 +22,7 @@ const props = defineProps<{
   submissionUnavailable?: boolean;
   disabled?: boolean;
   assistAvailable?: boolean;
+  assistDisabled?: boolean;
 }>();
 const emit = defineEmits<{
   assessmentUpdate: [value: SelfAssessment];
@@ -74,7 +75,7 @@ const answerText = computed(() => props.state.answerPreview?.value ?? props.stat
           <h3>{{ t('Wie sicher warst du?') }}</h3>
           <GradingPicker :grading="state.selfAssessment.grading" :disabled="disabled" :label="t('Wie sicher warst du?')" @select="emit('gradingSelect', $event)" />
         </div>
-        <button v-if="assistAvailable" type="button" class="practice-review__assist" :disabled="disabled" @click="emit('assist')">
+        <button v-if="assistAvailable" type="button" class="practice-review__assist" :disabled="disabled || assistDisabled" @click="emit('assist')">
           <Sparkles :size="16" aria-hidden="true" />{{ t('Mit KI vergleichen') }}
         </button>
       </section>

@@ -108,6 +108,11 @@ describe('ChoiceControl', () => {
     // …and the unselected rest is aria-disabled as a cap hint
     expect(options[1]!.attributes('aria-disabled')).toBe('true');
     expect(options[0]!.attributes('aria-disabled')).toBeUndefined();
+    // Keep the visible cap hint short without losing the spoken recovery
+    // instruction when a learner tries to select an extra answer.
+    const status = wrapper.get('[role="status"]');
+    expect(status.get('[aria-hidden="true"]').text()).toBe('Maximal 2');
+    expect(status.get('.q-choice__sr-only').text()).toBe('Maximal 2 — erst eine abwählen');
 
     // clicking a selected option still toggles it off
     await options[0]!.trigger('click');
@@ -151,6 +156,7 @@ describe('ChoiceControl', () => {
     // Verdict word only — picked vs. missed is carried by the row's own
     // styling (solid/filled vs. dashed), so the label must not repeat it.
     expect(options[0]!.text()).toContain('Richtig');
+    expect(options[0]!.get('.q-choice__mark-label').attributes('aria-hidden')).toBeUndefined();
     expect(options[0]!.text()).not.toContain('gewählt');
     expect(options[0]!.classes()).toContain('q-choice__opt--ok');
     expect(options[4]!.text()).toContain('Falsch');

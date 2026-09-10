@@ -184,9 +184,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 
 <template>
   <div class="q-match">
-    <!-- grouped ("Lückentext") review: feedback lives ON the option cards
-         (ok/err/missed) — a second ok/err wash on the outer row frame would
-         double the signal, so grouped rows keep only the small StateIcon. -->
+    <!-- Grouped review keeps feedback on the options. Repeating it in the
+         heading would both crowd the group and move its label sideways. -->
     <div class="q-match__rows" :class="{ 'q-match__rows--grouped': groupedOptionMode }">
       <div
         v-for="(leftItem, i) in answer.left"
@@ -202,7 +201,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
         @drop.prevent="onDrop(i, $event)"
       >
         <div class="q-match__main">
-          <StateIcon v-if="marks[i]" :state="marks[i]!.correct ? 'correct' : 'incorrect'" :size="20" />
+          <StateIcon v-if="!groupedOptionMode && marks[i]" :state="marks[i]!.correct ? 'correct' : 'incorrect'" :size="20" />
           <span class="q-match__left">
             <RichTextView :nodes="leftItem" inline-only />
           </span>
@@ -370,17 +369,18 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
 }
 .q-match__row--ok {
-  border: 1.5px solid var(--q-ok);
+  border-color: var(--q-ok);
   background: var(--q-ok-bg);
 }
 .q-match__row--err {
-  border: 1.5px solid var(--q-err);
+  border-color: var(--q-err);
   background: var(--q-err-bg);
 }
 .q-match__row--dragover {
-  border: 2px dashed var(--q-accent);
+  border-color: var(--q-accent);
+  border-style: dashed;
   background: var(--q-accent-bg);
-  padding: 9px 11px;
+  box-shadow: 0 0 0 1px var(--q-accent);
 }
 
 .q-match__main {
@@ -413,7 +413,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border-radius: 0;
   background: transparent;
   color: var(--q-mut-2);
-  font: 600 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
+  font: 700 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
@@ -433,7 +433,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__select--assigned {
   border-bottom: 1.5px solid var(--q-accent);
   color: var(--q-accent-strong);
-  font-weight: 700;
 }
 .q-match__select:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -487,26 +486,23 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   outline-offset: 2px;
 }
 .q-match__inline-choice--on {
-  border: 2px solid var(--q-accent);
+  border-color: var(--q-accent);
   background: var(--q-accent-bg);
-  padding: 11px 13px;
-  box-shadow: 0 0 0 3px var(--q-accent-ring);
+  box-shadow: inset 0 0 0 1px var(--q-accent), 0 0 0 3px var(--q-accent-ring);
 }
 .q-match__inline-choice--ok {
-  border: 1.5px solid var(--q-ok);
+  border-color: var(--q-ok);
   background: var(--q-ok-bg);
-  padding: 11.5px 13.5px;
   cursor: default;
 }
 .q-match__inline-choice--err {
-  border: 1.5px solid var(--q-err);
+  border-color: var(--q-err);
   background: var(--q-err-bg);
-  padding: 11.5px 13.5px;
   cursor: default;
 }
 .q-match__inline-choice--missed {
-  border: 1.5px dashed var(--q-ok);
-  padding: 11.5px 13.5px;
+  border-color: var(--q-ok);
+  border-style: dashed;
   cursor: default;
 }
 .q-match__inline-choice[aria-disabled='true'] {
@@ -533,10 +529,16 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   -webkit-user-select: text;
 }
 .q-match__oc-label {
-  font-size: 11.5px;
-  font-weight: 700;
+  /* Option glyphs carry the visible verdict; its accessible text must not
+   * take width away from the answer when the result arrives. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
-  flex: none;
 }
 .q-match__oc-label--ok,
 .q-match__oc-label--missed {

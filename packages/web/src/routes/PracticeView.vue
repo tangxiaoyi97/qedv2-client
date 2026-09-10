@@ -97,7 +97,12 @@ const playerState = ref<PartPlayerState>({
 const playerCommand = ref<PartPlayerCommand | null>(null);
 let playerCommandId = 0;
 const solutionDetent = ref<SheetDetent>('collapsed');
-const solutionHeight = ref(0);
+// Keep the space already revealed by this question's drawer. Shrinking it
+// during a save, drag or collapse would clamp the document's scroll offset.
+const solutionReserve = ref(0);
+function onSolutionHeight(height: number): void {
+  solutionReserve.value = Math.max(solutionReserve.value, height);
+}
 const helpOpen = ref(false);
 const helpMode = ref<'learning' | 'assessment'>('learning');
 /**
@@ -175,6 +180,11 @@ watch(mobileRailOpen, async (open) => {
 watch(
   () => practice.phase,
   async (phase) => {
+    if (phase === 'summary') {
+      await nextTick();
+      if (practice.phase === 'summary') window.scrollTo({ top: 0, behavior: 'instant' });
+      return;
+    }
     if (phase !== 'provenance-choice') return;
     await nextTick();
     provenanceHeading.value?.focus();
@@ -389,14 +399,14 @@ function primaryAction(): void {
   }
 }
 
+const primaryBusy = computed(() => commitBusy.value || pendingGradingSaveBusy.value || answerDraftSaveBusy.value
+  || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value
+    && !pendingGradingSaveError.value && !answerDraftSaveError.value && !selfAssessmentDraftError.value));
+
 const primaryLabel = computed(() => {
-  if (commitBusy.value) return 'Speichert …';
-  if (pendingGradingSaveBusy.value) return 'Speichert …';
-  if (answerDraftSaveBusy.value) return 'Speichert …';
   if (pendingGradingSaveError.value) return 'Speichern wiederholen';
   if (answerDraftSaveError.value) return 'Speichern wiederholen';
   if (selfAssessmentDraftError.value) return 'Speichern wiederholen';
-  if (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value) return 'Speichert …';
   if (commitError.value) return 'Speichern wiederholen';
   switch (playerState.value.phase) {
     case 'answering':
@@ -491,15 +501,18 @@ const canRequestDiagnosis = computed(() =>
   && ai.canDiagnose,
 );
 const learningAvailable = computed(() => {
-  if (commitBusy.value || commitError.value) return false;
-  if (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value) return false;
+  if (playerState.value.phase === 'self-assessing' && !reviewMaterialReady.value) return false;
   if (visibleLearningResponse.value) return true;
   if (learningStage.value === 'hint' && authoredHint.value) return true;
   if (learningStage.value === 'hint') {
     return bankHints.value.length > 0 || (aiLearningAllowed.value && ai.canHint) || learningNeedsSetup.value;
   }
-  return (learningStage.value === 'explanation' ? canRequestWalkthrough.value : canRequestDiagnosis.value) || learningNeedsSetup.value;
+  return (learningStage.value === 'explanation' ? aiLearningAllowed.value && ai.canWalkthrough : canRequestDiagnosis.value) || learningNeedsSetup.value;
 });
+// Keep known actions in place while a newer score snapshot is being saved.
+// Their request guards remain strict; only visibility stops following I/O.
+const learningEntryDisabled = computed(() => commitBusy.value || Boolean(commitError.value)
+  || (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value));
 const learningMarkdown = computed(() =>
   (visibleLearningResponse.value?.mode === 'hint' ? visibleLearningResponse.value.hint.markdown : undefined)
     ?? visibleLearningResponse.value?.markdown,
@@ -697,11 +710,13 @@ function requestCurrentHelp(): void {
 }
 async function toggleLearning(): Promise<void> {
   if (helpOpen.value) { dismissLearning(); return; }
+  if (learningEntryDisabled.value) return;
   helpMode.value = 'learning';
   helpOpen.value = true;
   requestCurrentHelp();
 }
 function openAssessmentHelp(): void {
+  if (commitBusy.value || !selfAssessmentDraftDurable.value) return;
   helpMode.value = 'assessment';
   helpOpen.value = true;
   if (!assistResult.value && !assistError.value && !ai.needsSourceSetup) void askForAssessment();
@@ -743,7 +758,7 @@ const showAssist = computed(
     && playerState.value.selfAssessment?.grading != null
     && current.value != null
     && practice.sessionIdentityDurable
-    && selfAssessmentDraftDurable.value
+    && reviewMaterialReady.value
     && ai.available
     && ai.capabilities?.assess === true
     && ai.status?.features.assess !== false
@@ -773,6 +788,7 @@ watch(
   currentInteraction,
   () => {
     interactionEpoch += 1;
+    solutionReserve.value = 0;
     cachedAssessmentReplay += 1;
     cachedHelpReplay += 1;
     draftSaveSequence += 1;
@@ -1231,13 +1247,21 @@ watch(() => route.query.prepared, () => {
 
 watch(
   () => practice.index,
-  () => {
+  async (_index, _previous, onCleanup) => {
+    let cancelled = false;
+    onCleanup(() => { cancelled = true; });
+    const interaction = currentInteraction.value;
     solutionDetent.value = 'collapsed';
     helpOpen.value = false;
     mobileRailOpen.value = false;
     exitArmed.value = false;
     playerCommand.value = null;
-    window.scrollTo({ top: 0 });
+    // Closing the mobile programme drawer releases its body lock in a post
+    // watcher and restores the old scroll position. Reset only after that
+    // release and the new question's DOM are committed.
+    await nextTick();
+    if (cancelled || currentInteraction.value !== interaction) return;
+    window.scrollTo({ top: 0, behavior: 'instant' });
   },
 );
 
@@ -1572,7 +1596,7 @@ const currentCompetencyCodes = computed(() =>
     class="practice q-app"
     :class="{ 'practice--no-rail': !showProgramRail }"
     :style="{
-      '--practice-sheet-height': `${solutionHeight}px`,
+      '--practice-sheet-height': `${solutionReserve}px`,
       ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
     }"
   >
@@ -1722,7 +1746,7 @@ const currentCompetencyCodes = computed(() =>
 
             <p class="practice__result-action">{{ t(summaryAction) }}</p>
 
-            <p v-if="auth.isLoggedIn && syncNote" class="practice__result-sync">{{ t(syncNote) }}</p>
+            <p v-if="auth.isLoggedIn" class="practice__result-sync">{{ syncNote ? t(syncNote) : '' }}</p>
           </section>
 
           <QButton class="practice__summary-cta" @click="exitNow">{{ t('Zurück') }}</QButton>
@@ -1787,7 +1811,7 @@ const currentCompetencyCodes = computed(() =>
             </div>
           </Teleport>
 
-          <div class="practice__content" :class="{ 'practice__content--sheet-open': solutionDetent !== 'collapsed' }">
+          <div class="practice__content" :class="{ 'practice__content--review-space': solutionReserve > 0 }">
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
@@ -1843,6 +1867,7 @@ const currentCompetencyCodes = computed(() =>
         </div>
 
         <PracticeBottomBar
+          :key="currentInteraction"
           v-model:solution-detent="solutionDetent"
           :top-reserve="topbarHeight || undefined"
           :state="playerState"
@@ -1854,8 +1879,10 @@ const currentCompetencyCodes = computed(() =>
           :grading-disabled="gradingOverrideDisabled"
           :primary-label="t(primaryLabel)"
           :primary-disabled="primaryDisabled"
+          :primary-busy="primaryBusy"
           learning-dialog
           :learning-available="learningAvailable"
+          :learning-disabled="learningEntryDisabled"
           :learning-open="helpOpen"
           :learning-label="learningEntryLabel"
           :solution-ready="reviewMaterialReady"
@@ -1864,7 +1891,7 @@ const currentCompetencyCodes = computed(() =>
           @grading-select="onGradingSelect"
           @primary="primaryAction"
           @learning-toggle="toggleLearning"
-          @update:solution-height="solutionHeight = $event"
+          @update:solution-height="onSolutionHeight"
         >
           <template #review>
             <div id="practice-review-panel" class="practice__review-panel" tabindex="-1">
@@ -1878,6 +1905,7 @@ const currentCompetencyCodes = computed(() =>
                 :ready="reviewMaterialReady"
                 :disabled="commitBusy"
                 :assist-available="showAssist"
+                :assist-disabled="!selfAssessmentDraftDurable"
                 @assist="openAssessmentHelp"
                 @assessment-update="onSelfAssessmentUpdate"
                 @grading-select="onSelfGradingSelect"
@@ -1993,8 +2021,16 @@ const currentCompetencyCodes = computed(() =>
 /* Stacks the phase panels so loading and content overlap during the swap
  * instead of leaving the screen briefly empty. */
 .practice__stage {
+  position: relative;
   flex: 1;
   min-height: 0;
+}
+.practice__stage > .q-crossfade-leave-active {
+  /* A departing long question must not size the centred result page for
+   * another animation frame. Clip its old overflow while it fades away. */
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
 }
 .practice__topbar {
   height: calc(56px + env(safe-area-inset-top));
@@ -2210,7 +2246,7 @@ const currentCompetencyCodes = computed(() =>
   flex: 1;
   min-width: 0;
 }
-.practice__content.practice__content--sheet-open {
+.practice__content.practice__content--review-space {
   padding-bottom: calc(var(--practice-sheet-height, 0px) + 180px + var(--q-keyboard-inset, 0px));
 }
 .practice__qprompt {
@@ -2427,6 +2463,7 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__result-sync {
   margin: 0;
+  min-height: 1.55em;
   font-size: var(--q-font-small);
   color: var(--q-mut-2);
 }
