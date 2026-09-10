@@ -75,6 +75,8 @@ export {
 } from './practice/self-assessment.js';
 export { default as SessionProgressBar } from './practice/SessionProgressBar.vue';
 export { default as SessionItemList } from './practice/SessionItemList.vue';
+export { default as PracticeHelpDialog } from './practice/PracticeHelpDialog.vue';
+export { default as PracticeReviewPanel } from './practice/PracticeReviewPanel.vue';
 export { default as PracticeBottomBar } from './practice/PracticeBottomBar.vue';
 export { default as PracticeQuestionHeader } from './practice/PracticeQuestionHeader.vue';
 export { default as PracticeSessionRail } from './practice/PracticeSessionRail.vue';

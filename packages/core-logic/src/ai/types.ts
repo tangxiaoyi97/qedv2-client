@@ -92,11 +92,16 @@ export interface AiPromptOptions {
 /** Legacy modes remain readable; 2.3 uses progressive hints and diagnosis. */
 export type AiExplainMode = 'answer' | 'walkthrough' | 'hint' | 'diagnosis';
 
-export type AiLegacyExplainRequest = AiQuestionContext & AiPromptOptions & Partial<AiRequestIdentity> & {
-  mode?: 'answer' | 'walkthrough';
+export type AiLegacyExplainRequest = AiQuestionContext & AiPromptOptions & Partial<AiRequestIdentity> & ({
+  mode?: 'answer';
   verdict: Verdict;
   awardedPoints: number;
-};
+} | {
+  /** A solution walkthrough does not assess the student's answer. */
+  mode: 'walkthrough';
+  verdict?: Verdict;
+  awardedPoints?: number;
+});
 
 export type AiHintRequest = AiQuestionContext & AiPromptOptions & AiLearningRequestIdentity & {
   mode: 'hint';

@@ -300,7 +300,7 @@ export function buildExplainRequest(input: {
   question: Question;
   part: QuestionPart;
   submitted: string;
-  /** Omitted only for a pre-attempt hint. */
+  /** Hints and solution walkthroughs do not require an assessment. */
   result?: GradeResult;
   /** `walkthrough` explains the question itself rather than the answer. */
   mode?: AiExplainMode;
@@ -313,7 +313,7 @@ export function buildExplainRequest(input: {
   if (mode === 'hint' && input.hintLevel == null) {
     throw new TypeError('A hint request requires a hint level');
   }
-  if (mode !== 'hint' && !result) {
+  if (mode !== 'hint' && mode !== 'walkthrough' && !result) {
     throw new TypeError(`${mode} requires a graded result`);
   }
   if ((mode === 'hint' || mode === 'diagnosis') && hasSolutionFigures(part)) {
@@ -343,10 +343,18 @@ export function buildExplainRequest(input: {
       awardedPoints: result!.awardedPoints,
     };
   }
+  if (mode === 'walkthrough') {
+    return {
+      ...context,
+      ...options,
+      mode,
+      ...(result ? { verdict: result.verdict, awardedPoints: result.awardedPoints } : {}),
+      ...(input.identity ?? {}),
+    };
+  }
   return {
     ...context,
     ...options,
-    ...(mode === 'walkthrough' ? { mode } : {}),
     verdict: result!.verdict,
     awardedPoints: result!.awardedPoints,
     ...(input.identity ?? {}),

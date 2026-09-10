@@ -449,6 +449,18 @@ describe('prompt options', () => {
     expect(buildExplainRequest({ ...base, mode: 'answer' }).mode).toBeUndefined();
     expect(buildExplainRequest(base).mode).toBeUndefined();
   });
+
+  it('explains the solution before self-assessment without inventing a grade', () => {
+    const request = buildExplainRequest({
+      question: question(), part: part(), submitted: 'Mein Ansatz', mode: 'walkthrough',
+    });
+    expect(request).toMatchObject({ mode: 'walkthrough', submitted: 'Mein Ansatz', maxPoints: 2 });
+    expect(request).not.toHaveProperty('verdict');
+    expect(request).not.toHaveProperty('awardedPoints');
+    expect(() => buildExplainRequest({
+      question: question(), part: part(), submitted: 'Mein Ansatz', mode: 'answer',
+    })).toThrow('requires a graded result');
+  });
 });
 
 /**

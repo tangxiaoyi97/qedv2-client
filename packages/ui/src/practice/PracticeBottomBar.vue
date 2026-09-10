@@ -44,6 +44,10 @@ const props = defineProps<{
   primaryDisabled: boolean;
   /** One low-interruption entry for hints and explanations. */
   learningAvailable?: boolean;
+  /** Page-based review keeps solutions out of the fixed action bar. */
+  inlineReview?: boolean;
+  learningOpen?: boolean;
+  learningLabel?: string;
   /** Official material stays hidden until a self-assessment draft is durable. */
   solutionReady?: boolean;
 }>();
@@ -89,8 +93,9 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="practice-bar" :class="{ 'practice-bar--full': solutionDetent === 'full' }">
+  <div class="practice-bar" :class="{ 'practice-bar--full': !inlineReview && solutionDetent === 'full', 'practice-bar--inline': inlineReview }">
     <SolutionSheet
+      v-if="!inlineReview"
       :detent="solutionDetent"
       :solution="solution"
       :show-solution="state.phase !== 'answering' && solutionReady !== false"
@@ -137,7 +142,7 @@ const emit = defineEmits<{
         <!-- mastery override rides the INFO slot (left), not the action
              cluster — and it shares the Lösung toggle's outlined geometry -->
         <GradingMenu
-          v-if="!assessing"
+          v-if="!assessing && (!inlineReview || state.phase === 'reviewed')"
           :grading="grading"
           :disabled="gradingDisabled"
           dense
@@ -164,19 +169,20 @@ const emit = defineEmits<{
           v-if="learningAvailable"
           type="button"
           class="practice-bar__learning-toggle"
-          :class="{ 'practice-bar__learning-toggle--on': solutionDetent !== 'collapsed' }"
-          :aria-expanded="solutionDetent !== 'collapsed'"
-          :aria-label="t(solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen')"
+          :class="{ 'practice-bar__learning-toggle--on': inlineReview ? learningOpen : solutionDetent !== 'collapsed' }"
+          :aria-expanded="inlineReview ? Boolean(learningOpen) : solutionDetent !== 'collapsed'"
+          :aria-haspopup="inlineReview ? 'dialog' : undefined"
+          :aria-label="inlineReview ? learningLabel : t(solutionDetent === 'collapsed' ? 'Lernhilfe öffnen' : 'Lernhilfe schließen')"
           @click="emit('learningToggle')"
         >
           <Lightbulb :size="17" aria-hidden="true" />
-          <span>{{ t('Lernhilfe') }}</span>
+          <span>{{ learningLabel ?? t('Lernhilfe') }}</span>
         </button>
         <!-- Hidden on narrow screens: the sheet's grab handle is the control
              there, so this button never has to fight the primary action for
              the last few pixels. -->
         <button
-          v-if="state.phase !== 'answering'"
+          v-if="!inlineReview && state.phase !== 'answering'"
           type="button"
           class="practice-bar__solution-toggle"
           :class="{ 'practice-bar__solution-toggle--on': solutionDetent !== 'collapsed' }"
@@ -445,4 +451,21 @@ const emit = defineEmits<{
     border-left: none;
   }
 }
+.practice-bar--inline { box-shadow: none; }
+.practice-bar--inline .practice-bar__row { max-width: 860px; }
+.practice-bar--inline .practice-bar__learning-toggle { border-color: transparent; background: transparent; color: var(--q-accent-strong); font-size: 13px; }
+@media (max-width: 640px) {
+  .practice-bar--inline .practice-bar__row { flex-wrap: wrap; gap: 8px; }
+  .practice-bar--inline .practice-bar__right { gap: 8px; flex-wrap: wrap; }
+  .practice-bar--inline .practice-bar__left { min-height: 0; }
+  .practice-bar--inline .practice-bar__preview { display: none; }
+  .practice-bar--inline .practice-bar__grading :deep(.q-grading-capsule) { padding: 0 8px; }
+}
+@media (max-width: 380px) {
+  .practice-bar--inline .practice-bar__left { display: none; }
+  .practice-bar--inline .practice-bar__right { width: 100%; justify-content: space-between; }
+  .practice-bar--inline .practice-bar__learning-toggle span { position: static; width: auto; height: auto; clip-path: none; }
+}
+
+
 </style>

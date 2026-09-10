@@ -658,8 +658,16 @@ function cloneSubmission(value: Submission): Submission {
 }
 
 function cloneSessionItem(item: SessionItem): SessionItem {
+  // Session items live in a deep Vue ref. Every nested object must become a
+  // plain snapshot before IndexedDB or the desktop IPC receives it; a shallow
+  // spread leaves paid AI locators as proxies and aborts the whole grade batch.
   return {
     ...item,
+    ...(item.cachedAiHelp ? { cachedAiHelp: { ...item.cachedAiHelp } } : {}),
+    ...(item.cachedAiHint ? { cachedAiHint: { ...item.cachedAiHint } } : {}),
+    ...(item.cachedAiDiagnosis ? { cachedAiDiagnosis: { ...item.cachedAiDiagnosis } } : {}),
+    ...(item.cachedAiAssessment ? { cachedAiAssessment: { ...item.cachedAiAssessment } } : {}),
+    ...(item.pendingGrading ? { pendingGrading: { ...item.pendingGrading } } : {}),
     ...(item.answerDraft
       ? {
           answerDraft: {
@@ -1880,7 +1888,9 @@ export const usePracticeStore = defineStore('practice', () => {
 
   function reviewStillOpen(record: GradedRecord | undefined): record is GradedRecord {
     return !!record
-      && record.result.verdict !== 'correct'
+      // Older correct attempts did not retain an answer or an open review.
+      // New attempts keep every answer until the user deliberately leaves it.
+      && (record.result.verdict !== 'correct' || record.pendingSubmission !== undefined)
       && record.reviewClosedAt === undefined
       && record.correctionClosedAt === undefined;
   }
@@ -2322,8 +2332,7 @@ export const usePracticeStore = defineStore('practice', () => {
     const record: GradedRecord = pending
       ? cloneGradedRecord(pending.record)
       : (() => {
-          const keepSubmission = payload.result.verdict !== 'correct'
-            && isPersistableSubmission(payload.submission);
+          const keepSubmission = isPersistableSubmission(payload.submission);
           return {
             clientAttemptId,
             partId: payload.part.id,

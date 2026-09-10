@@ -337,7 +337,9 @@ export const useAiStore = defineStore('ai', () => {
   }
   const hintOffered = computed(() => featureOffered('hint'));
   const diagnosisOffered = computed(() => featureOffered('diagnosis'));
+  const walkthroughOffered = computed(() => featureOffered('walkthrough'));
   const canExplain = computed(() => canUsePaidSource.value && featureOffered('answer'));
+  const canWalkthrough = computed(() => canUsePaidSource.value && walkthroughOffered.value);
 
   const canHint = computed(
     () => canUsePaidSource.value && hintOffered.value,
@@ -1195,10 +1197,12 @@ export const useAiStore = defineStore('ai', () => {
     statusError,
     available,
     canExplain,
+    canWalkthrough,
     canHint,
     canDiagnose,
     hintOffered,
     diagnosisOffered,
+    walkthroughOffered,
     assessmentOffered,
     needsSourceSetup,
     needsCredentialSetup,

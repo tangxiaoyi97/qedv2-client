@@ -20,6 +20,8 @@ const props = withDefaults(
   defineProps<{
     solution: SolutionEntry[] | undefined;
     defaultOpen?: boolean;
+    /** Render inside a clearly labelled review page without an accordion. */
+    plain?: boolean;
   }>(),
   { defaultOpen: true },
 );
@@ -34,9 +36,11 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
 </script>
 
 <template>
-  <CollapsePanel
+  <component
+    :is="plain ? 'div' : CollapsePanel"
     v-if="entries.length > 0"
     class="q-solution"
+    :class="{ 'q-solution--plain': plain }"
     :title="t('Lösung')"
     :default-open="defaultOpen"
   >
@@ -74,10 +78,20 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
         </div>
       </template>
     </div>
-  </CollapsePanel>
+  </component>
 </template>
 
 <style scoped>
+.q-solution--plain .q-solution__note {
+  padding: 4px 0 4px 12px;
+  border: none;
+  border-left: 2px solid var(--q-border-2);
+  border-radius: 0;
+  background: none;
+}
+.q-solution--plain .q-solution__note-label { font-family: inherit; text-transform: none; letter-spacing: 0; }
+.q-solution--plain .q-solution__note-text { font-family: inherit; font-size: 12px; }
+
 .q-solution__body {
   display: flex;
   flex-direction: column;

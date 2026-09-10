@@ -9,6 +9,7 @@ import {
   learningEventStorageKey,
   questionContentHash,
   type AtomicStoragePort,
+  type AiAssessCacheLocator,
   type AiExplainCacheLocator,
   type LocalArchive,
   type Question,
@@ -482,6 +483,194 @@ describe('practice session persistence', () => {
     expect(durable?.selfAssessmentDraft?.submission?.text).toBe('Fenster A');
   });
 
+  it.each(['hint', 'assessment'] as const)(
+    'saves a manual assessment after receiving AI %s, then restores the committed review',
+    async (mode) => {
+      const { practice } = await freshStores();
+      await practice.startQuestions(['q3', 'q1']);
+      const submission = { kind: 'open' as const, text: 'Meine Begründung', selfAssessment: {} };
+      await practice.saveAnswerDraft('q3-a', submission);
+      await practice.saveSelfAssessmentDraft('q3-a', {
+        submission,
+        assessment: {},
+        selectedPoints: null,
+        grading: null,
+        indeterminate: false,
+        indeterminateMax: 1,
+      });
+      const common = {
+        version: 1 as const,
+        cacheKey: `v2:${'a'.repeat(64)}`,
+        partId: 'q3-a',
+        attemptPhase: 'first' as const,
+        taskVersion: `${mode}.v1`,
+        promptVersion: 'ai-v2',
+        source: 'byo' as const,
+        savedAt: new Date().toISOString(),
+      };
+      if (mode === 'hint') {
+        await practice.recordAiHelp('q3-a', { ...common, mode: 'hint', hintLevel: 2 }, 2);
+      } else {
+        await practice.recordCachedAiAssessment('q3-a', {
+          ...common,
+          requestDigest: `v2:${'b'.repeat(64)}`,
+          contentSource: 'local',
+          contentId: TEST_COMMIT,
+        } satisfies AiAssessCacheLocator);
+      }
+      await expect(practice.saveSelfAssessmentDraft('q3-a', {
+        submission,
+        assessment: { awardedPoints: 0, overall: 'none' },
+        selectedPoints: 0,
+        grading: 'baffled',
+        indeterminate: false,
+        indeterminateMax: 1,
+      })).resolves.toBe(true);
+
+      const record = await practice.recordGraded({
+        part: practice.current!.part,
+        submission: { ...submission, selfAssessment: { awardedPoints: 0, overall: 'none' } },
+        result: { verdict: 'incorrect', correct: false, awardedPoints: 0, maxPoints: 1 },
+        manualGrading: 'baffled',
+        ...(mode === 'hint' ? { hintLevel: 2 as const } : {}),
+      });
+
+      expect(record?.result.verdict).toBe('incorrect');
+      expect(practice.currentSelfAssessmentDraft).toBeUndefined();
+      expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(1);
+      expect(await historyLog.count()).toBe(1);
+      expect((await archiveStore.load()).content.perPart).toHaveLength(1);
+      const restored = await freshStores();
+      await expect(restored.practice.restoreSession()).resolves.toBe(true);
+      expect(restored.practice.currentReview?.clientAttemptId).toBe(record!.clientAttemptId);
+      expect(restored.practice.currentReview?.pendingSubmission).toMatchObject({ text: submission.text });
+      expect(restored.practice.current!.item[mode === 'hint' ? 'cachedAiHint' : 'cachedAiAssessment'])
+        .toMatchObject({ cacheKey: common.cacheKey });
+      await restored.practice.completeReviewAndNext();
+      await gradeCurrent(restored.practice);
+      expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(2);
+      expect(await historyLog.count()).toBe(2);
+    },
+  );
+
+  it('can grade the next part after storing an AI diagnosis for an earlier review', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await gradeCurrent(practice);
+    await practice.recordAiHelp('q1-a', {
+      version: 1,
+      cacheKey: `v2:${'d'.repeat(64)}`,
+      mode: 'diagnosis',
+      partId: 'q1-a',
+      attemptPhase: 'first',
+      taskVersion: 'diagnosis.v1',
+      promptVersion: 'ai-v2',
+      source: 'byo',
+      savedAt: new Date().toISOString(),
+    });
+    await practice.completeReviewAndNext();
+    await gradeCurrent(practice);
+
+    expect(practice.graded).toHaveLength(2);
+    expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(2);
+    expect(await historyLog.count()).toBe(2);
+  });
+
+  it('restores legacy AI help and grades while another part retains a manual grading pick', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await expect(practice.savePendingGrading('q1-a', 'good')).resolves.toBe(true);
+    practice.jumpTo(1);
+    await practice.finishSession();
+    const key = activeSessionKey();
+    const snapshot = (await storage.get<{ items: SessionItem[] }>(STORAGE.app, key))!;
+    snapshot.items[1]!.cachedAiHelp = {
+      version: 1,
+      cacheKey: `v2:${'e'.repeat(64)}`,
+      mode: 'hint',
+      hintLevel: 1,
+      partId: 'q2-a',
+      attemptPhase: 'first',
+      taskVersion: 'hint.v1',
+      promptVersion: 'ai-v2',
+      source: 'byo',
+      savedAt: new Date().toISOString(),
+    };
+    snapshot.items[1]!.deliveredHintLevel = 1;
+    await storage.set(STORAGE.app, key, snapshot);
+
+    const restored = await freshStores();
+    await expect(restored.practice.restoreSession()).resolves.toBe(true);
+    expect(restored.practice.current!.item.cachedAiHint).toMatchObject({
+      cacheKey: snapshot.items[1]!.cachedAiHelp.cacheKey,
+    });
+    await gradeCurrent(restored.practice);
+
+    expect(restored.practice.graded).toHaveLength(1);
+    expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(1);
+    expect((await storage.get<{ items: SessionItem[] }>(STORAGE.app, key))!.items[0]!.pendingGrading?.grading)
+      .toBe('good');
+  });
+
+  it('keeps a correct written answer private through reload and profile switching, then removes it on next', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q3', 'q1']);
+    const text = 'Meine richtige private Begründung';
+    const record = await practice.recordGraded({
+      part: practice.current!.part,
+      submission: { kind: 'open', text, selfAssessment: { awardedPoints: 1, overall: 'full' } },
+      result: { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
+      manualGrading: 'good',
+    });
+
+    const restored = await freshStores();
+    await expect(restored.practice.restoreSession()).resolves.toBe(true);
+    expect(restored.practice.currentReview?.clientAttemptId).toBe(record!.clientAttemptId);
+    expect(restored.practice.currentReview?.pendingSubmission).toMatchObject({ text });
+    expect(JSON.stringify(await archiveStore.load())).not.toContain(text);
+    expect(JSON.stringify(await historyLog.list())).not.toContain(text);
+    expect(JSON.stringify(await attemptOutbox.list(GUEST_ATTEMPT_OWNER))).not.toContain(text);
+
+    await restored.progress.activateUserProfile('profile-b');
+    useAuthStore().session = {
+      token: 'profile-b-token',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      user: { id: 'profile-b', username: 'profile-b' },
+    };
+    expect(restored.practice.sessionAccessible).toBe(false);
+    expect(restored.practice.currentReview).toBeUndefined();
+    await restored.progress.activateGuestProfile();
+    useAuthStore().session = undefined;
+    expect(restored.practice.currentReview?.pendingSubmission).toMatchObject({ text });
+
+    await restored.practice.completeReviewAndNext();
+    const snapshot = await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, activeSessionKey());
+    expect(snapshot!.graded[0]!.pendingSubmission).toBeUndefined();
+    expect(snapshot!.graded[0]!.reviewClosedAt).toBeDefined();
+    const reopened = await freshStores();
+    await expect(reopened.practice.restoreSession()).resolves.toBe(true);
+    expect(reopened.practice.current!.part.id).toBe('q1-a');
+    expect(JSON.stringify(await storage.get(STORAGE.app, activeSessionKey()))).not.toContain(text);
+    expect(await historyLog.count()).toBe(1);
+    expect(await attemptOutbox.list(GUEST_ATTEMPT_OWNER)).toHaveLength(1);
+  });
+
+  it('keeps an older correct attempt without an answer closed instead of inventing a review', async () => {
+    const { practice } = await freshStores();
+    await practice.startQuestions(['q1', 'q2']);
+    await gradeCurrent(practice);
+    const key = activeSessionKey();
+    const snapshot = (await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, key))!;
+    delete snapshot.graded[0]!.pendingSubmission;
+    await storage.set(STORAGE.app, key, snapshot);
+
+    const restored = await freshStores();
+    await expect(restored.practice.restoreSession()).resolves.toBe(true);
+    expect(restored.practice.current!.part.id).toBe('q2-a');
+    expect(restored.practice.graded[0]!.pendingSubmission).toBeUndefined();
+    expect(await historyLog.count()).toBe(1);
+  });
+
   it('keeps a higher paid hint paired with its locator when a slower window commits later', async () => {
     const firstPinia = createPinia();
     setActivePinia(firstPinia);
@@ -752,7 +941,7 @@ describe('practice session persistence', () => {
     expect(restored.progress.practicedParts).toBe(1);
   });
 
-  it('advances an in-memory paused session when the scored part was not continued', async () => {
+  it('advances an in-memory paused session after deliberately closing the review', async () => {
     const { practice } = await freshStores();
     await practice.startQuestions(['q1', 'q2']);
     const current = practice.current;
@@ -766,6 +955,7 @@ describe('practice session persistence', () => {
         maxPoints: 1,
       },
     });
+    await practice.closeCurrentReview();
     await practice.finishSession();
 
     await expect(practice.restoreSession()).resolves.toBe(true);

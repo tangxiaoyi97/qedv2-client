@@ -2,16 +2,8 @@
 import { useI18n } from '../i18n.js';
 const { t, formatNumber } = useI18n();
 
-/**
- * Practice flow, redesigned (user feedback #2/#3 + tsx layout reference):
- *
- *  - the question meta lives IN the content as a big title header (no banner)
- *    together with the ever-present grading menu + star (supplement §2/§3);
- *  - feedback (ResultPill), the Lösung toggle and the primary action sit in a
- *    STICKY BOTTOM BAR; the official solution expands UPWARD from it
- *    (SolutionSheet, collapsed by default, auto-opened for self-assessment);
- *  - PartPlayer runs chromeless: it reports state, the bar triggers it.
- */
+/** Answering and review have separate page surfaces; AI help owns a dialog.
+ * PartPlayer stays mounted when switching surfaces so its answer is preserved. */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import { Cloud, HardDrive } from 'lucide-vue-next';
@@ -41,6 +33,8 @@ import {
   AiAssessPanel,
   AiLearningPanel,
   PracticeBottomBar,
+  PracticeReviewPanel,
+  PracticeHelpDialog,
   PracticeQuestionHeader,
   PracticeSessionDrawer,
   PracticeSessionRail,
@@ -48,11 +42,9 @@ import {
   SessionProgressBar,
   type SessionItem,
   StateIcon,
-  VerdictCard,
   type PartPlayerCommand,
   type PartPlayerDraft,
   type PartPlayerState,
-  type SheetDetent,
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -94,15 +86,23 @@ const playerState = ref<PartPlayerState>({
 });
 const playerCommand = ref<PartPlayerCommand | null>(null);
 let playerCommandId = 0;
-/** Solution drawer position. „full" is reachable by swipe only (SolutionSheet). */
-const solutionDetent = ref<SheetDetent>('collapsed');
-const solutionOpen = computed(() => solutionDetent.value !== 'collapsed');
-/** Real sheet height, reported by SolutionSheet — never re-derived here. */
-const solutionHeight = ref(0);
+const reviewVisible = ref(false);
+const helpOpen = ref(false);
+const helpMode = ref<'learning' | 'assessment'>('learning');
+
+function selectPracticePanel(review: boolean, focusTab = false): void {
+  if (review && playerState.value.phase === 'answering') return;
+  reviewVisible.value = review;
+  if (focusTab) void nextTick(() => document.getElementById(review ? 'practice-review-tab' : 'practice-task-tab')?.focus());
+}
+function onPracticeTabKeydown(event: KeyboardEvent): void {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  selectPracticePanel(event.key === 'Home' ? false : event.key === 'End' ? true : !reviewVisible.value, true);
+}
 /**
- * The real top bar height (56px plus whatever the notch adds), handed to the
- * solution sheet so full screen stops exactly below it. A constant inside the
- * sheet could not see `env(safe-area-inset-top)`.
+ * The real top bar height keeps focused review content below the sticky
+ * header, including devices with a safe-area inset.
  */
 const topbarEl = ref<HTMLElement | null>(null);
 const topbarHeight = ref(0);
@@ -142,7 +142,6 @@ const selfAssessmentDraftDurable = ref(false);
 const selfAssessmentDraftError = ref<string | null>(null);
 const pendingSelfAssessmentDraft = ref<PartPlayerDraft | null>(null);
 let draftSaveSequence = 0;
-let selfAssessmentFocusPending = false;
 const answerDraftSaveBusy = ref(false);
 const answerDraftSaveError = ref<string | null>(null);
 const pendingAnswerDraft = ref<Submission | null>(null);
@@ -179,32 +178,20 @@ watch(
 );
 
 function onPlayerState(state: PartPlayerState): void {
-  const wasSelfAssessing = playerState.value.phase === 'self-assessing';
-  const wasReviewed = playerState.value.phase === 'reviewed';
+  const previousPhase = playerState.value.phase;
   playerState.value = state;
-  // Comparing against the official solution is the whole point of
-  // self-assessment — open the sheet for the user. Same for a wrong or
-  // half-right answer: the people who most need the solution shouldn't
-  // have to hunt for the toggle.
-  // Full screen, not half: judging means reading the solution AND working
-  // the criteria, both of which now live in the sheet. Half would put the
-  // controls below the fold on the one step that is nothing but controls.
-  if (state.phase === 'self-assessing' && !wasSelfAssessing) {
-    selfAssessmentFocusPending = true;
+  if (state.phase === previousPhase) return;
+  helpOpen.value = false;
+  reviewVisible.value = state.phase !== 'answering';
+  if (state.phase === 'self-assessing') {
     selfAssessmentDraftDurable.value = Boolean(practice.currentSelfAssessmentDraft);
-    solutionDetent.value = 'full';
   }
-  if (
-    state.phase === 'reviewed' &&
-    !wasReviewed &&
-    state.result != null
-  ) {
-    // Coming out of self-assessment the sheet is at full screen and the
-    // assessment block has just vanished from under the user; drop back to
-    // the reading height so what is left — the solution — is what they see.
-    solutionDetent.value =
-      wasSelfAssessing || state.result.verdict !== 'correct' ? 'default' : solutionDetent.value;
-  }
+  void nextTick(() => {
+    if (state.phase === 'answering') return;
+    const panel = document.getElementById('practice-review-panel');
+    panel?.focus({ preventScroll: true });
+    panel?.scrollIntoView?.({ block: 'start' });
+  });
 }
 
 async function onPlayerDraft(draft: PartPlayerDraft): Promise<void> {
@@ -224,13 +211,7 @@ async function onPlayerDraft(draft: PartPlayerDraft): Promise<void> {
     selfAssessmentDraftError.value = saved
       ? null
       : 'Die Selbstbewertung konnte nicht lokal gespeichert werden.';
-    if (saved && selfAssessmentFocusPending) {
-      selfAssessmentFocusPending = false;
-      await nextTick();
-      document.querySelector<HTMLElement>(
-        '.q-selfassess button:not([disabled]), .q-selfassess [tabindex="0"]',
-      )?.focus();
-    }
+
   }
 }
 
@@ -436,8 +417,6 @@ const learningLoading = ref(false);
 const learningError = ref<string | null>(null);
 const learningResponse = ref<AiExplainResult | null>(null);
 const authoredHint = ref<RichText | null>(null);
-const learningPanel = ref<{ focus: () => void } | null>(null);
-let learningInvoker: HTMLElement | null = null;
 const pendingHintLevel = ref<1 | 2 | 3 | null>(null);
 const learningRenewGeneration = ref<number | null>(null);
 const hintLevel = ref<0 | 1 | 2 | 3>(0);
@@ -454,8 +433,15 @@ const aiLearningAllowed = computed(() =>
   && practice.sessionIdentityDurable
   && ai.canLearn(current.value.question, current.value.part),
 );
-const learningStage = computed<'hint' | 'diagnosis'>(() => firstResult.value ? 'diagnosis' : 'hint');
+const learningMode = ref<'walkthrough' | 'diagnosis'>('walkthrough');
+const learningStage = computed<'hint' | 'diagnosis' | 'explanation'>(() => {
+  if (playerState.value.phase === 'answering') return 'hint';
+  const diagnosisReady = answerNeedsExplanation.value && Boolean(playerState.value.submittedText.trim());
+  if (diagnosisReady && ai.diagnosisOffered && (learningMode.value === 'diagnosis' || !ai.walkthroughOffered)) return 'diagnosis';
+  return 'explanation';
+});
 const learningFeatureEnabled = computed(() => {
+  if (learningStage.value === 'explanation') return ai.walkthroughOffered;
   const feature = learningStage.value === 'hint' ? 'hint' : 'diagnosis';
   return ai.available && ai.capabilities?.[feature] === true
     && ai.status?.features[feature] !== false;
@@ -467,16 +453,20 @@ watch(learningFeatureEnabled, (enabled) => {
   learningLoading.value = false;
   learningError.value = null;
   learningRenewGeneration.value = null;
+  if (!authoredHint.value && helpMode.value === 'learning') helpOpen.value = false;
 });
 const visibleLearningResponse = computed(() => learningFeatureEnabled.value ? learningResponse.value : null);
 const learningNeedsSetup = computed(() => aiLearningAllowed.value && ai.needsSourceSetup
-  && (learningStage.value === 'hint'
-    ? ai.hintOffered
-    : learningStage.value === 'diagnosis' && answerNeedsExplanation.value
-      && Boolean(playerState.value.submittedText.trim()) && ai.diagnosisOffered));
+  && (learningStage.value === 'hint' ? ai.hintOffered
+    : learningStage.value === 'explanation' ? ai.walkthroughOffered
+      : answerNeedsExplanation.value && Boolean(playerState.value.submittedText.trim()) && ai.diagnosisOffered));
 const learningIsAi = computed(() => learningFeatureEnabled.value && !authoredHint.value
   && (Boolean(visibleLearningResponse.value) || learningNeedsSetup.value
-    || (aiLearningAllowed.value && (learningStage.value === 'hint' ? ai.canHint : ai.canDiagnose))));
+    || (aiLearningAllowed.value && (learningStage.value === 'hint' ? ai.canHint
+      : learningStage.value === 'explanation' ? ai.canWalkthrough : ai.canDiagnose))));
+const canRequestWalkthrough = computed(() => playerState.value.phase !== 'answering'
+  && (playerState.value.phase !== 'self-assessing' || selfAssessmentDraftDurable.value)
+  && aiLearningAllowed.value && ai.canWalkthrough);
 const canRequestDiagnosis = computed(() =>
   learningStage.value === 'diagnosis'
   && answerNeedsExplanation.value
@@ -486,13 +476,13 @@ const canRequestDiagnosis = computed(() =>
 );
 const learningAvailable = computed(() => {
   if (commitBusy.value || commitError.value) return false;
-  if (playerState.value.phase === 'self-assessing') return false;
+  if (playerState.value.phase === 'self-assessing' && !selfAssessmentDraftDurable.value) return false;
   if (visibleLearningResponse.value) return true;
   if (learningStage.value === 'hint' && authoredHint.value) return true;
   if (learningStage.value === 'hint') {
     return bankHints.value.length > 0 || (aiLearningAllowed.value && ai.canHint) || learningNeedsSetup.value;
   }
-  return canRequestDiagnosis.value || learningNeedsSetup.value;
+  return (learningStage.value === 'explanation' ? canRequestWalkthrough.value : canRequestDiagnosis.value) || learningNeedsSetup.value;
 });
 const learningMarkdown = computed(() =>
   (visibleLearningResponse.value?.mode === 'hint' ? visibleLearningResponse.value.hint.markdown : undefined)
@@ -511,7 +501,7 @@ const canRequestHint = computed(() =>
 );
 
 function requestIdentity(
-  mode: 'hint' | 'diagnosis' | 'assess',
+  mode: 'hint' | 'diagnosis' | 'walkthrough' | 'assess',
 ): AiRequestContext | undefined {
   const interactionId = current.value?.item.learningInteractionId;
   const taskVersion = ai.capabilities?.taskVersions?.[mode];
@@ -585,8 +575,15 @@ async function requestDiagnosis(options: { newRequest?: boolean; expectedGenerat
   }, options);
 }
 
+async function requestWalkthrough(options: { newRequest?: boolean; expectedGeneration?: number } = {}): Promise<void> {
+  if (!current.value || !canRequestWalkthrough.value || learningLoading.value) return;
+  const identity = requestIdentity('walkthrough');
+  if (!identity) return;
+  await runLearningRequest({ mode: 'walkthrough', submitted: playerState.value.submittedText, identity }, options);
+}
+
 async function runLearningRequest(input: {
-  mode: 'hint' | 'diagnosis';
+  mode: 'hint' | 'diagnosis' | 'walkthrough';
   submitted: string;
   result?: GradeResult;
   hintLevel?: 1 | 2 | 3;
@@ -619,7 +616,8 @@ async function runLearningRequest(input: {
     const locator = ai.explainCacheLocator(requestInput, answer);
     if (locator) {
       const replayable = await ai.replayExplain(locator, part.part).catch(() => undefined);
-      if (replayable) {
+      if (replayable && !controller.signal.aborted && learningController === controller
+        && current.value?.part.id === partId && auth.session?.user.id === userId) {
         await practice.recordAiHelp(
           partId,
           locator,
@@ -627,6 +625,8 @@ async function runLearningRequest(input: {
         ).catch(() => undefined);
       }
     }
+    if (controller.signal.aborted || learningController !== controller
+      || current.value?.part.id !== partId || auth.session?.user.id !== userId) return;
     if (answer.mode === 'hint' && input.hintLevel) {
       hintLevel.value = input.hintLevel;
       pendingHintLevel.value = null;
@@ -638,14 +638,17 @@ async function runLearningRequest(input: {
   } catch (error) {
     if (
       !controller.signal.aborted
+      && learningController === controller
       && current.value?.part.id === partId
       && auth.session?.user.id === userId
-    ) learningError.value = explainMessage(error);
-    if (
-      (error as { code?: unknown })?.code === 'AI_REQUEST_ALREADY_COMPLETED'
-      && Number.isSafeInteger((error as { paidRequestGeneration?: unknown }).paidRequestGeneration)
     ) {
-      learningRenewGeneration.value = (error as { paidRequestGeneration: number }).paidRequestGeneration;
+      learningError.value = explainMessage(error);
+      if (
+        (error as { code?: unknown })?.code === 'AI_REQUEST_ALREADY_COMPLETED'
+        && Number.isSafeInteger((error as { paidRequestGeneration?: unknown }).paidRequestGeneration)
+      ) {
+        learningRenewGeneration.value = (error as { paidRequestGeneration: number }).paidRequestGeneration;
+      }
     }
   } finally {
     if (learningController === controller) {
@@ -660,24 +663,42 @@ function renewLearning(): void {
   if (expectedGeneration == null) return;
   const options = { newRequest: true, expectedGeneration } as const;
   if (learningStage.value === 'hint') void requestHint(options);
+  else if (learningStage.value === 'explanation') void requestWalkthrough(options);
   else void requestDiagnosis(options);
 }
 
+const learningEntryLabel = computed(() => t(learningStage.value === 'hint'
+  ? learningIsAi.value ? 'KI-Hinweis' : 'Hinweis' : 'Lösung erklären'));
+const helpTitle = computed(() => t(helpMode.value === 'assessment' ? 'KI-Vergleich'
+  : learningStage.value === 'hint' ? learningIsAi.value ? 'KI-Hinweis' : 'Hinweis' : 'KI-Erklärung'));
+
+function requestCurrentHelp(): void {
+  // Reopening a result or error never makes another paid request.
+  if (visibleLearningResponse.value || authoredHint.value || learningError.value || learningNeedsSetup.value) return;
+  if (learningStage.value === 'hint') void requestHint();
+  else if (learningStage.value === 'explanation') void requestWalkthrough();
+  else void requestDiagnosis();
+}
 async function toggleLearning(): Promise<void> {
-  const opening = solutionDetent.value === 'collapsed';
-  if (opening && document.activeElement instanceof HTMLElement) learningInvoker = document.activeElement;
-  solutionDetent.value = opening ? 'default' : 'collapsed';
-  if (opening) {
-    await nextTick();
-    learningPanel.value?.focus();
-  } else {
-    learningInvoker?.focus();
-  }
+  if (helpOpen.value) { dismissLearning(); return; }
+  helpMode.value = 'learning';
+  helpOpen.value = true;
+  requestCurrentHelp();
+}
+function openAssessmentHelp(): void {
+  helpMode.value = 'assessment';
+  helpOpen.value = true;
+  if (!assistResult.value && !assistError.value && !ai.needsSourceSetup) void askForAssessment();
+}
+async function selectLearningMode(mode: 'walkthrough' | 'diagnosis'): Promise<void> {
+  if (mode === learningMode.value) return;
+  learningMode.value = mode;
+  await nextTick();
+  requestCurrentHelp();
 }
 
 function dismissLearning(): void {
-  solutionDetent.value = 'collapsed';
-  void nextTick(() => learningInvoker?.focus());
+  helpOpen.value = false;
 }
 
 function closeLockedSession(): void {
@@ -734,6 +755,9 @@ watch(
   [() => current.value?.part.id, () => auth.session?.user.id],
   () => {
     const restored = practice.currentReview;
+    reviewVisible.value = Boolean(restored || practice.currentSelfAssessmentDraft);
+    helpOpen.value = false;
+    learningMode.value = 'walkthrough';
     assistController?.abort();
     assistController = undefined;
     learningController?.abort();
@@ -746,6 +770,7 @@ watch(
     authoredHint.value = null;
     pendingHintLevel.value = null;
     learningError.value = null;
+    learningRenewGeneration.value = null;
     learningLoading.value = false;
     hintLevel.value = restored?.hintLevel ?? current.value?.item.deliveredHintLevel ?? 0;
     firstAttemptId.value = restored?.clientAttemptId ?? null;
@@ -837,6 +862,7 @@ const cachedHelpForStage = computed(() => {
     return item.cachedAiHint
       ?? (item.cachedAiHelp?.mode === 'hint' ? item.cachedAiHelp : undefined);
   }
+  if (learningStage.value === 'explanation') return undefined;
   return item.cachedAiDiagnosis
     ?? (item.cachedAiHelp?.mode === 'diagnosis' ? item.cachedAiHelp : undefined);
 });
@@ -851,8 +877,7 @@ watch(learningStage, (stage, previousStage) => {
     pendingHintLevel.value = null;
   }
   if (stage !== 'hint') authoredHint.value = null;
-  const mode = learningResponse.value?.mode;
-  if ((mode === 'hint' && stage !== 'hint') || (mode === 'diagnosis' && stage === 'hint')) {
+  if (stage !== previousStage) {
     learningResponse.value = null;
   }
 });
@@ -871,7 +896,7 @@ watch(
     if (!marker || !partId || marker.partId !== partId || marker.attemptPhase !== 'first' || learningResponse.value) return;
     if (
       (marker.mode === 'hint' && learningStage.value !== 'hint')
-      || (marker.mode === 'diagnosis' && learningStage.value === 'hint')
+      || (marker.mode === 'diagnosis' && learningStage.value !== 'diagnosis')
     ) return;
     const cached = await ai.replayExplain(marker, current.value!.part).catch(() => undefined);
     if (
@@ -1001,36 +1026,6 @@ function onSelfGradingSelect(grading: Grading): void {
 
 function onSelfAssessmentUpdate(value: SelfAssessment): void {
   playerCommand.value = { id: ++playerCommandId, type: 'set-assessment', assessment: value };
-}
-
-/* The verdict lands in the content flow (VerdictCard below the answer
- * control) — scroll it into view so the user actually SEES the feedback
- * instead of discovering it below the fold. */
-const verdictAnchor = ref<HTMLElement | null>(null);
-watch(
-  () => playerState.value.phase,
-  (phase) => {
-    if (phase !== 'reviewed') return;
-    // Wait out the content-padding transition that the auto-opened
-    // SolutionSheet triggers (0.3s) — scrolling before the layout settles
-    // lands the card behind the sheet again.
-    window.setTimeout(() => {
-      verdictAnchor.value?.style.setProperty(
-        'scroll-margin-bottom',
-        `${Math.round(solutionHeight.value) + 90}px`,
-      );
-      verdictAnchor.value?.scrollIntoView({
-        block: 'nearest',
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-      });
-    }, 340);
-  },
-);
-
-function openSolutionFromVerdict(): void {
-  // The sheet is part of the fixed bottom bar — just open it, no scroll
-  // (scrolling a fixed element is meaningless).
-  solutionDetent.value = 'default';
 }
 
 /* --- grading menu + star (ever-present, supplement §1.2/§2) --- */
@@ -1211,7 +1206,8 @@ watch(() => route.query.prepared, () => {
 watch(
   () => practice.index,
   () => {
-    solutionDetent.value = 'collapsed';
+    reviewVisible.value = false;
+    helpOpen.value = false;
     mobileRailOpen.value = false;
     exitArmed.value = false;
     playerCommand.value = null;
@@ -1400,12 +1396,7 @@ const multiPart = computed(() => (current.value?.question.parts.length ?? 0) > 1
  *  interval/expression all render per-option/per-blank ok·err marks plus
  *  the expected answer — a big card below would just repeat them. `open`
  *  parts (self-assessed) have no inline verdict, so they keep the card. */
-const showVerdictCard = computed(
-  () =>
-    playerState.value.phase === 'reviewed' &&
-    playerState.value.result != null &&
-    current.value?.part.answer?.kind === 'open',
-);
+
 const summaryStats = computed(() => practice.summary);
 
 /** Score as a percentage for the result meter (0 max points → empty, not NaN). */
@@ -1541,7 +1532,6 @@ const currentCompetencyCodes = computed(() =>
     class="practice q-app"
     :class="{ 'practice--no-rail': !showProgramRail }"
     :style="{
-      '--practice-sheet-height': `${Math.round(solutionHeight)}px`,
       ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
     }"
   >
@@ -1756,7 +1746,7 @@ const currentCompetencyCodes = computed(() =>
             </div>
           </Teleport>
 
-          <div class="practice__content" :class="{ 'practice__content--sheet-open': solutionOpen }">
+          <div class="practice__content">
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
@@ -1768,6 +1758,16 @@ const currentCompetencyCodes = computed(() =>
               @star-toggle="onStarToggle"
             />
 
+            <div class="practice__steps" role="tablist" :aria-label="t('Bearbeitungsschritte')" @keydown="onPracticeTabKeydown">
+              <button id="practice-task-tab" type="button" role="tab" aria-controls="practice-task-panel" :aria-selected="!reviewVisible" :tabindex="reviewVisible ? -1 : 0" @click="selectPracticePanel(false)">
+                <span aria-hidden="true">1</span>{{ t('Aufgabe') }}
+              </button>
+              <button id="practice-review-tab" type="button" role="tab" aria-controls="practice-review-panel" :aria-selected="reviewVisible" :tabindex="reviewVisible ? 0 : -1" :disabled="playerState.phase === 'answering'" @click="selectPracticePanel(true)">
+                <span aria-hidden="true">2</span>{{ t('Lösung & Bewertung') }}
+              </button>
+            </div>
+
+            <section v-show="!reviewVisible" id="practice-task-panel" role="tabpanel" aria-labelledby="practice-task-tab">
             <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
               <RichTextView :nodes="current.question.prompt" />
             </div>
@@ -1793,17 +1793,23 @@ const currentCompetencyCodes = computed(() =>
               @answer-draft="onAnswerDraft"
             />
 
-            <!-- The authoritative grade feedback lives HERE, in the scroll
-                 flow under the answer — but only for kinds without inline
-                 verdict marks (open); everything else feeds back in place. -->
-            <div v-if="showVerdictCard" ref="verdictAnchor">
-              <VerdictCard
-                :key="current.part.id"
-                :result="playerState.result!"
-                class="practice__verdict"
-                @view-solution="openSolutionFromVerdict"
+            </section>
+
+            <section v-if="playerState.phase !== 'answering'" v-show="reviewVisible" id="practice-review-panel" class="practice__review-panel" role="tabpanel" aria-labelledby="practice-review-tab" tabindex="-1">
+              <PracticeReviewPanel
+                :state="playerState"
+                :submission-unavailable="Boolean(practice.currentReview && !practice.currentReview.pendingSubmission)"
+                :solution="current.part.solution"
+                :scoring="current.part.scoring"
+                :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
+                :ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
+                :disabled="commitBusy"
+                :assist-available="showAssist"
+                @assist="openAssessmentHelp"
+                @assessment-update="onSelfAssessmentUpdate"
+                @grading-select="onSelfGradingSelect"
               />
-            </div>
+            </section>
 
             <div
               v-if="!showProgramRail"
@@ -1821,9 +1827,7 @@ const currentCompetencyCodes = computed(() =>
         </div>
 
         <PracticeBottomBar
-          v-model:solution-detent="solutionDetent"
-          @update:solution-height="solutionHeight = $event"
-          :top-reserve="topbarHeight"
+          solution-detent="collapsed"
           :state="playerState"
           :answer-preview="playerState.answerPreview"
           :scoring="current.part.scoring"
@@ -1833,16 +1837,26 @@ const currentCompetencyCodes = computed(() =>
           :grading-disabled="gradingOverrideDisabled"
           :primary-label="t(primaryLabel)"
           :primary-disabled="primaryDisabled"
+          inline-review
           :learning-available="learningAvailable"
+          :learning-open="helpOpen"
+          :learning-label="learningEntryLabel"
           :solution-ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
           @assessment-update="onSelfAssessmentUpdate"
           @self-grading-select="onSelfGradingSelect"
           @grading-select="onGradingSelect"
           @primary="primaryAction"
           @learning-toggle="toggleLearning"
+        />
+
+        <PracticeHelpDialog
+          v-if="helpOpen"
+          :title="helpTitle"
+          :context="current.question.title"
+          :return-label="t(playerState.phase === 'answering' ? 'Zurück zur Aufgabe' : 'Zurück zur Bewertung')"
+          @close="dismissLearning"
         >
-          <!-- AI comparison is self-first, feature-gated and bank-authorized. -->
-          <template v-if="showAssist" #assist>
+          <template v-if="helpMode === 'assessment'">
             <AiAssessPanel
               :criteria="assist.criteria"
               :overall="assist.overall"
@@ -1863,16 +1877,13 @@ const currentCompetencyCodes = computed(() =>
               @setup="openAiSettings"
             />
           </template>
-
-          <!--
-            All of the AI lives in the drawer. On a phone that is the only
-            surface tall enough for a conversation, and splitting it between
-            the drawer and the scrolling question meant the two halves of the
-            same feature never appeared together.
-          -->
-          <template v-if="learningAvailable" #explain>
+          <template v-else>
+            <div v-if="playerState.phase !== 'answering' && answerNeedsExplanation && Boolean(playerState.submittedText.trim()) && aiLearningAllowed && ai.canDiagnose && ai.canWalkthrough" class="practice__help-modes" role="group" :aria-label="t('Art der Erklärung')">
+              <button type="button" :aria-pressed="learningMode === 'walkthrough'" @click="selectLearningMode('walkthrough')">{{ t('Lösungsweg') }}</button>
+              <button type="button" :aria-pressed="learningMode === 'diagnosis'" @click="selectLearningMode('diagnosis')">{{ t('Mein Fehler') }}</button>
+            </div>
             <AiLearningPanel
-              ref="learningPanel"
+              hide-header
               :stage="learningStage"
               :hint-level="hintLevel || undefined"
               :markdown="learningMarkdown"
@@ -1884,19 +1895,22 @@ const currentCompetencyCodes = computed(() =>
               :storage-warning="learningIsAi && ai.cacheWarning ? t(ai.cacheWarning) : undefined"
               :can-renew="learningFeatureEnabled && learningRenewGeneration != null"
               :ai-generated="learningIsAi"
-              :needs-setup="learningNeedsSetup && !visibleLearningResponse"
+              :needs-setup="learningNeedsSetup"
               :can-request-hint="canRequestHint"
+              :can-request-explanation="canRequestWalkthrough"
               :can-request-diagnosis="canRequestDiagnosis && !visibleLearningResponse"
               :model="visibleLearningResponse?.model"
               :source="visibleLearningResponse?.source"
               @request-hint="requestHint"
+              @request-explanation="requestWalkthrough"
               @request-diagnosis="requestDiagnosis"
               @renew="renewLearning"
               @setup="openAiSettings"
               @dismiss="dismissLearning"
             />
           </template>
-        </PracticeBottomBar>
+        </PracticeHelpDialog>
+
 
         <div v-if="practice.warning" class="practice__warning" role="alert">{{ t(practice.warning) }}</div>
         <div v-if="commitError || selfAssessmentDraftError || pendingGradingSaveError || answerDraftSaveError" class="practice__warning" role="alert">
@@ -1920,6 +1934,20 @@ const currentCompetencyCodes = computed(() =>
 </template>
 
 <style scoped>
+.practice__help-modes { display: flex; gap: 8px; margin: 0 0 20px; }
+.practice__help-modes button { font: inherit; font-size: 12px; font-weight: 650; border: 1px solid transparent; border-radius: 8px; background: var(--q-panel); color: var(--q-mut); padding: 10px 14px; min-height: 44px; cursor: pointer; }
+.practice__help-modes button[aria-pressed='true'] { color: var(--q-accent-strong); background: var(--q-accent-bg); border-color: var(--q-accent); }
+.practice__help-modes button:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 3px; }
+
+.practice__steps { display: flex; gap: 20px; margin: 24px 0 28px; border-bottom: 1px solid var(--q-border-soft); }
+.practice__steps button { display: inline-flex; align-items: center; gap: 8px; padding: 12px 0; min-height: 48px; border: none; border-bottom: 2px solid transparent; background: none; font: inherit; font-size: 13px; font-weight: 650; color: var(--q-faint); cursor: pointer; }
+.practice__steps button[aria-selected='true'] { border-bottom-color: var(--q-accent); color: var(--q-accent-strong); }
+.practice__steps button:disabled { opacity: 0.55; cursor: default; }
+.practice__steps button:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 4px; border-radius: 3px; }
+.practice__steps button span { display: inline-grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; font-size: 11px; background: var(--q-panel); }
+.practice__steps button[aria-selected='true'] span { background: var(--q-accent-bg); }
+.practice__review-panel { scroll-margin-top: calc(var(--practice-topbar-height, 56px) + 18px); outline: none; }
+
 .practice {
   --practice-rail-width: var(--q-sidebar-width);
   min-height: 100vh;
@@ -2123,39 +2151,13 @@ const currentCompetencyCodes = computed(() =>
 .practice__content {
   /* The keyboard inset is added to the bottom reserve, not just to the bar:
    * once the bar lifts, the answer field under it needs the same room. */
-  padding: 26px 28px calc(210px + var(--q-keyboard-inset, 0px));
+  padding: 26px 28px calc(132px + var(--q-keyboard-inset, 0px));
   max-width: 860px;
   margin: 0 auto;
   width: 100%;
   flex: 1;
   min-width: 0;
 }
-/* SolutionSheet is fixed above the bar — while it's open, the content must
- * clear the sheet plus the bar (~110px) or feedback hides behind it. The
- * height comes from the sheet itself (--practice-sheet-height); re-deriving
- * it here went stale the moment the detent became content-measured.
- * (doubled class beats the ≤640px padding override below regardless of
- * source order) */
-.practice__content.practice__content--sheet-open {
-  padding-bottom: calc(
-    var(--practice-sheet-height, 0px) + 110px + var(--q-keyboard-inset, 0px)
-  );
-}
-.practice__ai-panels {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 4px;
-}
-.practice__ai-panels--active {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.practice__verdict {
-  margin-top: 16px;
-  scroll-margin-bottom: 140px; /* keep clear of the fixed bottom bar */
-}
-
 .practice__qprompt {
   font-size: 15.5px;
   line-height: 1.65;
@@ -2376,7 +2378,7 @@ const currentCompetencyCodes = computed(() =>
 
 @media (max-width: 640px) {
   .practice__content {
-    padding: 18px 16px calc(300px + var(--q-keyboard-inset, 0px));
+    padding: 18px 16px calc(152px + var(--q-keyboard-inset, 0px));
   }
 }
 

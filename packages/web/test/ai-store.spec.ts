@@ -312,9 +312,11 @@ describe('AI store release guards', () => {
     await vi.waitFor(() => expect(ai.profilePreferencesReady && ai.status !== null).toBe(true));
     expect(ai.hintOffered).toBe(true);
     expect(ai.diagnosisOffered).toBe(true);
+    expect(ai.walkthroughOffered).toBe(true);
     expect(ai.assessmentOffered(part, question)).toBe(true);
     expect(ai.canHint).toBe(entry.ready);
     expect(ai.canDiagnose).toBe(entry.ready);
+    expect(ai.canWalkthrough).toBe(entry.ready);
     expect(ai.canAssess(part, question)).toBe(entry.ready);
     expect(ai.needsSourceSetup).toBe(entry.setup);
     if (entry.ready && !entry.ownKey) {
@@ -322,6 +324,47 @@ describe('AI store release guards', () => {
       const paid = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/me/ai-explain'));
       expect(JSON.parse(String(paid?.[1]?.body)).preferPool).toBe(true);
     }
+  });
+
+  it('requests and replays a solution walkthrough before the learner chooses a score', async () => {
+    const { ai, app } = setup();
+    await vi.waitFor(() => expect(ai.canWalkthrough).toBe(true));
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).endsWith('/me/ai/status')) return json(status());
+      const request = JSON.parse(String(init?.body));
+      return json({
+        markdown: 'Erklärung', mode: 'walkthrough', model: 'gpt-test', source: 'byo',
+        promptVersion: 'ai-v2', taskVersion: request.taskVersion,
+        clientRequestId: request.clientRequestId, interactionId: request.interactionId,
+        accounting: 'settled',
+      });
+    });
+    const input = {
+      question, part, submitted: explainInput.submitted, mode: 'walkthrough' as const,
+      identity: { ...learningIdentity, taskVersion: 'walkthrough.v1' },
+    };
+    const first = await ai.explain(input);
+    expect(first.markdown).toBe('Erklärung');
+    await expect(ai.explain(input)).resolves.toMatchObject({
+      markdown: first.markdown, mode: 'walkthrough', taskVersion: 'walkthrough.v1', cached: true,
+    });
+    const requests = vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/me/ai-explain'));
+    expect(requests).toHaveLength(1);
+    const body = JSON.parse(String(requests[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      mode: 'walkthrough', taskVersion: 'walkthrough.v1', submitted: explainInput.submitted,
+      interactionId: learningIdentity.interactionId,
+    });
+    expect(body).not.toHaveProperty('verdict');
+    expect(body).not.toHaveProperty('awardedPoints');
+    expect(body.clientRequestId).toMatch(/^[0-9a-f-]{36}$/);
+
+    const { walkthrough: _walkthrough, ...taskVersions } = capabilities.taskVersions!;
+    app.serverInfo = { ...app.serverInfo!, ai: { ...capabilities, taskVersions } };
+    expect(ai.canWalkthrough).toBe(false);
+    expect(ai.walkthroughOffered).toBe(false);
+    expect(ai.canExplain).toBe(true);
+    await expect(ai.explain(input)).rejects.toThrow('nicht verfügbar');
   });
 
   it('permits an explicitly selected usable BYO route even when the default active route is none', async () => {

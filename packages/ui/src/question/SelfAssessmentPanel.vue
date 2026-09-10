@@ -25,6 +25,8 @@ const props = defineProps<{
   scoring?: Scoring | null;
   rubric?: RichText | null;
   maxPoints: number;
+  /** Null distinguishes an untouched score from an explicit zero. */
+  selectedPoints?: number | null;
   modelValue: SelfAssessment;
   scoreOptions?: SelfAssessmentScoreOption[];
   disabled?: boolean;
@@ -178,7 +180,7 @@ function scoreTabIndex(index: number): 0 | -1 {
 
     <div class="q-selfassess__total">
       <span>{{ t('Deine Punkte') }}</span>
-      <b>{{ formatScore(points) }} / {{ formatScore(maxPoints) }}</b>
+      <b>{{ selectedPoints === null ? '–' : formatScore(selectedPoints ?? points) }} / {{ formatScore(maxPoints) }}</b>
     </div>
   </div>
 </template>

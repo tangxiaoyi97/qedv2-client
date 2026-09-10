@@ -14,7 +14,9 @@ import RichTextView from '../shared/RichTextView.vue';
 const { t } = useI18n();
 
 const props = defineProps<{
-  stage: 'hint' | 'diagnosis';
+  stage: 'hint' | 'diagnosis' | 'explanation';
+  /** The enclosing dialog already supplies its title and close action. */
+  hideHeader?: boolean;
   hintLevel?: 1 | 2 | 3;
   markdown?: string;
   authoredHint?: RichText;
@@ -27,6 +29,7 @@ const props = defineProps<{
   aiGenerated?: boolean;
   canRequestHint?: boolean;
   canRequestDiagnosis?: boolean;
+  canRequestExplanation?: boolean;
   needsSetup?: boolean;
   model?: string;
   source?: string;
@@ -35,6 +38,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   requestHint: [];
   requestDiagnosis: [];
+  requestExplanation: [];
   renew: [];
   dismiss: [];
   setup: [];
@@ -75,7 +79,7 @@ defineExpose({
     aria-live="polite"
     :aria-busy="loading ? 'true' : 'false'"
   >
-    <div class="q-learning__head">
+    <div class="q-learning__head" :class="{ 'q-learning__head--hidden': hideHeader }">
       <Lightbulb :size="18" aria-hidden="true" />
       <h3 :id="titleId">{{ panelTitle }}</h3>
       <AiBadge v-if="aiGenerated && hasContent" size="sm" />
@@ -96,9 +100,9 @@ defineExpose({
         {{ t('Neu anfragen') }}
       </QButton>
       <QButton
-        v-else-if="stage === 'hint' ? canRequestHint : canRequestDiagnosis"
+        v-else-if="stage === 'hint' ? canRequestHint : stage === 'explanation' ? canRequestExplanation : canRequestDiagnosis"
         variant="secondary"
-        @click="stage === 'hint' ? emit('requestHint') : emit('requestDiagnosis')"
+        @click="stage === 'hint' ? emit('requestHint') : stage === 'explanation' ? emit('requestExplanation') : emit('requestDiagnosis')"
       >
         {{ t('Erneut versuchen') }}
       </QButton>
@@ -108,6 +112,7 @@ defineExpose({
     </div>
 
     <template v-else>
+      <p v-if="!hasContent" class="q-learning__intro">{{ t(needsSetup ? 'Verbinde eine KI, um Hilfe zu dieser Aufgabe zu erhalten.' : stage === 'hint' ? 'Ein Hinweis hilft dir beim nächsten eigenen Schritt.' : stage === 'explanation' ? 'Der Lösungsweg wird Schritt für Schritt erklärt.' : 'Finde heraus, an welcher Stelle dein Lösungsweg abweicht.') }}</p>
       <div v-if="stage === 'hint' && (authoredHint?.length || markdown)" class="q-learning__content q-reveal">
         <span class="q-learning__eyebrow">{{ t('Hinweis {level}', { level: hintLevel ?? 1 }) }}</span>
         <RichTextView v-if="authoredHint?.length" :nodes="authoredHint" />
@@ -130,7 +135,7 @@ defineExpose({
         </p>
       </div>
 
-      <div v-else-if="stage === 'diagnosis' && markdown" class="q-learning__content q-reveal">
+      <div v-else-if="stage !== 'hint' && markdown" class="q-learning__content q-reveal">
         <span class="q-learning__eyebrow">{{ t('Erklärung') }}</span>
         <MarkdownView :source="markdown" />
       </div>
@@ -148,11 +153,11 @@ defineExpose({
           {{ t(hasContent ? 'Nächster Hinweis' : 'Hinweis 1') }}
         </QButton>
         <QButton
-          v-if="stage === 'diagnosis' && canRequestDiagnosis && !diagnosis && !markdown"
+          v-if="stage !== 'hint' && (stage === 'explanation' ? canRequestExplanation : canRequestDiagnosis) && !diagnosis && !markdown"
           variant="secondary"
-          @click="emit('requestDiagnosis')"
+          @click="stage === 'explanation' ? emit('requestExplanation') : emit('requestDiagnosis')"
         >
-          {{ t('Fehler ansehen') }}
+          {{ t('Erklärung anfordern') }}
         </QButton>
       </div>
 
@@ -166,6 +171,10 @@ defineExpose({
 </template>
 
 <style scoped>
+.q-learning__head--hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.q-learning__head--hidden :deep(button) { display: none; }
+.q-learning__intro { margin: 0; color: var(--q-mut); font-size: 14px; line-height: 1.65; }
+
 .q-learning {
   display: flex;
   flex-direction: column;
@@ -223,10 +232,7 @@ defineExpose({
   align-items: flex-start;
   gap: 8px;
   margin: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
-  background: var(--q-panel);
+  padding: 10px 0;
   color: var(--q-ink);
   font-weight: 650;
 }

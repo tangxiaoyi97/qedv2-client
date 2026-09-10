@@ -28,7 +28,7 @@ vi.mock('@qed2/ui', async (importOriginal) => ({
 const caps: AiCapabilities = {
   explain: true, assess: true, hint: true, diagnosis: true, promptVersion: 'v2',
   providers: ['openai'], poolAvailable: true, idempotencyWindowDays: 400,
-  taskVersions: { hint: 'hint.v1', diagnosis: 'diagnosis.v1', assess: 'assess.v1', answer: 'answer.v1' },
+  taskVersions: { walkthrough: 'walkthrough.v1', hint: 'hint.v1', diagnosis: 'diagnosis.v1', assess: 'assess.v1', answer: 'answer.v1' },
 };
 const ready: AiStatus = {
   byo: { configured: false }, pool: { eligible: true, provider: 'openai' },
@@ -93,6 +93,11 @@ async function mountPractice(status = ready, options: { enabled?: boolean; logge
     }],
   });
   const ai = useAiStore();
+  vi.spyOn(ai, 'explain').mockResolvedValue({
+    mode: 'hint', markdown: 'Ein hilfreicher Hinweis',
+    hint: { level: 1, markdown: 'Ein hilfreicher Hinweis', nextAction: 'Denke weiter', advisoryOnly: true },
+    model: 'test-model', promptVersion: 'v2', source: 'pool', taskVersion: 'hint.v1', cached: true,
+  });
   if (options.cached) vi.spyOn(ai, 'replayExplain').mockResolvedValue({
     mode: 'hint', markdown: 'Gespeicherte KI-Antwort',
     hint: { level: 1, markdown: 'Gespeicherte KI-Antwort', nextAction: 'Denke weiter', advisoryOnly: true },
@@ -109,7 +114,7 @@ async function mountPractice(status = ready, options: { enabled?: boolean; logge
   view.mount(host);
   unmount = () => view.unmount();
   await settle();
-  return { host, ai, app, router };
+  return { host: document.body, ai, app, router };
 }
 
 describe('practice AI entries', () => {
@@ -138,12 +143,12 @@ describe('practice AI entries', () => {
     expect(host.querySelector('.practice-bar__learning-toggle')).not.toBeNull();
     host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
     await settle();
-    expect(host.textContent).toContain('Hinweis 1');
+    await vi.waitFor(() => expect(host.textContent).toContain('Hinweis 1'));
     expect(host.textContent).not.toContain('KI einrichten');
     ai.status = { ...ready, active: 'none', allowedSources: ['byo'], pool: { eligible: false } };
     await settle();
     expect(host.textContent).toContain('KI einrichten');
-    expect(host.textContent).not.toContain('Hinweis 1');
+    expect(host.querySelector('.q-learning__actions')?.textContent).not.toContain('Nächster Hinweis');
     app.serverInfo = { ...app.serverInfo!, ai: { ...caps, hint: false, explain: false, diagnosis: false } };
     await settle();
     expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
@@ -185,11 +190,10 @@ describe('practice AI entries', () => {
     });
     player.emit!(state('incorrect'));
     await settle();
-    expect(host.querySelector('.practice-bar__learning-toggle')?.textContent).toContain('Lernhilfe');
-    const ask = [...host.querySelectorAll<HTMLButtonElement>('.q-learning__actions button')]
-      .find((entry) => entry.textContent?.includes('Fehler ansehen'));
-    expect(ask).toBeDefined();
-    ask!.click();
+    expect(host.querySelector('.practice-bar__learning-toggle')?.textContent).toContain('Lösung erklären');
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    [...host.querySelectorAll<HTMLButtonElement>('.practice__help-modes button')].find(button => button.textContent === 'Mein Fehler')!.click();
     await settle();
     expect(explain).toHaveBeenCalledWith(expect.objectContaining({
       mode: 'diagnosis', submitted: 'x = 3',
@@ -210,13 +214,16 @@ describe('practice AI entries', () => {
     expect(host.textContent).not.toMatch(/Korrektur|korrigieren/);
   });
 
-  it('has no empty explanation entry when the saved original answer is unavailable', async () => {
+  it('still explains the official solution when the original answer is unavailable, without inventing a diagnosis', async () => {
     const { host, ai } = await mountPractice();
     await vi.waitFor(() => expect(ai.canDiagnose).toBe(true));
     player.emit!({ ...state('incorrect'), submittedText: '' });
     await settle();
-    expect(host.querySelector('.practice-bar__learning-toggle')).toBeNull();
-    expect(host.querySelector('.q-learning')).toBeNull();
+    expect(host.querySelector('.practice-bar__learning-toggle')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(host.querySelector('.practice__help-modes')).toBeNull();
+    expect(ai.explain).toHaveBeenCalledWith(expect.objectContaining({ mode: 'walkthrough', submitted: '' }), expect.any(AbortSignal), {});
   });
 
   it('opens the precise setup section without changing the practice or choosing a payer', async () => {
@@ -237,4 +244,133 @@ describe('practice AI entries', () => {
     expect(usePracticeStore().contentId).toBe('a'.repeat(40));
     expect(choose).not.toHaveBeenCalled();
   });
+
+  it('opens the review page while preserving the mounted question and keyboard tab navigation', async () => {
+    const { host } = await mountPractice();
+    const task = host.querySelector<HTMLElement>('#practice-task-panel')!;
+    const mountedPlayer = host.querySelector('.test-player');
+    expect(host.querySelector<HTMLButtonElement>('#practice-review-tab')!.disabled).toBe(true);
+    player.emit!(state('incorrect'));
+    await settle();
+    expect(task.style.display).toBe('none');
+    expect(host.querySelector('#practice-review-tab')!.getAttribute('aria-selected')).toBe('true');
+    expect(host.querySelector('.practice-review__answer')?.textContent).toContain('x = 3');
+    host.querySelector<HTMLButtonElement>('#practice-task-tab')!.click();
+    await settle();
+    expect(task.style.display).not.toBe('none');
+    expect(host.querySelector('.test-player')).toBe(mountedPlayer);
+    host.querySelector('#practice-task-tab')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await settle();
+    expect(document.activeElement?.id).toBe('practice-review-tab');
+    expect(task.style.display).toBe('none');
+    expect(host.querySelector('.q-ssheet')).toBeNull();
+  });
+
+  it('explains an unscored submitted answer without selecting or submitting a grade', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canWalkthrough).toBe(true));
+    const practice = usePracticeStore();
+    const record = vi.spyOn(practice, 'recordGraded');
+    const draft = { version: 1 as const, revision: 1, partId: 'q1-a', savedAt: new Date().toISOString(), submission: { kind: 'open' as const, text: 'Mein Ansatz', selfAssessment: {} }, assessment: {}, selectedPoints: null, grading: null, indeterminate: false, indeterminateMax: 1 };
+    vi.spyOn(practice, 'currentSelfAssessmentDraft', 'get').mockReturnValue(draft);
+    const explain = vi.mocked(ai.explain).mockResolvedValue({ mode: 'walkthrough', markdown: 'Schritt für Schritt', model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'walkthrough.v1', cached: true });
+    player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Mein Ansatz', selfAssessment: { maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }], selectedPoints: null, grading: null, assessment: {} } });
+    await settle();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledWith(expect.objectContaining({ mode: 'walkthrough', submitted: 'Mein Ansatz', identity: expect.objectContaining({ taskVersion: 'walkthrough.v1' }) }), expect.any(AbortSignal), {});
+    expect(explain.mock.calls[0]![0]).not.toHaveProperty('result');
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Schritt für Schritt');
+    expect(record).not.toHaveBeenCalled();
+    expect(host.querySelector('.q-selfassess [aria-checked="true"]')).toBeNull();
+  });
+
+  it('offers a walkthrough after a correct answer and reopens its result without requesting again', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canWalkthrough).toBe(true));
+    const explain = vi.mocked(ai.explain).mockResolvedValue({ mode: 'walkthrough', markdown: 'So funktioniert der Lösungsweg.', model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'walkthrough.v1', cached: true });
+    player.emit!(state('correct'));
+    await settle();
+    const entry = host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!;
+    entry.focus(); entry.click();
+    await settle();
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain('So funktioniert der Lösungsweg.');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(entry);
+    entry.click();
+    await settle();
+    expect(explain).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains a failed explanation for an explicit retry while allowing the dialog to close', async () => {
+    const { host, ai } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canWalkthrough).toBe(true));
+    const explain = vi.mocked(ai.explain).mockRejectedValueOnce(new Error('Network error')).mockResolvedValue({ mode: 'walkthrough', markdown: 'Jetzt verfügbar.', model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'walkthrough.v1', cached: true });
+    player.emit!(state('correct'));
+    await settle();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(host.querySelector('.q-learning__error')).not.toBeNull();
+    host.querySelector<HTMLButtonElement>('.practice-help__footer button')!.click();
+    await settle();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledTimes(1);
+    host.querySelector<HTMLButtonElement>('.q-learning__error button')!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Jetzt verfügbar.');
+  });
+
+
+  it('keeps diagnosis reachable when the server only enables feedback on mistakes', async () => {
+    const { host, ai, app } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canDiagnose).toBe(true));
+    app.serverInfo = { ...app.serverInfo!, ai: { ...caps, explain: false } };
+    ai.status = { ...ready, features: { ...ready.features, explain: false } };
+    await settle();
+    expect(ai.canWalkthrough).toBe(false);
+    expect(ai.canDiagnose).toBe(true);
+    const explain = vi.mocked(ai.explain).mockResolvedValue({
+      mode: 'diagnosis', markdown: 'Prüfe die Umformung.',
+      diagnosis: { errorCode: 'algebra', reason: 'Das Vorzeichen stimmt nicht.', correctionPrompt: 'Achte auf das Vorzeichen.', advisoryOnly: true, evidence: '', evidenceVerified: false, confidence: 0.8 },
+      model: 'test', promptVersion: 'v2', taskVersion: 'diagnosis.v1', source: 'pool', cached: true,
+    });
+    player.emit!(state('incorrect'));
+    await settle();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    expect(explain).toHaveBeenCalledWith(expect.objectContaining({ mode: 'diagnosis' }), expect.any(AbortSignal), {});
+    await vi.waitFor(() => expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Das Vorzeichen stimmt nicht.'));
+  });
+
+
+  it('ignores a superseded paid-request error when changing explanation type', async () => {
+    const { host, ai, app } = await mountPractice();
+    await vi.waitFor(() => expect(ai.canWalkthrough).toBe(true));
+    let rejectOld!: (error: Error) => void;
+    const explain = vi.mocked(ai.explain)
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectOld = reject; }))
+      .mockRejectedValueOnce(new Error('Network error'));
+    player.emit!(state('incorrect'));
+    await settle();
+    host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
+    await settle();
+    [...host.querySelectorAll<HTMLButtonElement>('.practice__help-modes button')].find(button => button.textContent === 'Mein Fehler')!.click();
+    await settle();
+    rejectOld(Object.assign(new Error('Already completed'), { code: 'AI_REQUEST_ALREADY_COMPLETED', paidRequestGeneration: 4 }));
+    await settle();
+    expect(explain).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.q-learning__error')?.textContent).toContain('Erneut versuchen');
+    expect(host.querySelector('.q-learning__error')?.textContent).not.toContain('Neu anfragen');
+    // A capability change must fall back to the remaining explanation mode.
+    app.serverInfo = { ...app.serverInfo!, ai: { ...caps, diagnosis: false } };
+    await settle();
+    expect(host.querySelector('.practice-bar__learning-toggle')).not.toBeNull();
+    expect(host.querySelector('.practice__help-modes')).toBeNull();
+    expect(host.querySelector('.q-learning__actions')?.textContent).toContain('Erklärung anfordern');
+  });
+
 });
