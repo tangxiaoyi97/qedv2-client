@@ -108,17 +108,23 @@ describe('MatchingControl', () => {
     expect(events[events.length - 1]![0]).toEqual([null, null, null]);
   });
 
-  it('re-renders a chosen right item through RichTextView when it contains math', async () => {
+  it('shows a chosen formula once in the row and keeps its rich rendering in the options pool', async () => {
     const wrapper = mount(MatchingControl, {
       props: { answer, modelValue: [1, null, null] },
     });
-    const echo = wrapper.find('.q-match__echo');
-    expect(echo.exists()).toBe(true);
-    expect(echo.text()).toContain('B ·');
-    expect(echo.find('.katex').exists()).toBe(true);
+    const select = wrapper.findAll('select')[0]!;
+    expect((select.element as HTMLSelectElement).selectedOptions[0]!.textContent?.trim()).toBe('B · Parabel x²');
+    expect(wrapper.find('.q-match__echo').exists()).toBe(false);
+    // Native options retain readable labels; the shared pool keeps complete
+    // typeset formulas available without a second card under every choice.
+    expect(wrapper.findAll('.q-match__pool-item')[1]!.find('.katex').exists()).toBe(true);
 
-    // plain-text right item needs no echo
+    // Switching to text or clearing a choice must not leave a stale preview.
     await wrapper.setProps({ modelValue: [0, null, null] });
+    expect((select.element as HTMLSelectElement).selectedOptions[0]!.textContent?.trim()).toBe('A · Exponentialfunktion');
+    expect(wrapper.find('.q-match__echo').exists()).toBe(false);
+    await wrapper.setProps({ modelValue: [null, null, null] });
+    expect((select.element as HTMLSelectElement).value).toBe('');
     expect(wrapper.find('.q-match__echo').exists()).toBe(false);
   });
 

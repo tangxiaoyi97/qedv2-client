@@ -11,12 +11,11 @@ import { useI18n } from '../i18n.js';
  *
  * Each left row pairs the left RichText with a native select whose options
  * are "A · plain-text" projections of the right items (richTextToPlain).
- * Right items may contain math, so the chosen item is re-rendered below the
- * row through RichTextView whenever it contains a math node, and an
- * 'Optionen' pool panel renders ALL right items with RichTextView, prefixed
- * with the same A/B/C letters — the letters make select-option ↔ pool-entry
- * unambiguous even with formulas. Default one-to-one: a right item used by
- * another row is disabled in the other selects.
+ * The 'Optionen' pool renders all right items with RichTextView and the
+ * same A/B/C letters, keeping complete formulas available. Each assignment
+ * row shows its choice only in the select, without a duplicate preview.
+ * Default one-to-one: a right item used by another row is disabled in the
+ * other selects.
  *
  * Review (result set): the form controls and the pool disappear — each row
  * collapses to the state icon + compact comparison lines (Gewählt/Richtig),
@@ -58,10 +57,6 @@ const usedRight = computed<Set<number>>(() => {
   for (const r of props.modelValue) if (r !== null && r !== undefined) s.add(r);
   return s;
 });
-
-function hasMath(rt: RichText): boolean {
-  return rt.some((n) => n.t === 'math');
-}
 
 function onSelect(leftIdx: number, ev: Event): void {
   const raw = (ev.target as HTMLSelectElement).value;
@@ -289,12 +284,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
             </span>
             <span class="q-match__pool-letter">{{ letter(option.idx) }} ·</span>
           </button>
-        </div>
-
-        <!-- math-safe echo of the chosen right item (classic mode, answering only) -->
-        <div v-if="!review && !groupedOptionMode && chosen(i) !== null && hasMath(answer.right[chosen(i)!]!)" class="q-match__echo">
-          <span class="q-match__echo-letter">{{ letter(chosen(i)!) }} ·</span>
-          <RichTextView :nodes="answer.right[chosen(i)!]" inline-only />
         </div>
 
         <!-- review (classic mode): compact comparison lines -->
@@ -561,16 +550,6 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   color: var(--q-check-border);
 }
 
-.q-match__echo {
-  margin-top: 8px;
-  padding: 7px 10px;
-  border: 1px solid var(--q-border-soft);
-  border-radius: 8px;
-  background: var(--q-panel);
-  font-size: 13.5px;
-  overflow-wrap: anywhere;
-}
-.q-match__echo-letter,
 .q-match__pool-letter {
   font: 600 11px ui-monospace, Menlo, monospace;
   color: var(--q-faint);
@@ -677,8 +656,8 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__pool-item--used {
   background: var(--q-panel-2);
   border-color: transparent;
-  opacity: 0.5;
-  text-decoration: line-through;
+  /* The pool is also the formula reference for assigned items. Keep its
+   * notation readable instead of striking through numbers and operators. */
 }
 .q-match__pool-item--draggable {
   cursor: grab;
