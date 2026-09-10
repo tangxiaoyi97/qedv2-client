@@ -35,7 +35,7 @@ function mountReviewBar(extra: Record<string, unknown> = {}) {
       ...extra,
     },
     slots: {
-      review: ({ expanded }: { expanded: boolean }) => h(PracticeReviewPanel, { state, solution, ready: true, hideResult: true, expanded }),
+      review: () => h(PracticeReviewPanel, { state, solution, ready: true, hideResult: true }),
       assist: '<p>Duplicate legacy assessment</p>',
       explain: '<p>Legacy AI content</p>',
     },
@@ -46,25 +46,27 @@ function mountReviewBar(extra: Record<string, unknown> = {}) {
 }
 
 describe('practice review drawer', () => {
-  it('shows only the official answer at the reading detent, even after scrolling expanded details', async () => {
+  it('keeps notes and assessment mounted below the preview and resets the scroll when returning to it', async () => {
     const view = mountReviewBar({ solutionDetent: 'default' });
     const sheet = view.get<HTMLElement>('.q-ssheet');
     expect(sheet.text()).toContain('Die offizielle Lösung');
-    expect(sheet.text()).not.toContain('Beurteilungshinweis');
-    expect(sheet.find('.q-selfassess').exists()).toBe(false);
+    const note = sheet.get('.q-solution__note').element;
+    const assessment = sheet.get('.q-selfassess').element;
+    expect(sheet.text()).toContain('Beurteilungshinweis');
     await view.setProps({ solutionDetent: 'full' });
     expect(sheet.text()).toContain('Ein Punkt für die richtige Begründung.');
     expect(sheet.find('.q-selfassess').exists()).toBe(true);
     sheet.element.scrollTop = 250;
     await view.setProps({ solutionDetent: 'default' });
-    await nextTick(); // Scroll resets after the expanded content is removed.
+    await nextTick();
     expect(sheet.element.scrollTop).toBe(0);
     expect(sheet.text()).toContain('Die offizielle Lösung');
-    expect(sheet.find('.q-solution__note').exists()).toBe(false);
-    expect(sheet.find('.practice-review__assessment').exists()).toBe(false);
+    expect(sheet.get('.q-solution__note').element).toBe(note);
+    expect(sheet.get('.q-selfassess').element).toBe(assessment);
+    expect(sheet.get('.q-solution__note').isVisible()).toBe(true);
   });
 
-  it('keeps notes and assessment out of the default template until fully expanded', async () => {
+  it('keeps all default-template content available to scroll at every open detent', async () => {
     const view = mount(SolutionSheet, {
       props: { solution, detent: 'default', handle: true },
       slots: { assessment: '<button>Grade answer</button>', explain: '<p>Extra explanation</p>' },
@@ -72,16 +74,51 @@ describe('practice review drawer', () => {
     });
     mounted.push(view);
     expect(view.text()).toContain('Die offizielle Lösung');
-    expect(view.find('.q-ssheet__note').exists()).toBe(false);
-    expect(view.text()).not.toContain('Grade answer');
-    expect(view.text()).not.toContain('Extra explanation');
+    expect(view.get('.q-ssheet__note').text()).toContain('Beurteilungshinweis');
+    expect(view.text()).toContain('Grade answer');
+    expect(view.text()).toContain('Extra explanation');
     await view.setProps({ detent: 'full' });
     expect(view.get('.q-ssheet__note').text()).toContain('Beurteilungshinweis');
     expect(view.text()).toContain('Grade answer');
     expect(view.text()).toContain('Extra explanation');
     await view.setProps({ detent: 'default' });
-    expect(view.find('.q-ssheet__note').exists()).toBe(false);
-    expect(view.find('.q-ssheet__assessment').exists()).toBe(false);
+    expect(view.find('.q-ssheet__note').exists()).toBe(true);
+    expect(view.find('.q-ssheet__assessment').exists()).toBe(true);
+  });
+
+  it('measures the marked official answer, never the taller notes and grading controls', async () => {
+    let answerHeight = 120;
+    let resize!: () => void;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const top = this.hasAttribute('data-solution-detail') ? 200 + answerHeight + 6 : 200;
+      const height = this.hasAttribute('data-solution-preview') ? answerHeight
+        : this.classList.contains('q-ssheet__review') ? 1600 : 0;
+      return { x: 0, y: top, top, bottom: top + height, left: 0, right: 800, width: 800, height, toJSON: () => ({}) };
+    });
+    const view = mountReviewBar({ solutionDetent: 'default' });
+    await nextTick(); await nextTick();
+    const height = () => parseFloat(view.get<HTMLElement>('.q-ssheet').element.style.height);
+    expect(height()).toBe(120);
+    expect(view.find('.q-solution__note').exists()).toBe(true);
+    expect(view.find('.q-selfassess').exists()).toBe(true);
+    answerHeight = 350; // Wrapping text or a late-loading solution figure.
+    resize();
+    await nextTick();
+    expect(height()).toBe(350);
+    await view.setProps({ solutionDetent: 'full' });
+    expect(height()).toBeGreaterThan(350);
+    await view.setProps({ solutionDetent: 'default' });
+    await nextTick();
+    expect(height()).toBe(350);
+    answerHeight = 1600;
+    resize();
+    await nextTick();
+    expect(height()).toBeLessThanOrEqual(460);
   });
 
   it('places the simplified solution and manual grading inside the drawer exactly once', () => {

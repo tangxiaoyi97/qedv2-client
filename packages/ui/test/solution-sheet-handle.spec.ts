@@ -254,21 +254,16 @@ describe('SolutionSheet half-open size', () => {
     expect(heightOf(wrapper)).toBeLessThanOrEqual(full);
   });
 
-  it('can reveal and hide expanded notes when a short viewport gives both stops the same height', async () => {
+  it('retains scrollable notes when a short viewport gives both stops the same height', async () => {
     const wrapper = atViewport(150, {
       detent: 'default',
       solution: [{ result: [{ t: 'text', v: 'x = 3' }], note: 'Ein Punkt.' }],
     });
-    const readingHeight = heightOf(wrapper);
-    await drag(wrapper, 500, 460);
-    expect(lastDetent(wrapper)).toBe('full');
-    await wrapper.setProps({ detent: 'full' });
-    expect(heightOf(wrapper)).toBe(readingHeight);
+    expect(heightOf(wrapper)).toBe(84);
     expect(wrapper.get('.q-ssheet__note').text()).toContain('Ein Punkt.');
-    await drag(wrapper, 500, 540);
-    expect(lastDetent(wrapper)).toBe('default');
-    await wrapper.setProps({ detent: 'default' });
-    expect(wrapper.find('.q-ssheet__note').exists()).toBe(false);
+    const note = wrapper.get('.q-ssheet__note').element;
+    await wrapper.setProps({ detent: 'full' });
+    expect(wrapper.get('.q-ssheet__note').element).toBe(note);
     wrapper.unmount();
   });
 
@@ -288,7 +283,7 @@ describe('SolutionSheet half-open size', () => {
     const answer = wrapper.get('.q-ssheet__answer');
     expect(answer.find('.q-ssheet__card').exists()).toBe(true);
     expect(answer.find('.q-ssheet__note').exists()).toBe(false);
-    expect(wrapper.find('.q-ssheet__note').exists()).toBe(false);
+    expect(wrapper.find('.q-ssheet__note').exists()).toBe(true);
 
     await wrapper.setProps({ detent: 'full' });
     expect(answer.find('.q-ssheet__note').exists()).toBe(false);

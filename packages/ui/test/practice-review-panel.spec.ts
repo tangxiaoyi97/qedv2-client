@@ -29,27 +29,25 @@ describe('PracticeReviewPanel', () => {
     expect(view.text()).toContain(solution[0]!.note);
   });
 
-  it('shows only the solution when half open and preserves owner assessment across expansion changes', async () => {
+  it('keeps notes and assessment mounted below the answer measurement boundary without resetting owner state', async () => {
     const view = mount(PracticeReviewPanel, {
       props: {
-        state, solution, ready: true, expanded: false, assistAvailable: true,
+        state, solution, ready: true, assistAvailable: true,
         rubric: [{ t: 'text', v: 'Begründung vollständig und nachvollziehbar.' }],
       },
     });
-    const assertSolutionOnly = () => {
-      expect(view.text()).toContain('Die offizielle Begründung');
-      expect(view.find('.q-solution__note').exists()).toBe(false);
-      expect(view.find('.practice-review__assessment').exists()).toBe(false);
-      expect(view.find('button, [role="radio"], details').exists()).toBe(false);
-      for (const hidden of ['Beurteilungshinweis', solution[0]!.note, 'Selbstbewertung', 'Begründung vollständig und nachvollziehbar.', 'Mit KI vergleichen']) {
-        expect(view.html()).not.toContain(hidden);
-      }
-    };
-    assertSolutionOnly();
+    const preview = view.get('[data-solution-preview]');
+    expect(preview.text()).toBe('Die offizielle Begründung');
+    expect(preview.find('[data-solution-detail]').exists()).toBe(false);
+    const details = view.findAll('[data-solution-detail]');
+    expect(details).toHaveLength(2);
+    expect(details[0]!.text()).toContain(solution[0]!.note);
+    expect(details[1]!.text()).toContain('Selbstbewertung');
+    expect(details[1]!.find('[role="radiogroup"]').exists()).toBe(true);
+    const noteElement = details[0]!.element;
+    const assessmentElement = details[1]!.element;
     expect(view.emitted('assessmentUpdate')).toBeUndefined();
     expect(view.emitted('gradingSelect')).toBeUndefined();
-
-    await view.setProps({ expanded: true });
     expect(view.text()).toContain(solution[0]!.note);
     expect(view.get('.practice-review__rubric').text()).toContain('Begründung vollständig und nachvollziehbar.');
     expect(view.find('.practice-review__assist').exists()).toBe(true);
@@ -58,7 +56,7 @@ describe('PracticeReviewPanel', () => {
     const assessment = view.emitted('assessmentUpdate')![0]![0] as SelfAssessment;
     const grading = view.emitted('gradingSelect')![0]![0] as Grading;
     const gradingLabel = view.get('.q-gpick__opt').text();
-    // The owner applies emitted choices; hiding this panel must not reset them.
+    // The owner applies emitted choices; details remain mounted during updates.
     const assessedState: PartPlayerState = {
       ...state,
       selfAssessment: { ...state.selfAssessment!, assessment, selectedPoints: 1, grading },
@@ -67,16 +65,26 @@ describe('PracticeReviewPanel', () => {
     expect(view.get('.q-selfassess__segment[aria-checked="true"]').text()).toBe('1');
     expect(view.get('.q-gpick__opt[aria-checked="true"]').text()).toBe(gradingLabel);
 
-    await view.setProps({ expanded: false });
-    assertSolutionOnly();
+    await view.setProps({ disabled: true });
+    expect(view.get('.q-selfassess__segment[aria-checked="true"]').attributes('disabled')).toBeDefined();
+    await view.setProps({ disabled: false });
+    expect(view.findAll('[data-solution-detail]')[0]!.element).toBe(noteElement);
+    expect(view.findAll('[data-solution-detail]')[1]!.element).toBe(assessmentElement);
     expect(assessedState.selfAssessment).toMatchObject({ assessment, selectedPoints: 1, grading });
-
-    await view.setProps({ expanded: true });
     expect(view.get('.q-selfassess__total').text()).toContain('1 / 1');
     expect(view.get('.q-selfassess__segment[aria-checked="true"]').text()).toBe('1');
     expect(view.get('.q-gpick__opt[aria-checked="true"]').text()).toBe(gradingLabel);
     expect(view.emitted('assessmentUpdate')).toHaveLength(1);
     expect(view.emitted('gradingSelect')).toHaveLength(1);
+  });
+
+  it('provides a solution-only measurement fallback when the official answer is missing', () => {
+    const view = mount(PracticeReviewPanel, { props: { state, ready: true } });
+    const fallback = view.get('[data-solution-fallback]');
+    expect(fallback.text()).toContain('Keine offizielle Lösung verfügbar.');
+    expect(fallback.find('[data-solution-preview]').exists()).toBe(false);
+    expect(fallback.find('[data-solution-detail]').exists()).toBe(false);
+    expect(view.get('[data-solution-detail]').text()).toContain('Selbstbewertung');
   });
 
   it('does not reveal the solution before the submitted draft is durable', async () => {

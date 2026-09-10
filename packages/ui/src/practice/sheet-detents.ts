@@ -42,7 +42,7 @@ export const TOP_BAR_RESERVE_PX = 72;
  * top bar. Aim past the wall; let the wall decide.
  */
 export const FULL_OVERSHOOT_PX = 6;
-/** A half-open sheet shorter than this reads as broken rather than compact. */
+/** Minimum estimate before the official answer has a measured height. */
 export const HALF_MIN_PX = 180;
 export const HALF_MAX_PX = 460;
 export const HALF_MAX_VIEWPORT_RATIO = 0.6;
@@ -80,9 +80,6 @@ export interface SheetReleaseInput {
   recentDisplacement?: number;
   /** Time since the last actual movement, excluding stationary release samples. */
   idleMs?: number;
-  /** Full reveals additional content even when a short viewport makes its
-   * height coincide with default. Requires an explicit deliberate finger pull. */
-  expandedContent?: boolean;
 }
 
 /**
@@ -92,23 +89,10 @@ export interface SheetReleaseInput {
  * would move. This decision combines intent, release velocity and a short
  * momentum projection. One gesture advances at most one stop, keeping a
  * small flick predictable instead of unexpectedly swallowing the question.
- * Stops with the same visible height are skipped unless full reveals extra
- * content. The latest deliberate directional segment wins over velocity
- * collected before a reversal.
+ * Stops with the same visible height are skipped. The latest deliberate
+ * directional segment wins over velocity collected before a reversal.
  */
 export function resolveSheetRelease(input: SheetReleaseInput): SheetDetent {
-  if (input.expandedContent && input.heights.full > 0
-    && Math.abs(input.heights.full - input.heights.default) <= DISTINCT_DETENT_PX) {
-    // Height is clamped at full, so it cannot express an upward pull here.
-    // Use only actual final-segment travel; a tap, velocity, or short reversal
-    // must never reveal or dismiss content without a deliberate gesture.
-    const recent = input.recentDisplacement;
-    const deliberate = recent !== undefined && Number.isFinite(recent)
-      && Math.abs(recent) >= SHEET_SWIPE_DISTANCE_PX;
-    if (input.detent === 'default' && deliberate && recent! > 0) return 'full';
-    if (input.detent === 'full') return deliberate && recent! < 0 ? 'default' : 'full';
-  }
-
   const currentIndex = DETENT_ORDER.indexOf(input.detent);
   const displacement = input.height - input.startHeight;
   const recent = input.recentDisplacement ?? displacement;
@@ -167,12 +151,13 @@ export function resolveDetentHeights(input: DetentInput): Record<SheetDetent, nu
   // reason.
   const upper = Math.max(0, Math.min(viewportHeight * HALF_MAX_VIEWPORT_RATIO, HALF_MAX_PX, full));
   const lower = Math.min(HALF_MIN_PX, upper);
-  const wanted = answerHeight || Math.min(viewportHeight * HALF_FALLBACK_RATIO, HALF_MAX_PX);
+  const measured = answerHeight > 0;
+  const wanted = measured ? answerHeight : Math.min(viewportHeight * HALF_FALLBACK_RATIO, HALF_MAX_PX);
 
-  let half = Math.min(Math.max(wanted, lower), upper);
-  // Hiding the grading note outranks the minimum height: a short answer that
-  // fits in 140px is not a broken sliver, but a note peeking over the fold
-  // gives the assessment away before the reader has thought about it.
+  // Once measured, stop at the answer even if it is shorter than the estimate.
+  // The rest of the solution stays in the scrollable content below the fold.
+  let half = Math.min(measured ? wanted : Math.max(wanted, lower), upper);
+  // An earlier detail boundary also caps the initial reading height.
   if (noteOffset > 0) half = Math.min(half, noteOffset);
 
   return { collapsed: 0, default: Math.round(half), full };

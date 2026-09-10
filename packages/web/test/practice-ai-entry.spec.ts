@@ -342,7 +342,7 @@ describe('practice AI entries', () => {
     const explain = vi.mocked(ai.explain).mockResolvedValue({ mode: 'walkthrough', markdown: 'Schritt für Schritt', model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'walkthrough.v1', cached: true });
     player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Mein Ansatz', selfAssessment: { maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }], selectedPoints: null, grading: null, assessment: {} } });
     await settle();
-    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    expect(host.querySelector('.practice-bar--full')).toBeNull();
     expect(host.querySelector('.q-ssheet .q-selfassess')).not.toBeNull();
     expect(host.querySelector('#practice-task-panel .q-selfassess')).toBeNull();
     host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
@@ -355,7 +355,7 @@ describe('practice AI entries', () => {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     await settle();
     expect(host.querySelector('[role="dialog"]')).toBeNull();
-    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    expect(host.querySelector('.practice-bar--full')).toBeNull();
     expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('false');
   });
 

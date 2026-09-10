@@ -123,7 +123,7 @@ describe('practice draft winner convergence', () => {
     app.unmount();
   });
 
-  it('persists the first self-assessment draft before revealing the solution', async () => {
+  it('opens the submitted solution at default height and preserves manual expansion while scoring', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -131,6 +131,10 @@ describe('practice draft winner convergence', () => {
     const practice = usePracticeStore();
     vi.spyOn(practice, 'restoreSession').mockResolvedValue(true);
     const save = vi.spyOn(practice, 'saveSelfAssessmentDraft').mockResolvedValue(true);
+    const grade = vi.spyOn(practice, 'recordGraded').mockResolvedValue(undefined);
+    let now = Date.now();
+    // Keep synthetic clicks newer than Vue's freshly mounted listener stamps.
+    vi.spyOn(Date, 'now').mockImplementation(() => ++now);
     practice.$patch({
       phase: 'running',
       items: [{
@@ -159,6 +163,7 @@ describe('practice draft winner convergence', () => {
     app.use(router);
     app.mount(host);
     await nextTick();
+    expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('true');
     const submit = Array.from(host.querySelectorAll<HTMLButtonElement>('button'))
       .find((button) => button.textContent?.trim() === 'Prüfen');
     expect(submit).toBeDefined();
@@ -171,7 +176,96 @@ describe('practice draft winner convergence', () => {
       submission: { kind: 'open', text: '' },
     });
     expect(host.textContent).not.toContain('Speichert …');
+    expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('false');
+    expect(host.querySelector('.practice-bar--full')).toBeNull();
+
+    host.querySelector<HTMLButtonElement>('.q-ssheet__handle')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    await nextTick();
+    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    [...host.querySelectorAll<HTMLButtonElement>('.q-selfassess__segment')]
+      .find((button) => button.textContent?.trim() === '1')!.click();
+    await vi.waitFor(() => expect(host.querySelector('.q-selfassess__segment[aria-checked="true"]')?.textContent?.trim()).toBe('1'));
+    let gradingButton: HTMLButtonElement | undefined;
+    await vi.waitFor(() => {
+      gradingButton = [...host.querySelectorAll<HTMLButtonElement>('.practice-review__mastery .q-gpick__opt')]
+        .find((button) => button.querySelector('.q-gpick__label')?.textContent?.trim() === 'Gut');
+      expect(gradingButton).toBeDefined();
+      expect(gradingButton!.disabled).toBe(false);
+    });
+    gradingButton!.click();
+    await vi.waitFor(() => expect(save.mock.calls.at(-1)?.[1]).toMatchObject({ selectedPoints: 1, grading: 'good' }));
+    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    expect(grade).not.toHaveBeenCalled();
+
+    // Pass the primary button's accidental double-tap guard.
+    now += 1000;
+    let confirm: HTMLButtonElement | undefined;
+    await vi.waitFor(() => {
+      confirm = [...host.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Bewertung übernehmen');
+      expect(confirm).toBeDefined();
+      expect(confirm!.disabled).toBe(false);
+    });
+    confirm!.click();
+    await vi.waitFor(() => expect(grade).toHaveBeenCalledTimes(1));
+    expect(grade.mock.calls[0]?.[0]).toMatchObject({
+      part: { id: 'q-open-a' },
+      result: { verdict: 'correct', awardedPoints: 1, maxPoints: 1 },
+      submission: { kind: 'open', text: '', selfAssessment: { awardedPoints: 1 } },
+      manualGrading: 'good',
+    });
+    await nextTick();
+    expect(host.querySelector('.practice-bar--full')).toBeNull();
+    expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('false');
+    expect(host.textContent).not.toContain('Der Versuch wurde nicht gespeichert.');
     app.unmount();
+  });
+
+  it.each(['draft', 'review'] as const)('restores a saved %s at default height without submitting it again', async (kind) => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    await useProgressStore().init();
+    const practice = usePracticeStore();
+    vi.spyOn(practice, 'restoreSession').mockResolvedValue(true);
+    const grade = vi.spyOn(practice, 'recordGraded');
+    const save = vi.spyOn(practice, 'saveSelfAssessmentDraft');
+    if (kind === 'draft') {
+      vi.spyOn(practice, 'currentSelfAssessmentDraft', 'get').mockReturnValue({
+        version: 1, revision: 1, partId: 'q-open-a', savedAt: new Date().toISOString(),
+        submission: { kind: 'open', text: 'Gespeicherter Ansatz', selfAssessment: { awardedPoints: 1 } },
+        assessment: { awardedPoints: 1 }, selectedPoints: 1, grading: 'good',
+        indeterminate: false, indeterminateMax: 1,
+      });
+    }
+    practice.$patch({
+      phase: 'running',
+      items: [{ questionId: openQuestion.id, partId: 'q-open-a', reason: 'manual', clientAttemptId: winner.clientAttemptId }],
+      questions: new Map([[openQuestion.id, openQuestion]]), index: 0,
+      graded: kind === 'review' ? [{ ...winner, partId: 'q-open-a', questionId: openQuestion.id,
+        pendingSubmission: { kind: 'open', text: 'Gespeicherter Ansatz', selfAssessment: { awardedPoints: 1 } },
+      }] : [],
+    });
+    const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/practice', component: PracticeView }] });
+    await router.push('/practice');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const app = createApp({ render: () => h(RouterView) }).use(pinia).use(router);
+    app.mount(host);
+    try {
+      await vi.waitFor(() => expect(host.textContent).toContain('Offizieller Lösungsweg'));
+      expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('false');
+      expect(host.querySelector('.practice-bar--full')).toBeNull();
+      expect(grade).not.toHaveBeenCalled();
+      expect(save).not.toHaveBeenCalled();
+      if (kind === 'draft') {
+        expect(host.querySelector('.q-selfassess__segment[aria-checked="true"]')?.textContent?.trim()).toBe('1');
+        expect(host.querySelector('.practice-review__mastery [aria-checked="true"] .q-gpick__label')?.textContent?.trim()).toBe('Gut');
+      }
+    } finally {
+      app.unmount();
+    }
   });
 
   it('starts a fresh player when a new interaction reuses the same part', async () => {

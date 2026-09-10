@@ -7,6 +7,7 @@ import { provideAssetResolver } from '../src/shared/assets.js';
 
 const solution: SolutionEntry[] = [
   {
+    steps: [{ t: 'text', v: 'Zuerst die beiden Ausdrücke vergleichen.' }],
     result: [
       { t: 'text', v: 'Zutreffend: ' },
       { t: 'math', v: 'b:a' },
@@ -14,6 +15,7 @@ const solution: SolutionEntry[] = [
       { t: 'math', v: 'a\\cdot b' },
     ],
     note: '[0 / 1 Punkt] Ein Punkt ist genau dann zu geben, wenn …',
+    alternatives: [[{ t: 'text', v: 'Äquivalent als Produkt schreiben.' }]],
     figures: [{ kind: 'image', src: 'assets/fig/loesung.png', alt: 'Lösungsabbildung' }],
   },
   {
@@ -43,25 +45,31 @@ describe('SolutionPanel', () => {
     expect(img.attributes('alt')).toBe('Lösungsabbildung');
   });
 
-  it.each([false, true])('removes every grading note from the DOM while showNotes is false (plain=%s)', async (plain) => {
-    const w = mount(SolutionPanel, { props: { solution, plain, showNotes: false } });
-    const assertSolutionOnly = () => {
-      expect(w.text()).toContain('Zutreffend:');
-      expect(w.text()).toContain('Alternativer Weg über die Umkehrfunktion.');
-      expect(w.find('.katex').exists()).toBe(true);
-      expect(w.find('.q-zfig__img').exists()).toBe(true);
-      expect(w.find('.q-solution__note').exists()).toBe(false);
-      expect(w.html()).not.toContain('Beurteilungshinweis');
-      for (const entry of solution) expect(w.html()).not.toContain(entry.note!);
-    };
-    assertSolutionOnly();
+  it.each([false, true])('marks the complete first answer for measurement and keeps all notes below it (plain=%s)', (plain) => {
+    const w = mount(SolutionPanel, { props: { solution, plain } });
+    const previews = w.findAll('[data-solution-preview]');
+    expect(previews).toHaveLength(1);
+    const preview = previews[0]!;
+    expect(preview.text()).toContain('Zuerst die beiden Ausdrücke vergleichen.');
+    expect(preview.text()).toContain('Zutreffend:');
+    expect(preview.find('.katex').exists()).toBe(true);
+    expect(preview.text()).toContain('Äquivalent als Produkt schreiben.');
+    expect(preview.get('.q-zfig__img').attributes('alt')).toBe('Lösungsabbildung');
+    expect(preview.text()).not.toContain('Beurteilungshinweis');
+    expect(preview.text()).not.toContain('Alternativer Weg über die Umkehrfunktion.');
+    expect(preview.find('[data-solution-detail]').exists()).toBe(false);
 
-    await w.setProps({ showNotes: true });
-    expect(w.findAll('.q-solution__note')).toHaveLength(2);
-    for (const entry of solution) expect(w.text()).toContain(entry.note!);
-
-    await w.setProps({ showNotes: false });
-    assertSolutionOnly();
+    const entries = w.findAll('.q-solution__entry');
+    expect(entries).toHaveLength(2);
+    expect(entries[1]!.find('[data-solution-preview]').exists()).toBe(false);
+    expect(entries[1]!.get('.q-solution__answer').text()).toContain('Alternativer Weg über die Umkehrfunktion.');
+    expect(w.findAll('[data-solution-detail]')).toHaveLength(2);
+    for (const [index, entry] of entries.entries()) {
+      const note = entry.get('[data-solution-detail]');
+      expect(note.text()).toContain('Beurteilungshinweis');
+      expect(note.text()).toContain(solution[index]!.note!);
+      expect(entry.get('.q-solution__answer').element.nextElementSibling).toBe(note.element);
+    }
   });
 
   it('separates multiple entries with an Alternative divider from the 2nd on', () => {

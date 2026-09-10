@@ -209,8 +209,7 @@ function onPlayerState(state: PartPlayerState): void {
   playerState.value = state;
   if (state.phase === previousPhase) return;
   helpOpen.value = false;
-  solutionDetent.value = state.phase === 'answering' ? 'collapsed'
-    : state.phase === 'self-assessing' ? 'full' : 'default';
+  solutionDetent.value = state.phase === 'answering' ? 'collapsed' : 'default';
   if (state.phase === 'self-assessing') {
     selfAssessmentDraftDurable.value = Boolean(practice.currentSelfAssessmentDraft);
     selfAssessmentFocusPending = !selfAssessmentDraftDurable.value;
@@ -811,7 +810,7 @@ watch(
     commitBusy.value = false;
     exitArmed.value = false;
     const restored = practice.currentReview;
-    solutionDetent.value = restored ? 'default' : practice.currentSelfAssessmentDraft ? 'full' : 'collapsed';
+    solutionDetent.value = restored || practice.currentSelfAssessmentDraft ? 'default' : 'collapsed';
     helpOpen.value = false;
     learningMode.value = 'walkthrough';
     assistController?.abort();
@@ -1938,11 +1937,10 @@ const currentCompetencyCodes = computed(() =>
           @learning-toggle="toggleLearning"
           @update:solution-height="onSolutionHeight"
         >
-          <template #review="{ expanded }">
+          <template #review>
             <div id="practice-review-panel" class="practice__review-panel" tabindex="-1">
               <PracticeReviewPanel
                 :state="playerState"
-                :expanded="expanded"
                 hide-result
                 :submission-unavailable="Boolean(practice.currentReview && !practice.currentReview.pendingSubmission)"
                 :solution="current.part.solution"

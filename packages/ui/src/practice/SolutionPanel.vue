@@ -22,10 +22,8 @@ const props = withDefaults(
     defaultOpen?: boolean;
     /** Render inside a clearly labelled review page without an accordion. */
     plain?: boolean;
-    /** Grading notes belong to the expanded review, not the solution preview. */
-    showNotes?: boolean;
   }>(),
-  { defaultOpen: true, showNotes: true },
+  { defaultOpen: true },
 );
 
 const resolveAsset = useAssetResolver();
@@ -52,28 +50,30 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
           <span class="q-solution__divider-label">{{ t('Alternative') }}</span>
         </div>
         <div class="q-solution__entry">
-          <RichTextView
-            v-if="!isRichTextEmpty(entry.steps)"
-            class="q-solution__steps"
-            :nodes="entry.steps"
-          />
-          <RichTextView
-            v-if="!isRichTextEmpty(entry.result)"
-            class="q-solution__result"
-            :nodes="entry.result"
-          />
-          <div
-            v-for="(alternative, ai) in entry.alternatives ?? []"
-            :key="`${entry.id ?? i}-alternative-${ai}`"
-            class="q-solution__alternative"
-          >
-            <span class="q-solution__alternative-label">{{ t('Alternative') }}</span>
-            <RichTextView :nodes="alternative" />
+          <div class="q-solution__answer" :data-solution-preview="i === 0 ? '' : undefined">
+            <RichTextView
+              v-if="!isRichTextEmpty(entry.steps)"
+              class="q-solution__steps"
+              :nodes="entry.steps"
+            />
+            <RichTextView
+              v-if="!isRichTextEmpty(entry.result)"
+              class="q-solution__result"
+              :nodes="entry.result"
+            />
+            <div
+              v-for="(alternative, ai) in entry.alternatives ?? []"
+              :key="`${entry.id ?? i}-alternative-${ai}`"
+              class="q-solution__alternative"
+            >
+              <span class="q-solution__alternative-label">{{ t('Alternative') }}</span>
+              <RichTextView :nodes="alternative" />
+            </div>
+            <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
+              <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
+            </figure>
           </div>
-          <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
-            <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
-          </figure>
-          <div v-if="showNotes && entry.note" class="q-solution__note">
+          <div v-if="entry.note" class="q-solution__note" data-solution-detail>
             <span class="q-solution__note-label">{{ t('Beurteilungshinweis') }}</span>
             <span class="q-solution__note-text">{{ entry.note }}</span>
           </div>
@@ -143,7 +143,8 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   text-transform: uppercase;
   color: var(--q-faint);
 }
-.q-solution__entry {
+.q-solution__entry,
+.q-solution__answer {
   display: flex;
   flex-direction: column;
   gap: 10px;

@@ -107,6 +107,8 @@ const TAP_SLOP_PX = 8;
 const viewportHeight = ref(typeof window === 'undefined' ? 800 : window.innerHeight);
 /** Height that shows verdict + title + answer. */
 const answerHeight = ref(0);
+/** First detail below the answer, measured in the same scroll coordinates. */
+const noteOffset = ref(0);
 
 function readViewport(): void {
   cancelGesture();
@@ -117,8 +119,7 @@ const detentHeights = computed(() =>
   resolveDetentHeights({
     viewportHeight: viewportHeight.value,
     answerHeight: answerHeight.value,
-    // Notes are excluded from the reading content, including its scroll area.
-    noteOffset: 0,
+    noteOffset: noteOffset.value,
     chromeHeight: chromeHeight.value,
     ...(props.topReserve !== undefined ? { topReserve: props.topReserve } : {}),
   }),
@@ -138,7 +139,7 @@ const inner = ref<HTMLElement | null>(null);
  * leaves exactly one element in it.
  */
 const answerBlock = ref<HTMLElement | HTMLElement[] | null>(null);
-/** Custom review content participates in the same measured-height contract. */
+/** Custom review marks its answer boundary separately from notes/assessment. */
 const reviewBlock = ref<HTMLElement | null>(null);
 let contentObserver: ResizeObserver | undefined;
 
@@ -171,13 +172,17 @@ const MEASURE_DEAD_BAND_PX = 2;
 
 function measureAnswer(): void {
   const innerEl = inner.value;
-  const blockEl = reviewBlock.value ?? firstOf(answerBlock.value);
+  const blockEl = reviewBlock.value?.querySelector<HTMLElement>('[data-solution-preview]')
+    ?? reviewBlock.value?.querySelector<HTMLElement>('[data-solution-fallback]')
+    ?? reviewBlock.value
+    ?? firstOf(answerBlock.value);
 
   // No official solution → no answer block. The previous part's numbers must
   // not survive into this one, or an empty sheet opens at a height that
   // belonged to a different question.
   if (!blockEl) {
     answerHeight.value = 0;
+    noteOffset.value = 0;
     return;
   }
   if (!innerEl || dragging.value) return;
@@ -195,6 +200,9 @@ function measureAnswer(): void {
   if (height <= 0) return;
   const next = Math.ceil(height + padBottom);
   if (Math.abs(next - answerHeight.value) > MEASURE_DEAD_BAND_PX) answerHeight.value = next;
+  const detailEl = innerEl.querySelector<HTMLElement>('[data-solution-detail]');
+  const detailTop = detailEl ? Math.max(0, Math.floor(detailEl.getBoundingClientRect().top - innerTop)) : 0;
+  if (Math.abs(detailTop - noteOffset.value) > MEASURE_DEAD_BAND_PX) noteOffset.value = detailTop;
 }
 
 /* --- drag ------------------------------------------------------------------ */
@@ -288,7 +296,6 @@ function finishDrag(time: number): void {
     height: dragHeight.value,
     velocity: releaseVelocity(),
     recentDisplacement,
-    expandedContent: true,
     idleMs: Math.max(0, time - lastMoveTime),
   });
   dragging.value = false;
@@ -604,7 +611,7 @@ async function collapseFromKeyboard(): Promise<void> {
       </div>
 
       <div v-if="$slots.review" ref="reviewBlock" class="q-ssheet__review">
-        <slot v-if="showsSolution" name="review" :expanded="detent === 'full'" />
+        <slot v-if="showsSolution" name="review" />
         <p v-else class="q-ssheet__empty" role="status">{{ t('Antwort wird gesichert …') }}</p>
       </div>
       <template v-else>
@@ -664,8 +671,9 @@ async function collapseFromKeyboard(): Promise<void> {
               </figure>
             </template>
             <div
-              v-if="entry.note && detent === 'full'"
+              v-if="entry.note"
               class="q-ssheet__note"
+              data-solution-detail
             >
               <span class="q-ssheet__note-label">{{ t('Beurteilungshinweis') }}</span>
               <span class="q-ssheet__note-text">{{ entry.note }}</span>
@@ -682,7 +690,7 @@ async function collapseFromKeyboard(): Promise<void> {
         rubric parts the Bewertungsraster repeated the solution verbatim just
         to have something to compare with.
       -->
-      <div v-if="$slots.assessment && detent === 'full'" class="q-ssheet__assessment">
+      <div v-if="$slots.assessment" class="q-ssheet__assessment" data-solution-detail>
         <slot name="assessment" />
       </div>
 
@@ -691,7 +699,7 @@ async function collapseFromKeyboard(): Promise<void> {
         it. Order matters: the checked answer is read first, the machine's
         commentary second.
       -->
-      <slot v-if="detent === 'full'" name="explain" />
+      <div v-if="$slots.explain" data-solution-detail><slot name="explain" /></div>
       </template>
     </div>
     </section>
