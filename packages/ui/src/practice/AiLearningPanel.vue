@@ -117,22 +117,22 @@ defineExpose({
         <span class="q-learning__eyebrow">{{ t('Hinweis {level}', { level: hintLevel ?? 1 }) }}</span>
         <RichTextView v-if="authoredHint?.length" :nodes="authoredHint" />
         <MarkdownView v-else-if="markdown" :source="markdown" />
-        <p v-if="nextAction" class="q-learning__action">
+        <div v-if="nextAction" class="q-learning__action">
           <ArrowRight :size="16" aria-hidden="true" />
-          {{ nextAction }}
-        </p>
+          <MarkdownView :source="nextAction" />
+        </div>
       </div>
 
       <div v-else-if="stage === 'diagnosis' && diagnosis" class="q-learning__content q-reveal">
         <span class="q-learning__eyebrow">{{ t(DIAGNOSIS_LABELS[diagnosis.errorCode]) }}</span>
-        <p>{{ diagnosis.reason }}</p>
+        <MarkdownView :source="diagnosis.reason" />
         <blockquote v-if="diagnosis.evidenceVerified && diagnosis.evidence">
-          {{ diagnosis.evidence }}
+          <MarkdownView :source="diagnosis.evidence" />
         </blockquote>
-        <p class="q-learning__action">
+        <div class="q-learning__action">
           <ArrowRight :size="16" aria-hidden="true" />
-          {{ diagnosis.correctionPrompt }}
-        </p>
+          <MarkdownView :source="diagnosis.correctionPrompt" />
+        </div>
       </div>
 
       <div v-else-if="stage !== 'hint' && markdown" class="q-learning__content q-reveal">
@@ -204,6 +204,12 @@ defineExpose({
   font-size: 14px;
   line-height: 1.65;
   color: var(--q-ink-2);
+  min-width: 0;
+}
+.q-learning__content :deep(.q-md) {
+  min-width: 0;
+  font: inherit;
+  color: inherit;
 }
 .q-learning__content :deep(p) {
   margin: 0;
@@ -239,6 +245,9 @@ defineExpose({
 .q-learning__action svg {
   flex: none;
   margin-top: 2px;
+}
+.q-learning__action > :deep(.q-md) {
+  flex: 1;
 }
 .q-learning__actions {
   display: flex;

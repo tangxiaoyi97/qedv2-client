@@ -61,6 +61,71 @@ describe('AiAssessPanel', () => {
     expect(wrapper.get('.q-aia__item').classes()).toContain('q-aia__item--shaky');
   });
 
+  it('renders criterion evidence as safe Markdown and math without accepting the AI verdict', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: LABELS,
+        studentCriteria: [false],
+        criteria: [crit({
+          quote: String.raw`$x = \frac{1}{2}$`,
+          reason: '**Begründung:** Der Ansatz ergibt\n\n$$x = 0.5$$',
+          quoteVerified: false,
+        })],
+      },
+    });
+    expect(wrapper.get('.q-aia__quote').find('.katex').exists()).toBe(true);
+    expect(wrapper.get('.q-aia__reason').get('strong').text()).toBe('Begründung:');
+    expect(wrapper.get('.q-aia__reason').find('.katex-display').exists()).toBe(true);
+    expect(wrapper.get('.q-aia__quote-warn').text()).toBe('nicht wörtlich gefunden');
+    expect(wrapper.get('.q-aia__quote').classes()).toContain('q-aia__quote--unverified');
+    expect(wrapper.get('.q-aia__evidence').attributes()).toHaveProperty('open');
+    expect(wrapper.get('.q-aia__summary').text()).toContain('1 Abweichung');
+    expect(wrapper.emitted()).toEqual({});
+  });
+
+  it('renders overall evidence while keeping unverified points advisory', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: [],
+        studentPoints: 0,
+        maxPoints: 2,
+        overall: {
+          points: 1,
+          confidence: 0.95,
+          quote: String.raw`$a^2 + b^2 = c^2$`,
+          reason: '**Teilweise richtig:** Es fehlt $c = 5$.',
+          quoteVerified: false,
+        },
+      },
+    });
+    expect(wrapper.get('.q-aia__quote').find('.katex').exists()).toBe(true);
+    expect(wrapper.get('.q-aia__reason').get('strong').text()).toBe('Teilweise richtig:');
+    expect(wrapper.get('.q-aia__reason').find('.katex').exists()).toBe(true);
+    expect(wrapper.get('.q-aia__criterion').text()).toBe('Vorschlag: 1 / 2 P');
+    expect(wrapper.get('.q-aia__quote-warn').text()).toBe('nicht wörtlich gefunden');
+    expect(wrapper.get('.q-aia__overall').classes()).toContain('q-aia__item--shaky');
+    expect(wrapper.get('.q-aia__evidence').attributes()).toHaveProperty('open');
+    expect(wrapper.get('.q-aia__foot').text()).toBe('Bitte selbst bestätigen.');
+    expect(wrapper.emitted()).toEqual({});
+  });
+
+  it('keeps HTML and executable links inert inside quoted evidence and reasons', () => {
+    const wrapper = mount(AiAssessPanel, {
+      props: {
+        labels: LABELS,
+        criteria: [crit({
+          quote: '<img src=x onerror="alert(1)"> $x = 4$',
+          reason: '<script>alert(1)</script> [unsafe](javascript:alert(1)) **Kontrollieren**',
+        })],
+      },
+    });
+    expect(wrapper.find('img, script, [onerror], [onclick], a[href^="javascript:"]').exists()).toBe(false);
+    expect(wrapper.get('.q-aia__quote').text()).toContain('<img');
+    expect(wrapper.get('.q-aia__reason').get('strong').text()).toBe('Kontrollieren');
+    expect(wrapper.find('.q-aia__quote-warn').exists()).toBe(false);
+    expect(wrapper.emitted()).toEqual({});
+  });
+
   it('flags a low-confidence verdict for a human to look at', () => {
     const wrapper = mount(AiAssessPanel, {
       props: { labels: LABELS, criteria: [crit({ confidence: 0.4 })] },

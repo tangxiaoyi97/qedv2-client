@@ -188,6 +188,8 @@ export const webEn: Record<string, string> = {
   'Programm verlassen': 'Leave session',
   'Programm verlassen bestätigen': 'Confirm leaving session',
   'Programmliste öffnen': 'Open question list',
+  'Programmliste einblenden': 'Show question list',
+  'Programmliste ausblenden': 'Hide question list',
   'Prüfen': 'Check',
   'Punkte': 'Points',
   'Punkten': 'points',

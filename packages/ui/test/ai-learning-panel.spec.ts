@@ -4,6 +4,47 @@ import { defineComponent } from 'vue';
 import AiLearningPanel from '../src/practice/AiLearningPanel.vue';
 
 describe('AiLearningPanel', () => {
+  it('renders formulas in every diagnosis field without exposing markup', () => {
+    const wrapper = mount(AiLearningPanel, {
+      props: {
+        stage: 'diagnosis',
+        diagnosis: {
+          errorCode: 'algebra',
+          reason: String.raw`Beim Ableiten von \(a\cdot x^3\) entsteht der Faktor **3**, nicht 9.`,
+          evidence: String.raw`\(f'(x)\) → \(9\cdot h(x)\)`,
+          correctionPrompt: String.raw`Wende die Potenzregel auf \(f(x)=a\cdot x^3\) an und verwende \(h(x)\).`,
+          confidence: 0.99,
+          advisoryOnly: true,
+          evidenceVerified: true,
+        },
+      },
+    });
+    expect(wrapper.findAll('.katex')).toHaveLength(5);
+    expect(wrapper.find('.q-math-fallback').exists()).toBe(false);
+    expect(wrapper.get('strong').text()).toBe('3');
+    expect(wrapper.get('blockquote').findAll('.katex')).toHaveLength(2);
+    expect(wrapper.get('.q-learning__action').findAll('.katex')).toHaveLength(2);
+    expect(wrapper.find('p .q-md').exists()).toBe(false);
+  });
+
+  it('renders next-step math safely and keeps unverified evidence hidden', async () => {
+    const wrapper = mount(AiLearningPanel, {
+      props: {
+        stage: 'hint', markdown: 'Nutze die Potenzregel.',
+        nextAction: 'Vergleiche **$h(x)$**. <img src=x onerror=alert(1)>',
+      },
+    });
+    expect(wrapper.get('.q-learning__action').findAll('.katex')).toHaveLength(1);
+    expect(wrapper.get('.q-learning__action').find('img').exists()).toBe(false);
+    expect(wrapper.get('.q-learning__action').text()).toContain('<img src=x onerror=alert(1)>');
+    await wrapper.setProps({ stage: 'diagnosis', diagnosis: {
+      errorCode: 'unknown', reason: 'Kein sicherer Beleg.', evidence: '$x=9$',
+      correctionPrompt: 'Prüfe den Ansatz.', confidence: 0.1,
+      evidenceVerified: false, advisoryOnly: true,
+    } });
+    expect(wrapper.find('blockquote').exists()).toBe(false);
+  });
+
   it('renders an authored hint without pretending it came from AI', () => {
     const wrapper = mount(AiLearningPanel, {
       props: {

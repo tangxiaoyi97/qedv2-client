@@ -115,6 +115,7 @@ async function mountPractice(options: {
 
 describe('practice question-bank footer', () => {
   beforeEach(() => {
+    window.localStorage.removeItem('qed2.practice.rail-collapsed');
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -128,6 +129,7 @@ describe('practice question-bank footer', () => {
   afterEach(() => {
     ports.shell = originalShell;
     vi.restoreAllMocks();
+    window.localStorage.removeItem('qed2.practice.rail-collapsed');
     vi.unstubAllGlobals();
     document.body.innerHTML = '';
   });
@@ -181,6 +183,89 @@ describe('practice question-bank footer', () => {
       'Remote · ff30462',
     );
     mounted.unmount();
+  });
+
+  it('collapses and restores the desktop list without remounting or changing the active answer', async () => {
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
+    const practice = usePracticeStore();
+    try {
+      const saveDraft = vi.spyOn(practice, 'saveAnswerDraft').mockResolvedValue({ status: 'saved' });
+      const option = mounted.host.querySelector<HTMLButtonElement>('.q-choice__opt')!;
+      option.click();
+      await settle();
+      expect(saveDraft).toHaveBeenCalledTimes(1);
+      const draft = JSON.stringify(saveDraft.mock.calls[0]);
+      const items = JSON.stringify(practice.items);
+      const rail = mounted.host.querySelector<HTMLElement>('#practice-program-rail')!;
+      const list = rail.querySelector('.q-sitems');
+      const toggle = mounted.host.querySelector<HTMLButtonElement>('.practice__rail-toggle')!;
+      const scroll = vi.spyOn(window, 'scrollTo');
+      expect(toggle.getAttribute('aria-controls')).toBe(rail.id);
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      toggle.focus();
+      toggle.click();
+      await settle();
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      expect(toggle.getAttribute('aria-label')).toBe('Programmliste einblenden');
+      expect(rail.hasAttribute('inert')).toBe(true);
+      expect(rail.getAttribute('aria-hidden')).toBe('true');
+      expect(document.activeElement).toBe(toggle);
+      expect(mounted.host.querySelector('.practice--rail-collapsed')).not.toBeNull();
+      expect(window.localStorage.getItem('qed2.practice.rail-collapsed')).toBe('true');
+      expect(document.body.classList.contains('q-modal-open')).toBe(false);
+      expect(mounted.host.querySelector('.q-choice__opt')).toBe(option);
+      expect(option.getAttribute('aria-pressed')).toBe('true');
+      expect(JSON.stringify(saveDraft.mock.calls[0])).toBe(draft);
+      expect(saveDraft).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(practice.items)).toBe(items);
+      expect(practice.graded).toHaveLength(0);
+      expect(practice.index).toBe(0);
+      expect(scroll).not.toHaveBeenCalled();
+
+      toggle.click();
+      await settle();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+      expect(rail.hasAttribute('inert')).toBe(false);
+      expect(rail.hasAttribute('aria-hidden')).toBe(false);
+      expect(rail.querySelector('.q-sitems')).toBe(list);
+      expect(mounted.host.querySelector('.q-choice__opt')).toBe(option);
+      expect(JSON.stringify(saveDraft.mock.calls[0])).toBe(draft);
+      expect(saveDraft).toHaveBeenCalledTimes(1);
+    } finally { mounted.unmount(); }
+  });
+
+  it('restores only the local desktop preference and keeps the mobile programme drawer usable', async () => {
+    window.localStorage.setItem('qed2.practice.rail-collapsed', 'true');
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
+    try {
+      expect(mounted.host.querySelector('.practice__rail-toggle')?.getAttribute('aria-expanded')).toBe('false');
+      const mobile = mounted.host.querySelector<HTMLButtonElement>('.practice__session-button')!;
+      mobile.click();
+      await settle();
+      expect(mobile.getAttribute('aria-expanded')).toBe('true');
+      expect(document.querySelector('#practice-program-drawer[role="dialog"]')).not.toBeNull();
+      expect(mounted.host.querySelector('#practice-program-rail')?.hasAttribute('inert')).toBe(true);
+      const item = mounted.host.querySelectorAll<HTMLButtonElement>('.practice-session-drawer__panel .q-sitems__item')[1]!;
+      item.click();
+      await settle();
+      expect(usePracticeStore().index).toBe(1);
+      expect(mobile.getAttribute('aria-expanded')).toBe('false');
+      expect(mounted.host.querySelector('.practice__rail-toggle')?.getAttribute('aria-expanded')).toBe('false');
+    } finally { mounted.unmount(); }
+  });
+
+  it('keeps the toggle usable if browser storage is unavailable', async () => {
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
+    try {
+      vi.spyOn(Storage.prototype, 'setItem').mockImplementationOnce(() => { throw new Error('storage blocked'); });
+      const toggle = mounted.host.querySelector<HTMLButtonElement>('.practice__rail-toggle')!;
+      expect(() => toggle.click()).not.toThrow();
+      await settle();
+      expect(toggle.getAttribute('aria-expanded')).toBe('false');
+      toggle.click();
+      await settle();
+      expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    } finally { mounted.unmount(); }
   });
 
   it('opens the next question at the top after the programme drawer releases its scroll lock', async () => {

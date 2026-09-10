@@ -6,7 +6,7 @@ const { t, formatNumber } = useI18n();
  * AI help owns a separate dialog and never replaces the scoring controls. */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
-import { Cloud, HardDrive } from 'lucide-vue-next';
+import { Cloud, HardDrive, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
 import {
   type AiAssessResult,
   type AiExplainResult,
@@ -159,6 +159,18 @@ let answerDraftSaveSequence = 0;
 let answerDraftSavePromise: ReturnType<typeof practice.saveAnswerDraft> | undefined;
 
 const mobileRailOpen = ref(false);
+// A local layout preference, independent of the learner's synced settings.
+const RAIL_COLLAPSED_KEY = 'qed2.practice.rail-collapsed';
+function readRailCollapsed(): boolean {
+  try { return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === 'true'; }
+  catch { return false; }
+}
+const railCollapsed = ref(readRailCollapsed());
+function toggleRail(): void {
+  railCollapsed.value = !railCollapsed.value;
+  try { window.localStorage.setItem(RAIL_COLLAPSED_KEY, String(railCollapsed.value)); }
+  catch { /* Storage restrictions must not disable the layout control. */ }
+}
 const mobileSourceFooterReady = ref(false);
 const exitArmed = ref(false);
 const provenanceHeading = ref<HTMLHeadingElement | null>(null);
@@ -1599,7 +1611,7 @@ const currentCompetencyCodes = computed(() =>
 <template>
   <div
     class="practice q-app"
-    :class="{ 'practice--no-rail': !showProgramRail }"
+    :class="{ 'practice--no-rail': !showProgramRail, 'practice--rail-collapsed': railCollapsed }"
     :style="{
       '--practice-sheet-height': `${solutionReserve}px`,
       ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
@@ -1629,15 +1641,33 @@ const currentCompetencyCodes = computed(() =>
           :active="practice.phase === 'running' && practice.sessionAccessible"
         />
       </div>
-      <button
+      <div
         v-if="practice.phase === 'running' && practice.sessionAccessible && showProgramRail"
-        type="button"
-        class="practice__session-button"
-        :aria-label="t('Programmliste öffnen')"
-        @click="mobileRailOpen = true"
+        class="practice__session-controls"
       >
-        ☰
-      </button>
+        <button
+          type="button"
+          class="practice__rail-toggle"
+          :aria-label="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
+          :title="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
+          :aria-expanded="!railCollapsed"
+          aria-controls="practice-program-rail"
+          @click="toggleRail"
+        >
+          <PanelLeftOpen v-if="railCollapsed" :size="20" aria-hidden="true" />
+          <PanelLeftClose v-else :size="20" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          class="practice__session-button"
+          :aria-label="t('Programmliste öffnen')"
+          :aria-expanded="mobileRailOpen"
+          aria-controls="practice-program-drawer"
+          @click="mobileRailOpen = true"
+        >
+          ☰
+        </button>
+      </div>
       <span v-else class="practice__spacer" />
     </div>
 
@@ -1771,27 +1801,36 @@ const currentCompetencyCodes = computed(() =>
       <!-- running -->
       <div v-else-if="practice.phase === 'running' && current" key="running" class="practice__running">
         <div class="practice__body">
-          <div v-if="showProgramRail" class="practice__session-rail-shell">
-            <PracticeSessionRail
-              :items="railItems"
-              :graded-count="gradedCount"
-              :total="practice.total"
-              @jump="jumpToSessionItem"
-            />
-            <div
-              class="practice__source-footer"
-              :data-source="bankSourceIsLocal ? 'local' : 'remote'"
-              :title="bankSourceTitle"
-            >
-              <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
-              <Cloud v-else :size="12" aria-hidden="true" />
-              <span aria-hidden="true">{{ bankSourceText }}</span>
-              <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
+          <div
+            v-if="showProgramRail"
+            id="practice-program-rail"
+            class="practice__session-rail-shell"
+            :inert="railCollapsed ? true : undefined"
+            :aria-hidden="railCollapsed ? 'true' : undefined"
+          >
+            <div class="practice__session-rail-contents">
+              <PracticeSessionRail
+                :items="railItems"
+                :graded-count="gradedCount"
+                :total="practice.total"
+                @jump="jumpToSessionItem"
+              />
+              <div
+                class="practice__source-footer"
+                :data-source="bankSourceIsLocal ? 'local' : 'remote'"
+                :title="bankSourceTitle"
+              >
+                <HardDrive v-if="bankSourceIsLocal" :size="12" aria-hidden="true" />
+                <Cloud v-else :size="12" aria-hidden="true" />
+                <span aria-hidden="true">{{ bankSourceText }}</span>
+                <span class="practice__visually-hidden">{{ bankSourceA11yText }}</span>
+              </div>
             </div>
           </div>
 
           <PracticeSessionDrawer
             v-if="showProgramRail"
+            id="practice-program-drawer"
             :open="mobileRailOpen"
             :items="railItems"
             :graded-count="gradedCount"
@@ -2023,6 +2062,14 @@ const currentCompetencyCodes = computed(() =>
 .practice--no-rail {
   --practice-rail-width: 0px;
 }
+@media (min-width: 1024px) {
+  .practice--rail-collapsed {
+    --practice-rail-width: 0px;
+  }
+  .practice :deep(.practice-bar) {
+    transition: left 220ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 240ms ease, box-shadow var(--q-transition-normal);
+  }
+}
 /* Stacks the phase panels so loading and content overlap during the swap
  * instead of leaving the screen briefly empty. */
 .practice__stage {
@@ -2121,14 +2168,28 @@ const currentCompetencyCodes = computed(() =>
   height: calc(100dvh - 56px);
   flex: none;
   position: sticky;
-  top: 56px;
+  top: var(--practice-topbar-height, 56px);
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 16px 10px 10px;
   overflow: hidden;
+  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.practice__session-rail-contents {
+  box-sizing: border-box;
+  width: var(--q-sidebar-width);
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 10px 10px;
   background: var(--q-panel);
   border-right: 1px solid var(--q-border);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.practice--rail-collapsed .practice__session-rail-contents {
+  opacity: 0;
+  transform: translateX(-12px);
 }
 .practice__session-rail-shell :deep(.practice-rail) {
   width: 100%;
@@ -2206,11 +2267,17 @@ const currentCompetencyCodes = computed(() =>
 }
 /* The track itself is PracticeProgressBar's business now. */
 .practice__spacer {
-  width: 34px;
+  width: 44px;
 }
-.practice__session-button {
-  width: 34px;
-  height: 34px;
+.practice__session-controls {
+  width: 44px;
+  flex: none;
+}
+.practice__session-button,
+.practice__rail-toggle {
+  width: 44px;
+  height: 44px;
+  flex: none;
   border-radius: 8px;
   border: none;
   background: none;
@@ -2220,10 +2287,16 @@ const currentCompetencyCodes = computed(() =>
   cursor: pointer;
   display: grid;
   place-items: center;
-  visibility: hidden;
+}
+.practice__session-button { display: none; }
+.practice__rail-toggle:focus-visible,
+.practice__session-button:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: 2px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .practice__session-button:hover {
+  .practice__session-button:hover,
+  .practice__rail-toggle:hover {
     background: var(--q-panel);
   }
 }
@@ -2484,7 +2557,16 @@ const currentCompetencyCodes = computed(() =>
     display: none;
   }
   .practice__session-button {
-    visibility: visible;
+    display: grid;
+  }
+  .practice__rail-toggle { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .practice__session-rail-shell,
+  .practice__session-rail-contents,
+  .practice :deep(.practice-bar) {
+    transition: none;
   }
 }
 

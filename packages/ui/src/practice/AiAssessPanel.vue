@@ -21,6 +21,7 @@ import AiBadge from '../shared/AiBadge.vue';
 import StateIcon from '../shared/StateIcon.vue';
 import QButton from '../shared/QButton.vue';
 import QSkeleton from '../shared/QSkeleton.vue';
+import MarkdownView from '../shared/MarkdownView.vue';
 
 const { t } = useI18n();
 
@@ -158,11 +159,13 @@ watch(
         <details class="q-aia__evidence" :open="overallShaky">
           <summary>{{ t(overallShaky ? 'Begründung prüfen' : 'Begründung') }}</summary>
           <div class="q-aia__evidence-body">
-            <p v-if="overall.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !overall.quoteVerified }">
-              „{{ overall.quote }}"
+            <blockquote v-if="overall.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !overall.quoteVerified }">
+              <MarkdownView :source="overall.quote" class="q-aia__markdown" />
               <span v-if="!overall.quoteVerified" class="q-aia__quote-warn">{{ t('nicht wörtlich gefunden') }}</span>
-            </p>
-            <p v-if="overall.reason" class="q-aia__reason">{{ overall.reason }}</p>
+            </blockquote>
+            <div v-if="overall.reason" class="q-aia__reason">
+              <MarkdownView :source="overall.reason" class="q-aia__markdown" />
+            </div>
           </div>
         </details>
       </div>
@@ -184,11 +187,13 @@ watch(
           <details class="q-aia__evidence" :open="shaky(c)">
             <summary>{{ t(shaky(c) ? 'Begründung prüfen' : 'Begründung') }}</summary>
             <div class="q-aia__evidence-body">
-              <p v-if="c.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !c.quoteVerified }">
-                „{{ c.quote }}"
+              <blockquote v-if="c.quote" class="q-aia__quote" :class="{ 'q-aia__quote--unverified': !c.quoteVerified }">
+                <MarkdownView :source="c.quote" class="q-aia__markdown" />
                 <span v-if="!c.quoteVerified" class="q-aia__quote-warn">{{ t('nicht wörtlich gefunden') }}</span>
-              </p>
-              <p v-if="c.reason" class="q-aia__reason">{{ c.reason }}</p>
+              </blockquote>
+              <div v-if="c.reason" class="q-aia__reason">
+                <MarkdownView :source="c.reason" class="q-aia__markdown" />
+              </div>
             </div>
           </details>
         </li>
@@ -305,10 +310,13 @@ watch(
 }
 .q-aia__evidence-body {
   padding: 2px 0 2px 1px;
+  min-width: 0;
 }
 .q-aia__quote {
   margin: 4px 0 0;
-  font: 500 11.5px/1.5 ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.5;
   color: var(--q-mut);
   overflow-wrap: anywhere;
 }
@@ -316,8 +324,8 @@ watch(
   color: var(--q-err-ink);
 }
 .q-aia__quote-warn {
-  display: inline-block;
-  margin-left: 6px;
+  display: block;
+  margin-top: 4px;
   font-size: 9.5px;
   font-weight: 700;
   text-transform: uppercase;
@@ -329,6 +337,19 @@ watch(
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--q-faint);
+}
+.q-aia__markdown.q-md {
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.q-aia__markdown > :deep(:first-child) {
+  margin-top: 0;
+}
+.q-aia__markdown > :deep(:last-child) {
+  margin-bottom: 0;
 }
 .q-aia__confidence {
   margin-left: auto;
