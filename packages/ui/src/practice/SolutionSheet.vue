@@ -13,10 +13,11 @@ import { useI18n } from '../i18n.js';
  *
  * Controlled component: the parent owns `detent`.
  */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue';
 import { isRichTextEmpty, type SolutionEntry, type ImageFigure } from '@qed2/core-logic';
 import RichTextView from '../shared/RichTextView.vue';
 import StateIcon from '../shared/StateIcon.vue';
+import ChevronDown from '../shared/ChevronDown.vue';
 import ZoomableFigure from '../shared/ZoomableFigure.vue';
 import { useAssetResolver } from '../shared/assets.js';
 import {
@@ -41,6 +42,8 @@ const props = withDefaults(defineProps<{
    * nothing to reveal yet, and the handle would invite spoiling the question.
    */
   handle?: boolean;
+  /** Optional visible title makes a collapsed review drawer easy to reopen. */
+  handleTitle?: string;
   /** Hide official material while an unanswered first attempt asks for a hint. */
   showSolution?: boolean;
   /**
@@ -61,6 +64,7 @@ const emit = defineEmits<{
 }>();
 
 const resolveAsset = useAssetResolver();
+const sheetId = `q-solution-sheet-${useId()}`;
 
 const entries = computed(() => props.solution ?? []);
 const showsSolution = computed(() => props.showSolution !== false);
@@ -76,7 +80,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
  * the cue is not colour-only for anyone who cannot see it.
  */
 const handleLabel = computed(() => {
-  const subject = t(showsSolution.value ? 'Lösung' : 'Lernhilfe');
+  const subject = props.handleTitle ?? t(showsSolution.value ? 'Lösung' : 'Lernhilfe');
   const action = t(props.detent === 'collapsed' ? '{subject} anzeigen' : '{subject} einklappen', { subject });
   return props.verdictLabel ? `${props.verdictLabel} — ${action}` : action;
 });
@@ -132,6 +136,8 @@ const inner = ref<HTMLElement | null>(null);
  * leaves exactly one element in it.
  */
 const answerBlock = ref<HTMLElement | HTMLElement[] | null>(null);
+/** Custom review content participates in the same measured-height contract. */
+const reviewBlock = ref<HTMLElement | null>(null);
 /** The first entry's grading note, if it has one. */
 const noteBlock = ref<HTMLElement | HTMLElement[] | null>(null);
 let contentObserver: ResizeObserver | undefined;
@@ -164,7 +170,7 @@ const MEASURE_DEAD_BAND_PX = 2;
 
 function measureAnswer(): void {
   const innerEl = inner.value;
-  const blockEl = firstOf(answerBlock.value);
+  const blockEl = reviewBlock.value ?? firstOf(answerBlock.value);
 
   // No official solution → no answer block. The previous part's numbers must
   // not survive into this one, or an empty sheet opens at a height that
@@ -190,7 +196,7 @@ function measureAnswer(): void {
   const next = Math.ceil(height + padBottom);
   if (Math.abs(next - answerHeight.value) > MEASURE_DEAD_BAND_PX) answerHeight.value = next;
 
-  const noteEl = firstOf(noteBlock.value);
+  const noteEl = reviewBlock.value ? null : firstOf(noteBlock.value);
   const noteTop = noteEl ? Math.floor(noteEl.getBoundingClientRect().top - innerTop) : 0;
   if (Math.abs(noteTop - noteOffset.value) > MEASURE_DEAD_BAND_PX) noteOffset.value = noteTop;
 }
@@ -326,7 +332,7 @@ onMounted(() => {
 });
 
 watch(
-  () => [props.solution, props.showSolution],
+  () => [props.solution, props.showSolution, props.detent],
   () => void nextTick(measureAnswer),
 );
 
@@ -337,7 +343,7 @@ watch(
  * it and the bar rode over the practice top bar.
  */
 watch(
-  () => [props.detent, props.verdict, props.handle],
+  () => [props.detent, props.verdict, props.handle, props.handleTitle],
   () => void nextTick(measureChrome),
   { immediate: true },
 );
@@ -372,6 +378,8 @@ async function collapseFromKeyboard(): Promise<void> {
         ref="handleEl"
         type="button"
         class="q-ssheet__handle"
+        :class="{ 'q-ssheet__handle--labelled': handleTitle }"
+        :aria-controls="sheetId"
         :aria-expanded="detent !== 'collapsed'"
         :aria-label="handleLabel"
         @pointerdown="onHandleDown"
@@ -387,6 +395,10 @@ async function collapseFromKeyboard(): Promise<void> {
           :class="`q-ssheet__grip--${bannerVerdict ? 'on-banner' : (verdict ?? 'neutral')}`"
           aria-hidden="true"
         />
+        <span v-if="handleTitle" class="q-ssheet__handle-caption" :style="contentMaxWidth ? { maxWidth: contentMaxWidth } : undefined">
+          <span>{{ handleTitle }}</span>
+          <ChevronDown :class="{ 'q-ssheet__handle-chevron--closed': detent === 'collapsed' }" />
+        </span>
       </button>
       <div v-if="bannerVerdict" class="q-ssheet__banner q-reveal" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
         <StateIcon :state="bannerVerdict" :size="20" />
@@ -397,13 +409,14 @@ async function collapseFromKeyboard(): Promise<void> {
 
     <section
       ref="sheetEl"
+      :id="sheetId"
       class="q-ssheet"
       :class="{ 'q-ssheet--dragging': dragging, 'q-ssheet--open': detent !== 'collapsed' }"
       :style="{ height: `${sheetHeight}px` }"
       :aria-hidden="detent === 'collapsed'"
       :inert="detent === 'collapsed' ? true : undefined"
       :tabindex="detent === 'collapsed' ? -1 : 0"
-      :aria-label="t(!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg')"
+      :aria-label="handleTitle ?? t(!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg')"
       @keydown.esc.prevent.stop="collapseFromKeyboard"
     >
     <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
@@ -420,6 +433,11 @@ async function collapseFromKeyboard(): Promise<void> {
         <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
       </div>
 
+      <div v-if="$slots.review" ref="reviewBlock" class="q-ssheet__review">
+        <slot v-if="showsSolution" name="review" />
+        <p v-else class="q-ssheet__empty" role="status">{{ t('Antwort wird gesichert …') }}</p>
+      </div>
+      <template v-else>
       <div v-if="showsSolution" class="q-ssheet__head">
         <span class="q-ssheet__tick" aria-hidden="true"></span>
         <h3 class="q-ssheet__title">{{ t('Offizieller Lösungsweg') }}</h3>
@@ -505,6 +523,7 @@ async function collapseFromKeyboard(): Promise<void> {
         commentary second.
       -->
       <slot name="explain" />
+      </template>
     </div>
     </section>
   </div>
@@ -830,5 +849,41 @@ async function collapseFromKeyboard(): Promise<void> {
   font: 500 12px/1.6 ui-monospace, Menlo, monospace;
   color: var(--q-mut);
   overflow-wrap: break-word;
+}
+
+.q-ssheet__review {
+  min-width: 0;
+  padding: 4px 0 12px;
+}
+.q-ssheet__handle--labelled {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  min-height: 52px;
+  padding: 8px 16px;
+}
+.q-ssheet__handle-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+.q-ssheet__handle-caption > svg {
+  flex: none;
+}
+.q-ssheet__handle-chevron--closed {
+  transform: rotate(180deg);
+}
+.q-ssheet__handle--labelled:focus-visible {
+  outline: 2px solid var(--q-accent);
+  outline-offset: -3px;
+  border-radius: 4px;
 }
 </style>

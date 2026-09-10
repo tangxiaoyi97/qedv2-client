@@ -1,0 +1,164 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mount, type VueWrapper } from '@vue/test-utils';
+import { h, nextTick } from 'vue';
+import type { PartPlayerState } from '../src/index.js';
+import PracticeBottomBar from '../src/practice/PracticeBottomBar.vue';
+import PracticeReviewPanel from '../src/practice/PracticeReviewPanel.vue';
+import SolutionSheet from '../src/practice/SolutionSheet.vue';
+
+const assessing: PartPlayerState = {
+  phase: 'self-assessing', canSubmit: false, result: null,
+  indeterminate: false, unplayable: false, answerPreview: null,
+  submittedText: 'Meine eigene Antwort',
+  selfAssessment: {
+    maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }],
+    selectedPoints: null, grading: null, assessment: {},
+  },
+};
+const solution = [{ result: [{ t: 'text' as const, v: 'Die offizielle Lösung' }] }];
+const mounted: VueWrapper[] = [];
+afterEach(() => {
+  for (const view of mounted.splice(0)) view.unmount();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = '';
+});
+
+function mountReviewBar(extra: Record<string, unknown> = {}) {
+  const state = (extra.state as PartPlayerState | undefined) ?? assessing;
+  const view = mount(PracticeBottomBar, {
+    props: {
+      state: assessing, answerPreview: null, grading: 'unseen',
+      primaryLabel: 'Bewertung übernehmen', primaryDisabled: true,
+      solutionDetent: 'full', solutionReady: true, learningDialog: true,
+      solution: [{ result: [{ t: 'text', v: 'Duplicate legacy solution' }] }],
+      ...extra,
+    },
+    slots: {
+      review: () => h(PracticeReviewPanel, { state, solution, ready: true, hideResult: true }),
+      assist: '<p>Duplicate legacy assessment</p>',
+      explain: '<p>Legacy AI content</p>',
+    },
+    attachTo: document.body,
+  });
+  mounted.push(view);
+  return view;
+}
+
+describe('practice review drawer', () => {
+  it('places the simplified solution and manual grading inside the drawer exactly once', () => {
+    const view = mountReviewBar();
+    const sheet = view.get('.q-ssheet');
+    expect(sheet.get('.practice-review__answer').text()).toContain('Meine eigene Antwort');
+    expect(sheet.get('.practice-review__solution').text()).toContain('Die offizielle Lösung');
+    expect(sheet.findAll('.q-selfassess')).toHaveLength(1);
+    expect(sheet.findAll('.q-gpick')).toHaveLength(1);
+    expect(sheet.text()).not.toContain('Duplicate legacy');
+    expect(sheet.text()).not.toContain('Legacy AI content');
+    expect(view.find('.practice-bar__row .q-selfassess').exists()).toBe(false);
+  });
+
+  it('keeps one verdict in the drawer banner instead of duplicating the review result', () => {
+    const state: PartPlayerState = {
+      ...assessing, phase: 'reviewed', selfAssessment: null,
+      result: { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
+    };
+    const view = mountReviewBar({ state });
+    expect(view.get('.q-ssheet__banner').text()).toContain('Richtig');
+    expect(view.find('.practice-review__result').exists()).toBe(false);
+    expect(view.find('.q-selfassess').exists()).toBe(false);
+  });
+
+  it('does not invoke custom solution content before a durable first submission', async () => {
+    const view = mountReviewBar({ solutionReady: false });
+    expect(view.find('.practice-review').exists()).toBe(false);
+    expect(view.text()).not.toContain('Die offizielle Lösung');
+    expect(view.text()).not.toContain('Duplicate legacy solution');
+    expect(view.get('.q-ssheet').text()).toContain('Antwort wird gesichert …');
+    await view.setProps({ solutionReady: true });
+    expect(view.get('.q-ssheet').text()).toContain('Die offizielle Lösung');
+    await view.setProps({ state: { ...assessing, phase: 'answering', selfAssessment: null } });
+    expect(view.find('.practice-review').exists()).toBe(false);
+    expect(view.find('.q-ssheet__handle').exists()).toBe(false);
+  });
+
+  it('keeps a labelled reopening control while collapsed and removes the sheet from focus', async () => {
+    const view = mountReviewBar({ solutionDetent: 'collapsed' });
+    const handle = view.get('.q-ssheet__handle');
+    const sheet = view.get('.q-ssheet');
+    expect(handle.text()).toContain('Lösung & Bewertung');
+    expect(handle.attributes('aria-label')).toBe('Lösung & Bewertung anzeigen');
+    expect(handle.attributes('aria-controls')).toBe(sheet.attributes('id'));
+    expect(sheet.attributes('inert')).toBeDefined();
+    expect(sheet.attributes('aria-hidden')).toBe('true');
+    expect(sheet.attributes('tabindex')).toBe('-1');
+    expect(sheet.attributes('style')).toContain('height: 0px');
+    await handle.trigger('click');
+    expect(view.emitted('update:solutionDetent')?.at(-1)).toEqual(['default']);
+    await view.setProps({ solutionDetent: 'default' });
+    expect(sheet.attributes('inert')).toBeUndefined();
+    expect(sheet.attributes('aria-hidden')).toBe('false');
+  });
+
+  it('keeps the existing swipe, keyboard, and Escape return-focus behavior for custom review', async () => {
+    const view = mountReviewBar({ solutionDetent: 'default' });
+    const handle = view.get('.q-ssheet__handle');
+    await handle.trigger('pointerdown', { clientY: 500, pointerId: 1 });
+    await handle.trigger('pointermove', { clientY: 280, pointerId: 1 });
+    await handle.trigger('pointerup', { clientY: 280, pointerId: 1 });
+    expect(view.emitted('update:solutionDetent')?.at(-1)).toEqual(['full']);
+    await view.setProps({ solutionDetent: 'full' });
+    await handle.trigger('keydown', { key: 'ArrowDown' });
+    expect(view.emitted('update:solutionDetent')?.at(-1)).toEqual(['default']);
+    view.get<HTMLButtonElement>('.q-selfassess button').element.focus();
+    await view.get('.q-ssheet').trigger('keydown', { key: 'Escape' });
+    expect(view.emitted('update:solutionDetent')?.at(-1)).toEqual(['collapsed']);
+    expect(document.activeElement).toBe(handle.element);
+  });
+
+  it('drives AI dialog state independently of the open solution drawer', async () => {
+    const view = mountReviewBar({ learningAvailable: true, learningLabel: 'Lösung erklären', learningOpen: false });
+    const entry = view.get('.practice-bar__learning-toggle');
+    expect(entry.attributes('aria-haspopup')).toBe('dialog');
+    expect(entry.attributes('aria-expanded')).toBe('false');
+    await entry.trigger('click');
+    expect(view.emitted('learningToggle')).toHaveLength(1);
+    expect(view.emitted('update:solutionDetent')).toBeUndefined();
+    await view.setProps({ learningOpen: true, solutionDetent: 'collapsed' });
+    expect(entry.attributes('aria-expanded')).toBe('true');
+    expect(entry.classes()).toContain('practice-bar__learning-toggle--on');
+  });
+
+  it('uses custom review content in the measured default height and caps long content', async () => {
+    let contentHeight = 260;
+    let resize!: () => void;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const height = this.classList.contains('q-ssheet__review') ? contentHeight : 0;
+      return { x: 0, y: 0, top: 0, bottom: height, left: 0, right: 800, width: 800, height, toJSON: () => ({}) };
+    });
+    const view = mount(SolutionSheet, {
+      props: { solution: [], detent: 'default', handle: true, handleTitle: 'Lösung & Bewertung', topReserve: 56 },
+      slots: { review: '<div>Meine Antwort, Lösung und Bewertung</div>' },
+    });
+    mounted.push(view);
+    await nextTick(); await nextTick();
+    const height = () => parseFloat(view.get<HTMLElement>('.q-ssheet').element.style.height);
+    expect(height()).toBeGreaterThanOrEqual(260);
+    expect(height()).toBeLessThan(300);
+    contentHeight = 1200;
+    resize();
+    await nextTick();
+    expect(height()).toBeLessThanOrEqual(460);
+    const readingHeight = height();
+    await view.setProps({ detent: 'full' });
+    expect(height()).toBeGreaterThan(readingHeight);
+    expect(height()).toBeLessThanOrEqual(window.innerHeight - 56 + 6);
+    await view.setProps({ detent: 'collapsed' });
+    expect(height()).toBe(0);
+  });
+});

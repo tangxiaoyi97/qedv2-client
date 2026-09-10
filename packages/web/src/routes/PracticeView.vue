@@ -2,8 +2,8 @@
 import { useI18n } from '../i18n.js';
 const { t, formatNumber } = useI18n();
 
-/** Answering and review have separate page surfaces; AI help owns a dialog.
- * PartPlayer stays mounted when switching surfaces so its answer is preserved. */
+/** The question stays on the page; solution and scoring share the bottom drawer.
+ * AI help owns a separate dialog and never replaces the scoring controls. */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
 import { Cloud, HardDrive } from 'lucide-vue-next';
@@ -45,6 +45,7 @@ import {
   type PartPlayerCommand,
   type PartPlayerDraft,
   type PartPlayerState,
+  type SheetDetent,
 } from '@qed2/ui';
 import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
@@ -86,20 +87,10 @@ const playerState = ref<PartPlayerState>({
 });
 const playerCommand = ref<PartPlayerCommand | null>(null);
 let playerCommandId = 0;
-const reviewVisible = ref(false);
+const solutionDetent = ref<SheetDetent>('collapsed');
+const solutionHeight = ref(0);
 const helpOpen = ref(false);
 const helpMode = ref<'learning' | 'assessment'>('learning');
-
-function selectPracticePanel(review: boolean, focusTab = false): void {
-  if (review && playerState.value.phase === 'answering') return;
-  reviewVisible.value = review;
-  if (focusTab) void nextTick(() => document.getElementById(review ? 'practice-review-tab' : 'practice-task-tab')?.focus());
-}
-function onPracticeTabKeydown(event: KeyboardEvent): void {
-  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-  event.preventDefault();
-  selectPracticePanel(event.key === 'Home' ? false : event.key === 'End' ? true : !reviewVisible.value, true);
-}
 /**
  * The real top bar height keeps focused review content below the sticky
  * header, including devices with a safe-area inset.
@@ -139,6 +130,11 @@ const commitError = ref<string | null>(null);
 const pendingGradeCommit = ref<GradeCommitPayload | null>(null);
 const pendingOverrideGrading = ref<Grading | null>(null);
 const selfAssessmentDraftDurable = ref(false);
+// Once the answer is secured, later score edits must not unmount the drawer
+// controls and lose keyboard focus while their newer draft is being saved.
+const reviewMaterialReady = computed(() => playerState.value.phase !== 'self-assessing'
+  || selfAssessmentDraftDurable.value || Boolean(practice.currentSelfAssessmentDraft));
+let selfAssessmentFocusPending = false;
 const selfAssessmentDraftError = ref<string | null>(null);
 const pendingSelfAssessmentDraft = ref<PartPlayerDraft | null>(null);
 let draftSaveSequence = 0;
@@ -182,15 +178,19 @@ function onPlayerState(state: PartPlayerState): void {
   playerState.value = state;
   if (state.phase === previousPhase) return;
   helpOpen.value = false;
-  reviewVisible.value = state.phase !== 'answering';
+  solutionDetent.value = state.phase === 'answering' ? 'collapsed'
+    : state.phase === 'self-assessing' ? 'full' : 'default';
   if (state.phase === 'self-assessing') {
     selfAssessmentDraftDurable.value = Boolean(practice.currentSelfAssessmentDraft);
+    selfAssessmentFocusPending = !selfAssessmentDraftDurable.value;
+  } else {
+    selfAssessmentFocusPending = false;
   }
   void nextTick(() => {
     if (state.phase === 'answering') return;
     const panel = document.getElementById('practice-review-panel');
     panel?.focus({ preventScroll: true });
-    panel?.scrollIntoView?.({ block: 'start' });
+    panel?.closest('.q-ssheet')?.scrollTo?.({ top: 0 });
   });
 }
 
@@ -211,7 +211,13 @@ async function onPlayerDraft(draft: PartPlayerDraft): Promise<void> {
     selfAssessmentDraftError.value = saved
       ? null
       : 'Die Selbstbewertung konnte nicht lokal gespeichert werden.';
-
+    if (saved && selfAssessmentFocusPending) {
+      selfAssessmentFocusPending = false;
+      await nextTick();
+      if (solutionDetent.value !== 'collapsed' && !helpOpen.value) {
+        document.getElementById('practice-review-panel')?.focus({ preventScroll: true });
+      }
+    }
   }
 }
 
@@ -755,7 +761,7 @@ watch(
   [() => current.value?.part.id, () => auth.session?.user.id],
   () => {
     const restored = practice.currentReview;
-    reviewVisible.value = Boolean(restored || practice.currentSelfAssessmentDraft);
+    solutionDetent.value = restored ? 'default' : practice.currentSelfAssessmentDraft ? 'full' : 'collapsed';
     helpOpen.value = false;
     learningMode.value = 'walkthrough';
     assistController?.abort();
@@ -1206,7 +1212,7 @@ watch(() => route.query.prepared, () => {
 watch(
   () => practice.index,
   () => {
-    reviewVisible.value = false;
+    solutionDetent.value = 'collapsed';
     helpOpen.value = false;
     mobileRailOpen.value = false;
     exitArmed.value = false;
@@ -1532,6 +1538,7 @@ const currentCompetencyCodes = computed(() =>
     class="practice q-app"
     :class="{ 'practice--no-rail': !showProgramRail }"
     :style="{
+      '--practice-sheet-height': `${solutionHeight}px`,
       ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
     }"
   >
@@ -1746,7 +1753,7 @@ const currentCompetencyCodes = computed(() =>
             </div>
           </Teleport>
 
-          <div class="practice__content">
+          <div class="practice__content" :class="{ 'practice__content--sheet-open': solutionDetent !== 'collapsed' }">
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
@@ -1758,16 +1765,7 @@ const currentCompetencyCodes = computed(() =>
               @star-toggle="onStarToggle"
             />
 
-            <div class="practice__steps" role="tablist" :aria-label="t('Bearbeitungsschritte')" @keydown="onPracticeTabKeydown">
-              <button id="practice-task-tab" type="button" role="tab" aria-controls="practice-task-panel" :aria-selected="!reviewVisible" :tabindex="reviewVisible ? -1 : 0" @click="selectPracticePanel(false)">
-                <span aria-hidden="true">1</span>{{ t('Aufgabe') }}
-              </button>
-              <button id="practice-review-tab" type="button" role="tab" aria-controls="practice-review-panel" :aria-selected="reviewVisible" :tabindex="reviewVisible ? 0 : -1" :disabled="playerState.phase === 'answering'" @click="selectPracticePanel(true)">
-                <span aria-hidden="true">2</span>{{ t('Lösung & Bewertung') }}
-              </button>
-            </div>
-
-            <section v-show="!reviewVisible" id="practice-task-panel" role="tabpanel" aria-labelledby="practice-task-tab">
+            <section id="practice-task-panel" class="practice__task" :aria-label="t('Aufgabe')">
             <div v-if="current.question.prompt && current.question.prompt.length > 0" class="practice__qprompt">
               <RichTextView :nodes="current.question.prompt" />
             </div>
@@ -1795,22 +1793,6 @@ const currentCompetencyCodes = computed(() =>
 
             </section>
 
-            <section v-if="playerState.phase !== 'answering'" v-show="reviewVisible" id="practice-review-panel" class="practice__review-panel" role="tabpanel" aria-labelledby="practice-review-tab" tabindex="-1">
-              <PracticeReviewPanel
-                :state="playerState"
-                :submission-unavailable="Boolean(practice.currentReview && !practice.currentReview.pendingSubmission)"
-                :solution="current.part.solution"
-                :scoring="current.part.scoring"
-                :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
-                :ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
-                :disabled="commitBusy"
-                :assist-available="showAssist"
-                @assist="openAssessmentHelp"
-                @assessment-update="onSelfAssessmentUpdate"
-                @grading-select="onSelfGradingSelect"
-              />
-            </section>
-
             <div
               v-if="!showProgramRail"
               class="practice__source-footer practice__source-footer--inline"
@@ -1827,7 +1809,8 @@ const currentCompetencyCodes = computed(() =>
         </div>
 
         <PracticeBottomBar
-          solution-detent="collapsed"
+          v-model:solution-detent="solutionDetent"
+          :top-reserve="topbarHeight || undefined"
           :state="playerState"
           :answer-preview="playerState.answerPreview"
           :scoring="current.part.scoring"
@@ -1837,17 +1820,37 @@ const currentCompetencyCodes = computed(() =>
           :grading-disabled="gradingOverrideDisabled"
           :primary-label="t(primaryLabel)"
           :primary-disabled="primaryDisabled"
-          inline-review
+          learning-dialog
           :learning-available="learningAvailable"
           :learning-open="helpOpen"
           :learning-label="learningEntryLabel"
-          :solution-ready="playerState.phase !== 'self-assessing' || selfAssessmentDraftDurable"
+          :solution-ready="reviewMaterialReady"
           @assessment-update="onSelfAssessmentUpdate"
           @self-grading-select="onSelfGradingSelect"
           @grading-select="onGradingSelect"
           @primary="primaryAction"
           @learning-toggle="toggleLearning"
-        />
+          @update:solution-height="solutionHeight = $event"
+        >
+          <template #review>
+            <div id="practice-review-panel" class="practice__review-panel" tabindex="-1">
+              <PracticeReviewPanel
+                :state="playerState"
+                hide-result
+                :submission-unavailable="Boolean(practice.currentReview && !practice.currentReview.pendingSubmission)"
+                :solution="current.part.solution"
+                :scoring="current.part.scoring"
+                :rubric="current.part.answer?.kind === 'open' ? current.part.answer.rubric : undefined"
+                :ready="reviewMaterialReady"
+                :disabled="commitBusy"
+                :assist-available="showAssist"
+                @assist="openAssessmentHelp"
+                @assessment-update="onSelfAssessmentUpdate"
+                @grading-select="onSelfGradingSelect"
+              />
+            </div>
+          </template>
+        </PracticeBottomBar>
 
         <PracticeHelpDialog
           v-if="helpOpen"
@@ -1939,14 +1942,8 @@ const currentCompetencyCodes = computed(() =>
 .practice__help-modes button[aria-pressed='true'] { color: var(--q-accent-strong); background: var(--q-accent-bg); border-color: var(--q-accent); }
 .practice__help-modes button:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 3px; }
 
-.practice__steps { display: flex; gap: 20px; margin: 24px 0 28px; border-bottom: 1px solid var(--q-border-soft); }
-.practice__steps button { display: inline-flex; align-items: center; gap: 8px; padding: 12px 0; min-height: 48px; border: none; border-bottom: 2px solid transparent; background: none; font: inherit; font-size: 13px; font-weight: 650; color: var(--q-faint); cursor: pointer; }
-.practice__steps button[aria-selected='true'] { border-bottom-color: var(--q-accent); color: var(--q-accent-strong); }
-.practice__steps button:disabled { opacity: 0.55; cursor: default; }
-.practice__steps button:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 4px; border-radius: 3px; }
-.practice__steps button span { display: inline-grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; font-size: 11px; background: var(--q-panel); }
-.practice__steps button[aria-selected='true'] span { background: var(--q-accent-bg); }
-.practice__review-panel { scroll-margin-top: calc(var(--practice-topbar-height, 56px) + 18px); outline: none; }
+.practice__task { margin-top: 28px; }
+.practice__review-panel { outline: none; }
 
 .practice {
   --practice-rail-width: var(--q-sidebar-width);
@@ -2157,6 +2154,9 @@ const currentCompetencyCodes = computed(() =>
   width: 100%;
   flex: 1;
   min-width: 0;
+}
+.practice__content.practice__content--sheet-open {
+  padding-bottom: calc(var(--practice-sheet-height, 0px) + 180px + var(--q-keyboard-inset, 0px));
 }
 .practice__qprompt {
   font-size: 15.5px;

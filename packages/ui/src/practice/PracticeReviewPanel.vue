@@ -17,6 +17,8 @@ const props = defineProps<{
   scoring?: Scoring | null;
   rubric?: RichText | null;
   ready: boolean;
+  /** The enclosing drawer can own the result banner. */
+  hideResult?: boolean;
   submissionUnavailable?: boolean;
   disabled?: boolean;
   assistAvailable?: boolean;
@@ -34,7 +36,7 @@ const answerText = computed(() => props.state.answerPreview?.value ?? props.stat
 
 <template>
   <div class="practice-review">
-    <div v-if="result" class="practice-review__result" :class="`practice-review__result--${result.verdict}`" role="status">
+    <div v-if="result && !hideResult" class="practice-review__result" :class="`practice-review__result--${result.verdict}`" role="status">
       <StateIcon :state="result.verdict" :size="22" />
       <strong>{{ t(VERDICT_LABELS[result.verdict]) }}</strong>
       <span>{{ formatUiScoreRatio(result.awardedPoints, result.maxPoints) }}</span>

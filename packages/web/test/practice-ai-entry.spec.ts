@@ -245,25 +245,31 @@ describe('practice AI entries', () => {
     expect(choose).not.toHaveBeenCalled();
   });
 
-  it('opens the review page while preserving the mounted question and keyboard tab navigation', async () => {
+  it('keeps the question mounted and contains review in the collapsible keyboard-accessible drawer', async () => {
     const { host } = await mountPractice();
     const task = host.querySelector<HTMLElement>('#practice-task-panel')!;
     const mountedPlayer = host.querySelector('.test-player');
-    expect(host.querySelector<HTMLButtonElement>('#practice-review-tab')!.disabled).toBe(true);
+    const sheet = host.querySelector<HTMLElement>('.q-ssheet')!;
+    expect(sheet.getAttribute('aria-hidden')).toBe('true');
+    expect(host.querySelector('.practice-review')).toBeNull();
     player.emit!(state('incorrect'));
     await settle();
-    expect(task.style.display).toBe('none');
-    expect(host.querySelector('#practice-review-tab')!.getAttribute('aria-selected')).toBe('true');
-    expect(host.querySelector('.practice-review__answer')?.textContent).toContain('x = 3');
-    host.querySelector<HTMLButtonElement>('#practice-task-tab')!.click();
-    await settle();
     expect(task.style.display).not.toBe('none');
-    expect(host.querySelector('.test-player')).toBe(mountedPlayer);
-    host.querySelector('#practice-task-tab')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(sheet.getAttribute('aria-hidden')).toBe('false');
+    expect(sheet.querySelector('.practice-review__answer')?.textContent).toContain('x = 3');
+    expect(task.querySelector('.practice-review')).toBeNull();
+    const handle = host.querySelector<HTMLButtonElement>('.q-ssheet__handle')!;
+    expect(handle.textContent).toContain('Lösung & Bewertung');
+    handle.click();
     await settle();
-    expect(document.activeElement?.id).toBe('practice-review-tab');
-    expect(task.style.display).toBe('none');
-    expect(host.querySelector('.q-ssheet')).toBeNull();
+    expect(sheet.getAttribute('aria-hidden')).toBe('true');
+    expect(sheet.hasAttribute('inert')).toBe(true);
+    expect(host.querySelector('.test-player')).toBe(mountedPlayer);
+    handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+    await settle();
+    expect(sheet.getAttribute('aria-hidden')).toBe('false');
+    expect(sheet.hasAttribute('inert')).toBe(false);
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
   });
 
   it('explains an unscored submitted answer without selecting or submitting a grade', async () => {
@@ -276,6 +282,9 @@ describe('practice AI entries', () => {
     const explain = vi.mocked(ai.explain).mockResolvedValue({ mode: 'walkthrough', markdown: 'Schritt für Schritt', model: 'test', promptVersion: 'v2', source: 'pool', taskVersion: 'walkthrough.v1', cached: true });
     player.emit!({ ...state(), phase: 'self-assessing', submittedText: 'Mein Ansatz', selfAssessment: { maxPoints: 1, scoreOptions: [{ points: 0, label: '0' }, { points: 1, label: '1' }], selectedPoints: null, grading: null, assessment: {} } });
     await settle();
+    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    expect(host.querySelector('.q-ssheet .q-selfassess')).not.toBeNull();
+    expect(host.querySelector('#practice-task-panel .q-selfassess')).toBeNull();
     host.querySelector<HTMLButtonElement>('.practice-bar__learning-toggle')!.click();
     await settle();
     expect(explain).toHaveBeenCalledWith(expect.objectContaining({ mode: 'walkthrough', submitted: 'Mein Ansatz', identity: expect.objectContaining({ taskVersion: 'walkthrough.v1' }) }), expect.any(AbortSignal), {});
@@ -283,6 +292,11 @@ describe('practice AI entries', () => {
     expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Schritt für Schritt');
     expect(record).not.toHaveBeenCalled();
     expect(host.querySelector('.q-selfassess [aria-checked="true"]')).toBeNull();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle();
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.querySelector('.practice-bar--full')).not.toBeNull();
+    expect(host.querySelector('.q-ssheet')?.getAttribute('aria-hidden')).toBe('false');
   });
 
   it('offers a walkthrough after a correct answer and reopens its result without requesting again', async () => {
