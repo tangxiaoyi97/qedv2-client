@@ -1938,10 +1938,11 @@ const currentCompetencyCodes = computed(() =>
           @learning-toggle="toggleLearning"
           @update:solution-height="onSolutionHeight"
         >
-          <template #review>
+          <template #review="{ expanded }">
             <div id="practice-review-panel" class="practice__review-panel" tabindex="-1">
               <PracticeReviewPanel
                 :state="playerState"
+                :expanded="expanded"
                 hide-result
                 :submission-unavailable="Boolean(practice.currentReview && !practice.currentReview.pendingSubmission)"
                 :solution="current.part.solution"

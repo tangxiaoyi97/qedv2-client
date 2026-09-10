@@ -18,6 +18,7 @@ const solution: SolutionEntry[] = [
   },
   {
     result: [{ t: 'text', v: 'Alternativer Weg über die Umkehrfunktion.' }],
+    note: 'Auch dieser Lösungsweg erhält einen Punkt.',
   },
 ];
 
@@ -33,11 +34,34 @@ describe('SolutionPanel', () => {
     // grader note as annotation box
     expect(w.text()).toContain('Beurteilungshinweis');
     expect(w.text()).toContain('[0 / 1 Punkt]');
+    expect(w.findAll('.q-solution__note')).toHaveLength(2);
+    expect(w.text()).toContain('Auch dieser Lösungsweg erhält einen Punkt.');
     // image figure via asset resolver (identity fallback)
     const img = w.find('.q-zfig__img');
     expect(img.exists()).toBe(true);
     expect(img.attributes('src')).toBe('assets/fig/loesung.png');
     expect(img.attributes('alt')).toBe('Lösungsabbildung');
+  });
+
+  it.each([false, true])('removes every grading note from the DOM while showNotes is false (plain=%s)', async (plain) => {
+    const w = mount(SolutionPanel, { props: { solution, plain, showNotes: false } });
+    const assertSolutionOnly = () => {
+      expect(w.text()).toContain('Zutreffend:');
+      expect(w.text()).toContain('Alternativer Weg über die Umkehrfunktion.');
+      expect(w.find('.katex').exists()).toBe(true);
+      expect(w.find('.q-zfig__img').exists()).toBe(true);
+      expect(w.find('.q-solution__note').exists()).toBe(false);
+      expect(w.html()).not.toContain('Beurteilungshinweis');
+      for (const entry of solution) expect(w.html()).not.toContain(entry.note!);
+    };
+    assertSolutionOnly();
+
+    await w.setProps({ showNotes: true });
+    expect(w.findAll('.q-solution__note')).toHaveLength(2);
+    for (const entry of solution) expect(w.text()).toContain(entry.note!);
+
+    await w.setProps({ showNotes: false });
+    assertSolutionOnly();
   });
 
   it('separates multiple entries with an Alternative divider from the 2nd on', () => {

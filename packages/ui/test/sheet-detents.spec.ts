@@ -4,6 +4,7 @@ import {
   TOP_BAR_RESERVE_PX,
   HALF_MAX_PX,
   HALF_MIN_PX,
+  SHEET_SWIPE_DISTANCE_PX,
   SHEET_FLICK_VELOCITY_PX_S,
   SHEET_FLICK_MIN_DISTANCE_PX,
   SHEET_FLICK_MAX_IDLE_MS,
@@ -178,6 +179,77 @@ describe('solution drawer release intent', () => {
     const short = { collapsed: 0, default: 10, full: 10 };
     expect(release({ heights: short, height: 10 })).toBe('default');
     expect(release({ heights: short, height: 1, velocity: 2400 })).toBe('collapsed');
+  });
+
+  it.each([100, 101, 102])('can reveal additional content at a coincident full height of %ipx', (full) => {
+    const short = { collapsed: 0, default: 100, full };
+    expect(release({
+      detent: 'default', heights: short, expandedContent: true,
+      startHeight: 100, height: full, recentDisplacement: SHEET_SWIPE_DISTANCE_PX,
+    })).toBe('full');
+    expect(release({
+      detent: 'full', heights: short, expandedContent: true,
+      startHeight: full, height: full - SHEET_SWIPE_DISTANCE_PX, recentDisplacement: -SHEET_SWIPE_DISTANCE_PX,
+    })).toBe('default');
+  });
+
+  it.each([undefined, 0, 1, 12, SHEET_SWIPE_DISTANCE_PX - 0.1])(
+    'does not switch coincident content stops with %s pixels of final finger travel', (distance) => {
+      const short = { collapsed: 0, default: 100, full: 100 };
+      expect(release({
+        detent: 'default', heights: short, expandedContent: true,
+        startHeight: 100, height: 100, velocity: 3000,
+        ...(distance === undefined ? {} : { recentDisplacement: distance }),
+      })).toBe('default');
+      expect(release({
+        detent: 'full', heights: short, expandedContent: true,
+        // Even large visible travel cannot substitute for final-segment intent.
+        startHeight: 100, height: 0, velocity: -3000,
+        ...(distance === undefined ? {} : { recentDisplacement: -distance }),
+      })).toBe('full');
+    },
+  );
+
+  it('uses final finger direction for coincident content without accepting a short reversal', () => {
+    const short = { collapsed: 0, default: 100, full: 100 };
+    for (const distance of [10, SHEET_SWIPE_DISTANCE_PX - 1, SHEET_SWIPE_DISTANCE_PX]) {
+      expect(release({
+        detent: 'default', heights: short, expandedContent: true,
+        startHeight: 100, height: 64, velocity: -1800, recentDisplacement: distance,
+      })).toBe(distance === SHEET_SWIPE_DISTANCE_PX ? 'full' : 'default');
+      expect(release({
+        detent: 'full', heights: short, expandedContent: true,
+        startHeight: 80, height: 100, velocity: 1800, recentDisplacement: -distance,
+      })).toBe(distance === SHEET_SWIPE_DISTANCE_PX ? 'default' : 'full');
+    }
+  });
+
+  it('preserves normal physical transitions and the old coincident-stop behavior by default', () => {
+    const short = { collapsed: 0, default: 100, full: 100 };
+    for (const expandedContent of [undefined, false]) {
+      expect(release({
+        detent: 'full', heights: short, startHeight: 100, height: 64, recentDisplacement: -36,
+        ...(expandedContent === undefined ? {} : { expandedContent }),
+      })).toBe('collapsed');
+    }
+    expect(release({ expandedContent: true, heights: short, height: 36, recentDisplacement: 36 })).toBe('default');
+    expect(release({
+      detent: 'default', expandedContent: true, heights: short,
+      startHeight: 100, height: 64, recentDisplacement: -36,
+    })).toBe('collapsed');
+    // A distinct full stop keeps the usual fast-flick threshold, below 36px.
+    expect(release({
+      detent: 'default', expandedContent: true, startHeight: 420,
+      height: 436, recentDisplacement: 16, velocity: 600,
+    })).toBe('full');
+    expect(release({
+      detent: 'full', expandedContent: true, startHeight: 672,
+      height: 656, recentDisplacement: -16, velocity: -600,
+    })).toBe('default');
+    expect(release({
+      detent: 'default', expandedContent: true, heights: { collapsed: 0, default: 0, full: 0 },
+      recentDisplacement: 36, velocity: 1500,
+    })).toBe('default');
   });
 
 });

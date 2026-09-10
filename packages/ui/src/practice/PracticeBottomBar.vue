@@ -126,8 +126,8 @@ const emit = defineEmits<{
       @update:detent="emit('update:solutionDetent', $event)"
       @update:height="emit('update:solutionHeight', $event)"
     >
-      <template v-if="$slots.review" #review>
-        <slot v-if="state.phase !== 'answering' && solutionReady !== false" name="review" />
+      <template v-if="$slots.review" #review="{ expanded }">
+        <slot v-if="state.phase !== 'answering' && solutionReady !== false" name="review" :expanded="expanded" />
         <p v-else-if="state.phase !== 'answering'" class="practice-bar__review-pending" role="status">{{ t('Antwort wird gesichert …') }}</p>
       </template>
       <!-- Judging happens against the solution directly above it, on one

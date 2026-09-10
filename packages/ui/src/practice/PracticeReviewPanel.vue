@@ -11,7 +11,7 @@ import RichTextView from '../shared/RichTextView.vue';
 import SelfAssessmentPanel from '../question/SelfAssessmentPanel.vue';
 import SolutionPanel from './SolutionPanel.vue';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   state: PartPlayerState;
   solution?: SolutionEntry[];
   scoring?: Scoring | null;
@@ -19,11 +19,13 @@ const props = defineProps<{
   ready: boolean;
   /** The enclosing drawer can own the result banner. */
   hideResult?: boolean;
+  /** A half-open drawer shows only the official solution. */
+  expanded?: boolean;
   submissionUnavailable?: boolean;
   disabled?: boolean;
   assistAvailable?: boolean;
   assistDisabled?: boolean;
-}>();
+}>(), { expanded: true });
 const emit = defineEmits<{
   assessmentUpdate: [value: SelfAssessment];
   gradingSelect: [value: Grading];
@@ -46,11 +48,11 @@ const result = computed(() => props.state.result);
     <template v-if="ready">
       <section class="practice-review__solution" :aria-label="t('Offizieller Lösungsweg')">
         <h2>{{ t('Offizieller Lösungsweg') }}</h2>
-        <SolutionPanel :solution="solution" plain />
+        <SolutionPanel :solution="solution" :show-notes="expanded" plain />
         <p v-if="!solution?.length" class="practice-review__empty">{{ t('Keine offizielle Lösung verfügbar.') }}</p>
       </section>
 
-      <section v-if="state.phase === 'self-assessing' && state.selfAssessment" class="practice-review__assessment" :aria-label="t('Selbstbewertung')">
+      <section v-if="expanded && state.phase === 'self-assessing' && state.selfAssessment" class="practice-review__assessment" :aria-label="t('Selbstbewertung')">
         <details v-if="rubric?.length" class="practice-review__rubric">
           <summary>{{ t('Bewertungsraster') }}</summary>
           <RichTextView :nodes="rubric" />

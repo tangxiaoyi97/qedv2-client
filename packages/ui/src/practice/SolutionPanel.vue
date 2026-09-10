@@ -22,8 +22,10 @@ const props = withDefaults(
     defaultOpen?: boolean;
     /** Render inside a clearly labelled review page without an accordion. */
     plain?: boolean;
+    /** Grading notes belong to the expanded review, not the solution preview. */
+    showNotes?: boolean;
   }>(),
-  { defaultOpen: true },
+  { defaultOpen: true, showNotes: true },
 );
 
 const resolveAsset = useAssetResolver();
@@ -71,7 +73,7 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
           <figure v-for="(fig, fi) in imageFigures(entry)" :key="fi" class="q-solution__figure">
             <ZoomableFigure :src="resolveAsset(fig.src)" :alt="fig.alt" />
           </figure>
-          <div v-if="entry.note" class="q-solution__note">
+          <div v-if="showNotes && entry.note" class="q-solution__note">
             <span class="q-solution__note-label">{{ t('Beurteilungshinweis') }}</span>
             <span class="q-solution__note-text">{{ entry.note }}</span>
           </div>

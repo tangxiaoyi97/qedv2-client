@@ -235,8 +235,8 @@ describe('SolutionSheet', () => {
     expect(w.text()).toContain('Offizieller Lösungsweg');
   });
 
-  it('renders solution entries with note box, figures and Alternative divider', () => {
-    const w = mount(SolutionSheet, { props: { solution, detent: 'default' as const } });
+  it('renders expanded solution entries with note box, figures and Alternative divider', () => {
+    const w = mount(SolutionSheet, { props: { solution, detent: 'full' as const } });
     expect(w.text()).toContain('Zutreffend:');
     expect(w.find('.katex').exists()).toBe(true);
     expect(w.text()).toContain('Beurteilungshinweis');
