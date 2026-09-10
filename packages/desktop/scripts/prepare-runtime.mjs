@@ -83,6 +83,7 @@ const INTEGRITY_ROOTS = [
   'bank/schema',
   'bank/revisions',
 ];
+const OPTIONAL_INTEGRITY_ROOTS = ['bank/reference'];
 const INTEGRITY_FILES = [
   'core/package.json',
   'core/pnpm-lock.yaml',
@@ -127,6 +128,7 @@ function trackedBankFiles() {
       'content',
       'assets',
       'schema',
+      'reference',
       'LICENSE',
       'README.md',
     ],
@@ -272,7 +274,7 @@ function isWithin(root, candidate) {
 }
 
 function isCoveredPath(path) {
-  return INTEGRITY_FILES.includes(path) || INTEGRITY_ROOTS.some((root) => path.startsWith(`${root}/`));
+  return INTEGRITY_FILES.includes(path) || [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS].some((root) => path.startsWith(`${root}/`));
 }
 
 async function mapLimit(values, concurrency, worker) {
@@ -318,9 +320,13 @@ async function collectIntegrityCandidates(runtimeRoot) {
     }
   }
 
-  for (const manifestPath of INTEGRITY_ROOTS) {
+  for (const manifestPath of [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS]) {
     const absolutePath = resolve(runtimeRoot, ...manifestPath.split('/'));
-    const info = await lstat(absolutePath);
+    const info = await lstat(absolutePath).catch((error) => {
+      if (error.code === 'ENOENT' && OPTIONAL_INTEGRITY_ROOTS.includes(manifestPath)) return null;
+      throw error;
+    });
+    if (!info) continue;
     if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error(`Required runtime tree is not a regular directory: ${manifestPath}`);
     }

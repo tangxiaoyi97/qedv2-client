@@ -224,7 +224,10 @@ describe('Browse → Practice prepared handoff', () => {
     await vi.waitFor(() => expect(practice.phase).toBe('error'));
     await vi.waitFor(() => expect(startButton(host).disabled).toBe(false));
     expect(router.currentRoute.value.path).toBe('/questions');
-    expect(host.querySelectorAll('.browse__row[aria-pressed="true"]')).toHaveLength(2);
+    const selected = [...host.querySelectorAll('.browse__row .browse__select[aria-pressed="true"]')];
+    expect(selected).toHaveLength(2);
+    expect(selected.map((button) => button.closest('.browse__row')?.querySelector('.browse__qtitle')?.textContent?.trim()))
+      .toEqual(['Auswahl 2', 'Auswahl 3']);
     expect(core.batches.at(-1)).toEqual(['q2', 'q3']);
     expect(core.recommends).not.toHaveBeenCalled();
     expect(await storage.get(STORAGE.app, key)).toEqual(saved);

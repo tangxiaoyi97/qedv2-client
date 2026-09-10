@@ -4,6 +4,8 @@
  */
 import { normalizeBaseUrl } from '../config/index.js';
 import type { Question } from '../model/question.js';
+import type { CompetencyCatalog, CompetencyLocale } from '../model/competency-catalog.js';
+import { parseCompetencyCatalog } from './competency-catalog.js';
 import { requestJson } from './http.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
@@ -122,6 +124,19 @@ export class CoreClient {
   /** GET /content/info */
   info(): Promise<CoreInfo> {
     return requestJson<CoreInfo>(this.baseUrl, '/content/info');
+  }
+
+  /** A 404 alone means this Core/question bank predates the official catalog. */
+  async getCompetencyCatalog(locale: CompetencyLocale): Promise<CompetencyCatalog | null> {
+    if (locale !== 'de' && locale !== 'en') throw new TypeError('Unsupported competency locale');
+    try {
+      return parseCompetencyCatalog(await requestJson<unknown>(
+        this.baseUrl, `/content/competencies/${locale}`, { timeoutMs: 10_000 },
+      ), locale);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) return null;
+      throw cause;
+    }
   }
 
   /**

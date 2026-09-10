@@ -1859,6 +1859,7 @@ const currentCompetencyCodes = computed(() =>
             <PracticeQuestionHeader
               :title="current.question.title"
               :competency-codes="currentCompetencyCodes"
+              :competency-descriptions="Object.fromEntries(current.part.competencies.filter((entry) => entry.description).map((entry) => [entry.code, entry.description!]))"
               :source-line="sourceLine"
               :points="current.part.points"
               :format="current.part.format"

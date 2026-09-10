@@ -29,6 +29,7 @@ const INTEGRITY_ROOTS = [
   'bank/schema',
   'bank/revisions',
 ]
+const OPTIONAL_INTEGRITY_ROOTS = ['bank/reference']
 const INTEGRITY_FILES = [
   'core/package.json',
   'core/pnpm-lock.yaml',
@@ -135,7 +136,7 @@ function portablePath(value) {
 function isCoveredPath(value) {
   return (
     INTEGRITY_FILES.includes(value) ||
-    INTEGRITY_ROOTS.some((root) => value.startsWith(`${root}/`))
+    [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS].some((root) => value.startsWith(`${root}/`))
   )
 }
 
@@ -242,9 +243,13 @@ async function collectIntegrityCandidates(runtimeRoot) {
     }
   }
 
-  for (const root of INTEGRITY_ROOTS) {
+  for (const root of [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS]) {
     const absolutePath = path.join(runtimeRoot, ...root.split('/'))
-    const info = await lstat(absolutePath)
+    const info = await lstat(absolutePath).catch((error) => {
+      if (error.code === 'ENOENT' && OPTIONAL_INTEGRITY_ROOTS.includes(root)) return null
+      throw error
+    })
+    if (!info) continue
     if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error(`Required runtime tree is not a regular directory: ${root}`)
     }

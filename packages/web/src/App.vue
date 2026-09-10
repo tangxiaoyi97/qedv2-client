@@ -11,7 +11,7 @@ const { t } = useI18n();
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { provideAssetResolver, QButton, useKeyboardInset, useModalA11y } from '@qed2/ui';
+import { CompetencyDetailsDialog, provideCompetencyDetails, provideAssetResolver, QButton, useKeyboardInset, useModalA11y } from '@qed2/ui';
 import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid, Server } from 'lucide-vue-next';
 import { ports } from './services.js';
 import { useAppStore } from './stores/app.js';
@@ -23,6 +23,7 @@ import ConflictDialog from './routes/ConflictDialog.vue';
 import AuthModal from './routes/AuthModal.vue';
 import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
 import ChangelogDialog from './routes/ChangelogDialog.vue';
+import { useCompetencyDetailsDialog } from './composables/useCompetencyDetailsDialog.js';
 
 const route = useRoute();
 const app = useAppStore();
@@ -31,6 +32,13 @@ const progress = useProgressStore();
 const ui = useUiStore();
 
 provideAssetResolver((src) => app.assetUrl(src));
+const competencyDetails = useCompetencyDetailsDialog(() => app.pinnedCoreContent ?? {
+  baseUrl: app.coreEndpointUrl || app.config.coreBaseUrl,
+  client: app.coreClient,
+});
+provideCompetencyDetails(competencyDetails.open);
+watch(() => route.fullPath, competencyDetails.close);
+watch(() => auth.transitioning, (transitioning) => { if (transitioning) competencyDetails.close(); });
 
 // One shell-level listener feeds --q-keyboard-inset to every fixed element.
 useKeyboardInset();
@@ -239,6 +247,18 @@ watch(
       <ConflictDialog />
       <ArchiveChoiceDialog />
       <ChangelogDialog />
+      <CompetencyDetailsDialog
+        :open="competencyDetails.isOpen.value"
+        :code="competencyDetails.code.value"
+        :locale="competencyDetails.locale.value"
+        :catalog="competencyDetails.catalog.value"
+        :loading="competencyDetails.loading.value"
+        :error="competencyDetails.error.value"
+        :fallback-description="competencyDetails.fallbackDescription.value"
+        @close="competencyDetails.close"
+        @retry="competencyDetails.retry"
+        @locale-change="competencyDetails.changeLocale"
+      />
     </div>
     <!-- Keep form state alive while the account lock owns the screen. A
          failed login must return to its inputs and error, not a new modal. -->

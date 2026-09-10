@@ -1,5 +1,15 @@
 /** Shared controls. Question-bank content retains its original language. */
 export const en: Record<string, string> = {
+  'Grundkompetenz': 'Core competency',
+  'Grundkompetenz {code} anzeigen': 'Show core competency {code}',
+  'Grundkompetenz schließen': 'Close core competency',
+  'Sprache der Beschreibung': 'Description language',
+  'Anmerkungen': 'Notes',
+  'Offizieller Katalog (PDF)': 'Official catalogue (PDF)',
+  'Beschreibung wird geladen …': 'Loading description…',
+  'Der Katalog konnte nicht geladen werden.': 'The catalogue could not be loaded.',
+  'Für diesen Code ist kein offizieller Eintrag verfügbar.': 'No official entry is available for this code.',
+  'Beschreibung aus der Aufgabe': 'Description from the question',
   'Der Lösungsweg wird Schritt für Schritt erklärt.': 'The solution is explained step by step.',
   'Mein Fehler': 'My mistake',
   'Lösungsweg': 'Solution steps',

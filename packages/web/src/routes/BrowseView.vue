@@ -38,7 +38,7 @@ import {
   HighlightSnippet,
   QButton,
   QIconButton,
-  QChip,
+  CompetencyChip,
   QNotice,
   QSkeleton,
   SearchBox,
@@ -829,21 +829,25 @@ function firstCode(q: QuestionSummary): string | undefined {
     </QNotice>
 
     <div v-else-if="!searchMode" key="list" class="browse__list">
-      <button
+      <div
         v-for="q in windowed"
         :key="q.id"
-        type="button"
         class="browse__row"
         :class="{
           'browse__row--disabled': !q.playable,
           'browse__row--excluded': rowInfo(q).allExcluded,
           'browse__row--selected': selectedIds.has(q.id)
         }"
-        :disabled="!q.playable"
-        :aria-pressed="selectedIds.has(q.id)"
         @click="toggleSelection(q)"
         @dblclick="q.playable && practiceSingle(q.id)"
       >
+        <button
+          type="button"
+          class="browse__select"
+          :disabled="!q.playable"
+          :aria-pressed="selectedIds.has(q.id)"
+          :aria-label="`${q.title} · ${gradingSummary(q.parts)}`"
+        />
         <span class="browse__dots" role="img" :aria-label="gradingSummary(q.parts)">
           <span
             v-for="group in gradingGroups(q.parts)"
@@ -856,7 +860,7 @@ function firstCode(q: QuestionSummary): string | undefined {
           </span>
         </span>
         <span class="browse__nr">{{ q.source.nr }}</span>
-        <QChip v-if="firstCode(q)" class="browse__chip">{{ firstCode(q) }}</QChip>
+        <CompetencyChip v-if="firstCode(q)" :code="firstCode(q)!" :description="q.parts[0]?.competencies[0]?.description" class="browse__chip" />
         <span
           v-if="rowInfo(q).allExcluded"
           class="browse__excl"
@@ -878,7 +882,7 @@ function firstCode(q: QuestionSummary): string | undefined {
         </template>
         <span v-else class="browse__state browse__state--new">{{ t('Neu') }}</span>
 
-      </button>
+      </div>
       <div
         v-if="windowed.length < filtered.length"
         ref="listSentinel"
@@ -1197,6 +1201,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 7px;
 }
 .browse__row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1215,15 +1220,30 @@ function firstCode(q: QuestionSummary): string | undefined {
   content-visibility: auto;
   contain-intrinsic-size: auto 50px;
 }
+.browse__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.browse__row:not(.browse__hit) { min-height: 50px; padding-block: 3px; }
+.browse__select:disabled { cursor: default; }
+.browse__row > :not(.browse__select) { position: relative; pointer-events: none; }
+.browse__row > .browse__chip { pointer-events: auto; }
+.browse__select:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 1px; }
 .browse__row--selected {
   background: var(--q-accent-bg);
   border-color: var(--q-accent);
 }
 @media (hover: hover) and (pointer: fine) {
-  .browse__row:hover:not(:disabled) {
+  .browse__row:hover:not(.browse__row--disabled) {
     border-color: var(--q-accent);
   }
-  .browse__row--selected:hover:not(:disabled) {
+  .browse__row--selected:hover:not(.browse__row--disabled) {
     border-color: var(--q-accent-strong, var(--q-accent));
   }
 }
@@ -1338,7 +1358,7 @@ function firstCode(q: QuestionSummary): string | undefined {
     min-height: 52px;
     flex-wrap: nowrap;
     gap: 7px;
-    padding: 8px 10px;
+    padding: 4px 10px;
     contain-intrinsic-size: auto 52px;
   }
   .browse__row:not(.browse__hit) .browse__dots {
@@ -1355,9 +1375,11 @@ function firstCode(q: QuestionSummary): string | undefined {
     color: var(--q-mut);
   }
   .browse__row:not(.browse__hit) .browse__chip {
-    padding: 3px 8px;
+    padding: 0;
+    flex: none;
     font-size: 10.75px;
   }
+  .browse__row:not(.browse__hit) .browse__chip :deep(.q-chip) { padding: 3px 8px; font-size: inherit; }
   .browse__row:not(.browse__hit) .browse__excl {
     font-size: var(--q-font-small);
   }

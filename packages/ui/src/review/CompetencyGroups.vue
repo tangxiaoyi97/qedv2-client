@@ -9,6 +9,7 @@ import { useI18n } from '../i18n.js';
 import { computed } from 'vue';
 import { competencyCategory, masteryLevel } from '@qed2/core-logic';
 import MasteryBar from './MasteryBar.vue';
+import CompetencyChip from '../shared/CompetencyChip.vue';
 
 const { t } = useI18n();
 
@@ -71,6 +72,7 @@ const groups = computed(() => {
       </header>
       <div class="q-cgroups__rows">
         <div v-for="entry in group.rows" :key="entry.code" class="q-cgroups__row">
+          <CompetencyChip :code="entry.code" />
           <MasteryBar class="q-cgroups__bar" :code="entry.code" :mastery="entry.mastery" />
           <span
             class="q-cgroups__due"
@@ -148,6 +150,7 @@ const groups = computed(() => {
   flex: 1;
   min-width: 0;
 }
+.q-cgroups__bar :deep(.q-mastery__code) { display: none; }
 .q-cgroups__due {
   flex: none;
   width: 9px;

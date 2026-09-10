@@ -25,6 +25,7 @@ const INTEGRITY_ROOTS = [
   'bank/schema',
   'bank/revisions',
 ] as const;
+const OPTIONAL_INTEGRITY_ROOTS: readonly string[] = ['bank/reference'];
 const INTEGRITY_FILES = [
   'core/package.json',
   'core/pnpm-lock.yaml',
@@ -144,7 +145,7 @@ function safeManifestPath(value: unknown): value is string {
 function isCoveredPath(path: string): boolean {
   return (
     (INTEGRITY_FILES as readonly string[]).includes(path) ||
-    INTEGRITY_ROOTS.some((root) => path.startsWith(`${root}/`))
+    [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS].some((root) => path.startsWith(`${root}/`))
   );
 }
 
@@ -351,9 +352,13 @@ async function collectCandidates(runtimeRoot: string): Promise<IntegrityCandidat
     }
   };
 
-  for (const root of INTEGRITY_ROOTS) {
+  for (const root of [...INTEGRITY_ROOTS, ...OPTIONAL_INTEGRITY_ROOTS]) {
     const rootPath = runtimePath(runtimeRoot, root);
-    const info = await lstat(rootPath);
+    const info = await lstat(rootPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT' && OPTIONAL_INTEGRITY_ROOTS.includes(root)) return null;
+      throw error;
+    });
+    if (!info) continue;
     if (!info.isDirectory() || info.isSymbolicLink()) fail(`Required runtime tree is not a directory: ${root}`);
     await visit(rootPath, root);
   }

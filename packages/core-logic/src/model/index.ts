@@ -3,3 +3,4 @@ export * from './question.js';
 export * from './archive.js';
 export * from './labels.js';
 export * from './format.js';
+export * from './competency-catalog.js';

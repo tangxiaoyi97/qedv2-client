@@ -199,6 +199,30 @@ describe('bundled runtime integrity', () => {
     );
   });
 
+  it('protects an optional competency catalog without changing the question manifest', async () => {
+    const fixture = await createFixture();
+    const path = 'bank/reference/competencies/2024-11/de.json';
+    const content = Buffer.from('{"locale":"de"}\n');
+    const absolute = resolve(fixture.runtimeRoot, path);
+    await mkdir(resolve(absolute, '..'), { recursive: true });
+    await writeFile(absolute, content);
+    fixture.manifest.files.push({ path, type: 'file', size: content.length, sha256: digest(content) });
+    fixture.manifest.files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+    await writeFile(fixture.manifestPath, JSON.stringify(fixture.manifest));
+    const runtime = await resolveRuntime({ packaged: true, resourcesPath: fixture.resourcesPath, appPath: '/unused', env: {} });
+    await expect(verifyRuntimeIntegrity(runtime, 'full')).resolves.toMatchObject({ mode: 'full' });
+    await writeFile(absolute, '{"locale":"en"}\n');
+    await expect(verifyRuntimeIntegrity(runtime, 'full')).rejects.toThrow('integrity mismatch');
+  });
+
+  it('rejects an unmanifested reference file alongside an older bundled bank', async () => {
+    const fixture = await createFixture();
+    const absolute = resolve(fixture.runtimeRoot, 'bank/reference/competencies/injected.json');
+    await mkdir(resolve(absolute, '..'), { recursive: true });
+    await writeFile(absolute, '{}');
+    await expect(verifyRuntimeIntegrity(fixture.descriptor, 'full')).rejects.toThrow('inventory mismatch');
+  });
+
   it('detects both missing and unmanifested files in protected trees', async () => {
     const missing = await createFixture();
     await rm(resolve(missing.runtimeRoot, 'bank/assets/example.png'));

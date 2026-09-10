@@ -1,0 +1,1 @@
+- **kompetenzen:** offizielle erklärungen per klick, deutsch & englisch

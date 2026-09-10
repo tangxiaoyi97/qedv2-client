@@ -2,6 +2,7 @@
 import { useI18n } from '../i18n.js';
 
 import QChip from '../shared/QChip.vue';
+import CompetencyChip from '../shared/CompetencyChip.vue';
 import StarButton from '../shared/StarButton.vue';
 import { ExternalLink } from 'lucide-vue-next';
 
@@ -10,6 +11,7 @@ const { t } = useI18n();
 defineProps<{
   title: string;
   competencyCodes: string[];
+  competencyDescriptions?: Record<string, string>;
   sourceLine: string;
   points?: number | null;
   format?: string;
@@ -30,7 +32,7 @@ const emit = defineEmits<{
     </div>
 
     <div class="practice-qhead__meta">
-      <QChip v-for="code in competencyCodes" :key="code">{{ code }}</QChip>
+      <CompetencyChip v-for="code in competencyCodes" :key="code" :code="code" :description="competencyDescriptions?.[code]" />
       <QChip v-if="format" tone="neutral">{{ format }}</QChip>
     </div>
     <div class="practice-qhead__subline">

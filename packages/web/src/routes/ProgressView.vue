@@ -21,7 +21,7 @@ import {
   type GradingOrUnseen,
   type QuestionSummary,
 } from '@qed2/core-logic';
-import { ActivityHeatmap, CompetencyGroups, GradingDistribution, GradingDot, MasteryBar, QIconButton, RadarChart, type RadarAxis, useModalA11y } from '@qed2/ui';
+import { ActivityHeatmap, CompetencyChip, CompetencyGroups, GradingDistribution, GradingDot, MasteryBar, QIconButton, RadarChart, type RadarAxis, useModalA11y } from '@qed2/ui';
 import { historyLog } from '../services.js';
 
 import { useAppStore } from '../stores/app.js';
@@ -694,7 +694,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
                 </div>
                 <div class="prog-modal__competencies">
                   <div v-for="row in group.rows" :key="row.code" class="prog-modal__competency">
-                    <span class="prog-modal__competency-code">{{ row.code }}</span>
+                    <CompetencyChip :code="row.code" class="prog-modal__competency-code" />
                     <MasteryBar :code="row.code" :mastery="row.mastery" />
                     <b>{{ row.percent }} %</b>
                   </div>
@@ -1296,6 +1296,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   font: 800 11px ui-monospace, Menlo, monospace;
   color: var(--q-accent-strong);
 }
+.prog-modal__competency :deep(.q-mastery__code) { display: none; }
 .prog-modal__competency b {
   text-align: right;
   font-size: var(--q-font-small);
