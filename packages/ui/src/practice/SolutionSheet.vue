@@ -82,7 +82,8 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
 const handleLabel = computed(() => {
   const subject = props.handleTitle ?? t(showsSolution.value ? 'Lösung' : 'Lernhilfe');
   const action = t(props.detent === 'collapsed' ? '{subject} anzeigen' : '{subject} einklappen', { subject });
-  return props.verdictLabel ? `${props.verdictLabel} — ${action}` : action;
+  const score = props.handleTitle && props.verdictPoints ? `, ${props.verdictPoints}` : '';
+  return props.verdictLabel ? `${props.verdictLabel}${score} — ${action}` : action;
 });
 
 /**
@@ -90,7 +91,9 @@ const handleLabel = computed(() => {
  * stranded above a separate verdict line reads as two unrelated strips, and
  * the verdict would scroll away with the rest of the content.
  */
-const bannerVerdict = computed(() => (props.detent === 'full' ? props.verdict : undefined));
+// The labelled header keeps its result in the same row at every detent, so
+// releasing a drag never adds/removes banner height underneath the animation.
+const bannerVerdict = computed(() => (props.handleTitle || props.detent === 'full' ? props.verdict : undefined));
 
 /* --- detents ---------------------------------------------------------------
  * Heights are resolved in pixels rather than left to CSS, because the drag
@@ -109,6 +112,7 @@ const answerHeight = ref(0);
 const noteOffset = ref(0);
 
 function readViewport(): void {
+  cancelGesture();
   viewportHeight.value = window.innerHeight;
 }
 
@@ -151,6 +155,7 @@ const firstOf = (r: HTMLElement | HTMLElement[] | null): HTMLElement | null =>
  * silently push the stack over the practice top bar at full screen.
  */
 function measureChrome(): void {
+  if (dragging.value) return;
   const bar = wrapper.value?.parentElement;
   const sheet = sheetEl.value;
   if (!bar || !sheet) return;
@@ -207,10 +212,15 @@ const dragging = ref(false);
 const dragHeight = ref(0);
 /** True only between pointerdown and pointerup — a hover must not drag. */
 let pointerDown = false;
+let activePointerId: number | undefined;
+let dragSource: 'handle' | 'content' | undefined;
 let dragStartY = 0;
 let dragStartHeight = 0;
 let moved = false;
 let dragSamples: Array<{ height: number; time: number }> = [];
+let lastDragY = 0;
+let lastMoveTime = 0;
+let recentDisplacement = 0;
 
 /** What the sheet is actually this tall right now. */
 const sheetHeight = computed(() =>
@@ -233,10 +243,11 @@ function releaseVelocity(): number {
   return elapsed >= 8 ? ((last.height - first.height) / elapsed) * 1000 : 0;
 }
 
-function onHandleDown(event: PointerEvent): void {
-  (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
-  pointerDown = true;
-  dragStartY = event.clientY;
+function beginDrag(y: number, time: number): void {
+  dragStartY = y;
+  lastDragY = y;
+  lastMoveTime = time;
+  recentDisplacement = 0;
   // If a spring is interrupted, begin at its visible position rather than at
   // the old logical target. jsdom has no layout, hence the target fallback.
   const liveHeight = sheetEl.value?.getBoundingClientRect().height ?? 0;
@@ -247,21 +258,29 @@ function onHandleDown(event: PointerEvent): void {
   // movement threshold.
   dragging.value = true;
   moved = false;
-  dragSamples = [{ height: dragStartHeight, time: event.timeStamp }];
+  dragSamples = [{ height: dragStartHeight, time }];
 }
 
-function onHandleMove(event: PointerEvent): void {
-  if (!pointerDown) return;
+function moveDrag(y: number, time: number): void {
   // Sheet grows upward, so dragging up (negative dy) makes it taller.
-  const height = dragStartHeight + (dragStartY - event.clientY);
-  if (!moved && Math.abs(dragStartY - event.clientY) < TAP_SLOP_PX) return;
+  const delta = lastDragY - y;
+  if (delta !== 0) {
+    recentDisplacement = Math.sign(delta) === Math.sign(recentDisplacement)
+      ? recentDisplacement + delta : delta;
+    lastMoveTime = time;
+    lastDragY = y;
+  }
+  const height = dragStartHeight + (dragStartY - y);
+  if (!moved && Math.abs(dragStartY - y) < TAP_SLOP_PX) return;
   moved = true;
   dragHeight.value = Math.max(0, Math.min(detentHeights.value.full, height));
-  rememberSample(dragHeight.value, event.timeStamp);
+  rememberSample(dragHeight.value, time);
 }
 
-function onHandleUp(event: PointerEvent): void {
+function finishDrag(time: number): void {
   pointerDown = false;
+  activePointerId = undefined;
+  dragSource = undefined;
   dragStartY = 0;
   if (!dragging.value) return;
   if (!moved) {
@@ -270,29 +289,159 @@ function onHandleUp(event: PointerEvent): void {
     void nextTick(measureAnswer);
     return;
   }
-  rememberSample(dragHeight.value, event.timeStamp);
+  rememberSample(dragHeight.value, time);
   const snapped = resolveSheetRelease({
     detent: props.detent,
     heights: detentHeights.value,
     startHeight: dragStartHeight,
     height: dragHeight.value,
     velocity: releaseVelocity(),
+    recentDisplacement,
+    idleMs: Math.max(0, time - lastMoveTime),
   });
   dragging.value = false;
   dragSamples = [];
   // Measuring is suppressed while dragging; anything that resized in the
   // meantime (a figure finishing to load) would otherwise stay stale forever.
   void nextTick(measureAnswer);
+  void nextTick(measureChrome);
   if (snapped !== props.detent) emit('update:detent', snapped);
 }
 
-function onHandleCancel(): void {
+function onHandleDown(event: PointerEvent): void {
+  if (event.isPrimary === false || (event.button !== undefined && event.button !== 0) || dragging.value) return;
+  (event.currentTarget as Element).setPointerCapture?.(event.pointerId);
+  pointerDown = true;
+  activePointerId = event.pointerId;
+  dragSource = 'handle';
+  beginDrag(event.clientY, event.timeStamp);
+}
+
+function onHandleMove(event: PointerEvent): void {
+  if (!pointerDown || event.pointerId !== activePointerId) return;
+  moveDrag(event.clientY, event.timeStamp);
+}
+
+function onHandleUp(event: PointerEvent): void {
+  if (!pointerDown || event.pointerId !== activePointerId) return;
+  moveDrag(event.clientY, event.timeStamp);
+  finishDrag(event.timeStamp);
+}
+
+function cancelGesture(): void {
   pointerDown = false;
+  activePointerId = undefined;
+  dragSource = undefined;
   dragStartY = 0;
   dragging.value = false;
   moved = false;
   dragSamples = [];
+  contentTouch = undefined;
   void nextTick(measureAnswer);
+  void nextTick(measureChrome);
+}
+
+function onHandleCancel(event: PointerEvent): void {
+  if (dragSource === 'handle' && event.pointerId === activePointerId) cancelGesture();
+}
+
+/** Keep the browser's native scrolling and momentum until a finger pulls
+ * down beyond the top edge. Only the extra pull belongs to the drawer. */
+interface ContentTouch {
+  id: number;
+  startX: number;
+  edgeY: number | null;
+  edgeTime: number;
+  target: Element;
+  claimed: boolean;
+}
+let contentTouch: ContentTouch | undefined;
+let suppressClickUntil = 0;
+const INTERACTIVE_TARGET = 'a,button,input,textarea,select,summary,label,[contenteditable]:not([contenteditable="false"]),[role="button"],[role="checkbox"],[role="radio"],[role="slider"],[role="spinbutton"]';
+const textIsSelected = () => window.getSelection()?.isCollapsed === false;
+
+function canPullContent(target: Element): boolean {
+  const sheet = sheetEl.value;
+  if (!sheet || sheet.scrollTop > 1) return false;
+  // A nested scrollable code block/table must retain its own reading gesture.
+  for (let element: Element | null = target; element && element !== sheet; element = element.parentElement) {
+    if (element.scrollTop > 1 || element.scrollWidth > element.clientWidth + 1) {
+      const style = getComputedStyle(element);
+      if (/(auto|scroll)/.test(style.overflowY + style.overflowX)) return false;
+    }
+  }
+  return true;
+}
+
+function onContentTouchStart(event: TouchEvent): void {
+  // A fresh tap must not inherit suppression from a preceding drag.
+  suppressClickUntil = 0;
+  if (dragSource === 'content') cancelGesture();
+  contentTouch = undefined;
+  if (event.touches.length !== 1 || props.detent === 'collapsed' || dragging.value || textIsSelected()) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target || target.closest(INTERACTIVE_TARGET)) return;
+  const touch = event.touches[0]!;
+  contentTouch = { id: touch.identifier, startX: touch.clientX,
+    edgeY: canPullContent(target) ? touch.clientY : null,
+    edgeTime: event.timeStamp, target, claimed: false };
+}
+
+function onContentTouchMove(event: TouchEvent): void {
+  const gesture = contentTouch;
+  if (!gesture) return;
+  const touch = Array.from(event.touches).find((point) => point.identifier === gesture.id);
+  if (event.touches.length !== 1 || !touch || textIsSelected()) { cancelGesture(); return; }
+  if (gesture.claimed) {
+    if (!event.cancelable) { cancelGesture(); return; }
+    event.preventDefault();
+    moveDrag(touch.clientY, event.timeStamp);
+    return;
+  }
+  if (!canPullContent(gesture.target)) { gesture.edgeY = null; return; }
+  if (gesture.edgeY === null) {
+    gesture.edgeY = touch.clientY;
+    gesture.edgeTime = event.timeStamp;
+    gesture.startX = touch.clientX;
+    return;
+  }
+  const down = touch.clientY - gesture.edgeY;
+  const sideways = Math.abs(touch.clientX - gesture.startX);
+  if (sideways > TAP_SLOP_PX && sideways >= Math.abs(down)) { contentTouch = undefined; return; }
+  if (down <= 0 || down < sideways * 1.2) return;
+  // Reserve a downward edge gesture on its first cancelable movement; waiting
+  // until the visual drag threshold would let native scrolling claim it first.
+  // If scrolling already owns this gesture, the next pull at the top can claim
+  // it. Never fight the browser by rewriting scrollTop during native scrolling.
+  if (!event.cancelable) { contentTouch = undefined; return; }
+  event.preventDefault();
+  gesture.claimed = true;
+  dragSource = 'content';
+  beginDrag(gesture.edgeY, gesture.edgeTime);
+  moveDrag(touch.clientY, event.timeStamp);
+}
+
+function onContentTouchEnd(event: TouchEvent): void {
+  const gesture = contentTouch;
+  if (!gesture) return;
+  contentTouch = undefined;
+  if (!gesture.claimed) return;
+  if (event.cancelable) event.preventDefault();
+  if (moved) suppressClickUntil = performance.now() + 400;
+  finishDrag(event.timeStamp);
+  moved = false; // A content drag must not consume the handle's next click.
+}
+
+function onContentClick(event: MouseEvent): void {
+  if (event.detail > 0 && performance.now() < suppressClickUntil) {
+    suppressClickUntil = 0;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+}
+
+function onVisibilityChange(): void {
+  if (document.hidden) cancelGesture();
 }
 
 function stepDetent(direction: -1 | 1): void {
@@ -318,6 +467,12 @@ watch(sheetHeight, (height) => emit('update:height', height), { immediate: true 
 
 onMounted(() => {
   window.addEventListener('resize', readViewport);
+  window.addEventListener('blur', cancelGesture);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  sheetEl.value?.addEventListener('touchstart', onContentTouchStart, { passive: true });
+  sheetEl.value?.addEventListener('touchmove', onContentTouchMove, { passive: false });
+  sheetEl.value?.addEventListener('touchend', onContentTouchEnd, { passive: false });
+  sheetEl.value?.addEventListener('touchcancel', cancelGesture, { passive: true });
   void nextTick(measureAnswer);
   // Figures load late and change the answer's height under us.
   void nextTick(measureChrome);
@@ -330,6 +485,11 @@ onMounted(() => {
     if (wrapper.value) contentObserver.observe(wrapper.value);
   }
 });
+
+watch(
+  () => props.detent,
+  () => { if (dragging.value || contentTouch) cancelGesture(); },
+);
 
 watch(
   () => [props.solution, props.showSolution, props.detent],
@@ -350,6 +510,12 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', readViewport);
+  window.removeEventListener('blur', cancelGesture);
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  sheetEl.value?.removeEventListener('touchstart', onContentTouchStart);
+  sheetEl.value?.removeEventListener('touchmove', onContentTouchMove);
+  sheetEl.value?.removeEventListener('touchend', onContentTouchEnd);
+  sheetEl.value?.removeEventListener('touchcancel', cancelGesture);
   contentObserver?.disconnect();
 });
 
@@ -386,6 +552,7 @@ async function collapseFromKeyboard(): Promise<void> {
         @pointermove="onHandleMove"
         @pointerup="onHandleUp"
         @pointercancel="onHandleCancel"
+        @lostpointercapture="onHandleCancel"
         @keydown.up.prevent="stepDetent(1)"
         @keydown.down.prevent="stepDetent(-1)"
         @click="onHandleClick"
@@ -397,10 +564,15 @@ async function collapseFromKeyboard(): Promise<void> {
         />
         <span v-if="handleTitle" class="q-ssheet__handle-caption" :style="contentMaxWidth ? { maxWidth: contentMaxWidth } : undefined">
           <span>{{ handleTitle }}</span>
+          <span v-if="verdict" class="q-ssheet__handle-result">
+            <StateIcon :state="verdict" :size="16" />
+            <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
+            <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
+          </span>
           <ChevronDown :class="{ 'q-ssheet__handle-chevron--closed': detent === 'collapsed' }" />
         </span>
       </button>
-      <div v-if="bannerVerdict" class="q-ssheet__banner q-reveal" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
+      <div v-if="bannerVerdict && !handleTitle" class="q-ssheet__banner q-reveal" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
         <StateIcon :state="bannerVerdict" :size="20" />
         <span class="q-ssheet__verdict-label">{{ verdictLabel }}</span>
         <span v-if="verdictPoints" class="q-ssheet__verdict-points">{{ verdictPoints }}</span>
@@ -418,6 +590,7 @@ async function collapseFromKeyboard(): Promise<void> {
       :tabindex="detent === 'collapsed' ? -1 : 0"
       :aria-label="handleTitle ?? t(!showsSolution ? 'Lernhilfe' : $slots.assessment ? 'Lösung und Selbstbewertung' : 'Offizieller Lösungsweg')"
       @keydown.esc.prevent.stop="collapseFromKeyboard"
+      @click.capture="onContentClick"
     >
     <div ref="inner" class="q-ssheet__inner" :style="contentMaxWidth ? { maxWidth: contentMaxWidth, margin: '0 auto' } : undefined">
       <!-- The verdict lives here, not in the action row: on a phone it was
@@ -532,6 +705,7 @@ async function collapseFromKeyboard(): Promise<void> {
 <style scoped>
 .q-ssheet-wrap {
   background: var(--q-card);
+  border-radius: inherit;
   /* Lets the bar's max-height actually squeeze the sheet rather than
    * overflowing it — the JS height below is a target, not a guarantee. */
   display: flex;
@@ -542,7 +716,8 @@ async function collapseFromKeyboard(): Promise<void> {
 /* Header strip. Neutral normally; maximised it takes the verdict tint and
  * the grip + result read as one banner. */
 .q-ssheet__top {
-  transition: background 0.3s ease, border-color 0.3s ease;
+  border-radius: inherit;
+  transition: background 240ms ease, border-color 240ms ease;
   border-bottom: 1px solid transparent;
 }
 /* The verdict ink rides the strip, not the label inside it, so everything on
@@ -709,15 +884,16 @@ async function collapseFromKeyboard(): Promise<void> {
    * one — the content would visibly reflow mid-animation. */
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
-  transition: height 320ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: height 240ms cubic-bezier(0.22, 1, 0.36, 1);
   border-bottom: 1px solid transparent;
   outline: none;
 }
 .q-ssheet--dragging {
   transition: none;
+  user-select: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .q-ssheet {
+  .q-ssheet, .q-ssheet__top {
     transition: none;
   }
   .q-ssheet__grip {
@@ -856,6 +1032,7 @@ async function collapseFromKeyboard(): Promise<void> {
   padding: 4px 0 12px;
 }
 .q-ssheet__handle--labelled {
+  user-select: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -877,6 +1054,19 @@ async function collapseFromKeyboard(): Promise<void> {
 }
 .q-ssheet__handle-caption > svg {
   flex: none;
+}
+.q-ssheet__handle-result {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+  font-weight: 600;
+}
+.q-ssheet__handle-result > svg { flex: none; }
+.q-ssheet__handle-result .q-ssheet__verdict-points { margin-left: 2px; white-space: nowrap; }
+@media (max-width: 380px) {
+  .q-ssheet__handle-result .q-ssheet__verdict-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 }
 .q-ssheet__handle-chevron--closed {
   transform: rotate(180deg);

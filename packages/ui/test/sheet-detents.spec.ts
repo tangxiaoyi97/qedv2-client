@@ -5,6 +5,8 @@ import {
   HALF_MAX_PX,
   HALF_MIN_PX,
   SHEET_FLICK_VELOCITY_PX_S,
+  SHEET_FLICK_MIN_DISTANCE_PX,
+  SHEET_FLICK_MAX_IDLE_MS,
   resolveDetentHeights,
   resolveSheetRelease,
 } from '../src/practice/sheet-detents.js';
@@ -92,7 +94,9 @@ describe('solution drawer release intent', () => {
     });
 
   it('opens after a short deliberate pull instead of requiring half the drawer', () => {
-    expect(release({ height: 48 })).toBe('default');
+    expect(release({ height: 36 })).toBe('default');
+    expect(release({ detent: 'default', startHeight: 420, height: 384 })).toBe('collapsed');
+    expect(release({ detent: 'full', startHeight: 672, height: 636 })).toBe('default');
   });
 
   it('commits a small fast flick in its direction', () => {
@@ -112,4 +116,68 @@ describe('solution drawer release intent', () => {
   it('moves only one stop per gesture so a flick stays predictable', () => {
     expect(release({ height: 500, velocity: 1800 })).toBe('default');
   });
+
+  it.each([0, 1, 6, SHEET_FLICK_MIN_DISTANCE_PX - 1])('does not mistake a %ipx twitch for a fast flick', (distance) => {
+    expect(release({ height: distance, velocity: 2400 })).toBe('collapsed');
+    expect(release({ detent: 'default', startHeight: 420, height: 420 - distance, velocity: -2400 })).toBe('default');
+  });
+
+  it('accepts a genuine flick after the minimum deliberate movement', () => {
+    expect(release({ height: SHEET_FLICK_MIN_DISTANCE_PX, velocity: 600 })).toBe('default');
+    expect(release({ detent: 'full', startHeight: 672, height: 672 - SHEET_FLICK_MIN_DISTANCE_PX, velocity: -600 })).toBe('default');
+  });
+
+  it('does not let a stale velocity reverse the final overall movement', () => {
+    expect(release({ detent: 'default', startHeight: 420, height: 384, velocity: 1200 })).toBe('collapsed');
+    expect(release({ detent: 'default', startHeight: 420, height: 456, velocity: -1200 })).toBe('full');
+  });
+
+  it('uses a deliberate final reversal even when the finger remains beyond its starting position', () => {
+    expect(release({
+      detent: 'default', startHeight: 420, height: 470,
+      recentDisplacement: -36, velocity: 1200,
+    })).toBe('collapsed');
+    expect(release({
+      detent: 'default', startHeight: 420, height: 370,
+      recentDisplacement: 36, velocity: -1200,
+    })).toBe('full');
+  });
+
+  it('treats a shorter final reversal as cancellation instead of committing the earlier pull', () => {
+    expect(release({
+      detent: 'default', startHeight: 420, height: 520,
+      recentDisplacement: -10, velocity: 1200,
+    })).toBe('default');
+  });
+
+  it('does not let a settling jitter erase a deliberate short pull', () => {
+    expect(release({ height: 40, recentDisplacement: -2, velocity: 900 })).toBe('default');
+  });
+
+  it('expires flick momentum after a pause but preserves a completed deliberate pull', () => {
+    expect(release({ height: 16, recentDisplacement: 16, velocity: 1600, idleMs: SHEET_FLICK_MAX_IDLE_MS })).toBe('collapsed');
+    expect(release({ height: 36, recentDisplacement: 36, velocity: 1600, idleMs: 300 })).toBe('default');
+    expect(release({ height: 16, recentDisplacement: 16, velocity: 600, idleMs: 20 })).toBe('default');
+  });
+
+  it('skips coincident default and full stops when closing a short drawer', () => {
+    const short = { collapsed: 0, default: 100, full: 100 };
+    expect(release({ detent: 'full', heights: short, startHeight: 100, height: 64 })).toBe('collapsed');
+    expect(release({ detent: 'default', heights: short, startHeight: 100, height: 64 })).toBe('collapsed');
+    expect(release({ heights: short, height: 36 })).toBe('default');
+    expect(release({ detent: 'default', heights: short, startHeight: 100, height: 100, velocity: 1500 })).toBe('default');
+  });
+
+  it('skips an empty reading stop and treats near-equal heights as the same position', () => {
+    expect(release({ heights: { collapsed: 0, default: 0, full: 100 }, height: 36 })).toBe('full');
+    expect(release({ detent: 'full', heights: { collapsed: 0, default: 100, full: 101 }, startHeight: 101, height: 65 })).toBe('collapsed');
+    expect(release({ detent: 'full', heights: { collapsed: 0, default: 0, full: 0 }, velocity: -1200, recentDisplacement: -36 })).toBe('full');
+  });
+
+  it('can complete a physically short transition without demanding travel beyond its bounds', () => {
+    const short = { collapsed: 0, default: 10, full: 10 };
+    expect(release({ heights: short, height: 10 })).toBe('default');
+    expect(release({ heights: short, height: 1, velocity: 2400 })).toBe('collapsed');
+  });
+
 });

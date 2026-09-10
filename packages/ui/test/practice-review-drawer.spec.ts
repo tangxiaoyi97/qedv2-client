@@ -58,13 +58,21 @@ describe('practice review drawer', () => {
     expect(view.find('.practice-bar__row .q-selfassess').exists()).toBe(false);
   });
 
-  it('keeps one verdict in the drawer banner instead of duplicating the review result', () => {
+  it('keeps one result in the same header row at every drawer height', async () => {
     const state: PartPlayerState = {
       ...assessing, phase: 'reviewed', selfAssessment: null,
       result: { verdict: 'correct', correct: true, awardedPoints: 1, maxPoints: 1 },
     };
     const view = mountReviewBar({ state });
-    expect(view.get('.q-ssheet__banner').text()).toContain('Richtig');
+    const header = view.get('.q-ssheet__handle-result').element;
+    for (const solutionDetent of ['full', 'default', 'collapsed'] as const) {
+      await view.setProps({ solutionDetent });
+      expect(view.get('.q-ssheet__handle-result').element).toBe(header);
+      expect(view.get('.q-ssheet__handle-result').text()).toContain('Richtig');
+      expect(view.findAll('.q-ssheet__verdict-label')).toHaveLength(1);
+      expect(view.get('.q-ssheet__handle').attributes('aria-label')).toContain('1 / 1');
+      expect(view.find('.q-ssheet__banner').exists()).toBe(false);
+    }
     expect(view.find('.practice-review__result').exists()).toBe(false);
     expect(view.find('.q-selfassess').exists()).toBe(false);
   });

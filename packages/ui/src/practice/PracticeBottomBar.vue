@@ -460,6 +460,11 @@ const emit = defineEmits<{
   }
 }
 .practice-bar--inline { box-shadow: none; }
+.practice-bar--review { border-radius: 16px 16px 0 0; transition: border-radius 240ms ease, box-shadow 240ms ease; }
+.practice-bar--review.practice-bar--full { border-radius: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .practice-bar--review { transition: none; }
+}
 :is(.practice-bar--inline, .practice-bar--review) .practice-bar__row { max-width: 860px; }
 :is(.practice-bar--inline, .practice-bar--review) .practice-bar__learning-toggle { border-color: transparent; background: transparent; color: var(--q-accent-strong); font-size: 13px; }
 @media (max-width: 640px) {
