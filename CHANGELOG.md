@@ -14,6 +14,16 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.4.0 — 2026-09-11
+
+- **kompetenzen:** offizielle erklärungen per klick, deutsch & englisch
+- **üben:** sicher speichern, auch nach ki-hilfe und selbstbewertung
+- **lösungen:** klarer antwortauszug, flüssige schublade & touch-gesten
+- **ki:** vollständige aufgaben, lesbare formeln & modellwechsel ohne neuen key
+- **grafiken:** per klick vergrößern, zoomen & verschieben
+- **zuordnungen:** klare antwortvergleiche, auch auf kleinen bildschirmen
+- **oberfläche:** stabile auswahl, ruhige übergänge & passende heatmaps
+
 ## 2.3.4 — 2026-09-10
 
 - **login:** clear errors, no reset, retry in place
