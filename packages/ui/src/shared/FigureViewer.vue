@@ -16,7 +16,7 @@ import { useI18n } from '../i18n.js';
  * double-click) to toggle, wheel/trackpad to zoom, all anchored on the point
  * under the cursor or the pinch midpoint.
  */
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import QIconButton from './QIconButton.vue';
 import { useModalA11y } from './useModalA11y.js';
 
@@ -72,15 +72,46 @@ function stagePoint(clientX: number, clientY: number): { x: number; y: number } 
 }
 
 /** Never let the figure be dragged so far that it leaves the stage entirely. */
-function clampTranslation(): void {
+function clampTranslation(): boolean {
   const el = image.value;
   const host = stage.value;
-  if (!el || !host) return;
+  // An unloaded/broken image can temporarily have an alt-text box or no box.
+  // Neither describes the figure's bounds, so keep its position until load.
+  if (!el || !host || el.naturalWidth <= 0 || el.naturalHeight <= 0
+    || el.offsetWidth <= 0 || el.offsetHeight <= 0 || host.clientWidth <= 0 || host.clientHeight <= 0) return false;
   const maxX = Math.max(0, (el.offsetWidth * scale.value - host.clientWidth) / 2);
   const maxY = Math.max(0, (el.offsetHeight * scale.value - host.clientHeight) / 2);
   tx.value = Math.min(maxX, Math.max(-maxX, tx.value));
   ty.value = Math.min(maxY, Math.max(-maxY, ty.value));
+  return true;
 }
+
+function reconcileLayout(): void {
+  if (!clampTranslation()) return;
+  // Continue an active gesture from its adjusted position after rotation.
+  const [pointer] = pointers.values();
+  if (pointers.size === 1 && pointer) {
+    panOrigin = { x: pointer.x, y: pointer.y, tx: tx.value, ty: ty.value };
+  } else if (pointers.size >= 2) {
+    pinchStartDistance = distanceBetweenPointers();
+    pinchStartScale = scale.value;
+  }
+}
+
+let layoutObserver: ResizeObserver | undefined;
+onMounted(() => {
+  window.addEventListener('resize', reconcileLayout);
+  if (typeof ResizeObserver !== 'undefined') {
+    layoutObserver = new ResizeObserver(reconcileLayout);
+    if (stage.value) layoutObserver.observe(stage.value);
+    if (image.value) layoutObserver.observe(image.value);
+  }
+  reconcileLayout();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', reconcileLayout);
+  layoutObserver?.disconnect();
+});
 
 /** Zoom to `next`, keeping the content under (px, py) pinned in place. */
 function zoomAround(next: number, px: number, py: number): void {
@@ -295,6 +326,7 @@ function onStageKeydown(event: KeyboardEvent): void {
           :alt="alt ?? ''"
           :style="transform"
           draggable="false"
+          @load="reconcileLayout"
           @pointerdown="onPointerDown"
           @pointermove="onPointerMove"
           @pointerup="onPointerUp"

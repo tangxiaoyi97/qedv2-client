@@ -66,6 +66,8 @@ function stubLayout(): void {
   for (const [prop, value] of [
     ['offsetWidth', IMAGE.width],
     ['offsetHeight', IMAGE.height],
+    ['naturalWidth', IMAGE.width],
+    ['naturalHeight', IMAGE.height],
   ] as const) {
     vi.spyOn(HTMLImageElement.prototype, prop, 'get').mockReturnValue(value);
   }
@@ -119,6 +121,73 @@ function translationOf(wrapper: ReturnType<typeof mountViewer>): string {
 }
 
 describe('FigureViewer', () => {
+  it('reclamps a zoomed figure after layout changes without changing scale or jumping on the next drag', async () => {
+    let resize = () => {};
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe = observe;
+      disconnect = disconnect;
+    });
+    try {
+      const wrapper = mountViewer();
+      const img = wrapper.get('.q-figview__img');
+      expect(observe.mock.calls.map(call => call[0])).toEqual([
+        wrapper.get('.q-figview__stage').element, img.element,
+      ]);
+      wrapper.get('.q-figview__stage').element.dispatchEvent(new WheelEvent('wheel', {
+        bubbles: true, cancelable: true, deltaY: -400 * Math.log(4), clientX: 200, clientY: 200,
+      }));
+      await nextTick();
+      await img.trigger('pointerdown', pointer(1, 200, 200));
+      await img.trigger('pointermove', pointer(1, 900, 900));
+      expect(translationOf(wrapper)).toBe('400px, 200px');
+
+      // Rotation changes both the fitting image and available reading area.
+      vi.spyOn(HTMLImageElement.prototype, 'offsetWidth', 'get').mockReturnValue(150);
+      vi.spyOn(HTMLImageElement.prototype, 'offsetHeight', 'get').mockReturnValue(100);
+      vi.spyOn(HTMLDivElement.prototype, 'clientWidth', 'get').mockReturnValue(200);
+      vi.spyOn(HTMLDivElement.prototype, 'clientHeight', 'get').mockReturnValue(250);
+      resize();
+      await nextTick();
+      expect(scaleOf(wrapper)).toBe(4);
+      expect(translationOf(wrapper)).toBe('200px, 75px');
+      await img.trigger('pointermove', pointer(1, 890, 890));
+      expect(translationOf(wrapper)).toBe('190px, 65px');
+      wrapper.unmount();
+      expect(disconnect).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('waits for real image dimensions before limiting a pending image on load or resize', async () => {
+    const wrapper = mountViewer();
+    vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(0);
+    vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(0);
+    vi.spyOn(HTMLImageElement.prototype, 'offsetWidth', 'get').mockReturnValue(0);
+    vi.spyOn(HTMLImageElement.prototype, 'offsetHeight', 'get').mockReturnValue(0);
+    wrapper.get('.q-figview__stage').element.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, deltaY: -400 * Math.log(4), clientX: 100, clientY: 150,
+    }));
+    await nextTick();
+    expect(translationOf(wrapper)).toBe('300px, 150px');
+    window.dispatchEvent(new Event('resize'));
+    await nextTick();
+    expect(translationOf(wrapper)).toBe('300px, 150px');
+
+    vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(400);
+    vi.spyOn(HTMLImageElement.prototype, 'naturalHeight', 'get').mockReturnValue(200);
+    vi.spyOn(HTMLImageElement.prototype, 'offsetWidth', 'get').mockReturnValue(100);
+    vi.spyOn(HTMLImageElement.prototype, 'offsetHeight', 'get').mockReturnValue(50);
+    await wrapper.get('.q-figview__img').trigger('load');
+    expect(scaleOf(wrapper)).toBe(4);
+    expect(translationOf(wrapper)).toBe('0px, 0px');
+  });
+
   it('initially focuses close and traps both directions of Tab inside the viewer', async () => {
     const wrapper = mountViewer();
     runFrames();
