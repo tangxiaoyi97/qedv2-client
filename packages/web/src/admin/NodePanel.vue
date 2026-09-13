@@ -78,7 +78,7 @@ async function connect(): Promise<void> {
       address.value = client.value.address;
       try { localStorage.setItem(storageKey, address.value); } catch { /* optional, address only */ }
       emit('status', '待登录');
-      notice.value = status.initialized ? '节点已连接，请使用管理密码登录。' : '节点尚未设置密码，请使用该节点的初始密钥登录。';
+      notice.value = '连接成功。';
     } catch (caught) { emit('status', '连接失败'); throw caught; }
   });
 }
@@ -99,52 +99,51 @@ async function savePassword(): Promise<void> {
       acceptGrant(result);
       if (nodeStatus.value) nodeStatus.value.initialized = true;
       passwordForm.value = false;
-      notice.value = '管理密码已保存。旧密钥及之前的会话已失效。';
+      notice.value = '密码已保存，旧凭据和会话已失效。';
     } finally { clearSecrets(); }
   });
 }
 async function logout(): Promise<void> {
   await run(async () => {
     try { await client.value?.logout(); }
-    finally { clearSession(); notice.value = '已清除当前页面的管理会话。'; }
+    finally { clearSession(); notice.value = '已退出。'; }
   });
 }
 function sessionLost(): void { clearSession(); notice.value = '节点会话已失效，请重新登录。'; }
-function restartAccepted(): void { clearSession(); notice.value = '重启请求已接受。节点重新就绪后，请连接并登录。'; }
+function restartAccepted(): void { clearSession(); notice.value = '重启请求已接受。服务恢复后请重新登录。'; }
 onBeforeUnmount(() => { currentGeneration += 1; clearTimeout(expiryTimer); clearSession(); });
 </script>
 
 <template>
   <section :aria-labelledby="`${kind}-title`" class="node-panel">
-    <div class="workspace-heading"><div><p class="eyebrow">{{ label }} 节点</p><h2 :id="`${kind}-title`">{{ kind === 'server' ? '账号与运营' : '内容与运行维护' }}</h2></div>
+    <div class="workspace-heading"><h2 :id="`${kind}-title`">{{ label }}</h2>
       <div v-if="grant && !grant.requiresPasswordSetup" class="actions">
         <button type="button" :disabled="busy" :aria-expanded="passwordForm" @click="passwordForm = !passwordForm; clearSecrets()">修改密码</button>
         <button type="button" :disabled="busy" @click="logout">退出 {{ label }}</button>
       </div>
     </div>
-    <div v-if="!grant" class="connection-layout">
+    <div v-if="!grant" class="connection-layout" :class="{ 'connection-layout-single': !nodeStatus }">
       <form class="surface connection-form" @submit.prevent="connect">
-        <h3>连接节点</h3><p class="muted">输入 {{ label }} 的管理服务地址。</p>
+        <h3>连接节点</h3>
         <label :for="`${kind}-address`">节点地址</label>
         <input :id="`${kind}-address`" v-model="address" type="url" required autocomplete="url" spellcheck="false" :disabled="busy" :placeholder="defaultAddress" />
         <p class="field-hint">使用 HTTPS，或本机 HTTP 管理端口。</p>
         <button type="submit" :disabled="busy" class="primary">{{ busy && !nodeStatus ? '正在连接…' : nodeStatus ? '重新连接' : '连接节点' }}</button>
       </form>
       <form v-if="nodeStatus" class="surface connection-form" @submit.prevent="login">
-        <h3>{{ nodeStatus.initialized ? '使用管理密码登录' : '首次设置' }}</h3>
-        <p class="muted">{{ nodeStatus.initialized ? `此密码只用于 ${label} 节点管理。` : '从节点主机上的 bootstrap.key 获取初始密钥。登录后必须设置管理密码。' }}</p>
+        <h3>{{ nodeStatus.initialized ? '登录' : '首次登录' }}</h3>
+        <p v-if="!nodeStatus.initialized" class="muted">使用节点 bootstrap.key 中的初始密钥，登录后设置管理密码。</p>
         <p class="field-hint mono">{{ client?.address }}</p>
         <label :for="`${kind}-secret`">{{ nodeStatus.initialized ? '管理密码' : '初始管理密钥' }}</label>
         <input :id="`${kind}-secret`" v-model="secret" type="password" autocomplete="current-password" required maxlength="512" :disabled="busy" />
         <button type="submit" :disabled="busy" class="primary">{{ busy ? '正在验证…' : '登录' }}</button>
       </form>
-      <div v-else class="connection-explainer"><span class="node-symbol large" aria-hidden="true">{{ kind === 'server' ? 'S' : 'C' }}</span><h3>{{ label }} 独立认证</h3><p>此页面直接连接所选节点。另一个节点的连接状态，不会影响这里的登录与操作。</p></div>
     </div>
     <p v-if="error" class="message error" role="alert">{{ error }}</p>
     <p v-if="notice" class="message success" role="status">{{ notice }}</p>
     <form v-if="grant && (grant.requiresPasswordSetup || passwordForm)" class="surface password-form" @submit.prevent="savePassword">
       <h3>{{ grant.requiresPasswordSetup ? '设置管理密码' : '更改管理密码' }}</h3>
-      <p class="muted">至少 12 个字符，最多 256 个 UTF-8 字节。密码成功保存后，旧凭据和旧会话立即失效。</p>
+      <p class="muted">至少 12 个字符，最多 256 个 UTF-8 字节。</p>
       <div v-if="!grant.requiresPasswordSetup" class="field"><label :for="`${kind}-current-password`">当前密码</label><input :id="`${kind}-current-password`" v-model="currentPassword" type="password" autocomplete="current-password" required :disabled="busy" /></div>
       <div class="form-grid"><div class="field"><label :for="`${kind}-new-password`">新密码</label><input :id="`${kind}-new-password`" v-model="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256" :disabled="busy" /></div>
         <div class="field"><label :for="`${kind}-repeat-password`">再次输入新密码</label><input :id="`${kind}-repeat-password`" v-model="repeatPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256" :disabled="busy" /></div></div>

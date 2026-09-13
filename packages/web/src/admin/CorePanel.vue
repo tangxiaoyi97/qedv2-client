@@ -73,12 +73,12 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); });
       <div class="metric"><span>服务状态</span><strong>{{ info.health?.status === 'ok' || info.health?.status === 'healthy' || info.health?.ok === true ? '正常' : text(info.health?.status) }}</strong></div>
       <div class="metric"><span>题库提交</span><strong class="mono compact-value">{{ text(info.bank?.commit ?? info.bankCommit).slice(0, 12) }}</strong></div>
     </div>
-    <section class="surface"><h3>题库与服务</h3><p class="muted">校验当前题库，或获取节点预先配置的题库版本。更新与重启是否可用由节点配置决定。</p>
+    <section class="surface"><h3>题库与服务</h3>
       <dl class="detail-list"><dt>题目数量</dt><dd>{{ text(info.bank?.questionCount) }}</dd><dt>可练习题目</dt><dd>{{ text(info.bank?.playableCount) }}</dd><dt>构建时间</dt><dd>{{ dateText(info.builtAt ?? info.buildTime) }}</dd><dt>题库更新</dt><dd>{{ capabilities?.bankUpdate ? '已启用' : '未启用' }}</dd><dt>服务重启</dt><dd>{{ capabilities?.restart ? '已启用' : '未启用' }}</dd></dl>
       <div class="actions"><button type="button" class="primary" :disabled="busy || job?.status === 'running' || !capabilities?.validate" @click="maintain('validate')">校验题库</button><button type="button" :disabled="busy || job?.status === 'running' || !capabilities?.bankUpdate" @click="confirmAction = 'update'">更新题库</button><button type="button" class="danger" :disabled="busy || job?.status === 'running' || !capabilities?.restart" @click="confirmAction = 'restart'">重启 Core</button></div>
       <div v-if="confirmAction" class="confirmation" role="group" :aria-label="confirmAction === 'update' ? '确认更新题库' : '确认重启 Core'">
-        <h4>{{ confirmAction === 'update' ? '更新到节点配置的题库版本？' : '重启此 Core 节点？' }}</h4>
-        <p>{{ confirmAction === 'update' ? '节点将获取并验证题库；验证成功后，将其设为下次启动版本。当前服务继续使用原题库，重启后新版本生效。' : '服务会短暂中断，并由进程管理器重新启动。Server 将继续独立运行；之后需要重新登录 Core。' }}</p>
+        <h4>{{ confirmAction === 'update' ? '更新题库？' : '重启 Core？' }}</h4>
+        <p>{{ confirmAction === 'update' ? '验证成功后，重启 Core 使新题库生效。' : '内容服务会短暂中断，恢复后需重新登录。' }}</p>
         <div class="actions"><button type="button" :disabled="busy" class="danger" @click="maintain(confirmAction!)">{{ confirmAction === 'update' ? '确认更新' : '确认重启' }}</button><button type="button" @click="confirmAction = undefined">取消</button></div>
       </div>
     </section>
@@ -87,9 +87,9 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); });
     <div class="panel-toolbar"><h3 id="job-title">{{ job.operation === 'validate' ? '题库校验' : '题库更新' }}</h3><span class="status-pill" role="status">{{ jobLabel }}</span></div>
     <dl class="detail-list"><dt>任务编号</dt><dd class="mono">{{ job.id }}</dd><dt>开始时间</dt><dd>{{ dateText(job.startedAt) }}</dd><dt>完成时间</dt><dd>{{ dateText(job.finishedAt) }}</dd></dl>
     <p v-if="job.status === 'failed'" class="message error" role="alert">{{ job.operation === 'validate' ? '题库校验失败，当前运行题库未被替换。' : '题库更新失败，当前运行题库已保留。' }}请检查节点日志。</p>
-    <p v-else-if="job.status === 'running'" class="muted">任务正在节点上执行，状态每 2 秒自动刷新。关闭页面不会取消节点任务。</p>
-    <p v-else class="message success" role="status">{{ job.result?.requiresRestart === true ? '新题库已验证并准备就绪。重启 Core 后生效，当前服务继续使用原题库。' : '任务已完成。' }}</p>
-    <p v-if="job.result?.durability === 'uncertain'" class="message error" role="alert">新题库的启动指向已改变，但磁盘持久化确认失败。请先检查节点存储，确认后再重启。</p>
+    <p v-else-if="job.status === 'running'" class="muted">关闭页面不会取消任务。</p>
+    <p v-else class="message success" role="status">{{ job.result?.requiresRestart === true ? '新题库已就绪，重启 Core 后生效。' : '任务已完成。' }}</p>
+    <p v-if="job.result?.durability === 'uncertain'" class="message error" role="alert">新题库已选中，但保存状态未确认。请检查节点存储后再重启。</p>
     <details v-if="job.result"><summary>查看任务结果</summary><pre class="json-result">{{ JSON.stringify(job.result, null, 2) }}</pre></details>
     <button type="button" :disabled="busy" @click="refreshJob">刷新任务状态</button>
   </section>

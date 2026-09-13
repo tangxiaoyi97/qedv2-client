@@ -30,7 +30,7 @@ describe('standalone management interface', () => {
   it('renders immediately without learner login, bank requests or any node connection', async () => {
     const fetcher = vi.fn<typeof fetch>(); vi.stubGlobal('fetch', fetcher);
     const host = mount(AdminApp); await settle();
-    expect(host.textContent).toContain('两个节点，各自独立');
+    expect(host.querySelector('h1')?.textContent).toBe('节点管理');
     expect(host.querySelector('#server-address')).not.toBeNull();
     expect(host.querySelector('#core-address')).not.toBeNull();
     expect(fetcher).not.toHaveBeenCalled();
