@@ -100,11 +100,39 @@ an installed previous-release worker when publishing the first admin release.
 
 ## Operations
 
-Server supports user lookup/creation, invitations, AI allowance edits, daily AI
-usage, reported-activity statistics, feedback status changes, audit records, and
-an optional supervised restart. Allowance edits preserve used counters. BYO
-means user-owned AI credentials; removing shared-pool access does not disable
-an account. User deletion, disabling and password reset are not exposed.
+Server provides filtered user lookup and creation, account enable/disable,
+password reset, impact-count details and permanent deletion. Disable and password
+reset revoke existing user sessions; enabling requires a fresh login. Permanent
+deletion shows associated data counts and requires entering the exact username.
+There is no bulk permanent deletion.
+
+Invitations have type/status/code filters, creation, revocation/restoration,
+expiry editing and permanent deletion with exact-code confirmation. Usage counts
+and the latest ten redemptions come from Server; migrated counts that cannot be
+fully reconstructed are marked as lower bounds. Deleting an invitation leaves
+registered users intact. Restoring an invitation does not bypass expiry or
+one-time redemption limits.
+
+AI allowance edits preserve used counters, with separate Token and cent limits,
+expiry and current-period usage. BYO means user-owned AI credentials; removing
+shared-pool access does not disable an account. Daily AI requests, failures,
+Tokens and costs are shown in tables and a CSS bar chart using real UTC buckets.
+Feedback supports subject/category/status filters, details and status updates.
+Audit filters include action, target and dates; authentication/service logs use
+the node's bounded safe-field view, with `hasMore` pagination and a truncation
+notice instead of an invented total. No raw log files are exposed.
+
+Each new control requires its exact advertised capability. Older API-v1 nodes
+retain their supported lookup/create/allowance workflows without sending new
+lifecycle writes or unsupported filters. Search uses explicit submission,
+cancellable reads and response generations; a replaced request cannot overwrite
+a newer result. Mutations never retry automatically. Changing pages or sections
+clears detail and generated-secret views. Changing nodes unmounts its resource
+panel while retaining each idle node's independent in-memory login, then reloads
+records on return. Authentication in progress is discarded on a node switch.
+Late responses and 401s from an older credential cannot update or revoke a newer
+session. Confirmations use native dialogs with a keyboard focus trap, Escape
+cancellation and focus restoration.
 
 Statistics describe authenticated attempts **received** by Server. Guests,
 offline activity and not-yet-synced work can be absent. AI daily buckets are UTC,
@@ -116,7 +144,9 @@ validation and optionally a configured bank update or supervised restart. Job
 status is polled with read-only requests while running. A successful bank update
 prepares a verified bank for the next Core restart; the live process continues
 serving its original immutable bank until then. Restart and bank-update actions
-require an explicit confirmation in the page.
+require an explicit confirmation dialog. Capability-enabled nodes also show the
+latest 32 maintenance-task summaries retained by the current process, with detail
+lookups; process history is cleared on restart.
 
 The ordinary learning Settings screen also has an opt-in feedback form for
 signed-in users, in German and English. It submits a user-written subject and
@@ -129,7 +159,7 @@ explicit send checkbox and preserves unsent text if delivery fails.
 
 ```sh
 pnpm --filter @qed2/web typecheck
-pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-theme.spec.ts test/feedback-settings.spec.ts
+pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/feedback-settings.spec.ts
 pnpm --filter @qed2/core-logic test test/feedback-client.spec.ts
 pnpm --filter @qed2/web build
 ```

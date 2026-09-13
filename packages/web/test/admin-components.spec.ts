@@ -69,6 +69,7 @@ describe('standalone management interface', () => {
     const core = host.querySelector<HTMLElement>('[aria-labelledby="core-title"]')!;
     await input(server, '#server-address', 'http://127.0.0.1:18081'); await submit(server, '.connection-form');
     expect(server.textContent).toContain('无法连接节点');
+    [...host.querySelectorAll<HTMLButtonElement>('.node-selector button')][1]!.click(); await settle();
     await input(core, '#core-address', 'http://127.0.0.1:18788'); await submit(core, '.connection-form');
     await input(core, '#core-secret', 'test-core-password'); await submit(core, 'form:nth-child(2)'); await settle();
     expect(core.textContent).toContain('1.14.0');
@@ -122,4 +123,44 @@ describe('standalone management interface', () => {
     expect(fetcher.mock.calls.some(([url]) => String(url).includes('/management/users'))).toBe(false);
     expect(host.textContent).not.toContain('创建用户');
   });
+});
+
+it('clears generated secrets on a node switch while preserving idle independent logins', async () => {
+  let userLists = 0;
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url, init) => {
+    const path = String(url);
+    if (path.endsWith('/auth/status')) return json({ service: 'qed2-server', apiVersion: 1, initialized: true });
+    if (path.endsWith('/auth/login')) return json(grant());
+    if (path.endsWith('/info')) return json({ management: { capabilities: { users: true } } });
+    if (path.endsWith('/stats')) return json({ users: { total: 0 }, activity: {}, ai: {}, feedback: {} });
+    if (path.endsWith('/users') && init?.method === 'POST') return json({ user: { username: 'newuser' }, generatedPassword: 'secret-only-in-current-view' });
+    if (path.includes('/users?')) { userLists++; return json({ items: [], total: 0, page: 1, pageSize: 25 }); }
+    throw new Error('Unexpected request');
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const host = mount(AdminApp); await settle();
+  const server = host.querySelector<HTMLElement>('[aria-labelledby="server-title"]')!;
+  await submit(server, '.connection-form'); await input(server, '#server-secret', 'test-password'); await submit(server, 'form:nth-child(2)'); await settle();
+  [...server.querySelectorAll<HTMLButtonElement>('.section-nav button')].find((button) => button.textContent === '用户')!.click(); await settle();
+  await input(server, '#new-username', 'newuser'); await submit(server, 'details form');
+  expect(server.textContent).toContain('secret-only-in-current-view');
+  const nodeButtons = host.querySelectorAll<HTMLButtonElement>('.node-selector button'); nodeButtons[1]!.click(); await settle();
+  expect(host.textContent).not.toContain('secret-only-in-current-view');
+  nodeButtons[0]!.click(); await settle(); await settle();
+  expect(server.textContent).toContain('已登录'); expect(server.textContent).not.toContain('secret-only-in-current-view');
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/login'))).toHaveLength(1);
+  expect(userLists).toBe(2); expect(JSON.stringify([...saved])).not.toContain('secret-only-in-current-view');
+});
+
+it('ignores a pending connection after switching nodes', async () => {
+  let finish!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(() => new Promise((done) => { finish = done; })));
+  const host = mount(AdminApp); await settle();
+  const server = host.querySelector<HTMLElement>('[aria-labelledby="server-title"]')!;
+  await submit(server, '.connection-form');
+  host.querySelectorAll<HTMLButtonElement>('.node-selector button')[1]!.click(); await settle();
+  finish(json({ service: 'qed2-server', apiVersion: 1, initialized: true })); await settle();
+  expect(server.querySelector('#server-secret')).toBeNull();
+  host.querySelectorAll<HTMLButtonElement>('.node-selector button')[0]!.click(); await settle();
+  expect(server.querySelector<HTMLButtonElement>('.connection-form button')?.disabled).toBe(false);
 });

@@ -79,3 +79,50 @@ describe('independent management transport', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 });
+
+describe('management request generation', () => {
+  function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
+  it('keeps a replacement password session when an old request later returns 401', async () => {
+    const old = deferred<Response>();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(grant())).mockImplementationOnce(() => old.promise).mockResolvedValueOnce(json(grant('new-password-token-1234567890')));
+    const client = new ManagementClient('https://server.example', fetcher);
+    await client.login('test-password');
+    const pending = client.request('/users');
+    const rejected = expect(pending).rejects.toMatchObject({ status: 401 });
+    await client.changePassword('test-password', 'changed-test-password');
+    old.resolve(json({ error: { code: 'INVALID_SESSION' } }, 401));
+    await rejected;
+    expect(client.session?.token).toBe('new-password-token-1234567890');
+  });
+  it('does not return private results captured under a previous session', async () => {
+    const old = deferred<Response>();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(grant())).mockImplementationOnce(() => old.promise).mockResolvedValueOnce(json(grant('new-login-token-1234567890')));
+    const client = new ManagementClient('https://server.example', fetcher);
+    await client.login('test-password');
+    const pending = client.request('/users');
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+    await client.login('other-test-password');
+    old.resolve(json({ items: [{ username: 'private-old-user' }] }));
+    await rejected;
+  });
+  it('does not let a delayed logout forget a newer login', async () => {
+    const old = deferred<Response>();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(grant())).mockImplementationOnce(() => old.promise).mockResolvedValueOnce(json(grant('new-login-token-1234567890')));
+    const client = new ManagementClient('https://server.example', fetcher);
+    await client.login('test-password');
+    const pending = client.logout();
+    const rejected = expect(pending).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+    await client.login('other-test-password');
+    old.resolve(json({ loggedOut: true }));
+    await rejected;
+    expect(client.session?.token).toBe('new-login-token-1234567890');
+  });
+  it('sends a deliberate JSON DELETE once and reports unknown outcomes without retry', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json(grant())).mockRejectedValueOnce(new TypeError('offline'));
+    const client = new ManagementClient('https://server.example', fetcher);
+    await client.login('test-password');
+    await expect(client.request('/users/id', { confirmUsername: 'sample' }, true, 'DELETE')).rejects.toMatchObject({ message: expect.stringContaining('操作结果尚未确认') });
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: 'DELETE', body: '{"confirmUsername":"sample"}' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+});

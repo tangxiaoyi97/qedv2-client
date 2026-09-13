@@ -26,8 +26,8 @@ const version = __APP_VERSION__;
       </button>
     </nav>
     <div id="node-workspace" tabindex="-1">
-      <NodePanel v-show="selected === 'server'" kind="server" @status="status.server = $event" />
-      <NodePanel v-show="selected === 'core'" kind="core" @status="status.core = $event" />
+      <NodePanel v-show="selected === 'server'" :active="selected === 'server'" kind="server" @status="status.server = $event" />
+      <NodePanel v-show="selected === 'core'" :active="selected === 'core'" kind="core" @status="status.core = $event" />
     </div>
   </main>
 </template>

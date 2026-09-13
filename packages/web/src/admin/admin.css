@@ -143,3 +143,55 @@ td > button { font-size: .8rem; }
   th, td { padding: 12px; }
   .message > button { display: block; margin: 14px 0 0; }
 }
+/* Dense records remain native tables; each region owns its narrow-screen scroll. */
+.node-panel, #node-workspace { min-width: 0; }
+.admin-shell { width: min(1400px, calc(100% - 48px)); }
+.admin-header { padding-inline: max(24px, calc((100vw - 1400px) / 2)); }
+.filter-fields { align-items: flex-end; }
+.filter-fields .field { flex: 1 1 160px; max-width: 300px; }
+.filter-fields .field input, .filter-fields .field select { max-width: none; min-width: 0; }
+.filter-fields label { margin-bottom: 6px; }
+.request-progress { display: flex; gap: 18px; align-items: center; color: var(--admin-muted); padding: 12px 0 20px; }
+.request-progress button { padding-inline: 14px; }
+.row-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 250px; max-width: 360px; }
+.row-actions button { min-height: 44px; padding: 8px 12px; font-size: .78rem; }
+.record-link { display: block; }
+.date-cell { min-width: 160px; font-variant-numeric: tabular-nums; }
+.numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table-wrap { max-width: 100%; }
+table caption:not(.sr-only) { text-align: left; padding: 14px 18px; font-weight: 650; }
+tbody th { background: transparent; color: var(--admin-ink); }
+.status-negative { color: var(--admin-danger); background: var(--admin-danger-bg); }
+.count-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 16px; margin-block: 22px; }
+.count-grid > div { display: flex; flex-direction: column; gap: 5px; padding: 12px; border-left: 2px solid var(--admin-border); }
+.count-grid span { font-size: .8rem; color: var(--admin-muted); }
+.count-grid strong { font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+.overview-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.overview-columns > .surface { min-width: 0; }
+.admin-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow-y: auto; border: 1px solid var(--admin-border); border-radius: var(--q-radius-card); padding: 28px; background: var(--admin-surface); color: var(--admin-ink); box-shadow: var(--q-shadow-card); }
+.admin-dialog::backdrop { background: rgb(0 0 0 / .6); }
+.dialog-description { margin-bottom: 22px; line-height: 1.65; }
+.dialog-target { padding: 14px; background: var(--admin-soft); margin: 18px 0; }
+.dialog-actions { justify-content: flex-end; margin-top: 24px; }
+.admin-dialog .panel-toolbar { align-items: flex-start; }
+.admin-dialog .panel-toolbar h3 { padding-top: 9px; }
+.log-selector { margin-bottom: 20px; }
+.log-selector [aria-pressed='true'] { color: var(--admin-accent); background: var(--admin-accent-soft); border-color: var(--admin-accent); }
+.metadata-list { min-width: 230px; font-size: .8rem; }
+.usage-chart { margin: 0 0 20px; padding: 20px; background: var(--admin-surface); border: 1px solid var(--admin-border); border-radius: var(--q-radius-card); }
+.usage-chart figcaption { font-size: .93rem; font-weight: 650; margin-bottom: 24px; }
+.chart-bars { position: relative; display: flex; align-items: flex-end; gap: 3px; height: 130px; border-bottom: 1px solid var(--admin-border); }
+.chart-column { position: absolute; height: 100%; min-width: 1px; }
+.chart-bar, .chart-failed { position: absolute; bottom: 0; left: 8%; width: 84%; }
+.chart-bar { background: var(--admin-accent); }
+.chart-failed { background: repeating-linear-gradient(135deg, var(--admin-danger) 0 2px, var(--admin-danger-bg) 2px 5px); }
+.chart-axis { display: flex; justify-content: space-between; color: var(--admin-muted); font-size: .75rem; margin-top: 8px; }
+.usage-chart .field-hint { margin-bottom: 0; }
+@media (max-width: 700px) {
+  .overview-columns { grid-template-columns: 1fr; gap: 0; }
+  .admin-shell { width: calc(100% - 32px); }
+  .admin-header { padding-inline: 16px; }
+  .filter-fields .field { max-width: none; }
+  .admin-dialog { padding: 20px; }
+  .row-actions { min-width: 220px; }
+}

@@ -4,7 +4,7 @@ import { dateText, errorText, ManagementClient, ManagementError, normalizeNodeAd
 import ServerPanel from './ServerPanel.vue';
 import CorePanel from './CorePanel.vue';
 
-const props = defineProps<{ kind: NodeKind }>();
+const props = withDefaults(defineProps<{ kind: NodeKind; active?: boolean }>(), { active: true });
 const emit = defineEmits<{ status: [text: string] }>();
 const label = computed(() => props.kind === 'server' ? 'Server' : 'Core');
 const storageKey = `qed2.admin.${props.kind}.origin`;
@@ -28,6 +28,7 @@ const currentPassword = ref('');
 const passwordForm = ref(false);
 let expiryTimer: ReturnType<typeof setTimeout> | undefined;
 let currentGeneration = 0;
+const panelGeneration = ref(0);
 
 function clearSecrets(): void { secret.value = ''; password.value = ''; repeatPassword.value = ''; currentPassword.value = ''; }
 function clearSession(): void {
@@ -42,11 +43,12 @@ function clearSession(): void {
 // may never go to a previously connected origin hidden behind newly typed text.
 watch(address, (value) => {
   if (client.value && value.trim() !== client.value.address) {
-    clearSession(); nodeStatus.value = undefined; client.value = undefined;
+    currentGeneration++; busy.value = false; clearSession(); nodeStatus.value = undefined; client.value = undefined;
     notice.value = ''; error.value = ''; emit('status', '未连接');
   }
 }, { flush: 'sync' });
 function acceptGrant(value: Grant): void {
+  panelGeneration.value++;
   grant.value = value;
   clearTimeout(expiryTimer);
   expiryTimer = setTimeout(() => {
@@ -55,21 +57,27 @@ function acceptGrant(value: Grant): void {
   }, Math.max(0, new Date(value.expiresAt).getTime() - Date.now()));
   emit('status', value.requiresPasswordSetup ? '待设密码' : '已登录');
 }
+watch(() => props.active, (active) => {
+  if (!active) { currentGeneration++; passwordForm.value = false; clearSecrets(); if (busy.value) { clearSession(); busy.value = false; } }
+}, { flush: 'sync' });
 async function run(work: () => Promise<void>): Promise<void> {
-  if (busy.value) return;
+  if (busy.value || !props.active) return;
+  const generation = currentGeneration;
   busy.value = true; error.value = ''; notice.value = '';
   try { await work(); }
-  catch (caught) { error.value = errorText(caught); if (client.value && !client.value.session && grant.value) clearSession(); }
-  finally { busy.value = false; }
+  catch (caught) { if (generation !== currentGeneration) return; error.value = errorText(caught); if (client.value && !client.value.session && grant.value) clearSession(); }
+  finally { if (generation === currentGeneration) busy.value = false; }
 }
 async function connect(): Promise<void> {
   await run(async () => {
-    currentGeneration += 1;
+    const generation = currentGeneration;
     clearSession(); nodeStatus.value = undefined;
-    client.value = new ManagementClient(address.value);
+    const destination = new ManagementClient(address.value);
+    client.value = destination;
     emit('status', '连接中');
     try {
-      const status = await client.value.status();
+      const status = await destination.status();
+      if (generation !== currentGeneration) return;
       if (status.service !== `qed2-${props.kind}` || typeof status.initialized !== 'boolean') {
         throw new ManagementError('WRONG_NODE', `该地址不是可识别的 ${label.value} 管理节点。`);
       }
@@ -79,12 +87,13 @@ async function connect(): Promise<void> {
       try { localStorage.setItem(storageKey, address.value); } catch { /* optional, address only */ }
       emit('status', '待登录');
       notice.value = '连接成功。';
-    } catch (caught) { emit('status', '连接失败'); throw caught; }
+    } catch (caught) { if (generation === currentGeneration) emit('status', '连接失败'); throw caught; }
   });
 }
 async function login(): Promise<void> {
   await run(async () => {
-    try { if (client.value) acceptGrant(await client.value.login(secret.value)); }
+    const generation = currentGeneration, destination = client.value;
+    try { if (destination) { const value = await destination.login(secret.value); if (generation === currentGeneration && props.active) acceptGrant(value); } }
     finally { secret.value = ''; }
   });
 }
@@ -93,9 +102,11 @@ async function savePassword(): Promise<void> {
     try {
       if (password.value !== repeatPassword.value) { error.value = '两次输入的密码不一致。'; return; }
       if (!client.value) return;
+      const generation = currentGeneration;
       const result = grant.value?.requiresPasswordSetup
         ? await client.value.setup(password.value)
         : await client.value.changePassword(currentPassword.value, password.value);
+      if (generation !== currentGeneration || !props.active) return;
       acceptGrant(result);
       if (nodeStatus.value) nodeStatus.value.initialized = true;
       passwordForm.value = false;
@@ -105,8 +116,9 @@ async function savePassword(): Promise<void> {
 }
 async function logout(): Promise<void> {
   await run(async () => {
+    const generation = currentGeneration;
     try { await client.value?.logout(); }
-    finally { clearSession(); notice.value = '已退出。'; }
+    finally { if (generation === currentGeneration) { clearSession(); notice.value = '已退出。'; } }
   });
 }
 function sessionLost(): void { clearSession(); notice.value = '节点会话已失效，请重新登录。'; }
@@ -149,10 +161,10 @@ onBeforeUnmount(() => { currentGeneration += 1; clearTimeout(expiryTimer); clear
         <div class="field"><label :for="`${kind}-repeat-password`">再次输入新密码</label><input :id="`${kind}-repeat-password`" v-model="repeatPassword" type="password" autocomplete="new-password" required minlength="12" maxlength="256" :disabled="busy" /></div></div>
       <div class="actions"><button type="submit" class="primary" :disabled="busy">{{ busy ? '正在保存…' : '保存管理密码' }}</button><button v-if="grant.requiresPasswordSetup" type="button" :disabled="busy" @click="logout">取消设置并退出</button><button v-else type="button" :disabled="busy" @click="passwordForm = false; clearSecrets()">取消</button></div>
     </form>
-    <template v-if="grant && !grant.requiresPasswordSetup && client">
+    <template v-if="active && grant && !grant.requiresPasswordSetup && client">
       <div class="session-strip"><span class="status-pill">已登录</span><span class="mono">{{ client.address }}</span><span>会话到期：{{ dateText(grant.expiresAt) }}</span></div>
-      <ServerPanel v-if="kind === 'server'" :key="currentGeneration" :client="client" @session-lost="sessionLost" @restart="restartAccepted" />
-      <CorePanel v-else :key="currentGeneration" :client="client" @session-lost="sessionLost" @restart="restartAccepted" />
+      <ServerPanel v-if="kind === 'server'" :key="panelGeneration" :client="client" @session-lost="sessionLost" @restart="restartAccepted" />
+      <CorePanel v-else :key="panelGeneration" :client="client" @session-lost="sessionLost" @restart="restartAccepted" />
     </template>
   </section>
 </template>
