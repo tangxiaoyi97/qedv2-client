@@ -16,6 +16,13 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 /** Coming back to the app checks too, but not more often than this. */
 const MIN_CHECK_GAP_MS = 15 * 60 * 1000;
 
+/** Called only by the learner entry. The standalone admin never registers SWs. */
+export function registerLearningServiceWorker(): void {
+  if (!import.meta.env.PROD || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+  void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL })
+    .catch(() => undefined);
+}
+
 export function watchForBuildUpdates(): void {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
 

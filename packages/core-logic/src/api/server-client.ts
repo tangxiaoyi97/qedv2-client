@@ -105,6 +105,21 @@ export class ServerClient {
     return requestJson<UserInfo>(this.baseUrl, '/auth/me', this.authed({}));
   }
 
+  /** A deliberate, bounded support submission; never uploads learning data. */
+  submitFeedback(input: {
+    category: 'bug' | 'question' | 'suggestion'; subject: string; message: string;
+    clientVersion?: string; platform?: string; requestId?: string; questionId?: string;
+  }): Promise<{ id: string; status: 'open'; createdAt: string }> {
+    const body = {
+      category: input.category, subject: input.subject, message: input.message,
+      ...(input.clientVersion ? { clientVersion: input.clientVersion } : {}),
+      ...(input.platform ? { platform: input.platform } : {}),
+      ...(input.requestId ? { requestId: input.requestId } : {}),
+      ...(input.questionId ? { questionId: input.questionId } : {}),
+    };
+    return requestJson(this.baseUrl, '/me/feedback', this.authed({ method: 'POST', body }));
+  }
+
   /** GET /me/state */
   getState(): Promise<ServerArchiveState> {
     return requestJson<ServerArchiveState>(this.baseUrl, '/me/state', this.authed({}));

@@ -14,6 +14,12 @@
   which is why some of their versions never appeared in package.json.
 -->
 
+## 2.5.0 — 2026-09-14
+
+- **verwaltung:** eigener zugang für Server und Core, unabhängig von der lernanmeldung
+- **betrieb:** benutzer, einladungen, kontingente und rückmeldungen im browser verwalten
+- **Core:** aufgabenbestand prüfen und aktualisieren, dienst gezielt neu starten
+
 ## 2.4.0 — 2026-09-11
 
 - **kompetenzen:** offizielle erklärungen per klick, deutsch & englisch

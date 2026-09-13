@@ -19,11 +19,12 @@ import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
-import { watchForBuildUpdates } from './platform/sw-update.js';
+import { registerLearningServiceWorker, watchForBuildUpdates } from './platform/sw-update.js';
 import { installShellCommandRouter } from './platform/shell-commands.js';
 import { authStore as authStorage, localProfileStore, ports } from './services.js';
 import { useI18n } from './i18n.js';
 import { setUiLocale } from '@qed2/ui';
+import { recoverAdminNavigation } from './platform/admin-navigation-recovery.js';
 
 setUiLocale(document.documentElement.lang === 'en' ? 'en' : 'de');
 const { t } = useI18n();
@@ -125,7 +126,10 @@ async function boot(): Promise<void> {
   // …and keep looking for newer builds, so an installed PWA that never gets
   // closed does not sit on this one forever. Native shells own their update
   // lifecycle and must never race the PWA service-worker poller.
-  if (!ports.shell.capabilities.desktop) watchForBuildUpdates();
+  if (!ports.shell.capabilities.desktop) {
+    registerLearningServiceWorker();
+    watchForBuildUpdates();
+  }
 }
 
 function showBootError(err: unknown): void {
@@ -160,4 +164,8 @@ function showBootError(err: unknown): void {
   root.append(box);
 }
 
-void boot().catch(showBootError);
+if (/^\/admin(?:\/|$)/.test(location.pathname)) {
+  void recoverAdminNavigation().catch(showBootError);
+} else {
+  void boot().catch(showBootError);
+}

@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { desktopCoreEnvironment } from '../src/core-environment.cjs'
 import {
   discoverPackagedRuntimeRoot,
   parseArguments,
@@ -93,6 +94,21 @@ async function runtimeFixture(root) {
 }
 
 describe('runtime smoke helpers', () => {
+  it('isolates smoke Core from host management state without changing the parent environment', () => {
+    const inherited = Object.freeze({
+      PATH: '/test/bin', HTTPS_PROXY: 'http://proxy.example.test',
+      MANAGEMENT_ENABLED: 'true', MANAGEMENT_STATE_DIR: '/host/state',
+      MANAGEMENT_BANK_CURRENT_LINK: '/host/state/banks/current',
+      MANAGEMENT_HOST: '0.0.0.0', MANAGEMENT_ALLOW_RESTART: 'true',
+      MANAGEMENT_FUTURE_SETTING: 'forbidden', management_state_dir: '/mixed-case/state',
+    })
+    expect(desktopCoreEnvironment(inherited)).toEqual({
+      PATH: '/test/bin', HTTPS_PROXY: 'http://proxy.example.test', MANAGEMENT_ENABLED: 'false',
+    })
+    expect(inherited.MANAGEMENT_ENABLED).toBe('true')
+    expect(inherited.MANAGEMENT_STATE_DIR).toBe('/host/state')
+  })
+
   it('accepts a canonical, commit-attested Bank Manifest v2 and rejects root drift', () => {
     const manifest = bankManifestFixture()
     expect(validateBankManifestV2(manifest, manifest.bank.commit)).toBe(manifest)

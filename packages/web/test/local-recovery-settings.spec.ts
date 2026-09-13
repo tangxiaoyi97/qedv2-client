@@ -122,7 +122,7 @@ vi.mock('../src/services.js', () => ({
     pendingLegacyAccountRecovery: mocks.pendingLegacyAccountRecovery,
     migrateLegacyAccountIdentity: mocks.migrateLegacyAccountIdentity,
   },
-  ports: {},
+  ports: { shell: { capabilities: { desktop: false } } },
 }));
 
 vi.mock('../src/stores/app.js', () => ({ useAppStore: () => mocks.appStore }));

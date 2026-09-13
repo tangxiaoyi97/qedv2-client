@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { desktopCoreEnvironment } from '../core-environment.cjs';
 import { resolve } from 'node:path';
 import {
   DEFAULT_CONFIG,
@@ -433,8 +434,9 @@ export class CoreSupervisor extends EventEmitter {
     });
 
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...desktopCoreEnvironment(process.env),
       NODE_ENV: 'production',
+      PUBLIC_HOST: LOOPBACK_HOST,
       PORT: String(port),
       BANK_PATH: this.runtime.bankDirectory,
       BANK_STRICT: 'true',

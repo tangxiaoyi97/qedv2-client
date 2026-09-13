@@ -17,6 +17,7 @@ import {
 } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
+import FeedbackSettings from './settings/FeedbackSettings.vue';
 import SettingsCard from './settings/SettingsCard.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import {
@@ -566,6 +567,8 @@ async function openChangelog(): Promise<void> {
     </SettingsCard>
 
     <AiSettings />
+
+    <FeedbackSettings />
 
     <SettingsCard>
       <SettingsRow

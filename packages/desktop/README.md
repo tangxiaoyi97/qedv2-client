@@ -51,6 +51,9 @@ fall back to Settings and never render or reserve desktop-only UI.
 The packaged Core is launched as an Electron utility process and reads the
 packaged bank directly. The renderer never talks to that process directly: a
 loopback gateway serves the Web build and proxies the allowed Core endpoints.
+Desktop and runtime smoke processes remove inherited `MANAGEMENT_*` settings
+and explicitly disable the Core management listener, so host management state
+cannot replace the verified bundled bank or enable remote maintenance.
 
 | Service | Preferred binding | Collision behavior |
 | --- | --- | --- |
