@@ -3,7 +3,7 @@
   "core": {
     "repository": "tangxiaoyi97/qedv2-core",
     "ref": "main",
-    "commit": "395f7c8f4cd6a73f4e54b6a1e48d870ad71bc68f"
+    "commit": "3c395575c3d8d1151cae74432a4731f1d1647c00"
   },
   "bank": {
     "repository": "tangxiaoyi97/srdpmppr",
