@@ -40,8 +40,9 @@ import {
   suppressThemeTransitions,
   type BuiltinThemeId,
 } from '../platform/theme.js';
+import { mirrorThemeAppearance, type ThemeAppearance } from '../platform/theme-preferences.js';
 
-export type ThemePref = 'light' | 'dark' | 'system';
+export type ThemePref = ThemeAppearance;
 const CORE_CAPABILITY_PROBE_MS = 1_000;
 const ACCENT_STORAGE_KEY = 'accent';
 
@@ -66,6 +67,7 @@ function applyThemeToDom(pref: ThemePref): void {
     (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   syncThemeColorFromCss();
+  mirrorThemeAppearance(pref);
 }
 
 export const useAppStore = defineStore('app', () => {

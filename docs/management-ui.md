@@ -7,6 +7,23 @@ its router, or require an ordinary account login. Vue is the only UI runtime;
 the management page uses native HTML controls and CSS, with no animations or
 component library.
 
+The page uses Client's Public Sans typography, native control dimensions, and
+the same weed, sky, raspberry and violette light/dark CSS palettes. It inherits
+the browser's saved appearance and accent, follows system appearance when no
+explicit mode is set, and responds to preference changes from other Client tabs
+or when the browser page resumes. Cached arbitrary external CSS is not applied
+to management controls.
+
+The learner mirrors its successfully loaded/saved appearance to
+`qed2.appearance`; the existing `qed2.accent` preference remains shared. When the
+appearance mirror is missing, admin spends at most 500 ms reading only
+`config/theme` from an already existing `qed2` IndexedDB database. It does not
+import the learner storage adapter, read progress, or commit a database creation
+or upgrade; a deletion race aborts the opening upgrade transaction. Unsupported
+database enumeration, denied storage or a timeout falls back to system mode
+without saving that fallback as a user choice. Opening the updated learner then
+publishes the saved appearance for future admin visits.
+
 ## Local use
 
 Start Core and Server with their respective management listeners enabled and
@@ -46,8 +63,9 @@ node CLI operation, never a button or remote reset endpoint.
 
 Management passwords, bootstrap keys, bearer tokens, generated user passwords,
 and response data remain in page memory. They are not written to browser
-storage, URLs, console logs, archives or telemetry. Only validated node origins
-are optionally stored under `qed2.admin.server.origin` and
+storage, URLs, console logs, archives or telemetry. In addition to the shared
+non-secret appearance preferences, validated node origins are optionally stored
+under `qed2.admin.server.origin` and
 `qed2.admin.core.origin`. The origin must use HTTPS or loopback HTTP and cannot
 contain URL credentials, query strings or fragments. Fetch uses
 `credentials: omit`, `cache: no-store`, rejects redirects and never retries a
@@ -107,12 +125,13 @@ explicit send checkbox and preserves unsent text if delivery fails.
 
 ```sh
 pnpm --filter @qed2/web typecheck
-pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/feedback-settings.spec.ts
+pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-theme.spec.ts test/feedback-settings.spec.ts
 pnpm --filter @qed2/core-logic test test/feedback-client.spec.ts
 pnpm --filter @qed2/web build
 ```
 
 Tests cover independent node boot/login, setup-only UI, node-origin credential
 isolation, address edits, no persisted secrets, failed mutations without retry,
-session revocation, destination validation and support-field allowlisting. The
+session revocation, destination validation, support-field allowlisting, theme
+inheritance, system changes and bounded read-only legacy preference access. The
 build check verifies separate entry assets and service-worker exclusions.

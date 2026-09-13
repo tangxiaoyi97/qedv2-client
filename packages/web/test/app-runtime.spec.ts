@@ -2,6 +2,7 @@ import { isProxy } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORAGE, type CoreRuntimeStatus } from '@qed2/core-logic';
+import { THEME_STORAGE_KEYS } from '../src/platform/theme-preferences.js';
 
 const mocks = vi.hoisted(() => {
   const listeners: {
@@ -112,6 +113,7 @@ function stubBrowserApis(): void {
 
 beforeEach(() => {
   setActivePinia(createPinia());
+  window.localStorage.clear();
   mocks.listeners.network = undefined;
   mocks.listeners.runtime = undefined;
   for (const mock of [
@@ -143,6 +145,31 @@ beforeEach(() => {
   mocks.storageSet.mockResolvedValue(undefined);
   mocks.getStatus.mockResolvedValue(initialStatus);
   stubBrowserApis();
+});
+
+describe('appearance preference mirror', () => {
+  it('mirrors the existing saved appearance for independent pages on learner startup', async () => {
+    mocks.getTheme.mockResolvedValue('light');
+    window.localStorage.setItem(THEME_STORAGE_KEYS.appearance, 'dark');
+    const app = useAppStore();
+    await app.init();
+    expect(window.localStorage.getItem(THEME_STORAGE_KEYS.appearance)).toBe('light');
+  });
+
+  it('publishes a changed appearance only after successful storage and preserves it on failure', async () => {
+    const app = useAppStore();
+    await app.init();
+    let save!: () => void;
+    mocks.setTheme.mockImplementationOnce(() => new Promise<void>((resolve) => { save = resolve; }));
+    const saving = app.setTheme('dark');
+    expect(window.localStorage.getItem(THEME_STORAGE_KEYS.appearance)).toBe('system');
+    save();
+    await saving;
+    expect(window.localStorage.getItem(THEME_STORAGE_KEYS.appearance)).toBe('dark');
+    mocks.setTheme.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(app.setTheme('light')).rejects.toThrow('storage unavailable');
+    expect(window.localStorage.getItem(THEME_STORAGE_KEYS.appearance)).toBe('dark');
+  });
 });
 
 describe('desktop core runtime integration', () => {
