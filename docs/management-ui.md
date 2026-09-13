@@ -26,6 +26,10 @@ publishes the saved appearance for future admin visits.
 
 ## Local use
 
+Management hosts require Linux or macOS, including Linux under WSL. Native
+Windows keeps management disabled; Windows browsers can manage supported remote
+nodes, and the Desktop content runtime remains available.
+
 Start Core and Server with their respective management listeners enabled and
 separate persistent identity directories. Allow the exact Web origin in each
 node's `MANAGEMENT_ALLOWED_ORIGINS`, for example `http://127.0.0.1:4173`.
