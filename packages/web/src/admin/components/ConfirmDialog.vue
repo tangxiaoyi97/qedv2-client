@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue';
-const props = defineProps<{ title: string; description: string; confirmLabel?: string; match?: string; busy?: boolean; error?: string; danger?: boolean }>();
+const props = defineProps<{ title: string; description: string; confirmLabel?: string; match?: string; busy?: boolean; error?: string; danger?: boolean; returnFocus?: HTMLElement | null }>();
 const emit = defineEmits<{ confirm: []; close: [] }>();
 const dialog = ref<HTMLDialogElement>(), entered = ref(''), id = useId();
 const matches = computed(() => props.match === undefined || entered.value === props.match);
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+const previousFocus = props.returnFocus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
 function close() { if (!props.busy) emit('close'); }
 function trap(event: KeyboardEvent) {
   if (event.key === 'Escape') { event.preventDefault(); close(); return; }

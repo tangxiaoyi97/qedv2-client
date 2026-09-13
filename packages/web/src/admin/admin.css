@@ -195,3 +195,5 @@ tbody th { background: transparent; color: var(--admin-ink); }
   .admin-dialog { padding: 20px; }
   .row-actions { min-width: 220px; }
 }
+
+.detail-region { scroll-margin-block: 24px; }

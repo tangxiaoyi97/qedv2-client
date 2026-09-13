@@ -3,10 +3,12 @@ import { createApp, nextTick, type App, type Component } from 'vue';
 import { ManagementClient } from '../src/admin/api.js';
 import UsersSection from '../src/admin/sections/UsersSection.vue';
 import InvitesSection from '../src/admin/sections/InvitesSection.vue';
+import FeedbackSection from '../src/admin/sections/FeedbackSection.vue';
 import AuditSection from '../src/admin/sections/AuditSection.vue';
 import ConfirmDialog from '../src/admin/components/ConfirmDialog.vue';
 import CorePanel from '../src/admin/CorePanel.vue';
 const apps: App[] = [];
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const user = { id: 'user1', username: 'alice', createdAt: '2026-09-01T00:00:00Z', status: 'active', disabledAt: null, archiveVersion: 1, lastSyncWrite: null, ai: null };
 const page = (items: unknown[], p = 1, total = items.length) => ({ items, total, page: p, pageSize: 25 });
@@ -16,7 +18,7 @@ async function input(host: ParentNode, selector: string, value: string) { const 
 async function click(host: ParentNode, label: string) { const button = [...host.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent?.trim() === label)!; expect(button, label).toBeTruthy(); button.click(); await settle(); }
 async function submit(host: ParentNode, selector: string) { host.querySelector(selector)!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle(); }
 async function clientWith(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) { const transport = vi.fn<typeof fetch>(async (url, init) => String(url).endsWith('/auth/login') ? json({ token: 'test-admin-token-1234567890', requiresPasswordSetup: false, expiresAt: new Date(Date.now() + 600_000).toISOString() }) : handler(String(url), init)); const client = new ManagementClient('https://server.example', transport); await client.login('test-password'); return { client, transport }; }
-afterEach(() => { apps.splice(0).forEach((app) => app.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks(); });
+afterEach(() => { apps.splice(0).forEach((app) => app.unmount()); document.body.innerHTML = ''; vi.restoreAllMocks(); if (originalScrollIntoView) Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView); else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView'); });
 
 describe('management resource interactions', () => {
   it('requires exact username, shows impacts, and adjusts a deleted last page', async () => {
@@ -92,5 +94,45 @@ describe('destructive confirmation keyboard control', () => {
     expect(document.activeElement?.tagName).toBe('INPUT');
     dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); expect(closed).toHaveBeenCalledTimes(1);
     app.unmount(); apps.splice(apps.indexOf(app), 1); expect(document.activeElement).toBe(trigger);
+  });
+});
+
+
+describe('resource detail focus', () => {
+  const invitation = { id: 'invite1', code: 'INVITE-TEST', kind: 'permanent', status: 'available', createdAt: '', expiresAt: null, useCount: 0, recentUses: [] };
+  const feedback = { id: 'feedback1', subject: 'A test report', message: 'Report content', category: 'bug', status: 'open', createdAt: '', user: { username: 'alice' } };
+  const allowance = { mode: 'BYO', usedTokens: 0, usedCostCents: 0, monthlyTokenLimit: null, monthlyCostLimitCents: null, expiresAt: null };
+  it.each([
+    { name: 'user details', component: UsersSection, capabilities: { users: true, userDetails: true }, label: 'alice', list: user, detail: user, path: '/users/user1', close: '关闭详情' },
+    { name: 'AI allowance', component: UsersSection, capabilities: { users: true, aiAllowance: true }, label: 'AI 授权', list: user, detail: allowance, path: '/users/user1/ai', close: '关闭' },
+    { name: 'invite redemptions', component: InvitesSection, capabilities: { invites: true, inviteUsage: true }, label: '兑换记录', list: invitation, detail: invitation, path: '/invites/invite1', close: '关闭详情' },
+    { name: 'feedback details', component: FeedbackSection, capabilities: { feedback: true }, label: 'A test report', list: feedback, detail: feedback, path: '/feedback/feedback1', close: '关闭详情' },
+  ])('reveals $name and restores its exact row trigger on close', async ({ component, capabilities, label, list, detail, path, close }) => {
+    const scroll = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll });
+    const { client } = await clientWith((url) => json(url.endsWith(path) ? detail : page([list])));
+    const { host } = mount(component, { client, capabilities }); await settle();
+    const trigger = [...host.querySelectorAll<HTMLButtonElement>('.table-wrap button')].find((button) => button.textContent?.trim() === label)!;
+    trigger.focus(); trigger.click(); await settle();
+    const region = host.querySelector<HTMLElement>('.detail-region')!;
+    expect(region).toBeTruthy(); expect(document.activeElement).toBe(region);
+    expect(scroll).toHaveBeenCalledWith({ behavior: 'auto', block: 'start' });
+    await click(region, close);
+    expect(host.querySelector('.detail-region')).toBeNull(); expect(document.activeElement).toBe(trigger);
+    expect(scroll).toHaveBeenCalledWith({ behavior: 'auto', block: 'nearest' });
+  });
+  it('restores the delete-row trigger after asynchronous impact loading and Escape', async () => {
+    let resolveDetail!: (value: Response) => void;
+    const { client } = await clientWith((url) => url.endsWith('/users/user1') ? new Promise((done) => { resolveDetail = done; }) : json(page([user])));
+    const { host } = mount(UsersSection, { client, capabilities: { users: true, userDetails: true, userDelete: true } }); await settle();
+    const trigger = [...host.querySelectorAll<HTMLButtonElement>('.table-wrap button')].find((button) => button.textContent === '删除')!;
+    trigger.focus(); trigger.click(); await settle();
+    expect(trigger.disabled).toBe(true);
+    document.body.tabIndex = -1; document.body.focus(); document.body.removeAttribute('tabindex'); expect(document.activeElement).toBe(document.body);
+    resolveDetail(json({ ...user, counts: { archives: 1, attempts: 0 } })); await settle();
+    const dialog = document.querySelector('dialog')!;
+    expect(document.activeElement?.textContent).toBe('取消');
+    dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle();
+    expect(document.querySelector('dialog')).toBeNull(); expect(document.activeElement).toBe(trigger);
   });
 });
