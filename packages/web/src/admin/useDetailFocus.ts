@@ -15,12 +15,13 @@ export function useDetailFocus() {
     region.value.focus({ preventScroll: true });
     region.value.scrollIntoView?.({ behavior: 'auto', block: 'start' });
   }
-  async function restore() {
+  async function restore(fallback?: HTMLElement) {
     await nextTick();
-    if (disposed || !trigger?.isConnected) return;
-    trigger.focus({ preventScroll: true });
-    trigger.scrollIntoView?.({ behavior: 'auto', block: 'nearest' });
+    const target = trigger?.isConnected ? trigger : fallback;
     trigger = null;
+    if (disposed || !target?.isConnected) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ behavior: 'auto', block: 'nearest' });
   }
   onBeforeUnmount(() => { disposed = true; trigger = null; });
   return { region, capture, reveal, restore };

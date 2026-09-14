@@ -19,6 +19,7 @@ const bankCheck = ref<BankCheck>(), updateConfirmation = ref<BankCheck>();
 const checkNotice = ref('');
 let checkExpiry: ReturnType<typeof setTimeout> | undefined;
 const detailOpen = ref(false), selectedJobId = ref<string>();
+const historyRegion = ref<HTMLElement>();
 const { region: detailRegion, capture, reveal, restore } = useDetailFocus();
 const confirmAction = ref<'update' | 'restart'>();
 const capabilities = computed(() => info.value?.management?.capabilities);
@@ -99,7 +100,11 @@ async function openJob(id: string, event?: Event) {
   void reveal();
   await refreshJob();
 }
-function closeJob() { cancelDetail(); detailOpen.value = false; job.value = undefined; selectedJobId.value = undefined; detailError.value = ''; void restore(); }
+function closeJob() {
+  const rowTrigger = [...(historyRegion.value?.querySelectorAll<HTMLButtonElement>('button[data-job-id]') ?? [])].find((item) => item.dataset.jobId === selectedJobId.value);
+  cancelDetail(); detailOpen.value = false; job.value = undefined; selectedJobId.value = undefined; detailError.value = '';
+  void restore(rowTrigger ?? historyRegion.value);
+}
 async function maintain(operation: 'validate' | 'update' | 'restart', event?: Event) {
   const enabled = operation === 'validate' ? capabilities.value?.validate : operation === 'update' ? capabilities.value?.bankUpdate : capabilities.value?.restart;
   if (enabled !== true || busy.value || hasRunningJob.value) return;
@@ -164,6 +169,6 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
     </template>
     <button type="button" :disabled="detailBusy || writing" @click="refreshJob()">{{ detailBusy ? '正在获取…' : '刷新任务状态' }}</button>
   </section>
-  <section v-if="capabilities?.jobHistory" class="surface"><div class="panel-toolbar"><h3>维护任务记录</h3><button type="button" :disabled="busy" @click="refreshHistory">刷新记录</button></div><p class="field-hint">本次服务运行中最近 32 项任务，重启后清空。</p><div class="table-wrap" tabindex="0" role="region" aria-label="Core 维护记录，可横向滚动"><table><caption class="sr-only">Core 维护任务记录</caption><thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">操作</th></tr></thead><tbody><tr v-for="item in history" :key="item.id"><td>{{ item.operation === 'validate' ? '题库校验' : '题库更新' }}<small class="record-id mono">{{ item.id }}</small></td><td><StatusBadge :value="item.status" /></td><td>{{ dateText(item.startedAt) }}</td><td>{{ dateText(item.finishedAt) }}</td><td><button type="button" :disabled="busy" @click="openJob(item.id, $event)">详情</button></td></tr><tr v-if="history?.length === 0"><td colspan="5" class="empty-cell">暂无维护任务。</td></tr></tbody></table></div></section>
+  <section v-if="capabilities?.jobHistory" class="surface"><div class="panel-toolbar"><h3>维护任务记录</h3><button type="button" :disabled="busy" @click="refreshHistory">刷新记录</button></div><p class="field-hint">本次服务运行中最近 32 项任务，重启后清空。</p><div ref="historyRegion" class="table-wrap" tabindex="0" role="region" aria-label="Core 维护记录，可横向滚动"><table><caption class="sr-only">Core 维护任务记录</caption><thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">操作</th></tr></thead><tbody><tr v-for="item in history" :key="item.id"><td>{{ item.operation === 'validate' ? '题库校验' : '题库更新' }}<small class="record-id mono">{{ item.id }}</small></td><td><StatusBadge :value="item.status" /></td><td>{{ dateText(item.startedAt) }}</td><td>{{ dateText(item.finishedAt) }}</td><td><button type="button" :data-job-id="item.id" :disabled="busy" @click="openJob(item.id, $event)">详情</button></td></tr><tr v-if="history?.length === 0"><td colspan="5" class="empty-cell">暂无维护任务。</td></tr></tbody></table></div></section>
   <ConfirmDialog v-if="confirmAction" :title="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新安装题库' : '更新题库' : '重启 Core'" :description="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新下载并校验当前最新题库；重启 Core 后生效。' : '下载并校验新题库；重启 Core 后生效。当前服务继续使用原题库。' : '内容服务会短暂中断，恢复后需重新登录管理控制台。'" :confirm-label="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '确认重新安装' : '确认更新' : '确认重启'" danger :busy="writing" :error="error" @confirm="maintain(confirmAction!)" @close="closeConfirm"><template v-if="confirmAction === 'update' && updateConfirmation"><p class="mono">题库提交：{{ updateConfirmation.latestCommit }}</p><p v-if="updateConfirmation.pendingCommit" class="field-hint">将替换待重启题库：<span class="mono">{{ updateConfirmation.pendingCommit }}</span></p></template></ConfirmDialog>
 </template>

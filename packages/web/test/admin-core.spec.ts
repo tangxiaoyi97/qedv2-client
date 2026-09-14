@@ -236,6 +236,28 @@ describe('Core bank update decisions', () => {
     expect([...host.querySelectorAll('button')].some((b) => ['更新题库', '重新安装'].includes(b.textContent?.trim() ?? ''))).toBe(false);
     expect(button(host, '重启 Core').disabled).toBe(false);
   });
+  it('returns to the completed history row when the reinstall trigger is removed after staging', async () => {
+    let started = false, completed = false;
+    const stagedJob = { ...runningJob, operation: 'bank-update', status: 'succeeded', result: { action: 'reinstall', requiresRestart: true } };
+    const { client } = await clientWith((path) => {
+      if (path === '/info') return json(nodeInfo());
+      if (path === '/jobs') return json({ items: started ? [completed ? stagedJob : { ...runningJob, operation: 'bank-update' }] : [] });
+      if (path === '/core/update-check') return json(completed ? { ...checked('pending_restart'), latestCommit: A, pendingCommit: A } : checked('up_to_date'));
+      if (path === '/core/update') { started = true; return json({ job: { ...runningJob, operation: 'bank-update' } }, 202); }
+      if (path === '/jobs/active-job') { completed = true; return json({ job: stagedJob }); }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const host = mount(client); await settle();
+    const trigger = button(host, '重新安装'); trigger.focus(); trigger.click(); await settle();
+    button(document, '确认重新安装').click(); await settle();
+    expect(document.activeElement).toBe(details(host));
+    await vi.advanceTimersByTimeAsync(2000); await settle();
+    expect(trigger.isConnected).toBe(false);
+    expect(details(host).textContent).toContain('题库已重新安装');
+    const rowTrigger = detailsTrigger(host, runningJob.id);
+    button(details(host), '关闭详情').click(); await settle();
+    expect(document.activeElement).toBe(rowTrigger);
+  });
   it('keeps an older pending commit visible alongside a newer upstream commit and confirms its replacement', async () => {
     const { client } = await clientWith((path) => path === '/info' ? json(nodeInfo()) : path === '/jobs' ? json({ items: [] }) : json({ ...checked('update_available'), latestCommit: C, pendingCommit: B, requiresRestart: true }));
     const host = mount(client); await settle();
