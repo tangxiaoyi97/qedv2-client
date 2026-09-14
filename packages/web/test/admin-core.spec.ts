@@ -210,6 +210,16 @@ describe('Core bank update decisions', () => {
     latestCommit: status === 'up_to_date' ? A : B, pendingCommit: status === 'pending_restart' ? B : null,
     status, requiresRestart: status === 'pending_restart', checkedAt: new Date().toISOString(), repository: 'https://github.com/example/bank.git', ref: 'main' });
   const nodeInfo = (supported = true) => ({ ...info(), bank: { commit: A }, management: { capabilities: { jobHistory: true, validate: true, bankUpdate: true, bankUpdateCheck: supported, restart: true }, activeJob: null } });
+  it('waits for an in-flight version check before offering validation or restart', async () => {
+    const pending = deferred<Response>();
+    const { client } = await clientWith((path) => path === '/info' ? json(nodeInfo()) : path === '/jobs' ? json({ items: [] }) : pending.promise);
+    const host = mount(client); await settle();
+    expect(button(host, '校验题库').disabled).toBe(true);
+    expect(button(host, '重启 Core').disabled).toBe(true);
+    pending.resolve(json(checked('up_to_date'))); await settle();
+    expect(button(host, '校验题库').disabled).toBe(false);
+    expect(button(host, '重启 Core').disabled).toBe(false);
+  });
   it.each([['up_to_date', '重新安装', '确认重新安装', 'reinstall', A], ['update_available', '更新题库', '确认更新', 'update', B]] as const)('uses the %s action and submits the exact confirmed commit once', async (status, label, confirm, mode, expectedCommit) => {
     const writes: unknown[] = [];
     const { client } = await clientWith((path, init) => {

@@ -120,7 +120,7 @@ function closeJob() {
 }
 async function maintain(operation: 'validate' | 'update' | 'restart', event?: Event) {
   const enabled = operation === 'validate' ? capabilities.value?.validate : operation === 'update' ? capabilities.value?.bankUpdate : capabilities.value?.restart;
-  if (enabled !== true || busy.value || sourceBusy.value || hasRunningJob.value) return;
+  if (enabled !== true || busy.value || sourceBusy.value || checkBusy.value || hasRunningJob.value) return;
   const approved = updateConfirmation.value;
   if (operation === 'update' && (!approved || !bankActionEnabled.value || approved.latestCommit !== bankCheck.value?.latestCommit)) return;
   const body = operation === 'update' ? { mode: approved!.status === 'up_to_date' ? 'reinstall' : 'update', expectedCommit: approved!.latestCommit, ...(approved!.sourceRevision ? { expectedSourceRevision: approved!.sourceRevision, expectedPendingCommit: approved!.pendingCommit } : {}) } : {};
@@ -164,7 +164,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
       <p v-else-if="!capabilities?.bankUpdateCheck" class="field-hint">{{ capabilities?.bankUpdate ? '请升级 Core 以检查题库版本。' : '此节点未启用题库更新。' }}</p>
       <p v-if="bankCheck?.sourceChanged" class="field-hint">获取来源已更改，当前题库仍在运行。</p>
       <p v-if="bankCheck && !checkError && !checkNotice" class="message success" role="status">{{ bankCheck.status === 'up_to_date' ? bankCheck.pendingCommit ? '当前运行版为最新，另有待重启题库。' : '已是最新版本。' : bankCheck.status === 'pending_restart' ? '题库已就绪，重启 Core 后生效。' : '有新版本可用。' }}</p>
-      <div class="actions"><button type="button" class="primary" :disabled="busy || sourceBusy || hasRunningJob || !capabilities?.validate" @click="maintain('validate', $event)">校验题库</button><button v-if="bankCheck?.status !== 'pending_restart'" type="button" :disabled="!bankActionEnabled" @click="openUpdate">{{ bankActionLabel }}</button><button type="button" class="danger" :disabled="busy || sourceBusy || hasRunningJob || !capabilities?.restart" @click="confirmAction = 'restart'; error = ''">重启 Core</button></div>
+      <div class="actions"><button type="button" class="primary" :disabled="busy || sourceBusy || checkBusy || hasRunningJob || !capabilities?.validate" @click="maintain('validate', $event)">校验题库</button><button v-if="bankCheck?.status !== 'pending_restart'" type="button" :disabled="!bankActionEnabled" @click="openUpdate">{{ bankActionLabel }}</button><button type="button" class="danger" :disabled="busy || sourceBusy || checkBusy || hasRunningJob || !capabilities?.restart" @click="confirmAction = 'restart'; error = ''">重启 Core</button></div>
     </section>
     <BankSourcePanel v-if="capabilities?.bankSource" :client="client" :generation="sourceGeneration" :locked="busy || checkBusy || hasRunningJob" @busy="sourceBusy = $event" @changed="sourceChanged" @session-lost="emit('sessionLost')" />
   </template>
