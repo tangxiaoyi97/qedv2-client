@@ -5,9 +5,11 @@ import { useRequest } from './useRequest.js';
 import { useDetailFocus } from './useDetailFocus.js';
 import ConfirmDialog from './components/ConfirmDialog.vue';
 import StatusBadge from './components/StatusBadge.vue';
+import BankSourcePanel from './BankSourcePanel.vue';
+import { isBankIdentity, isBankSource, isSourceRevision, sameBankSource, type BankIdentity } from './bank-source.js';
 interface Job { id: string; operation: 'validate' | 'bank-update'; status: 'running' | 'succeeded' | 'failed'; startedAt: string; finishedAt?: string; result?: Data; error?: { code: string; message: string } }
-interface CoreInfo extends Data { version?: string; commit?: string; health?: Data; bank?: Data; management?: { capabilities?: { validate?: boolean; bankUpdate?: boolean; bankUpdateCheck?: boolean; restart?: boolean; jobHistory?: boolean }; activeJob?: Job | null } }
-interface BankCheck { currentCommit: string | null; latestCommit: string; pendingCommit: string | null; status: 'up_to_date' | 'update_available' | 'pending_restart'; checkedAt: string; repository: string; ref: string; requiresRestart: boolean }
+interface CoreInfo extends Data { version?: string; commit?: string; health?: Data; bank?: Data; management?: { capabilities?: { validate?: boolean; bankUpdate?: boolean; bankUpdateCheck?: boolean; bankSource?: boolean; restart?: boolean; jobHistory?: boolean }; activeJob?: Job | null } }
+interface BankCheck { currentCommit: string | null; latestCommit: string; pendingCommit: string | null; status: 'up_to_date' | 'update_available' | 'pending_restart'; checkedAt: string; repository: string; ref: string; requiresRestart: boolean; sourceRevision?: string; currentSource?: BankIdentity; pendingSource?: BankIdentity | null; sourceChanged?: boolean }
 const props = defineProps<{ client: ManagementClient }>();
 const emit = defineEmits<{ sessionLost: []; restart: [] }>();
 const info = ref<CoreInfo>(), job = ref<Job>(), history = ref<Job[]>(), activeJob = ref<Job>();
@@ -17,6 +19,7 @@ const { error: pollError, run: runPoll, cancel: cancelPoll } = useRequest(props.
 const { busy: checkBusy, error: checkError, run: runCheck, cancel: cancelCheck } = useRequest(props.client, () => emit('sessionLost'));
 const bankCheck = ref<BankCheck>(), updateConfirmation = ref<BankCheck>();
 const checkNotice = ref('');
+const sourceBusy = ref(false), sourceGeneration = ref(0);
 let checkExpiry: ReturnType<typeof setTimeout> | undefined;
 const detailOpen = ref(false), selectedJobId = ref<string>();
 const historyRegion = ref<HTMLElement>();
@@ -25,18 +28,26 @@ const confirmAction = ref<'update' | 'restart'>();
 const capabilities = computed(() => info.value?.management?.capabilities);
 const hasRunningJob = computed(() => activeJob.value?.status === 'running' || info.value?.management?.activeJob?.status === 'running' || history.value?.some((item) => item.status === 'running'));
 const bankActionLabel = computed(() => bankCheck.value?.status === 'up_to_date' ? '重新安装' : '更新题库');
-const bankActionEnabled = computed(() => capabilities.value?.bankUpdate && capabilities.value?.bankUpdateCheck && bankCheck.value && bankCheck.value.status !== 'pending_restart' && !checkBusy.value && !busy.value && !hasRunningJob.value);
+const bankActionEnabled = computed(() => capabilities.value?.bankUpdate && capabilities.value?.bankUpdateCheck && bankCheck.value && bankCheck.value.status !== 'pending_restart' && !checkBusy.value && !busy.value && !sourceBusy.value && !hasRunningJob.value);
 function clearCheck() { clearTimeout(checkExpiry); bankCheck.value = undefined; updateConfirmation.value = undefined; if (confirmAction.value === 'update') confirmAction.value = undefined; }
 async function checkBank() {
-  if (writing.value || !capabilities.value?.bankUpdateCheck) return;
+  if (writing.value || sourceBusy.value || !capabilities.value?.bankUpdateCheck) return;
   clearCheck(); checkNotice.value = '';
   const ok = await runCheck((signal) => props.client.request<BankCheck>('/core/update-check', undefined, true, undefined, signal), (value) => {
     const commit = (input: unknown) => input === null || typeof input === 'string' && /^[a-f0-9]{40}$/.test(input);
+    const sourceAware = capabilities.value?.bankSource === true || value?.sourceRevision !== undefined;
+    if (sourceAware && (!isSourceRevision(value?.sourceRevision) || !isBankSource(value) || !isBankIdentity(value?.currentSource)
+      || value.currentSource.commit !== value.currentCommit || typeof value.sourceChanged !== 'boolean'
+      || value.sourceChanged === sameBankSource(value.currentSource, value)
+      || value.pendingSource !== null && (!isBankIdentity(value.pendingSource) || value.pendingSource.commit !== value.pendingCommit)
+      || (value.pendingSource === null) !== (value.pendingCommit === null))) throw new ManagementError('INVALID_RESPONSE', '题库来源检查结果无效，请重试。');
+    const currentMatches = !sourceAware || value.sourceChanged === false;
+    const pendingMatches = !sourceAware || !!value.pendingSource && sameBankSource(value.pendingSource, value);
     if (!value || !['up_to_date', 'update_available', 'pending_restart'].includes(value.status) || !/^[a-f0-9]{40}$/.test(value.latestCommit)
       || !commit(value.currentCommit) || !commit(value.pendingCommit) || value.requiresRestart !== (value.pendingCommit !== null)
-      || !Number.isFinite(Date.parse(value.checkedAt)) || value.status === 'up_to_date' && value.currentCommit !== value.latestCommit
-      || value.status === 'pending_restart' && value.pendingCommit !== value.latestCommit
-      || value.status === 'update_available' && (value.currentCommit === value.latestCommit || value.pendingCommit === value.latestCommit)) throw new ManagementError('INVALID_RESPONSE', '题库版本检查结果无效，请重试。');
+      || !Number.isFinite(Date.parse(value.checkedAt)) || value.status === 'up_to_date' && (!currentMatches || value.currentCommit !== value.latestCommit)
+      || value.status === 'pending_restart' && (!pendingMatches || value.pendingCommit !== value.latestCommit)
+      || value.status === 'update_available' && (currentMatches && value.currentCommit === value.latestCommit || pendingMatches && value.pendingCommit === value.latestCommit)) throw new ManagementError('INVALID_RESPONSE', '题库版本检查结果无效，请重试。');
     bankCheck.value = value;
   });
   if (ok && !disposed) checkExpiry = setTimeout(() => { clearCheck(); checkNotice.value = '版本检查已过期，请重新检查。'; }, 300_000);
@@ -58,7 +69,7 @@ function applyJob(value: Job): Job {
     activeJob.value = value;
     if (info.value?.management) info.value.management.activeJob = value.status === 'running' ? value : null;
   }
-  if (value.error?.code === 'BANK_UPDATE_CHANGED') { clearCheck(); checkNotice.value = '远端题库已变化，请重新检查后再操作。'; }
+  if (value.error?.code === 'BANK_UPDATE_CHANGED' || value.error?.code === 'BANK_SOURCE_CHANGED') { clearCheck(); checkNotice.value = '题库版本或来源已变化，请重新检查后再操作。'; }
   return value;
 }
 async function refreshHistory() {
@@ -66,6 +77,7 @@ async function refreshHistory() {
   await run((signal) => props.client.request<{ items: Job[] }>('/jobs', undefined, true, undefined, signal), (value) => { history.value = value.items; });
 }
 async function refresh() {
+  if (sourceBusy.value) return;
   const firstLoad = !info.value;
   const ok = await run((signal) => props.client.request<CoreInfo>('/info', undefined, true, undefined, signal), (value) => {
     info.value = value;
@@ -74,8 +86,9 @@ async function refresh() {
       if (firstLoad) { job.value = value.management.activeJob; selectedJobId.value = job.value.id; detailOpen.value = true; }
     }
   });
-  if (ok && !disposed) { await refreshHistory(); if (!hasRunningJob.value && activeJob.value?.error?.code !== 'BANK_UPDATE_CHANGED') await checkBank(); schedulePoll(); }
+  if (ok && !disposed) { sourceGeneration.value++; await refreshHistory(); if (!hasRunningJob.value && !['BANK_UPDATE_CHANGED', 'BANK_SOURCE_CHANGED'].includes(activeJob.value?.error?.code ?? '')) await checkBank(); schedulePoll(); }
 }
+async function sourceChanged() { cancelCheck(); clearCheck(); checkNotice.value = ''; await checkBank(); }
 async function refreshActiveJob() {
   const id = activeJob.value?.id;
   if (!id || disposed) return;
@@ -107,10 +120,10 @@ function closeJob() {
 }
 async function maintain(operation: 'validate' | 'update' | 'restart', event?: Event) {
   const enabled = operation === 'validate' ? capabilities.value?.validate : operation === 'update' ? capabilities.value?.bankUpdate : capabilities.value?.restart;
-  if (enabled !== true || busy.value || hasRunningJob.value) return;
+  if (enabled !== true || busy.value || sourceBusy.value || hasRunningJob.value) return;
   const approved = updateConfirmation.value;
   if (operation === 'update' && (!approved || !bankActionEnabled.value || approved.latestCommit !== bankCheck.value?.latestCommit)) return;
-  const body = operation === 'update' ? { mode: approved!.status === 'up_to_date' ? 'reinstall' : 'update', expectedCommit: approved!.latestCommit } : {};
+  const body = operation === 'update' ? { mode: approved!.status === 'up_to_date' ? 'reinstall' : 'update', expectedCommit: approved!.latestCommit, ...(approved!.sourceRevision ? { expectedSourceRevision: approved!.sourceRevision, expectedPendingCommit: approved!.pendingCommit } : {}) } : {};
   if (event) capture(event);
   clearTimeout(poll); if (operation === 'update') clearTimeout(checkExpiry); cancelPoll(); cancelCheck();
   const ok = await run(() => props.client.request<{ job?: Job }>(`/core/${operation}`, body), (value) => {
@@ -132,7 +145,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
 </script>
 
 <template>
-  <div class="panel-toolbar"><h3>节点概览</h3><button type="button" :disabled="busy" @click="refresh">{{ busy ? '正在获取…' : '刷新状态' }}</button></div>
+  <div class="panel-toolbar"><h3>节点概览</h3><button type="button" :disabled="busy || sourceBusy" @click="refresh">{{ busy ? '正在获取…' : '刷新状态' }}</button></div>
   <p v-if="error && !confirmAction" class="message error" role="alert">{{ error }}</p>
   <div v-if="!info && busy" class="empty-state" role="status">正在获取 Core 节点信息…</div>
   <template v-if="info">
@@ -144,14 +157,16 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
     </div>
     <section class="surface"><h3>题库与服务</h3>
       <dl class="detail-list"><dt>题目数量</dt><dd>{{ text(info.bank?.questionCount) }}</dd><dt>可练习题目</dt><dd>{{ text(info.bank?.playableCount) }}</dd><dt>构建时间</dt><dd>{{ dateText(info.builtAt ?? info.buildTime) }}</dd><dt>题库更新</dt><dd>{{ capabilities?.bankUpdate ? '已启用' : '未启用' }}</dd><dt>服务重启</dt><dd>{{ capabilities?.restart ? '已启用' : '未启用' }}</dd></dl>
-      <div class="panel-toolbar"><h4>题库版本</h4><button v-if="capabilities?.bankUpdateCheck" type="button" :disabled="checkBusy || busy || hasRunningJob" @click="checkBank">{{ checkBusy ? '正在检查…' : '检查更新' }}</button></div>
-      <dl class="detail-list"><dt>当前题库</dt><dd class="mono">{{ text(bankCheck?.currentCommit ?? info.bank?.commit ?? info.bankCommit) }}</dd><dt>最新题库</dt><dd class="mono">{{ checkBusy ? '正在检查…' : bankCheck?.latestCommit ?? '尚未确认' }}</dd><template v-if="bankCheck?.pendingCommit"><dt>待重启题库</dt><dd class="mono">{{ bankCheck.pendingCommit }}</dd></template><template v-if="bankCheck"><dt>检查时间</dt><dd>{{ dateText(bankCheck.checkedAt) }}</dd></template></dl>
+      <div class="panel-toolbar"><h4>题库版本</h4><button v-if="capabilities?.bankUpdateCheck" type="button" :disabled="checkBusy || busy || sourceBusy || hasRunningJob" @click="checkBank">{{ checkBusy ? '正在检查…' : '检查更新' }}</button></div>
+      <dl class="detail-list"><dt>当前题库</dt><dd class="mono">{{ text(bankCheck?.currentCommit ?? info.bank?.commit ?? info.bankCommit) }}</dd><template v-if="bankCheck?.currentSource"><dt>当前来源</dt><dd class="mono">{{ bankCheck.currentSource.repository }} · {{ bankCheck.currentSource.ref }}</dd></template><dt>最新题库</dt><dd class="mono">{{ checkBusy ? '正在检查…' : bankCheck?.latestCommit ?? '尚未确认' }}</dd><template v-if="bankCheck?.sourceRevision"><dt>获取来源</dt><dd class="mono">{{ bankCheck.repository }} · {{ bankCheck.ref }}</dd></template><template v-if="bankCheck?.pendingCommit"><dt>待重启题库</dt><dd class="mono">{{ bankCheck.pendingCommit }}</dd></template><template v-if="bankCheck"><dt>检查时间</dt><dd>{{ dateText(bankCheck.checkedAt) }}</dd></template></dl>
       <p v-if="checkError" class="message error" role="alert">{{ checkError }}</p>
       <p v-else-if="checkNotice" class="field-hint" role="status">{{ checkNotice }}</p>
       <p v-else-if="!capabilities?.bankUpdateCheck" class="field-hint">{{ capabilities?.bankUpdate ? '请升级 Core 以检查题库版本。' : '此节点未启用题库更新。' }}</p>
-      <p v-else-if="bankCheck" class="message success" role="status">{{ bankCheck.status === 'up_to_date' ? bankCheck.pendingCommit ? '当前运行版为最新，另有待重启题库。' : '已是最新版本。' : bankCheck.status === 'pending_restart' ? '题库已就绪，重启 Core 后生效。' : '有新版本可用。' }}</p>
-      <div class="actions"><button type="button" class="primary" :disabled="busy || hasRunningJob || !capabilities?.validate" @click="maintain('validate', $event)">校验题库</button><button v-if="bankCheck?.status !== 'pending_restart'" type="button" :disabled="!bankActionEnabled" @click="openUpdate">{{ bankActionLabel }}</button><button type="button" class="danger" :disabled="busy || hasRunningJob || !capabilities?.restart" @click="confirmAction = 'restart'; error = ''">重启 Core</button></div>
+      <p v-if="bankCheck?.sourceChanged" class="field-hint">获取来源已更改，当前题库仍在运行。</p>
+      <p v-if="bankCheck && !checkError && !checkNotice" class="message success" role="status">{{ bankCheck.status === 'up_to_date' ? bankCheck.pendingCommit ? '当前运行版为最新，另有待重启题库。' : '已是最新版本。' : bankCheck.status === 'pending_restart' ? '题库已就绪，重启 Core 后生效。' : '有新版本可用。' }}</p>
+      <div class="actions"><button type="button" class="primary" :disabled="busy || sourceBusy || hasRunningJob || !capabilities?.validate" @click="maintain('validate', $event)">校验题库</button><button v-if="bankCheck?.status !== 'pending_restart'" type="button" :disabled="!bankActionEnabled" @click="openUpdate">{{ bankActionLabel }}</button><button type="button" class="danger" :disabled="busy || sourceBusy || hasRunningJob || !capabilities?.restart" @click="confirmAction = 'restart'; error = ''">重启 Core</button></div>
     </section>
+    <BankSourcePanel v-if="capabilities?.bankSource" :client="client" :generation="sourceGeneration" :locked="busy || checkBusy || hasRunningJob" @busy="sourceBusy = $event" @changed="sourceChanged" @session-lost="emit('sessionLost')" />
   </template>
   <p v-if="pollError" class="message error" role="alert">任务状态未刷新：{{ pollError }}</p>
   <section v-if="detailOpen" ref="detailRegion" class="surface detail-region" tabindex="-1" aria-labelledby="job-title" :aria-busy="detailBusy">
@@ -161,7 +176,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
     <template v-if="job">
     <div class="panel-toolbar"><h4>{{ job.operation === 'validate' ? '题库校验' : job.result?.action === 'reinstall' ? '题库重新安装' : '题库更新' }}</h4><span class="status-pill" role="status">{{ jobLabel }}</span></div>
     <dl class="detail-list"><dt>任务编号</dt><dd class="mono">{{ job.id }}</dd><dt>开始时间</dt><dd>{{ dateText(job.startedAt) }}</dd><dt>完成时间</dt><dd>{{ dateText(job.finishedAt) }}</dd></dl>
-    <p v-if="job.status === 'failed'" class="message error" role="alert">{{ job.error?.code === 'BANK_UPDATE_CHANGED' ? '远端题库已变化，请重新检查后再操作。' : job.operation === 'validate' ? '题库校验失败，当前运行题库未被替换。请检查节点日志。' : '题库更新失败，当前运行题库已保留。请检查节点日志。' }}</p>
+    <p v-if="job.status === 'failed'" class="message error" role="alert">{{ ['BANK_UPDATE_CHANGED', 'BANK_SOURCE_CHANGED'].includes(job.error?.code ?? '') ? '题库版本或来源已变化，请重新检查后再操作。' : job.operation === 'validate' ? '题库校验失败，当前运行题库未被替换。请检查节点日志。' : '题库更新失败，当前运行题库已保留。请检查节点日志。' }}</p>
     <p v-else-if="job.status === 'running'" class="muted">关闭页面不会取消任务。</p>
     <p v-else class="message success" role="status">{{ jobSuccess }}</p>
     <p v-if="job.result?.durability === 'uncertain'" class="message error" role="alert">新题库已选中，但保存状态未确认。请检查节点存储后再重启。</p>
@@ -170,5 +185,5 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
     <button type="button" :disabled="detailBusy || writing" @click="refreshJob()">{{ detailBusy ? '正在获取…' : '刷新任务状态' }}</button>
   </section>
   <section v-if="capabilities?.jobHistory" class="surface"><div class="panel-toolbar"><h3>维护任务记录</h3><button type="button" :disabled="busy" @click="refreshHistory">刷新记录</button></div><p class="field-hint">本次服务运行中最近 32 项任务，重启后清空。</p><div ref="historyRegion" class="table-wrap" tabindex="0" role="region" aria-label="Core 维护记录，可横向滚动"><table><caption class="sr-only">Core 维护任务记录</caption><thead><tr><th scope="col">任务</th><th scope="col">状态</th><th scope="col">开始时间</th><th scope="col">完成时间</th><th scope="col">操作</th></tr></thead><tbody><tr v-for="item in history" :key="item.id"><td>{{ item.operation === 'validate' ? '题库校验' : '题库更新' }}<small class="record-id mono">{{ item.id }}</small></td><td><StatusBadge :value="item.status" /></td><td>{{ dateText(item.startedAt) }}</td><td>{{ dateText(item.finishedAt) }}</td><td><button type="button" :data-job-id="item.id" :disabled="busy" @click="openJob(item.id, $event)">详情</button></td></tr><tr v-if="history?.length === 0"><td colspan="5" class="empty-cell">暂无维护任务。</td></tr></tbody></table></div></section>
-  <ConfirmDialog v-if="confirmAction" :title="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新安装题库' : '更新题库' : '重启 Core'" :description="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新下载并校验当前最新题库；重启 Core 后生效。' : '下载并校验新题库；重启 Core 后生效。当前服务继续使用原题库。' : '内容服务会短暂中断，恢复后需重新登录管理控制台。'" :confirm-label="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '确认重新安装' : '确认更新' : '确认重启'" danger :busy="writing" :error="error" @confirm="maintain(confirmAction!)" @close="closeConfirm"><template v-if="confirmAction === 'update' && updateConfirmation"><p class="mono">题库提交：{{ updateConfirmation.latestCommit }}</p><p v-if="updateConfirmation.pendingCommit" class="field-hint">将替换待重启题库：<span class="mono">{{ updateConfirmation.pendingCommit }}</span></p></template></ConfirmDialog>
+  <ConfirmDialog v-if="confirmAction" :title="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新安装题库' : '更新题库' : '重启 Core'" :description="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '重新下载并校验当前最新题库；重启 Core 后生效。' : '下载并校验新题库；重启 Core 后生效。当前服务继续使用原题库。' : '内容服务会短暂中断，恢复后需重新登录管理控制台。'" :confirm-label="confirmAction === 'update' ? updateConfirmation?.status === 'up_to_date' ? '确认重新安装' : '确认更新' : '确认重启'" danger :busy="writing" :error="error" @confirm="maintain(confirmAction!)" @close="closeConfirm"><template v-if="confirmAction === 'update' && updateConfirmation"><p class="mono">仓库：{{ updateConfirmation.repository }}<br />分支：{{ updateConfirmation.ref }}<br />题库提交：{{ updateConfirmation.latestCommit }}</p><p v-if="updateConfirmation.pendingCommit" class="field-hint">将替换待重启题库：<span class="mono">{{ updateConfirmation.pendingCommit }}</span></p></template></ConfirmDialog>
 </template>

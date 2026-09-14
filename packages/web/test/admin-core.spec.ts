@@ -236,6 +236,64 @@ describe('Core bank update decisions', () => {
     expect([...host.querySelectorAll('button')].some((b) => ['更新题库', '重新安装'].includes(b.textContent?.trim() ?? ''))).toBe(false);
     expect(button(host, '重启 Core').disabled).toBe(false);
   });
+  it('treats the same commit from a different source as an update and confirms both source revision and commit', async () => {
+    const revision = 'd'.repeat(64), repository = 'https://github.com/example/new-bank';
+    const writes: unknown[] = [];
+    const { client } = await clientWith((path, init) => {
+      if (path === '/info') return json(nodeInfo());
+      if (path === '/jobs') return json({ items: [] });
+      if (path === '/core/update-check') return json({ ...checked('update_available'), latestCommit: A, repository,
+        sourceRevision: revision, sourceChanged: true, currentSource: { repository: 'https://github.com/example/old-bank', ref: 'main', commit: A }, pendingSource: null });
+      if (path === '/core/update') { writes.push(JSON.parse(String(init?.body))); return json({ job: runningJob }, 202); }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const host = mount(client); await settle();
+    expect(host.textContent).toContain('获取来源已更改');
+    button(host, '更新题库').click(); await settle();
+    expect(document.querySelector('dialog')?.textContent).toContain(repository);
+    button(document, '确认更新').click(); await settle();
+    expect(writes).toEqual([{ mode: 'update', expectedCommit: A, expectedSourceRevision: revision, expectedPendingCommit: null }]);
+  });
+  it('rejects inconsistent source identity instead of enabling an update from ambiguous metadata', async () => {
+    const { client } = await clientWith((path) => path === '/info' ? json(nodeInfo()) : path === '/jobs' ? json({ items: [] }) : json({ ...checked('update_available'), sourceRevision: 'd'.repeat(64), sourceChanged: false,
+      currentSource: { repository: 'https://github.com/example/different-bank', ref: 'main', commit: A }, pendingSource: null }));
+    const host = mount(client); await settle();
+    expect(button(host, '更新题库').disabled).toBe(true);
+    expect(host.textContent).toContain('题库来源检查结果无效');
+  });
+  it('blocks maintenance during a source save and replaces the old update confirmation with the saved source', async () => {
+    const oldSource = { repository: 'https://github.com/example/old-bank', ref: 'main' };
+    const newSource = { repository: 'https://github.com/example/new-bank', ref: 'main' };
+    let source = { ...oldSource, revision: 'd'.repeat(64), origin: 'override' };
+    const pending = deferred<Response>(), writes: unknown[] = [];
+    const state = () => ({ source, defaultSource: oldSource, current: { ...oldSource, commit: A }, pending: null });
+    const { client } = await clientWith((path, init) => {
+      if (path === '/info') { const value = nodeInfo(); return json({ ...value, management: { ...value.management, capabilities: { ...value.management.capabilities, bankSource: true } } }); }
+      if (path === '/jobs') return json({ items: [] });
+      if (path === '/core/bank-source') return init?.method === 'POST' ? pending.promise : json(state());
+      if (path === '/core/update-check') return json({ ...checked(source.repository === oldSource.repository ? 'up_to_date' : 'update_available'), ...source,
+        sourceRevision: source.revision, sourceChanged: source.repository !== oldSource.repository, currentSource: { ...oldSource, commit: A }, pendingSource: null });
+      if (path === '/core/update') { writes.push(JSON.parse(String(init?.body))); return json({ job: runningJob }, 202); }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const host = mount(client); await settle();
+    expect(button(host, '重新安装').disabled).toBe(false);
+    button(host, '更改来源').click(); await settle();
+    const field = host.querySelector<HTMLInputElement>('#bank-source-repository')!;
+    field.value = newSource.repository; field.dispatchEvent(new Event('input', { bubbles: true })); await nextTick();
+    field.closest('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })); await settle();
+    button(document, '确认保存来源').click(); await settle();
+    expect(button(host, '校验题库').disabled).toBe(true);
+    expect(button(host, '重新安装').disabled).toBe(true);
+    expect(button(host, '重启 Core').disabled).toBe(true);
+    source = { ...newSource, revision: 'e'.repeat(64), origin: 'override' };
+    pending.resolve(json({ ...state(), latestCommit: B, changed: true, durability: 'confirmed' })); await settle();
+    expect(host.textContent).toContain('题库来源已保存。');
+    button(host, '更新题库').click(); await settle();
+    expect(document.querySelector('dialog')?.textContent).toContain(newSource.repository);
+    button(document, '确认更新').click(); await settle();
+    expect(writes).toEqual([{ mode: 'update', expectedCommit: B, expectedSourceRevision: source.revision, expectedPendingCommit: null }]);
+  });
   it('returns to the completed history row when the reinstall trigger is removed after staging', async () => {
     let started = false, completed = false;
     const stagedJob = { ...runningJob, operation: 'bank-update', status: 'succeeded', result: { action: 'reinstall', requiresRestart: true } };

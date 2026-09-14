@@ -161,6 +161,23 @@ minutes, and errors/unsupported nodes cannot authorize an update. Confirmation
 submits the exact checked commit and update/reinstall mode; changed upstream
 requires a fresh check and is never retried automatically.
 
+With `bankSource`, a separate source panel shows the download repository, branch
+and deployment/default override status. Administrators can change a public HTTPS
+GitHub repository/branch or restore deployment defaults, with a confirmation
+showing the exact destination. Saving uses the observed 64-character source
+revision, verifies the public branch on Core, and changes only future downloads.
+Pending staged banks must be activated by restarting before changing source.
+Maintenance and source writes are mutually exclusive; interrupted saves are not
+retried. Refresh the source after an ambiguous result or concurrent modification.
+
+Version checks carry running and pending repository/branch identities in addition
+to commits. Equal commit hashes from different sources do not imply an up-to-date
+bank. Updates submit the checked commit, source revision and observed pending commit
+(or null), so changing a source or staging another version invalidates earlier
+confirmations. Core validates managed banks with its
+built-in schema; repository code is not executed. Only compatible bank layouts
+and schema versions can be activated.
+
 The ordinary learning Settings screen also has an opt-in feedback form for
 signed-in users, in German and English. It submits a user-written subject and
 description, category, displayed Client version/platform and optional question
@@ -168,11 +185,17 @@ ID to `POST /me/feedback` using the ordinary user token. There are no automatic
 uploads, logs, attachments, answers, or archive fields. The page requires an
 explicit send checkbox and preserves unsent text if delivery fails.
 
+Categories are fixed: `bug` (software problem), `question` (question-bank problem),
+and `suggestion` (feature suggestion). Subject and message are free text; category
+is not an extensible string. Administrators update status (`open`, `in_progress`,
+`resolved`) rather than editing the submitted category or message. Server owns
+these records and requires a valid ordinary-user account for submission.
+
 ## Checks
 
 ```sh
 pnpm --filter @qed2/web typecheck
-pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/admin-core.spec.ts test/feedback-settings.spec.ts
+pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/admin-core.spec.ts test/admin-bank-source.spec.ts test/feedback-settings.spec.ts
 pnpm --filter @qed2/core-logic test test/feedback-client.spec.ts
 pnpm --filter @qed2/web build
 ```

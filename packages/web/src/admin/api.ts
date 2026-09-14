@@ -21,6 +21,11 @@ const MESSAGES: Record<string, string> = {
   NOT_FOUND: '未找到记录或管理接口，请检查节点地址及版本。', FORBIDDEN: '当前会话无权执行此操作。',
   MANAGEMENT_UNAVAILABLE: '管理服务暂时不可用，请稍后重新连接。', STORAGE_UNAVAILABLE: '节点的管理身份存储不可用。',
   BANK_UPDATE_CHECK_FAILED: '无法检查远端题库版本，请稍后重试。', BANK_UPDATE_CHANGED: '远端题库已变化，请重新检查后再操作。',
+  BANK_SOURCE_INVALID: '题库来源无效，请检查公开 GitHub 仓库地址和分支名。',
+  BANK_SOURCE_CHANGED: '题库来源已被更改，请刷新来源并重新确认。',
+  BANK_SOURCE_CHECK_FAILED: '无法访问该公开仓库或分支，来源未保存。',
+  BANK_SOURCE_UNAVAILABLE: '题库来源配置无法读取，请检查节点存储。',
+  BANK_SOURCE_PENDING_RESTART: '有待重启题库，请先重启 Core，再更改来源。',
   MANAGEMENT_ERROR: '节点处理请求失败，请检查节点日志。', INTERNAL_ERROR: '节点处理请求失败，请检查节点日志。',
 };
 
