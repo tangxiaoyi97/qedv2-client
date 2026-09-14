@@ -24,6 +24,7 @@ import {
   readBankManifestV2,
 } from './bank-manifest-v2.mjs';
 import { installCoreProductionDependencies } from './prepare-runtime-dependencies.mjs';
+import { assertCleanGitCheckout } from './runtime-source-checkout.mjs';
 
 const runFile = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -104,17 +105,6 @@ function gitCommit(path, overrideName) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   }).trim();
-}
-
-function assertCleanGitCheckout(repositoryPath, label) {
-  const status = execFileSync(
-    'git',
-    ['-C', repositoryPath, 'status', '--porcelain=v1', '--untracked-files=all'],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] },
-  ).trim();
-  if (status) {
-    throw new Error(`${label} checkout contains uncommitted files and cannot represent an immutable commit`);
-  }
 }
 
 function trackedBankFiles() {
