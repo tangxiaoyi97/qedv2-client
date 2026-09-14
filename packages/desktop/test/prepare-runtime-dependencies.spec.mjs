@@ -94,7 +94,8 @@ describe('staged Core production dependencies', () => {
     expect(await stat(join(f.destination, 'node_modules/development-dependency')).catch(() => null)).toBeNull();
     expect(await stat(join(f.destination, 'node_modules/runtime-dependency/lifecycle-ran')).catch(() => null)).toBeNull();
     expect(await stat(join(f.destination, 'lifecycle-ran')).catch(() => null)).toBeNull();
-  });
+    // Four real pnpm subprocesses need more than 5 seconds on Windows CI.
+  }, 30_000);
 
   it('rejects a lockfile that differs from the audited overrides without resolving a new graph', async () => {
     const f = await fixture({ mismatchedLock: true });
