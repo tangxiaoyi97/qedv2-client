@@ -28,7 +28,8 @@ const confirmAction = ref<'update' | 'restart'>();
 const capabilities = computed(() => info.value?.management?.capabilities);
 const hasRunningJob = computed(() => activeJob.value?.status === 'running' || info.value?.management?.activeJob?.status === 'running' || history.value?.some((item) => item.status === 'running'));
 const bankActionLabel = computed(() => bankCheck.value?.status === 'up_to_date' ? '重新安装' : '更新题库');
-const bankActionEnabled = computed(() => capabilities.value?.bankUpdate && capabilities.value?.bankUpdateCheck && bankCheck.value && bankCheck.value.status !== 'pending_restart' && !checkBusy.value && !busy.value && !sourceBusy.value && !hasRunningJob.value);
+const pendingSourceMismatch = computed(() => !!bankCheck.value?.pendingSource && !sameBankSource(bankCheck.value.pendingSource, bankCheck.value));
+const bankActionEnabled = computed(() => capabilities.value?.bankUpdate && capabilities.value?.bankUpdateCheck && bankCheck.value && bankCheck.value.status !== 'pending_restart' && !pendingSourceMismatch.value && !checkBusy.value && !busy.value && !sourceBusy.value && !hasRunningJob.value);
 function clearCheck() { clearTimeout(checkExpiry); bankCheck.value = undefined; updateConfirmation.value = undefined; if (confirmAction.value === 'update') confirmAction.value = undefined; }
 async function checkBank() {
   if (writing.value || sourceBusy.value || !capabilities.value?.bankUpdateCheck) return;
@@ -163,6 +164,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(poll); clearTimeout(checkE
       <p v-else-if="checkNotice" class="field-hint" role="status">{{ checkNotice }}</p>
       <p v-else-if="!capabilities?.bankUpdateCheck" class="field-hint">{{ capabilities?.bankUpdate ? '请升级 Core 以检查题库版本。' : '此节点未启用题库更新。' }}</p>
       <p v-if="bankCheck?.sourceChanged" class="field-hint">获取来源已更改，当前题库仍在运行。</p>
+      <p v-if="pendingSourceMismatch" class="field-hint" role="status">待重启题库来自其他来源：<span class="mono">{{ bankCheck?.pendingSource?.repository }} · {{ bankCheck?.pendingSource?.ref }}</span>。请先重启 Core，再下载当前来源的题库。</p>
       <p v-if="bankCheck && !checkError && !checkNotice" class="message success" role="status">{{ bankCheck.status === 'up_to_date' ? bankCheck.pendingCommit ? '当前运行版为最新，另有待重启题库。' : '已是最新版本。' : bankCheck.status === 'pending_restart' ? '题库已就绪，重启 Core 后生效。' : '有新版本可用。' }}</p>
       <div class="actions"><button type="button" class="primary" :disabled="busy || sourceBusy || checkBusy || hasRunningJob || !capabilities?.validate" @click="maintain('validate', $event)">校验题库</button><button v-if="bankCheck?.status !== 'pending_restart'" type="button" :disabled="!bankActionEnabled" @click="openUpdate">{{ bankActionLabel }}</button><button type="button" class="danger" :disabled="busy || sourceBusy || checkBusy || hasRunningJob || !capabilities?.restart" @click="confirmAction = 'restart'; error = ''">重启 Core</button></div>
     </section>

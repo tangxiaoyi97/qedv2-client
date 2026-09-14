@@ -94,15 +94,15 @@ async function login(): Promise<void> {
   await run(async () => {
     const generation = currentGeneration, destination = client.value;
     try { if (destination) { const value = await destination.login(secret.value); if (generation === currentGeneration && props.active) acceptGrant(value); } }
-    finally { secret.value = ''; }
+    finally { if (generation === currentGeneration) secret.value = ''; }
   });
 }
 async function savePassword(): Promise<void> {
   await run(async () => {
+    const generation = currentGeneration;
     try {
       if (password.value !== repeatPassword.value) { error.value = '两次输入的密码不一致。'; return; }
       if (!client.value) return;
-      const generation = currentGeneration;
       const result = grant.value?.requiresPasswordSetup
         ? await client.value.setup(password.value)
         : await client.value.changePassword(currentPassword.value, password.value);
@@ -111,7 +111,7 @@ async function savePassword(): Promise<void> {
       if (nodeStatus.value) nodeStatus.value.initialized = true;
       passwordForm.value = false;
       notice.value = '密码已保存，旧凭据和会话已失效。';
-    } finally { clearSecrets(); }
+    } finally { if (generation === currentGeneration) clearSecrets(); }
   });
 }
 async function logout(): Promise<void> {

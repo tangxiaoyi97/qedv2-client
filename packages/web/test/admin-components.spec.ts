@@ -164,3 +164,40 @@ it('ignores a pending connection after switching nodes', async () => {
   host.querySelectorAll<HTMLButtonElement>('.node-selector button')[0]!.click(); await settle();
   expect(server.querySelector<HTMLButtonElement>('.connection-form button')?.disabled).toBe(false);
 });
+
+it.each(['login', 'setup', 'password'] as const)('keeps newly entered credentials when an earlier %s request finishes after switching back', async (operation) => {
+  let finish!: (response: Response) => void;
+  const pending = new Promise<Response>((resolve) => { finish = resolve; });
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async (url) => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/management/auth/status') return json({ service: 'qed2-server', apiVersion: 1, initialized: operation !== 'setup' });
+    if (path === '/management/auth/login') return operation === 'login' ? pending : json(grant(operation === 'setup'));
+    if (path === '/management/auth/setup' || path === '/management/auth/password') return pending;
+    if (path === '/management/info') return json({ management: { capabilities: {} } });
+    if (path === '/management/stats') return json({ users: {}, activity: {}, ai: {}, feedback: {} });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const host = mount(AdminApp); await settle();
+  const server = host.querySelector<HTMLElement>('[aria-labelledby="server-title"]')!;
+  await submit(server, '.connection-form');
+  await input(server, '#server-secret', 'previous-test-secret');
+  await submit(server, 'form:nth-child(2)');
+  if (operation !== 'login') {
+    if (operation === 'password') {
+      [...server.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent === '修改密码')!.click(); await settle();
+      await input(server, '#server-current-password', 'previous-test-secret');
+    }
+    await input(server, '#server-new-password', 'replacement-test-password');
+    await input(server, '#server-repeat-password', 'replacement-test-password');
+    await submit(server, '.password-form');
+  }
+  const nodeButtons = host.querySelectorAll<HTMLButtonElement>('.node-selector button');
+  nodeButtons[1]!.click(); await settle(); nodeButtons[0]!.click(); await settle();
+  await input(server, '#server-secret', 'newly-entered-secret');
+  finish(json(grant())); await settle();
+  expect(server.querySelector<HTMLInputElement>('#server-secret')?.value).toBe('newly-entered-secret');
+  expect(server.querySelector('.session-strip')).toBeNull();
+  expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/auth/login'))).toHaveLength(1);
+  expect(JSON.stringify([...saved])).not.toContain('newly-entered-secret');
+});

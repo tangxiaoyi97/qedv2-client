@@ -246,6 +246,20 @@ describe('Core bank update decisions', () => {
     expect([...host.querySelectorAll('button')].some((b) => ['更新题库', '重新安装'].includes(b.textContent?.trim() ?? ''))).toBe(false);
     expect(button(host, '重启 Core').disabled).toBe(false);
   });
+  it.each([['up_to_date', '重新安装'], ['update_available', '更新题库']] as const)('requires restarting a different-source pending bank before %s', async (status, label) => {
+    const pendingSource = { repository: 'https://github.com/example/previous-source', ref: 'previous', commit: C };
+    const result = { ...checked(status), pendingCommit: C, requiresRestart: true, sourceRevision: 'd'.repeat(64), sourceChanged: false,
+      currentSource: { repository: checked(status).repository, ref: 'main', commit: A }, pendingSource };
+    const { client, count } = await clientWith((path) => path === '/info' ? json(nodeInfo()) : path === '/jobs' ? json({ items: [] }) : json(result));
+    const host = mount(client); await settle();
+    expect(host.textContent).toContain('待重启题库来自其他来源');
+    expect(host.textContent).toContain(pendingSource.repository);
+    expect(button(host, label).disabled).toBe(true);
+    expect(button(host, '重启 Core').disabled).toBe(false);
+    button(host, label).dispatchEvent(new MouseEvent('click', { bubbles: true })); await settle();
+    expect(document.querySelector('dialog')).toBeNull();
+    expect(count('/core/update')).toBe(0);
+  });
   it('treats the same commit from a different source as an update and confirms both source revision and commit', async () => {
     const revision = 'd'.repeat(64), repository = 'https://github.com/example/new-bank';
     const writes: unknown[] = [];
