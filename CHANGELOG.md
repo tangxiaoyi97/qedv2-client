@@ -17,8 +17,10 @@
 ## 2.5.0 — 2026-09-14
 
 - **verwaltung:** eigener zugang für Server und Core, unabhängig von der lernanmeldung
-- **betrieb:** benutzer, einladungen, kontingente und rückmeldungen im browser verwalten
-- **Core:** aufgabenbestand prüfen und aktualisieren, dienst gezielt neu starten
+- **konten:** benutzer erstellen, sperren, freigeben, passwörter zurücksetzen und mit bestätigung löschen
+- **betrieb:** einladungen, kontingente, rückmeldungen und protokolle im browser verwalten
+- **Core:** aufgabenstände vergleichen, prüfen, aktualisieren oder neu installieren
+- **quellen:** GitHub-repository und zweig ändern; geprüfte aufgaben nach neustart übernehmen
 
 ## 2.4.0 — 2026-09-11
 
