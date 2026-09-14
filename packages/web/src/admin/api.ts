@@ -20,6 +20,7 @@ const MESSAGES: Record<string, string> = {
   CONFIRMATION_REQUIRED: '确认内容与目标不匹配，请重新输入。', DB_UNAVAILABLE: '数据库或管理数据结构不可用，请检查节点状态。',
   NOT_FOUND: '未找到记录或管理接口，请检查节点地址及版本。', FORBIDDEN: '当前会话无权执行此操作。',
   MANAGEMENT_UNAVAILABLE: '管理服务暂时不可用，请稍后重新连接。', STORAGE_UNAVAILABLE: '节点的管理身份存储不可用。',
+  BANK_UPDATE_CHECK_FAILED: '无法检查远端题库版本，请稍后重试。', BANK_UPDATE_CHANGED: '远端题库已变化，请重新检查后再操作。',
   MANAGEMENT_ERROR: '节点处理请求失败，请检查节点日志。', INTERNAL_ERROR: '节点处理请求失败，请检查节点日志。',
 };
 

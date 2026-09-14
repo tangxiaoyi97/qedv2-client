@@ -148,6 +148,19 @@ require an explicit confirmation dialog. Capability-enabled nodes also show the
 latest 32 maintenance-task summaries retained by the current process, with detail
 lookups; process history is cleared on restart.
 
+Opening a maintenance detail fetches it afresh, focuses and scrolls to a
+closable detail region, and restores the row button on close. Historical details
+do not replace the separate polling state of an active task; failed reads clear
+old results and show an error in the detail region.
+
+With `bankUpdateCheck`, Core checks the configured upstream and displays the
+running, latest and pending commits with the check time. The current version
+offers **Reinstall**; a new version offers **Update**; an already-staged latest
+version offers restart without another download. Checks expire after five
+minutes, and errors/unsupported nodes cannot authorize an update. Confirmation
+submits the exact checked commit and update/reinstall mode; changed upstream
+requires a fresh check and is never retried automatically.
+
 The ordinary learning Settings screen also has an opt-in feedback form for
 signed-in users, in German and English. It submits a user-written subject and
 description, category, displayed Client version/platform and optional question
@@ -159,7 +172,7 @@ explicit send checkbox and preserves unsent text if delivery fails.
 
 ```sh
 pnpm --filter @qed2/web typecheck
-pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/feedback-settings.spec.ts
+pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/admin-core.spec.ts test/feedback-settings.spec.ts
 pnpm --filter @qed2/core-logic test test/feedback-client.spec.ts
 pnpm --filter @qed2/web build
 ```
