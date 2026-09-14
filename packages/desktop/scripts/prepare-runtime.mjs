@@ -23,6 +23,7 @@ import {
   BANK_WIRE_CONTRACT_VERSION,
   readBankManifestV2,
 } from './bank-manifest-v2.mjs';
+import { installCoreProductionDependencies } from './prepare-runtime-dependencies.mjs';
 
 const runFile = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -431,29 +432,7 @@ async function main() {
       });
     }
     const stagedCore = resolve(stage, 'core');
-    await mkdir(stagedCore, { recursive: true });
-    await Promise.all([
-      cp(resolve(coreSource, 'package.json'), resolve(stagedCore, 'package.json')),
-      cp(resolve(coreSource, 'pnpm-lock.yaml'), resolve(stagedCore, 'pnpm-lock.yaml')),
-    ]);
-    await runFile(
-      pnpm.executable,
-      [
-        ...pnpm.prefix,
-        '--dir',
-        stagedCore,
-        'install',
-        '--prod',
-        '--frozen-lockfile',
-        '--ignore-workspace',
-        '--ignore-scripts',
-        // A self-contained hoisted graph avoids relocatability problems from
-        // platform-specific pnpm junctions in signed application resources.
-        '--config.node-linker=hoisted',
-        '--config.package-import-method=copy',
-      ],
-      { env: process.env, maxBuffer: 16 * 1024 * 1024 },
-    );
+    await installCoreProductionDependencies(coreSource, stagedCore, pnpm);
     // Copy only the just-built, traceable output plus its production graph.
     // No Git, package manager or build tool is needed on an end-user machine.
     await cp(resolve(coreSource, 'dist'), resolve(stage, 'core/dist'), {
