@@ -185,9 +185,32 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('CoreSupervisor', () => {
+  it('never inherits host management listeners or activated banks into the bundled Core', async () => {
+    vi.stubEnv('MANAGEMENT_ENABLED', 'true');
+    vi.stubEnv('MANAGEMENT_STATE_DIR', '/host/management-state');
+    vi.stubEnv('MANAGEMENT_BANK_CURRENT_LINK', '/host/management-state/banks/current');
+    vi.stubEnv('MANAGEMENT_ALLOW_BANK_UPDATE', 'true');
+    vi.stubEnv('MANAGEMENT_ALLOW_RESTART', 'true');
+    vi.stubEnv('MANAGEMENT_FUTURE_SETTING', 'must not inherit');
+    vi.stubEnv('PUBLIC_HOST', '0.0.0.0');
+    const launcher = new FakeLauncher();
+    const supervisor = createSupervisor(launcher);
+    try {
+      await supervisor.configure(config);
+      const env = launcher.launches[0]!.options.env;
+      expect(Object.keys(env).filter((key) => key.toUpperCase().startsWith('MANAGEMENT_'))).toEqual(['MANAGEMENT_ENABLED']);
+      expect(env.MANAGEMENT_ENABLED).toBe('false');
+      expect(env.PUBLIC_HOST).toBe('127.0.0.1');
+      expect(env.BANK_PATH).toBe(runtime.bankDirectory);
+      expect(env.BANK_ROOT_SHA256).toBe(runtime.manifest!.bank.rootSha256);
+      expect(process.env.MANAGEMENT_STATE_DIR).toBe('/host/management-state');
+    } finally { await supervisor.stop(); }
+  });
+
   it('uses the injected ClientConfig as its complete pre-renderer fallback', () => {
     const supervisor = createSupervisor(new FakeLauncher());
 
@@ -221,6 +244,7 @@ describe('CoreSupervisor', () => {
       cwd: runtime.coreDirectory,
       env: {
         NODE_ENV: 'production',
+        PUBLIC_HOST: '127.0.0.1',
         PORT: '43123',
         BANK_PATH: runtime.bankDirectory,
         BANK_STRICT: 'true',

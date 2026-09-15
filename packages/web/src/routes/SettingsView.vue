@@ -17,6 +17,7 @@ import {
 } from '@qed2/core-logic';
 import { ChevronDown, CollapsePanel, QButton, QIconButton, useModalA11y } from '@qed2/ui';
 import AiSettings from './settings/AiSettings.vue';
+import FeedbackSettings from './settings/FeedbackSettings.vue';
 import SettingsCard from './settings/SettingsCard.vue';
 import SettingsRow from './settings/SettingsRow.vue';
 import {
@@ -479,7 +480,10 @@ async function openChangelog(): Promise<void> {
 
 <template>
   <div class="settings q-page q-settings-panel">
-    <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
+    <header class="settings__header">
+      <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
+      <FeedbackSettings />
+    </header>
     <SettingsCard>
       <SettingsRow class="settings__appearance-row" :label="t('Aussehen')">
         <template #status>
@@ -566,6 +570,7 @@ async function openChangelog(): Promise<void> {
     </SettingsCard>
 
     <AiSettings />
+
 
     <SettingsCard>
       <SettingsRow
@@ -840,6 +845,7 @@ async function openChangelog(): Promise<void> {
 .settings__title {
   margin-bottom: var(--q-space-1);
 }
+.settings__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings__url-error {
   font-size: var(--q-font-small);
   color: var(--q-err-ink);

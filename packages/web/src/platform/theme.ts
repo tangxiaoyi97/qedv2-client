@@ -12,13 +12,21 @@
  * server plumbing is intentionally not part of this version.
  */
 
-export type BuiltinThemeId = 'weed' | 'sky' | 'raspberry' | 'violette';
-
-export interface BuiltinThemeExtension {
-  kind: 'builtin-css';
-  id: BuiltinThemeId;
-  label: string;
-}
+import {
+  currentBuiltinThemeId,
+  notifyThemePreferencesChanged,
+  THEME_STORAGE_KEYS,
+  type BuiltinThemeExtension,
+  type BuiltinThemeId,
+} from './theme-preferences.js';
+export {
+  BUILTIN_THEME_EXTENSIONS,
+  currentBuiltinThemeId,
+  isBuiltinThemeId,
+  THEME_STORAGE_KEYS,
+  type BuiltinThemeExtension,
+  type BuiltinThemeId,
+} from './theme-preferences.js';
 
 /** Future server/user-library record for a single external theme stylesheet. */
 export interface ExternalCssThemeExtension {
@@ -37,13 +45,6 @@ export type ThemeExtension = BuiltinThemeExtension | ExternalCssThemeExtension;
 export interface ThemeExtensionResolver {
   resolveThemeExtension(): Promise<ThemeExtension | undefined>;
 }
-
-export const BUILTIN_THEME_EXTENSIONS: readonly BuiltinThemeExtension[] = [
-  { kind: 'builtin-css', id: 'weed', label: 'weed' },
-  { kind: 'builtin-css', id: 'sky', label: 'sky' },
-  { kind: 'builtin-css', id: 'raspberry', label: 'raspberry' },
-  { kind: 'builtin-css', id: 'violette', label: 'violette' },
-] as const;
 
 /**
  * Required variables for a standalone CSS theme extension.
@@ -109,12 +110,6 @@ export const THEME_CSS_TOKENS = [
 
 export type ThemeCssToken = (typeof THEME_CSS_TOKENS)[number];
 
-export const THEME_STORAGE_KEYS = {
-  builtinId: 'qed2.accent',
-  externalUrl: 'qed2.themeUrl',
-  externalCss: 'qed2.themeCss',
-} as const;
-
 const STYLE_ID = 'qed2-external-theme';
 let themeTransitionTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -130,10 +125,6 @@ export function suppressThemeTransitions(): void {
     delete root.dataset.themeSwitching;
     themeTransitionTimer = undefined;
   }, 80);
-}
-
-export function isBuiltinThemeId(v: string | null | undefined): v is BuiltinThemeId {
-  return v != null && BUILTIN_THEME_EXTENSIONS.some((theme) => theme.id === v);
 }
 
 function applyBuiltinThemeToDom(id: BuiltinThemeId): void {
@@ -154,16 +145,6 @@ export function syncThemeColorFromCss(): void {
   meta.content = color;
 }
 
-/** Current built-in extension (localStorage; weed when unset or invalid). */
-export function currentBuiltinThemeId(): BuiltinThemeId {
-  try {
-    const v = window.localStorage.getItem(THEME_STORAGE_KEYS.builtinId);
-    return isBuiltinThemeId(v) ? v : 'weed';
-  } catch {
-    return 'weed';
-  }
-}
-
 /** Apply + persist a built-in CSS extension. Clears any external theme. */
 export function setBuiltinThemeExtension(id: BuiltinThemeId): void {
   suppressThemeTransitions();
@@ -177,6 +158,7 @@ export function setBuiltinThemeExtension(id: BuiltinThemeId): void {
   } catch {
     /* private mode — theme just won't persist */
   }
+  notifyThemePreferencesChanged();
 }
 
 /* ------------------------------------------------------------------ *

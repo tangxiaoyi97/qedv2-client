@@ -1,0 +1,37 @@
+/* Layout, transitions and animations are not theme customization. */
+:root {
+  --q-font-body: 14px;
+  --q-font-ui: 14px;
+  --q-font-small: 12px;
+  --q-font-input: 16px;
+  --q-font-title: 22px;
+  --q-radius-control: 10px;
+  --q-radius-card: 14px;
+  --q-radius-dialog: 18px;
+  --q-space-1: 4px;
+  --q-space-2: 8px;
+  --q-space-3: 12px;
+  --q-space-4: 16px;
+  --q-space-5: 20px;
+  --q-space-6: 24px;
+  --q-sidebar-width: 240px;
+  --q-control-height: 44px;
+  --q-icon-control-size: 44px;
+  --q-icon-glyph-size: 20px;
+  --q-control-chevron-size: 16px;
+  --q-control-chevron-inset: 12px;
+  --q-control-chevron-padding-end: 36px;
+  --q-transition-fast: 0.14s cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-normal: 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-spring: 0.28s cubic-bezier(0.25, 1, 0.5, 1);
+  /* Header row and data row live in different files; editing one without the
+   * other silently misaligns the table, so the track list is stated once. */
+  --q-leaderboard-columns: 40px minmax(0, 1fr) 112px 88px 88px 16px;
+}
+
+@media (max-width: 700px) {
+  :root {
+    --q-leaderboard-columns: 24px minmax(0, 1fr) repeat(3, minmax(0, 0.6fr)) 12px;
+  }
+}
+

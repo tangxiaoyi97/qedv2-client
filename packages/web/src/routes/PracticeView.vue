@@ -6,7 +6,7 @@ const { t, formatNumber } = useI18n();
  * AI help owns a separate dialog and never replaces the scoring controls. */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
-import { Cloud, HardDrive, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
+import { Cloud, HardDrive, MessageSquareWarning, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
 import {
   type AiAssessResult,
   type AiExplainResult,
@@ -51,6 +51,7 @@ import { usePracticeStore } from '../stores/practice.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useAiStore } from '../stores/ai.js';
 import { useAuthStore } from '../stores/auth.js';
+import { useFeedbackStore } from '../stores/feedback.js';
 import { historyLog, ports } from '../services.js';
 import { shortCommit } from '../version-info.js';
 
@@ -59,6 +60,18 @@ const router = useRouter();
 const practice = usePracticeStore();
 const progress = useProgressStore();
 const auth = useAuthStore();
+const feedback = useFeedbackStore();
+
+function openQuestionFeedback(): void {
+  const part = current.value;
+  if (!part || !practice.sessionAccessible) return;
+  exitArmed.value = false;
+  feedback.openQuestion(part.question.id, {
+    partId: part.part.id,
+    ...(practice.contentBaseUrl ? { coreBaseUrl: practice.contentBaseUrl } : {}),
+    ...(practice.contentId ? { bankCommit: practice.contentId } : {}),
+  });
+}
 
 // Practice owns an immutable content source for its whole session. Override
 // App.vue's live resolver for this subtree so figures cannot jump to another
@@ -1631,6 +1644,12 @@ const currentCompetencyCodes = computed(() =>
         :data-confirm-label="t('Beenden?')"
         @click.stop="exit"
       />
+      <button
+        v-if="current && practice.sessionAccessible"
+        type="button" class="practice__feedback" data-feedback-entry="question"
+        :aria-label="t('Aufgabe melden')" :title="t('Aufgabe melden')" aria-haspopup="dialog"
+        @click="openQuestionFeedback"
+      ><MessageSquareWarning :size="20" aria-hidden="true" /></button>
       <div class="practice__progress">
         <div class="practice__progress-label">
           <template v-if="!preparedBlocked && !contentLoading && practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
@@ -2156,6 +2175,13 @@ const currentCompetencyCodes = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+.practice__feedback { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 44px; width: 44px; height: 44px; border: 1px solid var(--q-border-2); border-radius: var(--q-radius-control); background: var(--q-card); color: var(--q-ink-2); cursor: pointer; }
+.practice__feedback:focus-visible { outline: 3px solid var(--q-accent); outline-offset: 2px; }
+@media (max-width: 520px) {
+  .practice__topbar { gap: 8px; padding-right: 10px; padding-left: 10px; }
+  .practice__progress-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .practice__topbar:has(.practice__close--armed) .practice__progress { flex-basis: 0; }
 }
 .practice__progress-label {
   font-size: var(--q-font-small);

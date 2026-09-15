@@ -7,7 +7,7 @@ import sessionDrawerSource from '../src/practice/PracticeSessionDrawer.vue?raw';
 import filterDialogSource from '../src/question/FilterDialog.vue?raw';
 import figureViewerSource from '../src/shared/FigureViewer.vue?raw';
 import iconButtonSource from '../src/shared/QIconButton.vue?raw';
-import tokenSource from '../src/styles/tokens.css?raw';
+import tokenSource from '../src/styles/layout-tokens.css?raw';
 
 describe('QIconButton', () => {
   afterEach(() => {

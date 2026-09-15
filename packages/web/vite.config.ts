@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 import { VitePWA } from 'vite-plugin-pwa';
+import { fileURLToPath } from 'node:url';
 // Node-only build metadata helpers (untyped .mjs, declared ambiently in
 // src/env.d.ts). Version identifies changelog entries; commit remains useful
 // for diagnostics.
@@ -26,6 +27,18 @@ const ENDPOINTS = resolveEndpoints();
 // qed.barcarolle.studio, i.e. served from the root path.
 export default defineConfig({
   base: '/',
+  build: {
+    rollupOptions: {
+      input: {
+        app: fileURLToPath(new URL('./index.html', import.meta.url)),
+        admin: fileURLToPath(new URL('./admin/index.html', import.meta.url)),
+      },
+      output: {
+        entryFileNames: (chunk) => chunk.name === 'admin' ? 'admin/assets/[name]-[hash].js' : 'assets/[name]-[hash].js',
+        assetFileNames: (asset) => asset.names.some((name) => name.startsWith('admin.')) ? 'admin/assets/[name]-[hash][extname]' : 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   // Build-identifying commit for diagnostics (a static site cannot query git,
   // so it must be baked in).
   define: {
@@ -49,15 +62,29 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Registration belongs only to the learning entry, never /admin/.
+      injectRegister: false,
       // The manifest icons are precached automatically; these two are
       // referenced only from index.html and would otherwise be missing offline.
       includeAssets: ['favicon.svg', 'icons/apple-touch-icon.png'],
       manifest: PWA_MANIFEST(CHANNEL),
       workbox: {
+        // With injectRegister:false the plugin no longer derives these from
+        // registerType. Activate in the worker itself so already-open older
+        // clients need not know about the new /admin entry or send a message.
+        // Claiming the page updates request handling; it does not reload it.
+        skipWaiting: true,
+        clientsClaim: true,
+        globIgnores: ['**/admin/**'],
+        navigateFallbackDenylist: [/^\/admin(?:\/|$)/, /^\/management(?:\/|$)/],
         // App shell precached by default. Runtime caching for content so
         // previously loaded questions/figures stay readable offline.
         // (Web PWA offline = cached content only; it never runs a local core.)
         runtimeCaching: [
+          {
+            urlPattern: ({ url }) => /^\/(?:admin|management)(?:\/|$)/.test(url.pathname),
+            handler: 'NetworkOnly',
+          },
           {
             // Version probe must NEVER be served from cache — the settings
             // page shows these numbers to diagnose "am I up to date?", a

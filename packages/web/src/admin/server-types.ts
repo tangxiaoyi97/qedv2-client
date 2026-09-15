@@ -1,0 +1,43 @@
+import type { Data } from './api.js';
+export type Capabilities = Partial<Record<'users' | 'invites' | 'aiAllowance' | 'aiUsage' | 'feedback' | 'audit' | 'restart' | 'userDetails' | 'userDisable' | 'userDelete' | 'userPasswordReset' | 'inviteEdit' | 'inviteUsage' | 'inviteDelete' | 'inviteFilters' | 'feedbackFilters' | 'feedbackDetails' | 'auditFilters' | 'authAudit' | 'userFilters', boolean>>;
+export interface ServerInfo extends Data { version?: string; commit?: string; database?: { connected?: boolean; status?: string }; management?: { capabilities?: Capabilities } }
+export interface Allowance { mode: 'BYO' | 'POOL' | 'BOTH'; monthlyTokenLimit: number | null; monthlyCostLimitCents: number | null; usedTokens: number; usedCostCents: number; expiresAt: string | null; periodStart?: string | null }
+export interface User { id: string; username: string; createdAt: string; status?: string; disabledAt?: string | null; archiveVersion: number; lastSyncWrite: string | null; ai: Allowance | null }
+export interface UserDetail extends User { counts?: Record<string, number>; impact?: Record<string, number> }
+export interface Invite { id: string; code: string; kind: 'once' | 'permanent'; status: string; createdAt: string; expiresAt: string | null; disabledAt?: string | null; usedById?: string | null; useCount?: number; useCountComplete?: boolean; usedAt?: string | null; recentUses?: { id: string; usedAt: string; user: { id: string; username: string } | null }[] }
+export type FeedbackStatus = 'open' | 'in_progress' | 'resolved';
+export interface Feedback {
+  id: string;
+  user: { username: string } | null;
+  category: string;
+  status: FeedbackStatus;
+  subject: string;
+  message: string;
+  createdAt: string;
+  clientVersion?: string | null;
+  platform?: string | null;
+  questionId?: string | null;
+  requestId?: string | null;
+  issueType?: string | null;
+  submissionId?: string | null;
+  context?: { partId?: string; coreBaseUrl?: string; bankCommit?: string; contentRevision?: string } | null;
+}
+export interface Audit { id?: string; actor?: string; action: string; targetId?: string; createdAt?: string; at?: string; outcome?: string; metadata?: Data }
+export interface Stats { users: { total: number; newLast7Days: number; active?: number; disabled?: number }; invites?: Record<string, number>; activity: { reportedUsersLast7Days: number; attemptsLast7Days: number }; ai: { callsLast7Days: number; failedLast7Days: number; poolCostCentsLast7Days: number }; feedback: { open: number; inProgress: number; resolved: number } }
+export interface UsageDay { date: string; calls: number; failed: number; inputTokens: number; outputTokens: number; poolCostCents: number; byoEstimatedCostCents?: number }
+export interface Usage { days: number; calls: number; failed: number; inputTokens: number; outputTokens: number; poolCostCents: number; byoEstimatedCostCents: number; byDay: UsageDay[] }
+export const categoryLabel: Record<string, string> = { bug: '软件问题', question: '题目问题', suggestion: '功能建议' };
+export const feedbackIssueLabel: Record<string, string> = {
+  question_error: '题目错误', answer_error: '答案错误', numbering_error: '编号错误',
+  attachment_error: '附件错误', software_error: '软件错误', feature_request: '功能建议', other: '其他',
+};
+export const feedbackCategoryIssues: Record<string, readonly string[]> = {
+  question: ['question_error', 'answer_error', 'numbering_error', 'attachment_error', 'other'],
+  bug: ['software_error', 'other'], suggestion: ['feature_request'],
+};
+export function feedbackIssueText(issueType?: string | null): string {
+  return issueType ? Object.hasOwn(feedbackIssueLabel, issueType) ? feedbackIssueLabel[issueType]! : `未知类型（${issueType}）` : '未分类';
+}
+export const actionLabel: Record<string, string> = { 'user.create': '创建用户', 'user.disable': '停用用户', 'user.restore': '启用用户', 'user.delete': '删除用户', 'user.password.reset': '重置用户密码', 'invite.create': '创建邀请码', 'invite.update': '修改邀请码', 'invite.delete': '删除邀请码', 'ai.allowance.update': '调整 AI 额度', 'feedback.submit': '提交反馈', 'feedback.status.update': '更新反馈状态', 'service.restart': '重启服务', 'identity.reset': '本地重置管理身份', 'auth.login': '管理员登录', 'auth.logout': '管理员退出', 'auth.setup': '设置管理密码', 'auth.password': '修改管理密码' };
+
+export const userCountLabels: Record<string, string> = { archives: '学习档案', parts: '学习分区', competencies: '能力记录', attempts: '作答记录', syncReceipts: '同步回执', aiCredentials: 'AI 密钥', aiEntitlements: 'AI 授权', aiUsage: 'AI 用量记录', feedback: '反馈', inviteRedemptions: '兑换回执', leaderboardProfiles: '排行榜资料' };

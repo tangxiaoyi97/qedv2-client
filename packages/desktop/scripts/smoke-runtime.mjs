@@ -5,6 +5,7 @@ import { lstat, readFile, readdir, readlink } from 'node:fs/promises'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { desktopCoreEnvironment } from '../src/core-environment.cjs'
 import {
   BANK_MANIFEST_FORMAT,
   BANK_MANIFEST_PATH,
@@ -570,9 +571,9 @@ export async function runSmoke(argv = process.argv.slice(2)) {
     logText += String(chunk).slice(0, MAX_LOG_BYTES - logText.length)
   }
   const childEnvironment = {
-    ...process.env,
+    ...desktopCoreEnvironment(process.env),
     NODE_ENV: 'production',
-    HOST: '127.0.0.1',
+    PUBLIC_HOST: '127.0.0.1',
     PORT: String(port),
     BANK_PATH: bankDirectory,
     BANK_STRICT: 'true',

@@ -11,6 +11,7 @@
  */
 import { normalizeBaseUrl } from '../config/index.js';
 import { requestJson, type RequestOptions } from './http.js';
+import { parseFeedbackReceipt, projectFeedbackSubmission, type FeedbackOptions, type FeedbackReceipt, type FeedbackSubmission } from './feedback.js';
 import {
   validateQueuedAttemptBatch,
   type ValidatedQueuedAttempt,
@@ -103,6 +104,17 @@ export class ServerClient {
   /** GET /auth/me */
   me(): Promise<UserInfo> {
     return requestJson<UserInfo>(this.baseUrl, '/auth/me', this.authed({}));
+  }
+
+  /** Authenticated capability discovery; older Servers may return 404. */
+  feedbackOptions(options: Pick<RequestOptions, 'signal'> = {}): Promise<FeedbackOptions> {
+    return requestJson(this.baseUrl, '/me/feedback/options', this.authed(options));
+  }
+
+  /** A deliberate, bounded submission; never uploads learning data or retries silently. */
+  submitFeedback(input: FeedbackSubmission, options: Pick<RequestOptions, 'signal'> = {}): Promise<FeedbackReceipt> {
+    const body = projectFeedbackSubmission(input);
+    return requestJson<unknown>(this.baseUrl, '/me/feedback', this.authed({ ...options, method: 'POST', body })).then(parseFeedbackReceipt);
   }
 
   /** GET /me/state */

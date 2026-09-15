@@ -1,0 +1,2 @@
+<script setup lang="ts">defineProps<{ busy?: boolean; writing?: boolean; error?: string; notice?: string }>(); defineEmits<{ cancel: [] }>();</script>
+<template><p v-if="error" class="message error" role="alert">{{ error }}</p><p v-if="notice" class="message success" role="status">{{ notice }}</p><div v-if="busy" class="request-progress" role="status">{{ writing ? '正在提交…' : '正在加载…' }}<button v-if="!writing" type="button" @click="$emit('cancel')">取消查询</button></div></template>
