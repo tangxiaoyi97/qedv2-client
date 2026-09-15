@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { createApp, nextTick } from 'vue';
+import { createApp, h, nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +8,8 @@ import PracticeView from '../src/routes/PracticeView.vue';
 import { ports } from '../src/services.js';
 import { usePracticeStore } from '../src/stores/practice.js';
 import { useProgressStore } from '../src/stores/progress.js';
+import { useFeedbackStore } from '../src/stores/feedback.js';
+import FeedbackDialog from '../src/routes/FeedbackDialog.vue';
 
 const COMMIT = 'ff304623607463386026ebeebdbc17a576db1925';
 const originalShell = ports.shell;
@@ -80,6 +82,7 @@ async function mountPractice(options: {
     state.questions = new Map(questions.map((entry) => [entry.id, entry]));
     state.contentSource = options.source;
     state.contentId = COMMIT;
+    state.contentBaseUrl = 'https://session-core.example';
     state.contentMode = options.mode;
     state.graded = options.phase === 'summary'
       ? [{
@@ -105,7 +108,7 @@ async function mountPractice(options: {
 
   const host = document.createElement('div');
   document.body.appendChild(host);
-  const app = createApp(PracticeView);
+  const app = createApp({ render: () => h('div', [h(PracticeView), h(FeedbackDialog)]) });
   app.use(pinia);
   app.use(router);
   app.mount(host);
@@ -132,6 +135,33 @@ describe('practice question-bank footer', () => {
     window.localStorage.removeItem('qed2.practice.rail-collapsed');
     vi.unstubAllGlobals();
     document.body.innerHTML = '';
+  });
+
+  it('opens question feedback next to exit, preserves the answer, and consumes Escape before practice', async () => {
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'revision' });
+    try {
+      const practice = usePracticeStore();
+      const saveDraft = vi.spyOn(practice, 'saveAnswerDraft').mockResolvedValue({ status: 'saved' });
+      const option = mounted.host.querySelector<HTMLButtonElement>('.q-choice__select')!;
+      option.click(); await settle();
+      const before = JSON.stringify(saveDraft.mock.calls);
+      const entry = mounted.host.querySelector<HTMLButtonElement>('[data-feedback-entry="question"]')!;
+      expect(entry.previousElementSibling?.hasAttribute('data-practice-exit')).toBe(true);
+      entry.focus(); entry.click(); await settle();
+      expect(useFeedbackStore().target).toEqual({ scope: 'question', questionId: 'q1', context: {
+        partId: 'q1-a', coreBaseUrl: 'https://session-core.example', bankCommit: COMMIT,
+      } });
+      expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Melde dich an');
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true, bubbles: true });
+      document.dispatchEvent(escape); await settle();
+      expect(escape.defaultPrevented).toBe(true);
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(entry);
+      expect(mounted.host.querySelector('.practice__close--armed')).toBeNull();
+      expect(practice.phase).toBe('running');
+      expect(JSON.stringify(saveDraft.mock.calls)).toBe(before);
+      expect(mounted.host.querySelector('.q-choice__select')).toBe(option);
+    } finally { mounted.unmount(); }
   });
 
   it('moves the Web provenance out of the top bar and into both programme-list footers', async () => {

@@ -23,6 +23,8 @@ import ConflictDialog from './routes/ConflictDialog.vue';
 import AuthModal from './routes/AuthModal.vue';
 import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
 import ChangelogDialog from './routes/ChangelogDialog.vue';
+import FeedbackDialog from './routes/FeedbackDialog.vue';
+import FeedbackEntry from './routes/FeedbackEntry.vue';
 import { useCompetencyDetailsDialog } from './composables/useCompetencyDetailsDialog.js';
 
 const route = useRoute();
@@ -73,7 +75,6 @@ const otherItems = [
   { to: '/history', label: 'Verlauf', icon: History },
   { to: '/progress', label: 'Übersicht', icon: LineChart },
   { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
-  { to: '/settings', label: 'Einstellungen', icon: Settings },
 ] as const;
 
 /**
@@ -164,6 +165,13 @@ watch(
             <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
             <span>{{ t(item.label) }}</span>
           </RouterLink>
+          <div class="app__settings-row">
+            <FeedbackEntry compact />
+            <RouterLink to="/settings" class="app__nav-item" :class="{ 'app__nav-item--active': isActive('/settings') }">
+              <Settings class="app__nav-icon" aria-hidden="true" />
+              <span>{{ t('Einstellungen') }}</span>
+            </RouterLink>
+          </div>
           <RouterLink
             v-if="ports.shell.capabilities.desktop"
             to="/desktop"
@@ -263,6 +271,7 @@ watch(
     <!-- Keep form state alive while the account lock owns the screen. A
          failed login must return to its inputs and error, not a new modal. -->
     <AuthModal />
+    <FeedbackDialog />
     <div
       v-if="auth.transitioning"
       class="app__account-lock q-modal-backdrop"
@@ -292,6 +301,8 @@ watch(
   min-height: 100dvh;
   display: flex;
 }
+.app__settings-row { display: flex; align-items: center; gap: 8px; }
+.app__settings-row .app__nav-item { flex: 1; min-width: 0; }
 .app__account-lock {
   position: fixed;
   inset: 0;

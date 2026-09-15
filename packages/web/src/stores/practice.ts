@@ -924,6 +924,7 @@ export const usePracticeStore = defineStore('practice', () => {
   /** Content provenance is fixed for the lifetime of this renderer's session. */
   const contentSource = ref<CoreSourcePreference>('remote');
   const contentId = ref<string | undefined>();
+  const contentBaseUrl = ref<string | undefined>();
   const contentMode = ref<'current' | 'revision'>('current');
   const partShownAt = ref(0);
   /**
@@ -1429,6 +1430,7 @@ export const usePracticeStore = defineStore('practice', () => {
       && contentId.value === (pin.contentId ?? expectedContentId);
     contentSource.value = pin.source;
     contentId.value = pin.contentId ?? expectedContentId;
+    contentBaseUrl.value = pin.baseUrl;
     sessionCoreClient = pin.client;
     contentMode.value = pin.mode;
     sessionManifest = pin.manifest;
@@ -3477,6 +3479,7 @@ export const usePracticeStore = defineStore('practice', () => {
     sessionIdentityDurable.value = false;
     pendingUnprovenancedSession = undefined;
     contentId.value = undefined;
+    contentBaseUrl.value = undefined;
     revokePinnedAssets();
     useAppStore().releaseCoreContentPin();
   }
@@ -3517,6 +3520,7 @@ export const usePracticeStore = defineStore('practice', () => {
     sessionAccessible,
     contentSource,
     contentId,
+    contentBaseUrl,
     contentMode,
     total,
     current,

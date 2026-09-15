@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp, nextTick, type App } from 'vue';
+import { createPinia, disposePinia, type Pinia } from 'pinia';
 import { setUiLocale } from '@qed2/ui';
 import {
   accountStorageIdentity,
@@ -140,7 +141,7 @@ vi.mock('../src/routes/settings/AiSettings.vue', () => ({
 import SettingsView from '../src/routes/SettingsView.vue';
 import type { SyncStatus, AttemptUploadStatus } from '../src/stores/progress.js';
 
-let mounted: { app: App; host: HTMLElement } | undefined;
+let mounted: { app: App; host: HTMLElement; pinia: Pinia } | undefined;
 
 async function settle(): Promise<void> {
   await Promise.resolve();
@@ -153,8 +154,10 @@ function mountSettings(): HTMLElement {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const app = createApp(SettingsView);
+  const pinia = createPinia();
+  app.use(pinia);
   app.mount(host);
-  mounted = { app, host };
+  mounted = { app, host, pinia };
   return host;
 }
 
@@ -213,6 +216,7 @@ describe('local recovery settings', () => {
   afterEach(() => {
     setUiLocale('de');
     mounted?.app.unmount();
+    if (mounted) disposePinia(mounted.pinia);
     mounted = undefined;
     document.body.innerHTML = '';
   });

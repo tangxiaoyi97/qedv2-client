@@ -118,6 +118,12 @@ expiry and current-period usage. BYO means user-owned AI credentials; removing
 shared-pool access does not disable an account. Daily AI requests, failures,
 Tokens and costs are shown in tables and a CSS bar chart using real UTC buckets.
 Feedback supports subject/category/status filters, details and status updates.
+Nodes advertising `feedbackDetails` also accept exact question-ID and issue-type
+filters. List rows include the issue type and question reference; details show
+the submitted part ID, Core source, bank commit, content revision, client/platform
+and receipt identifiers. Missing legacy metadata is labelled as unavailable;
+unknown issue types remain readable. Source URLs are inert text. The older
+`feedbackFilters` capability alone never enables the new filters.
 Audit filters include action, target and dates; authentication/service logs use
 the node's bounded safe-field view, with `hasMore` pagination and a truncation
 notice instead of an invented total. No raw log files are exposed.
@@ -178,25 +184,44 @@ confirmations. Core validates managed banks with its
 built-in schema; repository code is not executed. Only compatible bank layouts
 and schema versions can be activated.
 
-The ordinary learning Settings screen also has an opt-in feedback form for
-signed-in users, in German and English. It submits a user-written subject and
-description, category, displayed Client version/platform and optional question
-ID to `POST /me/feedback` using the ordinary user token. There are no automatic
-uploads, logs, attachments, answers, or archive fields. The page requires an
-explicit send checkbox and preserves unsent text if delivery fails.
+The ordinary learning app has feedback beside the practice exit control and
+beside Settings, with an additional entry in Settings. The shared German/English
+form requires an ordinary authenticated account. Question feedback captures the
+displayed question and part IDs, the pinned Core source and the bank commit when
+opened. Software feedback does not attach question context. Only the displayed
+metadata and the user's subject, description and chosen issue type are sent to
+`POST /me/feedback`. No logs, attachments, answers or archive fields are uploaded.
+The page requires an explicit send checkbox and preserves unsent text if delivery
+fails. Drafts remain in memory and are discarded on account or Server changes.
 
 Categories are fixed: `bug` (software problem), `question` (question-bank problem),
-and `suggestion` (feature suggestion). Subject and message are free text; category
-is not an extensible string. Administrators update status (`open`, `in_progress`,
+and `suggestion` (feature suggestion). Question issue types are `question_error`,
+`answer_error`, `numbering_error`, `attachment_error` and `other`; software uses
+`software_error` or `other`, while suggestions use `feature_request`. Subject and
+message remain free text. Administrators update status (`open`, `in_progress`,
 `resolved`) rather than editing the submitted category or message. Server owns
-these records and requires a valid ordinary-user account for submission.
+these records; Core stores no feedback or user data.
+
+The form first checks authenticated `GET /me/feedback/options` for schema version
+2, the supported issue types, bounded field lengths and idempotent submission.
+Older Servers show an update-required state and receive no downgraded POST.
+An uncertain submission retains its `submissionId`; only explicit user retry
+resends it, and report edits generate a new ID. A successful HTTP status alone
+does not clear the draft: a complete receipt with a valid ID, status and timestamp
+is required. Logout, account changes and replaced requests invalidate late replies.
+
+For deployment, migrate and upgrade Server before publishing this Client. New
+Server retains the original feedback POST for existing clients. If Client is
+published first or Server is rolled back, the new feedback form is unavailable
+until its capability check passes; the learning and supported management APIs
+remain independent of this optional feature.
 
 ## Checks
 
 ```sh
 pnpm --filter @qed2/web typecheck
-pnpm --filter @qed2/web test test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/admin-core.spec.ts test/admin-bank-source.spec.ts test/feedback-settings.spec.ts
-pnpm --filter @qed2/core-logic test test/feedback-client.spec.ts
+pnpm --filter @qed2/web exec vitest run test/admin-api.spec.ts test/admin-components.spec.ts test/admin-sections.spec.ts test/admin-theme.spec.ts test/admin-core.spec.ts test/admin-bank-source.spec.ts test/admin-feedback-details.spec.ts test/feedback-settings.spec.ts
+pnpm --filter @qed2/core-logic exec vitest run test/feedback-client.spec.ts
 pnpm --filter @qed2/web build
 ```
 

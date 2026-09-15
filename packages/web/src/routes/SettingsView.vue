@@ -480,7 +480,10 @@ async function openChangelog(): Promise<void> {
 
 <template>
   <div class="settings q-page q-settings-panel">
-    <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
+    <header class="settings__header">
+      <h1 class="settings__title q-page-title">{{ t('Einstellungen') }}</h1>
+      <FeedbackSettings />
+    </header>
     <SettingsCard>
       <SettingsRow class="settings__appearance-row" :label="t('Aussehen')">
         <template #status>
@@ -568,7 +571,6 @@ async function openChangelog(): Promise<void> {
 
     <AiSettings />
 
-    <FeedbackSettings />
 
     <SettingsCard>
       <SettingsRow
@@ -843,6 +845,7 @@ async function openChangelog(): Promise<void> {
 .settings__title {
   margin-bottom: var(--q-space-1);
 }
+.settings__header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .settings__url-error {
   font-size: var(--q-font-small);
   color: var(--q-err-ink);
