@@ -76,6 +76,10 @@ export default defineConfig({
         // Claiming the page updates request handling; it does not reload it.
         skipWaiting: true,
         clientsClaim: true,
+        // Keep interface and KaTeX fonts available on a cold offline launch.
+        // Both bundled stylesheets prefer WOFF2; older fallback formats stay
+        // outside the precache to avoid storing each font several times.
+        globPatterns: ['**/*.{js,wasm,css,html,woff2}'],
         globIgnores: ['**/admin/**'],
         navigateFallbackDenylist: [/^\/admin(?:\/|$)/, /^\/management(?:\/|$)/],
         // App shell precached by default. Runtime caching for content so

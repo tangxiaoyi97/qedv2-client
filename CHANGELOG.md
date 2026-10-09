@@ -19,6 +19,7 @@
 - **üben:** ungültige ältere Wiederholungswerte blockieren neue Bewertungen nicht mehr
 - **formeln:** robustere automatische Prüfung, sichere Selbstbewertung bei zu komplexen Eingaben
 - **grafiken:** aktualisierte Aufgabenbilder werden online erneut geprüft und bleiben offline verfügbar
+- **offline:** Schriften für Oberfläche und Formeln stehen auch ohne Verbindung bereit
 - **desktop:** verständliche Verbindungsfehler, zuverlässigere Abbrüche und aktualisierte Sicherheitskomponenten
 
 ## 2.5.0 — 2026-09-15
