@@ -125,8 +125,8 @@ workflow actions are pinned to reviewed commits.
 
 ### Electron compatibility pin
 
-Electron is intentionally pinned to exactly `42.7.1`, the newest verified
-patch in the supported 42 line. A clean packaged macOS profile reproduced a
+Electron is pinned to exactly `42.10.0` for the 42-line security fixes,
+including sandboxed preload cache integrity. A clean packaged macOS profile previously reproduced a
 missing sandbox `startupData` failure on Electron 43.3.0, while 42.7.1 passed
 with the same application, preload, fuses, and empty profile. QED2 keeps
 renderer sandboxing enabled instead of weakening the security model. An

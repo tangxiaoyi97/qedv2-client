@@ -8,9 +8,22 @@ allowBuilds:
   electron-winstaller: false
   esbuild: true
 overrides:
-  "brace-expansion@>=2.0.0 <3.0.0": 2.1.4
-  "brace-expansion@>=5.0.0 <6.0.0": 5.0.9
+  "brace-expansion@>=1.0.0 <2.0.0": 1.1.21
+  "brace-expansion@>=2.0.0 <3.0.0": 2.1.7
+  "brace-expansion@>=5.0.0 <6.0.0": 5.0.12
   "nanoid@>=3.0.0 <4.0.0": 3.3.18
   "js-yaml@>=4.0.0 <5.0.0": 4.3.2
-  fast-uri: ^3.1.5
+  fast-uri: ^3.1.8
   postcss: ^8.5.23
+  source-map-js: 1.2.2
+  browserslist: ^4.28.7
+  # Keep the browser data outside the package manager's release-age window.
+  electron-to-chromium: 1.5.451
+  baseline-browser-mapping: ^2.11.0
+  "@xmldom/xmldom@>=0.8.0 <0.9.0": 0.8.15
+  "undici@>=6.0.0 <7.0.0": 6.28.1
+  "undici@>=7.0.0 <8.0.0": 7.29.1
+  http-cache-semantics: ^4.3.0
+  # @electron/get 3 uses only bootstrap(); 4.1.3 preserves that CommonJS API
+  # and removes roarr/sprintf-js. See docs/dependency-audit.md and proxy checks.
+  "@electron/get@3.1.0>global-agent": 4.1.3

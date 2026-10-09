@@ -27,6 +27,11 @@ const DECAY = -0.5;
 const FACTOR = 19 / 81;
 const DESIRED_RETENTION = 0.9;
 const MS_PER_DAY = 86_400_000;
+// The archive accepts finite legacy values outside the scheduler's domain.
+// Keep computations positive and bounded, including after 6-decimal rounding.
+const MIN_STABILITY = 0.000001;
+const MAX_STABILITY = 36_500;
+const MAX_REVIEW_COUNT = 2_147_483_647;
 
 /** Numeric grade used by the formulas: again=1, hard=2, good=3, easy=4. */
 const RATING_VALUE: Record<FsrsRating, 1 | 2 | 3 | 4> = {
@@ -42,6 +47,13 @@ export function verdictToRating(v: Verdict): FsrsRating {
 }
 
 const clamp = (x: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, x));
+const safeStability = (value: number): number =>
+  Number.isFinite(value) ? clamp(value, MIN_STABILITY, MAX_STABILITY) : MIN_STABILITY;
+
+/** PostgreSQL archive counters are signed Ints; imported saturated counters
+ * must not make the next otherwise valid review impossible to synchronize. */
+export const normalizeReviewCount = (value: number): number =>
+  clamp(Math.floor(Number.isFinite(value) ? value : 0), 0, MAX_REVIEW_COUNT);
 
 /** D0(g) = w4 − e^(w5·(g−1)) + 1, unclamped (mean-reversion target uses raw D0(4)). */
 const rawInitialDifficulty = (g: number): number => W[4]! - Math.exp(W[5]! * (g - 1)) + 1;
@@ -52,7 +64,7 @@ const rawInitialDifficulty = (g: number): number => W[4]! - Math.exp(W[5]! * (g 
  * clamped to [1, 36500] days.
  */
 export function intervalDays(stability: number): number {
-  const interval = (stability * (Math.pow(DESIRED_RETENTION, 1 / DECAY) - 1)) / FACTOR;
+  const interval = (safeStability(stability) * (Math.pow(DESIRED_RETENTION, 1 / DECAY) - 1)) / FACTOR;
   return clamp(Math.round(interval), 1, 36_500);
 }
 
@@ -72,7 +84,7 @@ function elapsedDays(state: FsrsState, now: Date): number {
 /** Forgetting curve R(t, S) = (1 + FACTOR·t/S)^DECAY; R(0, S) = 1. */
 export function retrievability(state: FsrsState, now: Date): number {
   const t = elapsedDays(state, now);
-  return Math.pow(1 + (FACTOR * t) / state.stability, DECAY);
+  return Math.pow(1 + (FACTOR * t) / safeStability(state.stability), DECAY);
 }
 
 export function isDue(state: FsrsState, now: Date): boolean {
@@ -103,8 +115,8 @@ export function advanceFsrs(prev: FsrsState | undefined, rating: FsrsRating, now
     reps = 1;
     lapses = rating === 'again' ? 1 : 0;
   } else {
-    const S = prev.stability;
-    const D = prev.difficulty;
+    const S = safeStability(prev.stability);
+    const D = Number.isFinite(prev.difficulty) ? clamp(prev.difficulty, 1, 10) : 5;
     const R = retrievability(prev, now);
 
     if (rating === 'again') {
@@ -130,13 +142,13 @@ export function advanceFsrs(prev: FsrsState | undefined, rating: FsrsRating, now
     const dPrime = D - W[6]! * (g - 3);
     difficulty = clamp(W[7]! * rawInitialDifficulty(4) + (1 - W[7]!) * dPrime, 1, 10);
 
-    reps = prev.reps + 1;
-    lapses = prev.lapses + (rating === 'again' ? 1 : 0);
+    reps = normalizeReviewCount(prev.reps + 1);
+    lapses = normalizeReviewCount(prev.lapses + (rating === 'again' ? 1 : 0));
   }
 
   // 6-decimal rounding at write time (checksum spec §5.1) so both sync sides
   // serialize identical floats.
-  stability = normNum(stability);
+  stability = normNum(safeStability(stability));
   difficulty = normNum(difficulty);
 
   return {

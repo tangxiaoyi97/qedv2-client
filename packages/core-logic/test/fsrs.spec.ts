@@ -166,6 +166,39 @@ describe('advanceFsrs — subsequent reviews', () => {
     expect(advanceFsrs(prev, 'hard', at)).toEqual(advanceFsrs(prev, 'hard', at));
     expect(advanceFsrs(undefined, 'easy', NOW)).toEqual(advanceFsrs(undefined, 'easy', NOW));
   });
+
+  it.each([0, -1, 1e-12, Number.MAX_VALUE])('repairs legacy stability %s without blocking later reviews', (stability) => {
+    const legacy = { ...advanceFsrs(undefined, 'good', NOW), stability, difficulty: -5 };
+    expect(retrievability(legacy, NOW)).toBe(1);
+    for (const rating of ['again', 'hard', 'good', 'easy'] as const) {
+      const next = advanceFsrs(legacy, rating, NOW);
+      expect(next.stability).toBeGreaterThan(0);
+      expect(next.stability).toBeLessThanOrEqual(36_500);
+      expect(next.difficulty).toBeGreaterThanOrEqual(1);
+      expect(next.difficulty).toBeLessThanOrEqual(10);
+      expect(Number.isFinite(Date.parse(next.due))).toBe(true);
+      expect(next.reps).toBe(legacy.reps + 1);
+      expect(JSON.parse(JSON.stringify(next))).toEqual(next);
+    }
+  });
+
+  it('keeps repeated same-day failures and their recovery finite at archive precision', () => {
+    let state = advanceFsrs(undefined, 'again', NOW);
+    for (let i = 0; i < 100; i++) state = advanceFsrs(state, 'again', NOW);
+    expect(state.stability).toBeGreaterThan(0);
+    const recovered = advanceFsrs(state, 'good', daysLater(NOW, 1));
+    expect(Number.isFinite(recovered.stability)).toBe(true);
+    expect(recovered.stability).toBeGreaterThan(state.stability);
+  });
+
+  it('can still review a synchronized archive at the database counter limit', () => {
+    const saturated = { ...advanceFsrs(undefined, 'good', NOW), reps: 2_147_483_647, lapses: 2_147_483_647 };
+    for (const rating of ['again', 'hard', 'good', 'easy'] as const) {
+      const next = advanceFsrs(saturated, rating, daysLater(NOW, 1));
+      expect(next.reps).toBe(2_147_483_647);
+      expect(next.lapses).toBe(2_147_483_647);
+    }
+  });
 });
 
 describe('retrievability', () => {

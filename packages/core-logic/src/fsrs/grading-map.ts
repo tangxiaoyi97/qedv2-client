@@ -40,6 +40,7 @@ import {
   FSRS_MS_PER_DAY,
   fsrsClamp,
   rawInitialDifficulty,
+  normalizeReviewCount,
 } from './fsrs.js';
 import { normNum } from '../model/archive.js';
 
@@ -99,8 +100,8 @@ export function advanceFsrsForGrading(
         due: now.toISOString(),
         stability,
         difficulty,
-        reps: (prev?.reps ?? 0) + 1,
-        lapses: (prev?.lapses ?? 0) + 1,
+        reps: normalizeReviewCount((prev?.reps ?? 0) + 1),
+        lapses: normalizeReviewCount((prev?.lapses ?? 0) + 1),
         lastReview: now.toISOString(),
       };
     }

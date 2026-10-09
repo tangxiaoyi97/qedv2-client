@@ -332,7 +332,7 @@ describe('RendererServer security boundary', () => {
     const nonCore = await gatewayRequest(address, '/__qed2_core/admin', {
       token: address.token,
     });
-    expect(nonCore.status).toBe(200);
+    expect(nonCore.status).toBe(404);
     expect(upstreamFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -374,5 +374,59 @@ describe('RendererServer security boundary', () => {
 
     expect(response.status).toBe(405);
     expect(response.headers.allow).toBe('GET, HEAD');
+  });
+
+  it.each(['/index.html', '/404.html'])('hardens the %s entry just like a deep link', async (path) => {
+    const address = await createRendererServer();
+    const response = await gatewayRequest(address, path, { token: address.token });
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    const html = response.body.toString('utf8');
+    expect(html).toContain('data-platform="desktop"');
+    expect(html).toContain('nonce="');
+    expect(html).not.toContain('registerSW.js');
+    expect(html).not.toContain('manifest.webmanifest');
+  });
+
+  it.each([
+    [new TypeError('fetch failed: private upstream address'), 502, 'CORE_SOURCE_UNREACHABLE'],
+    [new DOMException('private upstream timed out', 'TimeoutError'), 504, 'CORE_SOURCE_TIMEOUT'],
+  ])('reports unavailable upstreams as safe retryable errors', async (failure, status, code) => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(failure));
+    const address = await createRendererServer();
+    const response = await gatewayRequest(address, '/__qed2_core/local/content/questions', { token: address.token });
+    expect(response.status).toBe(status);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ error: { code } });
+    expect(response.body.toString('utf8')).not.toContain('private upstream');
+  });
+
+  it.each([true, false])('returns 413 for oversized uploads (declared length: %s)', async (declared) => {
+    const upstreamFetch = vi.fn();
+    vi.stubGlobal('fetch', upstreamFetch);
+    const address = await createRendererServer();
+    const size = 16 * 1024 * 1024 + 1;
+    const response = await gatewayRequest(address, '/__qed2_core/content/questions/batch', {
+      method: 'POST',
+      token: address.token,
+      ...(declared ? { headers: { 'Content-Length': String(size) } } : {}),
+      body: declared ? '{}' : Buffer.alloc(size),
+    });
+    expect(response.status).toBe(413);
+    expect(response.headers.connection).toBe('close');
+    expect(JSON.parse(response.body.toString('utf8'))).toMatchObject({ error: { code: 'REQUEST_TOO_LARGE' } });
+    expect(upstreamFetch).not.toHaveBeenCalled();
+  });
+
+  it('cancels unused upstream response bodies for HEAD requests', async () => {
+    const cancel = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream({ cancel }))));
+    const address = await createRendererServer();
+    const response = await gatewayRequest(address, '/__qed2_core/content/assets/test.png', {
+      method: 'HEAD', token: address.token,
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveLength(0);
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });

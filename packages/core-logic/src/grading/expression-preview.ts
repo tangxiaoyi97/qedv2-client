@@ -6,16 +6,16 @@
  * Uses the same normalization as grading so the preview never changes the
  * meaning of a scientific number, function call or decimal-comma input.
  */
-import { create, all } from 'mathjs';
-import type { FactoryFunctionMap } from 'mathjs';
 import { normalizeExpressionInput } from './expression.js';
-
-const math = create(all as FactoryFunctionMap);
+import { expressionMath as math, isBoundedExpressionSource } from './expression-safety.js';
 
 export function expressionPreviewLatex(input: string, vars: string[] = []): string | undefined {
-  const s = normalizeExpressionInput(input, vars);
-  if (s === '') return undefined;
+  if (!isBoundedExpressionSource(input) || vars.length > 32 || vars.some((name) => name.length > 128)) {
+    return undefined;
+  }
   try {
+    const s = normalizeExpressionInput(input, vars);
+    if (s === '') return undefined;
     return math.parse(s).toTex({ parenthesis: 'auto' });
   } catch {
     return undefined;

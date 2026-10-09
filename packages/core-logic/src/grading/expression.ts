@@ -5,18 +5,11 @@
  * `indeterminate` and the UI falls back to self-assessment — the user is
  * never hard-failed by tooling limits.
  */
-import { create, all } from 'mathjs';
-import type { FactoryFunctionMap, MathNode } from 'mathjs';
+import type { MathNode } from 'mathjs';
 import type { ExpressionAnswer, Scoring } from '../model/question.js';
 import type { ExpressionSubmission, GradeOutcome } from './types.js';
 import { latexToMathjs } from './latex.js';
-
-/**
- * One shared mathjs instance (default 'number' config) for the module.
- * mathjs types `all` through a Record destructure, so noUncheckedIndexedAccess
- * widens it with `undefined` — it is always defined at runtime.
- */
-const math = create(all as FactoryFunctionMap);
+import { expressionMath as math, isBoundedExpressionSource, isSafeScalarExpression } from './expression-safety.js';
 
 /* ------------------------------------------------------------------ *
  * Tolerances (spec'd): agreement is relative 1e-9 with absolute 1e-9
@@ -109,7 +102,8 @@ function insertImplicitMultiplication(s: string): string {
 function separateVarCalls(s: string, vars: string[]): string {
   let out = s;
   for (const v of vars) {
-    out = out.replace(new RegExp(`(?<![\\w.])${v}\\s*\\(`, 'g'), `${v}*(`);
+    const escaped = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`(?<![\\w.])${escaped}\\s*\\(`, 'g'), () => `${v}*(`);
   }
   return out;
 }
@@ -169,17 +163,6 @@ function evaluateAt(fn: Evaluable, scope: Record<string, number>): number | unde
   }
 }
 
-/** Assignment/program nodes are not scalar answers. Evaluating them can
- * mutate variables instead of comparing a mathematical expression. Keep
- * the normal leading f(x)= notation, which is stripped before parsing. */
-function hasStatefulNodes(node: MathNode): boolean {
-  let stateful = false;
-  node.traverse((child) => {
-    if (['AssignmentNode', 'FunctionAssignmentNode', 'BlockNode'].includes(child.type)) stateful = true;
-  });
-  return stateful;
-}
-
 function sample(user: MathNode, canonical: MathNode, vars: string[]): SamplingResult {
   const result: SamplingResult = { validPoints: 0, agreeingPoints: 0, counterexample: false };
   const compiledUser = user.compile();
@@ -187,9 +170,14 @@ function sample(user: MathNode, canonical: MathNode, vars: string[]): SamplingRe
   const n = SAMPLE_VALUES.length;
   for (let i = 0; i < n; i++) {
     const scope: Record<string, number> = {};
-    // Stride 7 (coprime with 20) decorrelates variables at each point.
+    // Stride 7 spreads the domains. A per-variable integer hash also varies
+    // the magnitude, so variables 20 positions apart do not receive exactly
+    // the same values and make unrelated expressions look equivalent.
     vars.forEach((v, j) => {
-      scope[v] = SAMPLE_VALUES[(i + 7 * j) % n]!;
+      let seed = Math.imul(j, 0x45d9f3b) ^ Math.imul(i + 1, 0x27d4eb2d);
+      seed = Math.imul(seed ^ (seed >>> 16), 0x45d9f3b);
+      const scale = j === 0 ? 1 : 0.9 + ((seed >>> 0) % 2_001) / 10_000;
+      scope[v] = SAMPLE_VALUES[(i + 7 * j) % n]! * scale;
     });
     const a = evaluateAt(compiledUser, scope);
     const b = evaluateAt(compiledCanonical, scope);
@@ -246,6 +234,11 @@ export function gradeExpression(
     maxPoints,
   };
 
+  if (!isBoundedExpressionSource(answer.canonical) || !isBoundedExpressionSource(submission.expr)
+    || answer.vars.length > 32 || answer.vars.some((name) => name.length > 128)) {
+    return { verdict: 'indeterminate', reason: 'cas-unreliable', maxPoints };
+  }
+
   // Variables use the same subscript flattening as the canonical (x_n → xn).
   const vars = answer.vars.map(flattenSubscripts);
 
@@ -273,7 +266,7 @@ export function gradeExpression(
     return { verdict: 'indeterminate', reason: 'cas-parse-error', maxPoints };
   }
 
-  if (hasStatefulNodes(userNode) || hasStatefulNodes(canonicalNode)) {
+  if (!isSafeScalarExpression(userNode, vars) || !isSafeScalarExpression(canonicalNode, vars)) {
     return { verdict: 'indeterminate', reason: 'cas-unreliable', maxPoints };
   }
 
@@ -298,10 +291,12 @@ export function gradeExpression(
   // ever collapsing non-equivalent forms, e.g. sqrt(x^2) vs x).
   if (s.counterexample) return incorrect;
 
-  if (simplifiesToZero(userSrc, canonicalSrc)) return correct;
-
   // Sampling alone: enough valid points and none of them disagreeing.
+  // This is the common successful path. Avoid a second, much more expensive
+  // symbolic pass when it cannot change the decision.
   if (s.validPoints >= MIN_VALID_POINTS && s.agreeingPoints === s.validPoints) return correct;
+
+  if (simplifiesToZero(userSrc, canonicalSrc)) return correct;
 
   return { verdict: 'indeterminate', reason: 'cas-unreliable', maxPoints };
 }
