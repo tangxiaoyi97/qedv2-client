@@ -10,6 +10,7 @@ import { resolveChannel, resolveEndpoints } from './scripts/channel.mjs';
 // The manifest lives next to it so a test can assert its colors against the
 // theme — vite-plugin-pwa silently fills omitted fields with its own defaults.
 import { PWA_MANIFEST } from './scripts/pwa-manifest.mjs';
+import { contentRuntimeCaching } from './src/platform/content-cache-policy.js';
 
 /**
  * Release channel, chosen at build time.
@@ -75,41 +76,16 @@ export default defineConfig({
         // Claiming the page updates request handling; it does not reload it.
         skipWaiting: true,
         clientsClaim: true,
+        // Keep interface and KaTeX fonts available on a cold offline launch.
+        // Both bundled stylesheets prefer WOFF2; older fallback formats stay
+        // outside the precache to avoid storing each font several times.
+        globPatterns: ['**/*.{js,wasm,css,html,woff2}'],
         globIgnores: ['**/admin/**'],
         navigateFallbackDenylist: [/^\/admin(?:\/|$)/, /^\/management(?:\/|$)/],
         // App shell precached by default. Runtime caching for content so
         // previously loaded questions/figures stay readable offline.
         // (Web PWA offline = cached content only; it never runs a local core.)
-        runtimeCaching: [
-          {
-            urlPattern: ({ url }) => /^\/(?:admin|management)(?:\/|$)/.test(url.pathname),
-            handler: 'NetworkOnly',
-          },
-          {
-            // Version probe must NEVER be served from cache — the settings
-            // page shows these numbers to diagnose "am I up to date?", a
-            // stale cached answer defeats the purpose.
-            urlPattern: ({ url }) => url.pathname === '/content/info',
-            handler: 'NetworkOnly',
-          },
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/content/assets/'),
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'qed2-assets',
-              expiration: { maxEntries: 600, maxAgeSeconds: 60 * 60 * 24 * 90 },
-            },
-          },
-          {
-            urlPattern: ({ url }) => url.pathname.startsWith('/content/'),
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'qed2-content',
-              networkTimeoutSeconds: 4,
-              expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
-            },
-          },
-        ],
+        runtimeCaching: contentRuntimeCaching(),
       },
     }),
   ],

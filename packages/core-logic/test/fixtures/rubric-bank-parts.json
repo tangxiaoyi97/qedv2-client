@@ -1,0 +1,1144 @@
+{
+  "description": "Exact automatically answered parts with rubric scoring from current and previous Desktop bank commits. Frozen regression data: no scoring rules are rewritten.",
+  "repository": "https://github.com/tangxiaoyi97/srdpmppr",
+  "records": [
+    {
+      "commit": "7a39f243dfe7dc51c938fde26d3e351eb7dc7d97",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-03.json",
+      "questionId": "2019-nt2-t2-03",
+      "contentHash": "d4f22d9998cd77511a9759db14e66b36db9278f1f2ac1931ab59e25d62092956",
+      "part": {
+        "id": "2019-nt2-t2-03-a2",
+        "label": "a2",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "FA 2.1",
+            "description": "verbal, tabellarisch, grafisch oder durch eine Gleichung (Formel) gegebene lineare Zusammenhänge als lineare Funktionen erkennen bzw. betrachten können; zwischen diesen Darstellungsformen wechseln können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_043a",
+            "baseId": "2_043",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/417/Verm%C3%B6gensverteilung.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Berechnen Sie unter der vereinfachenden Annahme, dass die Schwellenwerte im Intervall [20 %; 40 %] annähernd linear zunehmen, einen Näherungswert des Schwellenwerts bei 25 %!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "schwellenwert",
+              "value": 13262.5,
+              "tol": 62.5,
+              "unit": "€"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung, wobei die Einheit „€“ nicht angeführt sein muss. Toleranzintervall: [€ 13.200; € 13.325]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "text",
+                "v": "Mögliche Vorgehensweise:\n"
+              },
+              {
+                "t": "math",
+                "v": "6\\,086+\\dfrac{34\\,731-6\\,086}{4}=13\\,247{,}25"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Der Näherungswert für den Schwellenwert bei 25 % liegt bei ca. € 13.247."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung, wobei die Einheit „€“ nicht angeführt sein muss. Toleranzintervall: [€ 13.200; € 13.325]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "7a39f243dfe7dc51c938fde26d3e351eb7dc7d97",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "333f3202917c83a47e277230ccea2a8009078246e803f1cbd134363480b5d190",
+      "part": {
+        "id": "2019-nt2-t2-04-a1",
+        "label": "a1",
+        "format": "Offenes Antwortformat",
+        "competencies": [],
+        "externalRefs": [
+          {
+            "system": "maturaArchiv",
+            "id": "Aufgabe 4 (Teil 2)",
+            "url": "https://www.matura.gv.at/index.php?eID=dumpFile&t=f&f=2994&token=a512c9839d89efb97bd779d3d574be0018f6ffe9#page=10",
+            "verifiedAt": "2026-09-13"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Geben Sie an, wie viele Stimmen für Kandidat A im 5. Wahlbezirk zu erwarten sind, wenn man h als Schätzwert für den relativen Stimmenanteil für diesen Kandidaten in diesem Wahlbezirk verwendet!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "stimmen",
+              "value": 505,
+              "tol": 5,
+              "unit": "Stimmen"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Ausgleichspunkt für die richtige Lösung. Toleranzintervall: [500; 510]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "h=\\dfrac{1\\,648}{3\\,172}\\approx 0{,}52"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Für Kandidat A sind ca. 52 % von 978 Stimmen, also ca. 509 Stimmen, zu erwarten."
+              }
+            ],
+            "note": "Ein Ausgleichspunkt für die richtige Lösung. Toleranzintervall: [500; 510]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "7a39f243dfe7dc51c938fde26d3e351eb7dc7d97",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "333f3202917c83a47e277230ccea2a8009078246e803f1cbd134363480b5d190",
+      "part": {
+        "id": "2019-nt2-t2-04-a2",
+        "label": "a2",
+        "format": "Offenes Antwortformat",
+        "competencies": [],
+        "externalRefs": [
+          {
+            "system": "maturaArchiv",
+            "id": "Aufgabe 4 (Teil 2)",
+            "url": "https://www.matura.gv.at/index.php?eID=dumpFile&t=f&f=2994&token=a512c9839d89efb97bd779d3d574be0018f6ffe9#page=10",
+            "verifiedAt": "2026-09-13"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Im 4. Wahlbezirk weicht das Ergebnis für Kandidat A am stärksten von h ab.\nGeben Sie diese Abweichung in Prozentpunkten an!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "abweichung",
+              "value": 8.5,
+              "tol": 0.5,
+              "unit": "Prozentpunkte"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [8; 9]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "\\text{relativer Stimmenanteil im 4. Wahlbezirk: } \\dfrac{343}{570}\\approx 0{,}6"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Der relative Stimmenanteil weicht im 4. Wahlbezirk um ca. 8 Prozentpunkte von h ab."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [8; 9]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "7a39f243dfe7dc51c938fde26d3e351eb7dc7d97",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "333f3202917c83a47e277230ccea2a8009078246e803f1cbd134363480b5d190",
+      "part": {
+        "id": "2019-nt2-t2-04-b1",
+        "label": "b1",
+        "format": "Offenes Antwortformat",
+        "competencies": [],
+        "externalRefs": [
+          {
+            "system": "maturaArchiv",
+            "id": "Aufgabe 4 (Teil 2)",
+            "url": "https://www.matura.gv.at/index.php?eID=dumpFile&t=f&f=2994&token=a512c9839d89efb97bd779d3d574be0018f6ffe9#page=10",
+            "verifiedAt": "2026-09-13"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Die nachstehende Tabelle zeigt das Ergebnis einer Vergleichswahl."
+          },
+          {
+            "t": "fig",
+            "src": "assets/pdf/nebentermin2-2019/fig/2019-nt2-t2-04-tab2.png",
+            "alt": "Tabelle 2: Vergleichswahl. Kandidat A: 390, 416, 409, 383, 478, gesamt 2 076. Kandidat B: 385, 483, 519, 187, 500, gesamt 2 074. Wahlberechtigte: 775, 899, 928, 570, 978, gesamt 4 150 (1.–5. Wahlbezirk)."
+          },
+          {
+            "t": "text",
+            "v": "Die Variable x sei die Anzahl der Stimmen für Kandidat A bei der Vergleichswahl, die Variable y die Anzahl der Stimmen für Kandidat A bei der Bürgermeisterwahl. Damit erhält man für den Kandidaten A für die Ergebnisse aus dem 1., 2., 3. und 4. Wahlbezirk vier Punkte in einem kartesischen Koordinatensystem.\nDie Regressionsgerade "
+          },
+          {
+            "t": "math",
+            "v": "g: y=1{,}5462\\cdot x-205{,}71"
+          },
+          {
+            "t": "text",
+            "v": " verläuft nun durch diese „Punktwolke“ so, dass ein linearer Zusammenhang zwischen den beiden Variablen x und y gut beschrieben wird.\nBerechnen Sie mithilfe der Regressionsgeraden g die erwartete Anzahl an Stimmen bei der Bürgermeisterwahl für den Kandidaten A im 5. Wahlbezirk!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "stimmen5",
+              "value": 535,
+              "tol": 5,
+              "unit": "Stimmen"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [530 Stimmen; 540 Stimmen]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "1{,}5462\\cdot 478-205{,}71\\approx 533"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Bei der Hochrechnung mithilfe der Regressionsgeraden g erhält Kandidat A im 5. Wahlbezirk ca. 533 Stimmen bei der Bürgermeisterwahl."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [530 Stimmen; 540 Stimmen]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/haupttermin-2022/2022-ht-t2-01.json",
+      "questionId": "2022-ht-t2-01",
+      "contentHash": "f3ecf9692666dbeb04c97347f235d8a37ef653b8e0e001dadb0940386275a286",
+      "part": {
+        "id": "2022-ht-t2-01-a2",
+        "label": "a2",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "AN 1.3",
+            "description": "den Differenzen- und Differenzialquotienten in verschiedenen Kontexten deuten und entsprechende Sachverhalte durch den Differenzen- bzw. Differenzialquotienten beschreiben können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_113a",
+            "baseId": "2_113",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/744/Fahrradtour.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Berechnen Sie die Beschleunigung zum Zeitpunkt t = 1. Geben Sie auch die zugehörige Einheit an."
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "a",
+              "label": "a(1)",
+              "value": -0.16,
+              "tol": 1e-9,
+              "unit": "km/h²"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein halber Punkt für das richtige Berechnen der Beschleunigung.",
+              "points": 0.5
+            },
+            {
+              "desc": "Ein halber Punkt für das Angeben der richtigen Einheit.",
+              "points": 0.5
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "a(t)=v'(t)=-0{,}16\\cdot t"
+              },
+              {
+                "t": "text",
+                "v": "; "
+              },
+              {
+                "t": "math",
+                "v": "v'(1)=-0{,}16"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Die Beschleunigung zum Zeitpunkt t = 1 beträgt –0,16 km/h²."
+              }
+            ],
+            "note": "a2) Ein halber Punkt für das richtige Berechnen der Beschleunigung, ein halber Punkt für das Angeben der richtigen Einheit."
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-03.json",
+      "questionId": "2019-nt2-t2-03",
+      "contentHash": "294a79e7904162503d6b8c0152b8c479ffce5f3cb5914df0c07244cc20615dce",
+      "part": {
+        "id": "2019-nt2-t2-03-a1",
+        "label": "a1",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "WS 1.1",
+            "description": "Werte aus tabellarischen und elementaren grafischen Darstellungen ablesen (bzw. zusammengesetzte Werte ermitteln) und im jeweiligen Kontext angemessen interpretieren können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_043a",
+            "baseId": "2_043",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/417/Verm%C3%B6gensverteilung.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Ermitteln Sie mithilfe von Abbildung 1, wie viele Personen in Österreich im Jahr 2012 ein Vermögen von mindestens einer Million Euro besaßen!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "anzahl",
+              "value": 422500,
+              "tol": 84500,
+              "unit": "Personen"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Ausgleichspunkt für die richtige Lösung, wobei auch die Angabe des richtigen relativen Anteils als richtig zu werten ist. Toleranzintervalle: [338 000; 507 000] bzw. [4 %; 6 %]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "result": [
+              {
+                "t": "text",
+                "v": "Im Jahr 2012 hatten in Österreich ca. 422 500 Personen (laut Abbildung 1: ca. 5 % der Bevölkerung) ein Vermögen von mindestens einer Million Euro."
+              }
+            ],
+            "note": "Ein Ausgleichspunkt für die richtige Lösung, wobei auch die Angabe des richtigen relativen Anteils als richtig zu werten ist. Toleranzintervalle: [338 000; 507 000] bzw. [4 %; 6 %]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-03.json",
+      "questionId": "2019-nt2-t2-03",
+      "contentHash": "294a79e7904162503d6b8c0152b8c479ffce5f3cb5914df0c07244cc20615dce",
+      "part": {
+        "id": "2019-nt2-t2-03-a2",
+        "label": "a2",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "FA 2.1",
+            "description": "verbal, tabellarisch, grafisch oder durch eine Gleichung (Formel) gegebene lineare Zusammenhänge als lineare Funktionen erkennen bzw. betrachten können; zwischen diesen Darstellungsformen wechseln können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_043a",
+            "baseId": "2_043",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/417/Verm%C3%B6gensverteilung.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Berechnen Sie unter der vereinfachenden Annahme, dass die Schwellenwerte im Intervall [20 %; 40 %] annähernd linear zunehmen, einen Näherungswert des Schwellenwerts bei 25 %!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "schwellenwert",
+              "value": 13262.5,
+              "tol": 62.5,
+              "unit": "€"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung, wobei die Einheit „€“ nicht angeführt sein muss. Toleranzintervall: [€ 13.200; € 13.325]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "6\\,086+\\dfrac{34\\,731-6\\,086}{4}=13\\,247{,}25"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Der Näherungswert für den Schwellenwert bei 25 % liegt bei ca. € 13.247."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung, wobei die Einheit „€“ nicht angeführt sein muss. Toleranzintervall: [€ 13.200; € 13.325]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-03.json",
+      "questionId": "2019-nt2-t2-03",
+      "contentHash": "294a79e7904162503d6b8c0152b8c479ffce5f3cb5914df0c07244cc20615dce",
+      "part": {
+        "id": "2019-nt2-t2-03-b1",
+        "label": "b1",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "WS 1.1",
+            "description": "Werte aus tabellarischen und elementaren grafischen Darstellungen ablesen (bzw. zusammengesetzte Werte ermitteln) und im jeweiligen Kontext angemessen interpretieren können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_043b",
+            "baseId": "2_043",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/417/Verm%C3%B6gensverteilung.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Ermitteln Sie, welchen relativen Anteil am Gesamtvermögen die vermögensstärksten 10 % der österreichischen Bevölkerung besitzen!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "anteil",
+              "value": 0.6,
+              "tol": 0.02
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [58 %; 62 %]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "result": [
+              {
+                "t": "text",
+                "v": "Die vermögensstärksten 10 % der österreichischen Bevölkerung besitzen ca. 60 % des Vermögens."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [58 %; 62 %]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-03.json",
+      "questionId": "2019-nt2-t2-03",
+      "contentHash": "294a79e7904162503d6b8c0152b8c479ffce5f3cb5914df0c07244cc20615dce",
+      "part": {
+        "id": "2019-nt2-t2-03-c1",
+        "label": "c1",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "AN 4.3",
+            "description": "das bestimmte Integral in verschiedenen Kontexten deuten und entsprechende Sachverhalte durch Integrale beschreiben können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_043c",
+            "baseId": "2_043",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/417/Verm%C3%B6gensverteilung.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Die Lorenz-Kurve wird im Intervall [0; 1] durch eine reelle Funktion in Abhängigkeit von x modelliert, wobei x den relativen Anteil der Bevölkerung angibt.\nBerechnen Sie den Gini-Koeffizienten für ein Land S, dessen Lorenz-Kurve für das Jahr 2012 durch die Funktion "
+          },
+          {
+            "t": "math",
+            "v": "L_1"
+          },
+          {
+            "t": "text",
+            "v": " mit "
+          },
+          {
+            "t": "math",
+            "v": "L_1(x)=0{,}9\\cdot x^{5}+0{,}08\\cdot x^{2}+0{,}02\\cdot x"
+          },
+          {
+            "t": "text",
+            "v": " im Intervall [0; 1] beschrieben werden kann!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "gini",
+              "value": 0.625,
+              "tol": 0.005
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [0,62; 0,63]. Die Aufgabe ist auch dann als richtig gelöst zu werten, wenn bei korrektem Ansatz das Ergebnis aufgrund eines Rechenfehlers nicht richtig ist.",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "0{,}5-\\int_{0}^{1} L_1(x)\\,dx=0{,}313\\ldots"
+              },
+              {
+                "t": "math",
+                "v": "\\dfrac{0{,}313\\ldots}{0{,}5}\\approx 0{,}63"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Der Gini-Koeffizient für das Jahr 2012 hatte für das Land S etwa den Wert 0,63."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [0,62; 0,63]. Die Aufgabe ist auch dann als richtig gelöst zu werten, wenn bei korrektem Ansatz das Ergebnis aufgrund eines Rechenfehlers nicht richtig ist."
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "0d54924ba5ff7720b6b8d88aa6395c7fbb840b942f7adfdc8c296355e6160c18",
+      "part": {
+        "id": "2019-nt2-t2-04-a1",
+        "label": "a1",
+        "format": "",
+        "competencies": [],
+        "externalRefs": [],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Geben Sie an, wie viele Stimmen für Kandidat A im 5. Wahlbezirk zu erwarten sind, wenn man h als Schätzwert für den relativen Stimmenanteil für diesen Kandidaten in diesem Wahlbezirk verwendet!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "stimmen",
+              "value": 509,
+              "tol": 5,
+              "unit": "Stimmen"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Ausgleichspunkt für die richtige Lösung. Toleranzintervall: [500; 510]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "h=\\dfrac{1\\,648}{3\\,172}\\approx 0{,}52"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Für Kandidat A sind ca. 52 % von 978 Stimmen, also ca. 509 Stimmen, zu erwarten."
+              }
+            ],
+            "note": "Ein Ausgleichspunkt für die richtige Lösung. Toleranzintervall: [500; 510]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "0d54924ba5ff7720b6b8d88aa6395c7fbb840b942f7adfdc8c296355e6160c18",
+      "part": {
+        "id": "2019-nt2-t2-04-a2",
+        "label": "a2",
+        "format": "",
+        "competencies": [],
+        "externalRefs": [],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Im 4. Wahlbezirk weicht das Ergebnis für Kandidat A am stärksten von h ab.\nGeben Sie diese Abweichung in Prozentpunkten an!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "abweichung",
+              "value": 8.5,
+              "tol": 0.5,
+              "unit": "Prozentpunkte"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [8; 9]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "\\text{relativer Stimmenanteil im 4. Wahlbezirk: } \\dfrac{343}{570}\\approx 0{,}6"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Der relative Stimmenanteil weicht im 4. Wahlbezirk um ca. 8 Prozentpunkte von h ab."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [8; 9]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "0d54924ba5ff7720b6b8d88aa6395c7fbb840b942f7adfdc8c296355e6160c18",
+      "part": {
+        "id": "2019-nt2-t2-04-b1",
+        "label": "b1",
+        "format": "",
+        "competencies": [],
+        "externalRefs": [],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Die nachstehende Tabelle zeigt das Ergebnis einer Vergleichswahl."
+          },
+          {
+            "t": "fig",
+            "src": "assets/pdf/nebentermin2-2019/fig/2019-nt2-t2-04-tab2.png",
+            "alt": "Tabelle 2: Vergleichswahl. Kandidat A: 390, 416, 409, 383, 478, gesamt 2 076. Kandidat B: 385, 483, 519, 187, 500, gesamt 2 074. Wahlberechtigte: 775, 899, 928, 570, 978, gesamt 4 150 (1.–5. Wahlbezirk)."
+          },
+          {
+            "t": "text",
+            "v": "Die Variable x sei die Anzahl der Stimmen für Kandidat A bei der Vergleichswahl, die Variable y die Anzahl der Stimmen für Kandidat A bei der Bürgermeisterwahl. Damit erhält man für den Kandidaten A für die Ergebnisse aus dem 1., 2., 3. und 4. Wahlbezirk vier Punkte in einem kartesischen Koordinatensystem.\nDie Regressionsgerade "
+          },
+          {
+            "t": "math",
+            "v": "g: y=1{,}5462\\cdot x-205{,}71"
+          },
+          {
+            "t": "text",
+            "v": " verläuft nun durch diese „Punktwolke“ so, dass ein linearer Zusammenhang zwischen den beiden Variablen x und y gut beschrieben wird.\nBerechnen Sie mithilfe der Regressionsgeraden g die erwartete Anzahl an Stimmen bei der Bürgermeisterwahl für den Kandidaten A im 5. Wahlbezirk!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "stimmen5",
+              "value": 533,
+              "tol": 5,
+              "unit": "Stimmen"
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für die richtige Lösung. Toleranzintervall: [530 Stimmen; 540 Stimmen]",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "1{,}5462\\cdot 478-205{,}71\\approx 533"
+              }
+            ],
+            "result": [
+              {
+                "t": "text",
+                "v": "Bei der Hochrechnung mithilfe der Regressionsgeraden g erhält Kandidat A im 5. Wahlbezirk ca. 533 Stimmen bei der Bürgermeisterwahl."
+              }
+            ],
+            "note": "Ein Punkt für die richtige Lösung. Toleranzintervall: [530 Stimmen; 540 Stimmen]"
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-04.json",
+      "questionId": "2019-nt2-t2-04",
+      "contentHash": "0d54924ba5ff7720b6b8d88aa6395c7fbb840b942f7adfdc8c296355e6160c18",
+      "part": {
+        "id": "2019-nt2-t2-04-c1",
+        "label": "c1",
+        "format": "",
+        "competencies": [],
+        "externalRefs": [],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Bei einer österreichweiten Wahl kann ein Kandidat C gewählt werden. Aus einer vorhergehenden Wahl ist bekannt, dass der Stimmenanteil h für Kandidat A bei der Bürgermeisterwahl in den Wahlbezirken 1 bis 4 repräsentativ für den Stimmenanteil für Kandidat C bei der österreichweiten Wahl ist.\nErmitteln Sie anhand des Stimmenanteils h ein symmetrisches 95-%-Konfidenzintervall für den unbekannten Stimmenanteil für Kandidat C!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "numeric",
+          "blanks": [
+            {
+              "id": "unten",
+              "label": "untere Grenze",
+              "value": 0.5015,
+              "tol": 0.0015
+            },
+            {
+              "id": "oben",
+              "label": "obere Grenze",
+              "value": 0.538,
+              "tol": 0.002
+            }
+          ]
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für ein richtiges Intervall. Andere Schreibweisen des Ergebnisses sind ebenfalls als richtig zu werten. Toleranzintervall für den unteren Wert: [0,500; 0,503]. Toleranzintervall für den oberen Wert: [0,536; 0,540]. Die Aufgabe ist auch dann als richtig gelöst zu werten, wenn bei korrektem Ansatz das Ergebnis aufgrund eines Rechenfehlers nicht richtig ist.",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "0{,}52 \\pm 1{,}96\\cdot\\sqrt{\\dfrac{0{,}52\\cdot 0{,}48}{3\\,172}}\\approx 0{,}52 \\pm 0{,}017"
+              }
+            ],
+            "result": [
+              {
+                "t": "math",
+                "v": "[0{,}503;\\ 0{,}537]"
+              }
+            ],
+            "note": "Ein Punkt für ein richtiges Intervall. Andere Schreibweisen des Ergebnisses sind ebenfalls als richtig zu werten. Toleranzintervall für den unteren Wert: [0,500; 0,503]. Toleranzintervall für den oberen Wert: [0,536; 0,540]. Die Aufgabe ist auch dann als richtig gelöst zu werten, wenn bei korrektem Ansatz das Ergebnis aufgrund eines Rechenfehlers nicht richtig ist."
+          }
+        ]
+      }
+    },
+    {
+      "commit": "7a39f243dfe7dc51c938fde26d3e351eb7dc7d97",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-02.json",
+      "questionId": "2019-nt2-t2-02",
+      "contentHash": "47e0806a31581599e6bab9ff0c56faaae4b5d108aa72d609ac7941d552f67c2b",
+      "part": {
+        "id": "2019-nt2-t2-02-a2",
+        "label": "a2",
+        "format": "Offenes Antwortformat",
+        "competencies": [
+          {
+            "code": "AN 4.3",
+            "description": "das bestimmte Integral in verschiedenen Kontexten deuten und entsprechende Sachverhalte durch Integrale beschreiben können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_042a",
+            "baseId": "2_042",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/416/Kondensator.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Ein Kondensator mit einer bestimmten Kapazität C wird bis zur Ladungsmenge "
+          },
+          {
+            "t": "math",
+            "v": "Q_1"
+          },
+          {
+            "t": "text",
+            "v": " aufgeladen, die gemessene Spannung "
+          },
+          {
+            "t": "math",
+            "v": "U(Q_1)"
+          },
+          {
+            "t": "text",
+            "v": " hat dann den Wert "
+          },
+          {
+            "t": "math",
+            "v": "U_1"
+          },
+          {
+            "t": "text",
+            "v": ".\n\n"
+          },
+          {
+            "t": "text",
+            "v": "Die in diesem Kondensator gespeicherte Energie W kann mithilfe der Formel "
+          },
+          {
+            "t": "math",
+            "v": "W=\\int_{0}^{Q_1} U(Q)\\,dQ"
+          },
+          {
+            "t": "text",
+            "v": " berechnet werden.\nGeben Sie eine Formel für die gespeicherte Energie W in Abhängigkeit von "
+          },
+          {
+            "t": "math",
+            "v": "U_1"
+          },
+          {
+            "t": "text",
+            "v": " und C an!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "expression",
+          "canonical": "\\frac{1}{2}\\cdot C\\cdot U_1^{2}",
+          "vars": [
+            "C",
+            "U_1"
+          ],
+          "checker": "cas"
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für eine richtige Formel. Äquivalente Formeln sind als richtig zu werten.",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "W=\\int_{0}^{Q_1} U(Q)\\,dQ=\\tfrac{1}{2}\\cdot U_1\\cdot Q_1"
+              }
+            ],
+            "result": [
+              {
+                "t": "math",
+                "v": "W=\\tfrac{1}{2}\\cdot C\\cdot U_1^{2}"
+              }
+            ],
+            "note": "Ein Punkt für eine richtige Formel. Äquivalente Formeln sind als richtig zu werten."
+          }
+        ]
+      }
+    },
+    {
+      "commit": "acfde51773be1463af5624b93dc1392bb354a2db",
+      "file": "content/nebentermin2-2019/2019-nt2-t2-02.json",
+      "questionId": "2019-nt2-t2-02",
+      "contentHash": "9a2ab188219f463b354c7845c6c0fb5db897d0ee808b487aa1f484501f4aa2a0",
+      "part": {
+        "id": "2019-nt2-t2-02-a2",
+        "label": "a2",
+        "format": "Konstruktionsformat",
+        "competencies": [
+          {
+            "code": "AN 4.3",
+            "description": "das bestimmte Integral in verschiedenen Kontexten deuten und entsprechende Sachverhalte durch Integrale beschreiben können",
+            "source": "aufgabenpool",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "externalRefs": [
+          {
+            "system": "aufgabenpool",
+            "id": "2_042a",
+            "baseId": "2_042",
+            "url": "https://www.aufgabenpool.at/amn/Typ-2/416/Kondensator.pdf",
+            "license": "CC-BY-4.0",
+            "verifiedAt": "2026-06-30"
+          }
+        ],
+        "prompt": [
+          {
+            "t": "text",
+            "v": "Die in diesem Kondensator gespeicherte Energie W kann mithilfe der Formel "
+          },
+          {
+            "t": "math",
+            "v": "W=\\int_{0}^{Q_1} U(Q)\\,dQ"
+          },
+          {
+            "t": "text",
+            "v": " berechnet werden.\nGeben Sie eine Formel für die gespeicherte Energie W in Abhängigkeit von "
+          },
+          {
+            "t": "math",
+            "v": "U_1"
+          },
+          {
+            "t": "text",
+            "v": " und C an!"
+          }
+        ],
+        "figures": [],
+        "answer": {
+          "kind": "expression",
+          "canonical": "\\frac{1}{2}\\cdot C\\cdot U_1^{2}",
+          "vars": [
+            "C",
+            "U_1"
+          ],
+          "checker": "cas"
+        },
+        "scoring": {
+          "mode": "rubric",
+          "criteria": [
+            {
+              "desc": "Ein Punkt für eine richtige Formel. Äquivalente Formeln sind als richtig zu werten.",
+              "points": 1
+            }
+          ]
+        },
+        "points": 1,
+        "solution": [
+          {
+            "steps": [
+              {
+                "t": "math",
+                "v": "W=\\int_{0}^{Q_1} U(Q)\\,dQ=\\tfrac{1}{2}\\cdot U_1\\cdot Q_1"
+              }
+            ],
+            "result": [
+              {
+                "t": "math",
+                "v": "W=\\tfrac{1}{2}\\cdot C\\cdot U_1^{2}"
+              }
+            ],
+            "note": "Ein Punkt für eine richtige Formel. Äquivalente Formeln sind als richtig zu werten."
+          }
+        ]
+      }
+    }
+  ]
+}

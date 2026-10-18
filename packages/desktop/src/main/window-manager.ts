@@ -19,7 +19,7 @@ export interface PersistedWindowState {
 }
 
 export interface WindowManagerErrorContext {
-  operation: 'load-state' | 'persist-state' | 'load-url';
+  operation: 'load-state' | 'persist-state' | 'load-url' | 'fit-display';
   kind: ManagedWindowKind;
 }
 
@@ -182,6 +182,29 @@ export class WindowManager {
     for (const window of this.getAllWindows()) window.setBackgroundColor(background);
   }
 
+  /** Recover windows after undocking or changing display scale/work area. */
+  fitWindowsToDisplays(): void {
+    for (const [kind, window] of this.windows) {
+      if (window.isDestroyed() || window.isMinimized() || window.isMaximized() || window.isFullScreen()) continue;
+      try {
+        const bounds = window.getNormalBounds();
+        const workArea = screen.getDisplayMatching(bounds).workArea;
+        if (!validBounds(workArea)) continue;
+        const defaults = this.windowDefaults(kind);
+        const width = clamp(bounds.width, defaults.minWidth, workArea.width);
+        const height = clamp(bounds.height, defaults.minHeight, workArea.height);
+        const x = clamp(bounds.x, workArea.x, workArea.x + workArea.width - width);
+        const y = clamp(bounds.y, workArea.y, workArea.y + workArea.height - height);
+        window.setMinimumSize(Math.min(defaults.minWidth, workArea.width), Math.min(defaults.minHeight, workArea.height));
+        if (x !== bounds.x || y !== bounds.y || width !== bounds.width || height !== bounds.height) {
+          window.setBounds({ x, y, width, height });
+        }
+      } catch (error) {
+        this.reportError(error, { operation: 'fit-display', kind });
+      }
+    }
+  }
+
   /**
    * Sends only the compile-time bounded ShellCommand union. Single-purpose
    * tool windows host the shared Vue app, but remain excluded so a global
@@ -238,8 +261,8 @@ export class WindowManager {
       width: bounds?.width ?? defaults.width,
       height: bounds?.height ?? defaults.height,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}),
-      minWidth: defaults.minWidth,
-      minHeight: defaults.minHeight,
+      minWidth: Math.min(defaults.minWidth, bounds?.width ?? defaults.minWidth),
+      minHeight: Math.min(defaults.minHeight, bounds?.height ?? defaults.minHeight),
       maximizable: defaults.maximizable,
       fullscreenable: defaults.fullscreenable,
       show: false,
@@ -272,6 +295,12 @@ export class WindowManager {
     this.windows.set(kind, window);
     this.hardenWebContents(window, kind, destination);
     this.trackWindowState(kind, window);
+    // An OS-managed state may have hidden off-screen normal bounds when a
+    // display disappeared. Fit only after the user returns to normal mode.
+    const fitRestoredWindows = () => this.fitWindowsToDisplays();
+    window.on('restore', fitRestoredWindows);
+    window.on('unmaximize', fitRestoredWindows);
+    window.on('leave-full-screen', fitRestoredWindows);
     // The shared Web build owns one document title. Keep native windows
     // distinguishable in the Dock/task switcher without changing Web code.
     window.on('page-title-updated', (event) => {
@@ -404,6 +433,7 @@ export class WindowManager {
 
   private reveal(window: BrowserWindow): void {
     if (window.isMinimized()) window.restore();
+    this.fitWindowsToDisplays();
     if (!window.isVisible()) window.show();
     window.focus();
   }

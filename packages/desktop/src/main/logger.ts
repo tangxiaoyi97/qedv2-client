@@ -1,5 +1,6 @@
 import { mkdir, open, rename, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { managedDirectory, managedFile, unlinkManagedFile } from './managed-file-safety.js';
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -50,6 +51,50 @@ export class DesktopLogger {
 
   async flush(): Promise<void> {
     await this.queue;
+  }
+
+  inspectStorage(): Promise<{ bytes: number; cleanableBytes: number }> {
+    return this.serializeMaintenance(() => {
+      const snapshot = this.storageSnapshot();
+      return {
+        bytes: snapshot.files.reduce((sum, file) => sum + file.stat.size, 0),
+        cleanableBytes: snapshot.files.filter((file) => file.archived)
+          .reduce((sum, file) => sum + file.stat.size, 0),
+      };
+    });
+  }
+
+  clearArchivedLogs(): Promise<number> {
+    return this.serializeMaintenance(() => {
+      const snapshot = this.storageSnapshot();
+      if (!snapshot.root) return 0;
+      let freedBytes = 0;
+      // The active log is intentionally retained. Run in the same queue as
+      // writes/rotation so a newly rotated file cannot be deleted accidentally.
+      for (const file of snapshot.files) {
+        if (file.archived) {
+          freedBytes += unlinkManagedFile(dirname(this.filePath), snapshot.root, file.name, file.stat);
+        }
+      }
+      return freedBytes;
+    });
+  }
+
+  private serializeMaintenance<T>(operation: () => T): Promise<T> {
+    const result = this.queue.then(operation);
+    this.queue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private storageSnapshot() {
+    const root = managedDirectory(dirname(this.filePath));
+    const files = [0, 1, 2, 3].flatMap((index) => {
+      if (!root) return [];
+      const name = index === 0 ? 'desktop.log' : `desktop.log.${index}`;
+      const file = managedFile(root.path, name);
+      return file ? [{ name, stat: file.stat, archived: index > 0 }] : [];
+    });
+    return { root, files };
   }
 
   private write(level: LogLevel, message: string, detail?: unknown): void {

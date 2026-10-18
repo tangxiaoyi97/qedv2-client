@@ -96,7 +96,7 @@ const groups = computed(() => {
 .q-cgroups__card {
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   overflow: hidden;
 }
 .q-cgroups__head {
@@ -109,18 +109,18 @@ const groups = computed(() => {
 }
 .q-cgroups__cat {
   font-weight: 800;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   color: var(--q-accent-strong);
 }
 .q-cgroups__name {
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   color: var(--q-ink-2);
   overflow-wrap: break-word;
   min-width: 0;
 }
 .q-cgroups__agg {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   font-weight: 700;
   white-space: nowrap;
 }

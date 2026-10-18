@@ -941,7 +941,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   margin: 0 0 14px;
   padding: 10px 12px;
   border: 1px solid var(--q-border-soft);
-  border-radius: 14px;
+  border-radius: var(--q-radius-card);
   background: var(--q-card);
 }
 .browse__source-copy {
@@ -971,7 +971,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   padding: 3px;
   background: var(--q-panel-2);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
 }
 .browse__source-option {
   min-height: var(--q-control-height);
@@ -980,7 +980,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   gap: 9px;
   padding: 7px 10px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: transparent;
   color: var(--q-mut-2);
   font: inherit;
@@ -1051,7 +1051,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   justify-content: center;
   width: 46px;
   flex: none;
-  border-radius: 12px;
+  border-radius: var(--q-radius-control);
   border: 1px solid var(--q-border-3);
   background: var(--q-card);
   color: var(--q-mut-2);
@@ -1084,10 +1084,10 @@ function firstCode(q: QuestionSummary): string | undefined {
   min-width: 17px;
   height: 17px;
   padding: 0 4px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-accent-strong);
   color: var(--q-on-accent);
-  font-size: 10.5px;
+  font-size: var(--q-font-2xs);
   font-weight: 800;
   display: inline-grid;
   place-items: center;
@@ -1134,8 +1134,15 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 @media (pointer: coarse) {
   .browse__active-x {
+    position: relative;
     min-width: 32px;
     min-height: 32px;
+  }
+  /* 32px is the visible chip; the finger gets the full 44px. */
+  .browse__active-x::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
   }
 }
 .browse__active {
@@ -1143,7 +1150,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   align-items: center;
   gap: 4px;
   padding: 4px 6px 4px 10px;
-  border-radius: 20px;
+  border-radius: var(--q-radius-pill);
   border: 1px solid var(--q-accent);
   background: var(--q-accent-bg);
   color: var(--q-ink);
@@ -1155,7 +1162,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   border: none;
   background: none;
   color: var(--q-mut-2);
-  font-size: 10px;
+  font-size: var(--q-font-micro);
   font-weight: 700;
   cursor: pointer;
   padding: 2px 4px;
@@ -1208,7 +1215,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   padding: 12px 14px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   cursor: pointer;
   font: inherit;
   color: var(--q-ink);
@@ -1279,7 +1286,7 @@ function firstCode(q: QuestionSummary): string | undefined {
 }
 .browse__dot-count {
   color: var(--q-faint);
-  font: 700 9.5px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-micro) var(--q-font-mono);
   font-variant-numeric: tabular-nums;
 }
 .browse__nr {
@@ -1304,7 +1311,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   white-space: nowrap;
 }
 .browse__points {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   font-weight: 700;
   font-size: var(--q-font-ui);
   flex: none;
@@ -1377,7 +1384,7 @@ function firstCode(q: QuestionSummary): string | undefined {
   .browse__row:not(.browse__hit) .browse__chip {
     padding: 0;
     flex: none;
-    font-size: 10.75px;
+    font-size: var(--q-font-2xs);
   }
   .browse__row:not(.browse__hit) .browse__chip :deep(.q-chip) { padding: 3px 8px; font-size: inherit; }
   .browse__row:not(.browse__hit) .browse__excl {

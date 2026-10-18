@@ -163,7 +163,7 @@ function onEscape(): void {
   max-height: 90vh;
   overflow-y: auto;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   padding: 22px 24px 18px;
 }
@@ -176,7 +176,7 @@ function onEscape(): void {
 .achoice__icon {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-chip-bg);
   color: var(--q-accent-strong);
   display: grid;
@@ -186,7 +186,7 @@ function onEscape(): void {
 }
 .achoice__title {
   font-weight: 800;
-  font-size: 17px;
+  font-size: var(--q-font-lg);
   letter-spacing: -0.01em;
 }
 .achoice__text {
@@ -203,7 +203,7 @@ function onEscape(): void {
 .achoice__side {
   flex: 1;
   border: 1px solid var(--q-border-2);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 13px 14px;
 }
 .achoice__side-head {
@@ -232,7 +232,7 @@ function onEscape(): void {
   gap: 11px;
   padding: 12px 13px;
   border: 1px solid var(--q-border-2);
-  border-radius: 11px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   cursor: pointer;
   font: inherit;

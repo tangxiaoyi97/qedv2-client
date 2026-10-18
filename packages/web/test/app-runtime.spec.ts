@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => {
         if (listeners.network === cb) listeners.network = undefined;
       };
     }),
+    isOnline: vi.fn(() => true),
     getOverrides: vi.fn(),
     getTheme: vi.fn(),
     storageGet: vi.fn(),
@@ -69,7 +70,7 @@ vi.mock('../src/services.js', () => ({
       onStatusChange: mocks.onStatusChange,
     },
     network: {
-      isOnline: () => true,
+      isOnline: mocks.isOnline,
       onChange: mocks.onNetworkChange,
     },
   },
@@ -140,6 +141,7 @@ beforeEach(() => {
     coreRepoUrl: 'https://git.test/core',
     bankRepoUrl: 'https://git.test/bank',
   });
+  mocks.isOnline.mockReturnValue(true);
   mocks.getTheme.mockResolvedValue('system');
   mocks.storageGet.mockResolvedValue(undefined);
   mocks.storageSet.mockResolvedValue(undefined);
@@ -173,6 +175,41 @@ describe('appearance preference mirror', () => {
 });
 
 describe('desktop core runtime integration', () => {
+  it('refreshes connectivity when the network changes between construction and initialization', async () => {
+    mocks.configure.mockResolvedValue({ baseUrl: initialStatus.endpoint, source: 'local' });
+    const app = useAppStore();
+    expect(app.online).toBe(true);
+    mocks.isOnline.mockReturnValue(false);
+
+    await app.init();
+
+    expect(app.online).toBe(false);
+    expect(mocks.onNetworkChange).toHaveBeenCalledOnce();
+  });
+
+  it('observes connectivity changes while startup is waiting for the saved configuration', async () => {
+    let finishReading!: (value: { coreBaseUrl: string }) => void;
+    mocks.getOverrides.mockImplementationOnce(() => new Promise((resolve) => { finishReading = resolve; }));
+    mocks.configure.mockResolvedValue({ baseUrl: initialStatus.endpoint, source: 'local' });
+    const app = useAppStore();
+    const starting = app.init();
+
+    mocks.listeners.network?.(false);
+    expect(app.online).toBe(false);
+    expect(mocks.configure).not.toHaveBeenCalled();
+    finishReading({ coreBaseUrl: 'https://remote-core.test' });
+    await starting;
+
+    expect(app.online).toBe(false);
+    expect(mocks.configure).toHaveBeenCalledOnce();
+    expect(mocks.configure).toHaveBeenCalledWith(expect.objectContaining({
+      coreBaseUrl: 'https://remote-core.test',
+    }));
+    mocks.listeners.network?.(true);
+    await vi.waitFor(() => expect(mocks.configure).toHaveBeenCalledTimes(2));
+    expect(app.online).toBe(true);
+  });
+
   it('subscribes before configure and passes a plain complete config', async () => {
     mocks.configure.mockResolvedValue({
       baseUrl: initialStatus.endpoint,

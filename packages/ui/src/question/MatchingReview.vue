@@ -76,14 +76,14 @@ const letter = (index: number) => String.fromCharCode(65 + index);
   table-layout: fixed;
   border-collapse: collapse;
   text-align: left;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.6;
 }
 .q-match-review__table thead th {
   padding: 0 16px 10px;
   border-bottom: 1px solid var(--q-border-2);
   color: var(--q-faint);
-  font-size: 11px;
+  font-size: var(--q-font-xs);
   font-weight: 600;
 }
 .q-match-review__table thead th:first-child { width: 36%; padding-left: 0; }
@@ -110,17 +110,17 @@ const letter = (index: number) => String.fromCharCode(65 + index);
   flex: none;
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-panel-2);
   color: var(--q-mut);
-  font: 700 11px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-xs) var(--q-font-mono);
 }
 .q-match-review__chosen--wrong { color: var(--q-mut); }
 .q-match-review__chosen--wrong .q-match-review__letter { color: var(--q-err-ink); background: var(--q-err-bg); }
 .q-match-review__letter--solution { color: var(--q-ok); background: var(--q-ok-bg); }
 .q-match-review__mark { align-self: flex-start; flex: none; margin-top: 4px; }
-.q-match-review__confirmed { display: flex; align-items: center; gap: 8px; min-height: 24px; color: var(--q-ok); font-size: 12px; }
-.q-match-review__muted { color: var(--q-faint); font-size: 12px; }
+.q-match-review__confirmed { display: flex; align-items: center; gap: 8px; min-height: 24px; color: var(--q-ok); font-size: var(--q-font-small); }
+.q-match-review__muted { color: var(--q-faint); font-size: var(--q-font-small); }
 .q-match-review__label { display: none; }
 @container matching-review (max-width: 580px) {
   .q-match-review__table, .q-match-review__table tbody { display: block; }
@@ -130,7 +130,7 @@ const letter = (index: number) => String.fromCharCode(65 + index);
   .q-match-review__row:first-child { padding-top: 0; }
   .q-match-review__row > * { padding: 0; border: 0; }
   .q-match-review__prompt { grid-column: 1 / -1; }
-  .q-match-review__label { display: block; margin-bottom: 6px; color: var(--q-faint); font-size: 10.5px; font-weight: 500; }
+  .q-match-review__label { display: block; margin-bottom: 6px; color: var(--q-faint); font-size: var(--q-font-2xs); font-weight: 500; }
 }
 @container matching-review (max-width: 380px) {
   .q-match-review__row { grid-template-columns: minmax(0, 1fr); gap: 10px; }

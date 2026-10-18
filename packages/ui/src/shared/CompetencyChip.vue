@@ -40,7 +40,7 @@ function open(): void {
   max-width: 100%;
   padding: 0;
   border: 0;
-  border-radius: 22px;
+  border-radius: var(--q-radius-pill);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -55,6 +55,11 @@ function open(): void {
     background: var(--q-accent-bg);
     border-color: var(--q-accent);
   }
+}
+/* Touch has no hover: the same tint answers the tap instead. */
+.q-competency-chip:active :deep(.q-chip) {
+  background: var(--q-accent-bg);
+  border-color: var(--q-accent);
 }
 .q-competency-chip:focus-visible {
   outline: 2px solid var(--q-accent);

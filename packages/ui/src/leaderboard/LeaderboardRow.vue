@@ -77,7 +77,7 @@ function periodCount(): number {
   background: var(--q-card);
   color: var(--q-ink);
   cursor: pointer;
-  font-family: 'Public Sans', system-ui, sans-serif;
+  font-family: var(--q-font-family);
   text-align: left;
   transition:
     border-color var(--q-transition-fast),
@@ -155,7 +155,7 @@ function periodCount(): number {
   flex: none;
   padding: 2px 4px;
   border: 1px solid color-mix(in srgb, var(--q-accent) 38%, transparent);
-  border-radius: 5px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-card);
   color: var(--q-accent-strong);
   font-size: var(--q-font-small);
@@ -184,7 +184,7 @@ function periodCount(): number {
 
 .leader-row__stat--primary strong {
   color: var(--q-accent-strong);
-  font-size: 20px;
+  font-size: var(--q-font-xl);
   font-weight: 800;
 }
 
@@ -200,9 +200,11 @@ function periodCount(): number {
   transition: opacity var(--q-transition-fast), transform var(--q-transition-fast);
 }
 
-.leader-row:hover .leader-row__chevron {
-  opacity: 1;
-  transform: translateX(2px);
+@media (hover: hover) and (pointer: fine) {
+  .leader-row:hover .leader-row__chevron {
+    opacity: 1;
+    transform: translateX(2px);
+  }
 }
 
 @media (max-width: 700px) {
@@ -236,7 +238,7 @@ function periodCount(): number {
     padding: 0;
     border: 0;
     background: transparent;
-    font-size: 10px;
+    font-size: var(--q-font-micro);
   }
 
   .leader-row__chevron {

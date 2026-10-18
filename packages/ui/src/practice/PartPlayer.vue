@@ -6,7 +6,7 @@ import { useI18n } from '../i18n.js';
  *
  *   answering ──Überprüfen──► graded? ──► reviewed
  *        │                       │
- *        │ (open kind)           │ (expression: CAS indeterminate)
+ *        │ (open kind)           │ (rubric or CAS indeterminate)
  *        ▼                       ▼
  *   self-assessing (rubric + SelfAssessmentPanel) ──► reviewed
  *
@@ -30,6 +30,7 @@ import { useI18n } from '../i18n.js';
 import { computed, ref, watch, watchEffect } from 'vue';
 import {
   grade,
+  gradeSelfAssessment,
   isIndeterminate,
   type GradeResult,
   type Grading,
@@ -56,6 +57,7 @@ import RichTextView from '../shared/RichTextView.vue';
 import FigureList from '../shared/FigureList.vue';
 import QButton from '../shared/QButton.vue';
 import QChip from '../shared/QChip.vue';
+import { formatUiScore } from '../shared/format-score.js';
 import VerdictCard from './VerdictCard.vue';
 import SolutionPanel from './SolutionPanel.vue';
 
@@ -239,7 +241,8 @@ function submit(): void {
   }
   const outcome = grade(props.part, submission.value);
   if (isIndeterminate(outcome)) {
-    indeterminate.value = true;
+    // Rubric assessment is an expected scoring step, not a CAS warning.
+    indeterminate.value = outcome.reason !== 'rubric-requires-self-assessment';
     indeterminateMax.value = outcome.maxPoints;
     phase.value = 'self-assessing';
     emitSelfAssessmentDraft();
@@ -355,6 +358,11 @@ function confirmSelfAssessment(): void {
     const outcome = grade(props.part, withAssessment);
     if (isIndeterminate(outcome)) return; // open never yields indeterminate
     final = outcome;
+  } else if (props.part.scoring?.mode === 'rubric') {
+    final = gradeSelfAssessment(props.part.scoring, props.part.points, {
+      ...selfAssessment.value,
+      awardedPoints,
+    });
   } else {
     // expression fell back to self-assessment: use the exact supported score
     // selected by the user, not a hard-coded half-point mapping.
@@ -394,7 +402,7 @@ defineExpose({
     <div v-if="showPartHead" class="q-part__head">
       <span v-if="label" class="q-part__label">{{ label }}</span>
       <QChip v-if="!chromeless && part.format" tone="neutral">{{ part.format }}</QChip>
-      <span v-if="!chromeless && part.points != null" class="q-part__points">{{ part.points }} P</span>
+      <span v-if="!chromeless && part.points != null" class="q-part__points">{{ formatUiScore(part.points) }}&nbsp;{{ t('P') }}</span>
     </div>
 
     <div v-if="part.prompt && part.prompt.length > 0" class="q-part__prompt">
@@ -469,15 +477,15 @@ defineExpose({
 }
 .q-part__label {
   font-weight: 800;
-  font-size: 15px;
+  font-size: var(--q-font-md);
 }
 .q-part__points {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
 }
 .q-part__prompt {
-  font-size: 15px;
+  font-size: var(--q-font-md);
   line-height: 1.65;
   margin-bottom: 14px;
   /* wide inline KaTeX scrolls here instead of panning the whole page */
@@ -488,8 +496,8 @@ defineExpose({
   border: 1px solid var(--q-neutral-border);
   background: var(--q-neutral-bg);
   color: var(--q-mut);
-  border-radius: 10px;
-  font-size: 13px;
+  border-radius: var(--q-radius-control);
+  font-size: var(--q-font-meta);
 }
 .q-part__banner {
   margin-bottom: 14px;
@@ -511,7 +519,7 @@ defineExpose({
   margin-top: 16px;
 }
 .q-part__key-hint {
-  font: 500 11px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-hint);
 }
 .q-part__solution {

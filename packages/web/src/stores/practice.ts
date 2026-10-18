@@ -57,7 +57,7 @@ import {
   questionCache,
   storage,
 } from '../services.js';
-import { useAppStore } from './app.js';
+import { useAppStore, type PinnedCoreContent } from './app.js';
 import { useAuthStore } from './auth.js';
 import { useProgressStore } from './progress.js';
 
@@ -960,6 +960,7 @@ export const usePracticeStore = defineStore('practice', () => {
   let sessionStorageKey: string | undefined;
   let sessionResolvedOwnerId: string | undefined;
   let sessionCoreClient: CoreClient | undefined;
+  let sessionContentPin: PinnedCoreContent | undefined;
   let sessionManifest: ManifestResponse | undefined;
   let sessionManifestUnavailable = false;
   let sessionLearningRecommendations = false;
@@ -1415,6 +1416,22 @@ export const usePracticeStore = defineStore('practice', () => {
     preserveVerifiedAssets = false,
   ): Promise<CoreClient> {
     const app = useAppStore();
+    // A live immutable snapshot already owns verified questions and every
+    // figure as a blob URL. Returning to it must not depend on a second
+    // network authentication: a transient outage cannot invalidate that proof.
+    // A cold restore still goes through pinCoreContent and the cache verifier.
+    if (preserveVerifiedAssets && sessionContentPin?.contentId
+      && sessionContentPin.source === requestedSource
+      && sessionContentPin.contentId === expectedContentId
+      && contentId.value === expectedContentId
+      && contentSource.value === requestedSource
+      && (sessionContentPin.source === 'remote' || sessionContentPin.mode === 'revision')
+      && questions.value.size > 0
+      && [...questions.value.values()].every((question) =>
+        questionAssetPaths(question).every((path) => pinnedAssetUrls.has(path)))) {
+      app.pinnedCoreContent = sessionContentPin;
+      return sessionContentPin.client;
+    }
     const pin = await app.pinCoreContent(
       requestedSource ?? app.coreEndpointSource,
       expectedContentId,
@@ -1432,6 +1449,7 @@ export const usePracticeStore = defineStore('practice', () => {
     contentId.value = pin.contentId ?? expectedContentId;
     contentBaseUrl.value = pin.baseUrl;
     sessionCoreClient = pin.client;
+    sessionContentPin = pin;
     contentMode.value = pin.mode;
     sessionManifest = pin.manifest;
     sessionManifestUnavailable = pin.manifestUnavailable === true;
@@ -3472,6 +3490,7 @@ export const usePracticeStore = defineStore('practice', () => {
     sessionStorageKey = undefined;
     sessionResolvedOwnerId = undefined;
     sessionCoreClient = undefined;
+    sessionContentPin = undefined;
     contentMode.value = 'current';
     sessionManifest = undefined;
     sessionManifestUnavailable = false;

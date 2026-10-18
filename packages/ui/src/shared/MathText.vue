@@ -62,11 +62,11 @@ const rendered = computed(() => {
   overflow-y: hidden;
 }
 .q-math-fallback {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   font-size: 0.9em;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 5px;
+  border-radius: var(--q-radius-xs);
   padding: 1px 5px;
 }
 </style>

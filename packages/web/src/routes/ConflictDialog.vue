@@ -183,7 +183,7 @@ function onEscape(): void {
   max-height: 90vh;
   overflow-y: auto;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   padding: 22px 24px 16px;
 }
@@ -196,7 +196,7 @@ function onEscape(): void {
 .conflict__icon {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-part-bg);
   color: var(--q-part);
   display: grid;
@@ -206,7 +206,7 @@ function onEscape(): void {
 }
 .conflict__title {
   font-weight: 800;
-  font-size: 17px;
+  font-size: var(--q-font-lg);
   letter-spacing: -0.01em;
 }
 .conflict__text {
@@ -221,7 +221,7 @@ function onEscape(): void {
   color: var(--q-part-ink);
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   padding: 8px 11px;
   margin: 8px 0 0;
 }
@@ -233,7 +233,7 @@ function onEscape(): void {
 .conflict__side {
   flex: 1;
   border: 1px solid var(--q-border-2);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 15px;
   background: var(--q-card);
   cursor: pointer;
@@ -294,14 +294,14 @@ function onEscape(): void {
 }
 .conflict__entry {
   border: 1px solid var(--q-border);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   padding: 11px 13px;
 }
 .conflict__entry-title {
   font-weight: 700;
   font-size: var(--q-font-ui);
   margin-bottom: 7px;
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
 }
 .conflict__entry-opt {
   display: flex;

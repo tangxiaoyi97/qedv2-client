@@ -119,21 +119,28 @@ export async function discoverPackagedExecutable(outputRoot = defaultOutputRoot,
   const candidates = []
   try {
     if (platform === 'darwin') {
+      const applicationNames = new Map([
+        ['QED2.app', 'QED2'],
+        ['QED2 Preview.app', 'QED2 Preview'],
+      ])
       await visitDirectories(root, 5, async (directory, name) => {
-        if (name !== 'QED2.app') return
-        const executable = path.join(directory, 'Contents', 'MacOS', 'QED2')
-        if (await regularFile(executable)) candidates.push(executable)
+        const executableName = applicationNames.get(name)
+        if (!executableName) return
+        const executable = path.join(directory, 'Contents', 'MacOS', executableName)
+        const entries = await readdir(path.dirname(executable)).catch(() => [])
+        if (entries.includes(executableName) && await regularFile(executable)) candidates.push(executable)
       })
     } else {
       const unpackedSuffix = platform === 'win32' ? 'win-unpacked' : 'linux-unpacked'
       await visitDirectories(root, 4, async (directory, name) => {
         if (!name.endsWith(unpackedSuffix)) return
-        const names = platform === 'win32' ? ['QED2.exe'] : ['qed2', 'QED2']
+        const names = platform === 'win32' ? ['QED2.exe', 'QED2 Preview.exe'] : ['qed2', 'QED2', 'qed2-preview']
+        const entries = new Set(await readdir(directory))
         for (const executableName of names) {
+          if (!entries.has(executableName)) continue
           const executable = path.join(directory, executableName)
           if (await regularFile(executable)) {
             candidates.push(executable)
-            break
           }
         }
       })
@@ -767,6 +774,45 @@ export async function runSmoke(argv = process.argv.slice(2)) {
       throw new Error(`The ready local Core did not answer ${coreRecord.endpoint}/health.`)
     }
 
+    // This process always owns a disposable profile. Exercise the real
+    // sandboxed bridge and native cache API while proving durable data survives.
+    const maintenance = await mainClient.evaluate(`(async () => {
+      const ports = globalThis.__QED2_PLATFORM_PORTS__;
+      const sentinel = '__smoke_storage_preservation__';
+      await ports.storage.set('archive', sentinel, { preserved: true });
+      await ports.storage.set('config', sentinel, { preserved: true });
+      const support = await ports.shell.getDesktopSupport();
+      const overview = await ports.shell.desktopStorage.getOverview();
+      let rejectedDatabaseCleanup = false;
+      try { await ports.shell.desktopStorage.cleanup(['database']); }
+      catch { rejectedDatabaseCleanup = true; }
+      const cleaned = await ports.shell.desktopStorage.cleanup(['cache', 'downloads']);
+      const archive = await ports.storage.get('archive', sentinel);
+      const config = await ports.storage.get('config', sentinel);
+      await ports.storage.delete('archive', sentinel);
+      await ports.storage.delete('config', sentinel);
+      return { support, overview, cleaned, archive, config, rejectedDatabaseCleanup };
+    })()`)
+    // A native package may run under Rosetta, so the harness Node architecture
+    // need not equal the Electron executable's architecture.
+    const supportedArchitectures = process.platform === 'darwin' ? ['arm64', 'x64'] : ['x64']
+    if (maintenance.support.platform !== process.platform || !supportedArchitectures.includes(maintenance.support.arch)
+      || maintenance.support.localCoreSupported !== true) {
+      throw new Error('Desktop support information did not match the native test host.')
+    }
+    const categoryIds = maintenance.overview.categories.map((category) => category.id).sort()
+    if (JSON.stringify(categoryIds) !== JSON.stringify(['cache', 'database', 'downloads', 'logs'])
+      || !(maintenance.overview.disk.availableBytes >= 0)
+      || !Number.isSafeInteger(maintenance.overview.disk.availableBytes)
+      || maintenance.cleaned.results.some((result) => result.status !== 'cleaned')
+      || maintenance.archive?.preserved !== true || maintenance.config?.preserved !== true
+      || !maintenance.rejectedDatabaseCleanup) {
+      throw new Error('Desktop space management failed its native data-preservation check.')
+    }
+    if (!(await endpointAnswers(coreRecord.endpoint))) {
+      throw new Error('Local Core became unavailable after safe cache cleanup.')
+    }
+
     await mainClient.evaluate(
       `document.querySelector('[data-desktop-window-target="node"]')?.click()`,
     )
@@ -788,12 +834,43 @@ export async function runSmoke(argv = process.argv.slice(2)) {
             platform: document.querySelector('.app')?.dataset.platform,
             title: Boolean(document.querySelector('#desktop-title')),
             runtimeSection: Boolean(document.querySelector('#runtime-title')),
+            storageReady: document.querySelector('[data-desktop-storage]')?.dataset.state === 'ready',
           })`)
-          return value.platform === 'desktop' && value.title && value.runtimeSection ? value : undefined
+          return value.platform === 'desktop' && value.title && value.runtimeSection && value.storageReady ? value : undefined
         },
         deadline,
         child,
       )
+      for (const [label, width, height, theme] of [
+        ['node-space-light', 900, 900, 'light'],
+        ['node-space-narrow-dark', 480, 800, 'dark'],
+      ]) {
+        await nodeClient.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+        await nodeClient.call('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+        })
+        await nodeClient.evaluate(`document.documentElement.dataset.theme = ${JSON.stringify(theme)}`)
+        const layout = await nodeClient.evaluate(`({
+          horizontalOverflow: document.documentElement.scrollWidth > innerWidth + 1,
+          storage: Boolean(document.querySelector('[data-desktop-storage]')),
+          unlabeledProgress: [...document.querySelectorAll('progress')].some((el) => !el.getAttribute('aria-label')),
+          visibleGlobalNavigation: [...document.querySelectorAll('.app__tabbar, .app__sidebar')].some((el) => {
+            const bounds = el.getBoundingClientRect();
+            const style = getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0
+              && bounds.top < innerHeight && bounds.bottom > 0 && bounds.left < innerWidth && bounds.right > 0;
+          }),
+        })`)
+        if (layout.horizontalOverflow || !layout.storage || layout.unlabeledProgress || layout.visibleGlobalNavigation) {
+          throw new Error(`Desktop storage layout or accessibility failed: ${label}`)
+        }
+        if (options.diagnosticsDirectory) {
+          await mkdir(options.diagnosticsDirectory, { recursive: true })
+          const screenshot = await nodeClient.call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true })
+          await writeFile(path.join(options.diagnosticsDirectory, `${label}.png`), Buffer.from(screenshot.data, 'base64'))
+          await writeFile(path.join(options.diagnosticsDirectory, 'space-management.json'), JSON.stringify(maintenance, null, 2))
+        }
+      }
     } finally {
       nodeClient.close()
     }
@@ -839,7 +916,7 @@ export async function runSmoke(argv = process.argv.slice(2)) {
 
     process.stdout.write(
       `Packaged Desktop smoke passed: ${path.basename(executable)}, renderer + preload capability + ` +
-        `local Core + node-window singleton (CDP ${cdpPort}, ` +
+        `local Core + safe space cleanup + data preservation + node-window singleton (CDP ${cdpPort}, ` +
         `temporary userData${process.platform === 'darwin' ? ', mock Keychain' : ''}).\n`,
     )
   } catch (error) {

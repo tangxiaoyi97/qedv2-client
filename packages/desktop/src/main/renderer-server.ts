@@ -10,6 +10,12 @@ import { LOOPBACK_HOST } from './port-allocator.js';
 const TOKEN_HEADER = 'x-qed2-desktop-token';
 const MAX_PROXY_BODY = 16 * 1024 * 1024;
 
+class GatewayRequestError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message);
+  }
+}
+
 const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.html': 'text/html; charset=utf-8',
@@ -82,12 +88,16 @@ function safeTokenEqual(expected: string, received: string | undefined): boolean
 
 async function readRequestBody(request: IncomingMessage): Promise<Buffer | undefined> {
   if (request.method === 'GET' || request.method === 'HEAD') return undefined;
+  const tooLarge = () => new GatewayRequestError(413, 'REQUEST_TOO_LARGE', 'The content request exceeds the size limit.');
+  if (Number(request.headers['content-length']) > MAX_PROXY_BODY) throw tooLarge();
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of request) {
+  // Keep the socket alive long enough to return a useful 413. The default
+  // async iterator destroys it when an oversized upload exits this loop.
+  for await (const chunk of request.iterator({ destroyOnReturn: false })) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     bytes += buffer.byteLength;
-    if (bytes > MAX_PROXY_BODY) throw new Error('Proxy request body exceeds safety limit');
+    if (bytes > MAX_PROXY_BODY) throw tooLarge();
     chunks.push(buffer);
   }
   return Buffer.concat(chunks);
@@ -208,12 +218,20 @@ export class RendererServer {
     const token = randomBytes(32).toString('base64url');
     const server = createServer((request, response) => {
       void this.handle(request, response, token).catch((error: unknown) => {
+        if (response.destroyed) return;
         this.options.logger.error('Renderer gateway request failed', error);
         if (response.headersSent) {
           response.destroy(error instanceof Error ? error : undefined);
           return;
         }
         setHeaders(response, secureHeaders(this.csp));
+        response.setHeader('Cache-Control', 'no-store');
+        if (error instanceof GatewayRequestError) {
+          if (error.status === 413) response.setHeader('Connection', 'close');
+          response.writeHead(error.status, { 'Content-Type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ error: { code: error.code, message: error.message } }));
+          return;
+        }
         response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
         response.end('QED2 desktop gateway error');
       });
@@ -301,6 +319,10 @@ export class RendererServer {
       await this.proxyCore(request, response, url, matchedCoreRoute);
       return;
     }
+    if (url.pathname === '/__qed2_core' || url.pathname.startsWith('/__qed2_core/')) {
+      response.writeHead(404).end('Not found');
+      return;
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.writeHead(405, { Allow: 'GET, HEAD' }).end();
       return;
@@ -312,7 +334,8 @@ export class RendererServer {
       response.writeHead(404).end('Not found');
       return;
     }
-    const isAsset = url.pathname.includes('.') && !url.pathname.startsWith('/__qed2_boot/');
+    const isEntry = url.pathname === '/index.html' || url.pathname === '/404.html';
+    const isAsset = !isEntry && url.pathname.includes('.') && !url.pathname.startsWith('/__qed2_boot/');
     if (isAsset) {
       const file = await this.resolveStaticPath(url.pathname);
       if (!file) {
@@ -351,7 +374,6 @@ export class RendererServer {
     const upstream = new URL(selectedUpstream);
     upstream.pathname = `${upstream.pathname.replace(/\/$/, '')}${route.relativePath}`;
     upstream.search = url.search;
-    const body = await readRequestBody(request);
     const headers = new Headers();
     for (const name of ['accept', 'content-type', 'if-none-match', 'if-modified-since', 'range']) {
       const value = request.headers[name];
@@ -365,6 +387,9 @@ export class RendererServer {
     request.once('aborted', abortRequest);
     response.once('close', abortResponse);
     try {
+      const body = await readRequestBody(request);
+      if (response.destroyed || request.aborted) abortRequest();
+      abort.signal.throwIfAborted();
       const upstreamResponse = await fetch(upstream, {
         method: request.method ?? 'GET',
         headers,
@@ -378,10 +403,19 @@ export class RendererServer {
       }
       response.statusCode = upstreamResponse.status;
       if (request.method === 'HEAD' || !upstreamResponse.body) {
+        await upstreamResponse.body?.cancel();
         response.end();
         return;
       }
       await pipeline(Readable.fromWeb(upstreamResponse.body as never), response);
+    } catch (error) {
+      if (error instanceof GatewayRequestError || abort.signal.aborted || response.headersSent) throw error;
+      const timeout = error instanceof Error && error.name === 'TimeoutError';
+      throw new GatewayRequestError(
+        timeout ? 504 : 502,
+        timeout ? 'CORE_SOURCE_TIMEOUT' : 'CORE_SOURCE_UNREACHABLE',
+        timeout ? 'The selected content source did not respond in time.' : 'The selected content source could not be reached.',
+      );
     } finally {
       request.off('aborted', abortRequest);
       response.off('close', abortResponse);

@@ -12,26 +12,29 @@ const { t } = useI18n();
 import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { CompetencyDetailsDialog, provideCompetencyDetails, provideAssetResolver, QButton, useKeyboardInset, useModalA11y } from '@qed2/ui';
-import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid, Server } from 'lucide-vue-next';
+import { Calendar, Play, ListTodo, History, LineChart, Trophy, Settings, UserCircle, Grid, Server, MessageSquareWarning } from 'lucide-vue-next';
 import { ports } from './services.js';
 import { useAppStore } from './stores/app.js';
 import { useAuthStore } from './stores/auth.js';
 import { useProgressStore } from './stores/progress.js';
 import { useUiStore } from './stores/ui.js';
+import { useFeedbackStore } from './stores/feedback.js';
 
 import ConflictDialog from './routes/ConflictDialog.vue';
 import AuthModal from './routes/AuthModal.vue';
 import ArchiveChoiceDialog from './routes/ArchiveChoiceDialog.vue';
 import ChangelogDialog from './routes/ChangelogDialog.vue';
 import FeedbackDialog from './routes/FeedbackDialog.vue';
-import FeedbackEntry from './routes/FeedbackEntry.vue';
 import { useCompetencyDetailsDialog } from './composables/useCompetencyDetailsDialog.js';
+import { useSyncIndicator } from './composables/useSyncIndicator.js';
 
 const route = useRoute();
 const app = useAppStore();
 const auth = useAuthStore();
 const progress = useProgressStore();
 const ui = useUiStore();
+const sync = useSyncIndicator();
+const feedback = useFeedbackStore();
 
 provideAssetResolver((src) => app.assetUrl(src));
 const competencyDetails = useCompetencyDetailsDialog(() => app.pinnedCoreContent ?? {
@@ -52,18 +55,6 @@ const desktopToolWindow = computed(
     (route.path === '/desktop/updates' || route.path === '/desktop/node'),
 );
 const chromeHidden = computed(() => focusMode.value || desktopToolWindow.value);
-
-// Durable archive/attempt work survives an outage. Retry both channels when
-// the platform reports connectivity again so an empty cloud view cannot stay
-// stale until the next answer or app restart.
-watch(
-  () => app.online,
-  (online, wasOnline) => {
-    if (!online || wasOnline !== false || !auth.isLoggedIn) return;
-    void progress.flushAttemptOutbox();
-    void progress.syncNow({ quiet: true });
-  },
-);
 
 /** Two practice entries, visually grouped (supplement §7). */
 const practiceItems = [
@@ -125,6 +116,7 @@ watch(
     :aria-busy="auth.transitioning || undefined"
   >
     <aside
+      v-if="!desktopToolWindow"
       class="app__sidebar"
       :class="{ 'app__sidebar--hidden': chromeHidden }"
       :aria-hidden="chromeHidden || auth.transitioning || undefined"
@@ -165,13 +157,10 @@ watch(
             <component :is="item.icon" class="app__nav-icon" aria-hidden="true" />
             <span>{{ t(item.label) }}</span>
           </RouterLink>
-          <div class="app__settings-row">
-            <FeedbackEntry compact />
-            <RouterLink to="/settings" class="app__nav-item" :class="{ 'app__nav-item--active': isActive('/settings') }">
-              <Settings class="app__nav-icon" aria-hidden="true" />
-              <span>{{ t('Einstellungen') }}</span>
-            </RouterLink>
-          </div>
+          <RouterLink to="/settings" class="app__nav-item" :class="{ 'app__nav-item--active': isActive('/settings') }">
+            <Settings class="app__nav-icon" aria-hidden="true" />
+            <span>{{ t('Einstellungen') }}</span>
+          </RouterLink>
           <RouterLink
             v-if="ports.shell.capabilities.desktop"
             to="/desktop"
@@ -182,6 +171,20 @@ watch(
             <Server class="app__nav-icon" aria-hidden="true" />
             <span>{{ t('Desktop') }}</span>
           </RouterLink>
+          <!-- An action, not a destination — but drawn as a row of the same
+               list, so the sidebar stays one column of equal entries instead
+               of a boxed icon wedged beside „Einstellungen". -->
+          <button
+            type="button"
+            class="app__nav-item app__nav-item--action"
+            :title="t('Feedback senden')"
+            aria-haspopup="dialog"
+            data-feedback-entry="software"
+            @click="feedback.openSoftware()"
+          >
+            <MessageSquareWarning class="app__nav-icon" aria-hidden="true" />
+            <span>{{ t('Feedback') }}</span>
+          </button>
         </nav>
         <div v-if="!auth.isLoggedIn" class="app__guest-card">
           <div class="app__guest-header">
@@ -197,16 +200,14 @@ watch(
             <UserCircle class="app__guest-avatar" aria-hidden="true" />
             <div class="app__guest-info">
               <div class="app__guest-title">{{ auth.username }}</div>
-              <div class="app__guest-text">
-                <template v-if="progress.attemptUploadStatus.state === 'uploading'">{{ t('Synchronisiert …') }}</template>
-                <template v-else-if="progress.attemptUploadStatus.state === 'pending'">{{ t('Upload ausstehend') }}</template>
-                <template v-else-if="progress.attemptUploadStatus.state === 'error'">{{ t('Upload fehlgeschlagen') }}</template>
-                <template v-else-if="progress.syncStatus.state === 'synced'">{{ t('✓ Synchronisiert') }}</template>
-                <template v-else-if="progress.syncStatus.state === 'syncing'">{{ t('⟳ Sync …') }}</template>
-                <template v-else-if="progress.syncStatus.state === 'offline'">{{ t('Offline') }}</template>
-                <template v-else-if="progress.syncStatus.state === 'conflict'">{{ t('⚠ Konflikt') }}</template>
-                <template v-else-if="progress.syncStatus.state === 'error'">{{ t('⚠ Synchronisierung fehlgeschlagen') }}</template>
-                <template v-else>{{ t('Cloud aktiv') }}</template>
+              <div class="app__guest-text app__sync" :data-tone="sync.tone" role="status">
+                <component
+                  :is="sync.icon"
+                  class="app__sync-icon"
+                  :class="{ 'app__sync-icon--busy': sync.busy }"
+                  aria-hidden="true"
+                />
+                <span>{{ t(sync.label) }}</span>
               </div>
             </div>
           </div>
@@ -214,6 +215,7 @@ watch(
       </aside>
 
       <nav
+        v-if="!desktopToolWindow"
         class="app__tabbar"
         :class="{ 'app__tabbar--hidden': chromeHidden }"
         :aria-hidden="chromeHidden || auth.transitioning || undefined"
@@ -235,11 +237,12 @@ watch(
     <!-- opaque strip under the transparent iOS status bar (standalone PWA);
          fades out with the tabbar on focus routes, in sync with the
          .app__main padding transition (sibling selector below). -->
-    <div class="app__scrim" aria-hidden="true" />
+    <div v-if="!desktopToolWindow" class="app__scrim" aria-hidden="true" />
 
     <main
       ref="mainEl"
       class="app__main q-crossfade"
+      :class="{ 'app__main--tool': desktopToolWindow }"
       tabindex="-1"
       :aria-hidden="auth.transitioning || undefined"
       :inert="auth.transitioning || undefined"
@@ -301,8 +304,6 @@ watch(
   min-height: 100dvh;
   display: flex;
 }
-.app__settings-row { display: flex; align-items: center; gap: 8px; }
-.app__settings-row .app__nav-item { flex: 1; min-width: 0; }
 .app__account-lock {
   position: fixed;
   inset: 0;
@@ -322,7 +323,7 @@ watch(
   text-align: center;
   background: var(--q-panel);
   border: 1px solid var(--q-border);
-  border-radius: 18px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
 }
 .app__account-lock-card p { margin: 0; font-weight: 600; }
@@ -363,7 +364,7 @@ watch(
 }
 .app__logo {
   font-weight: 800;
-  font-size: 20px;
+  font-size: var(--q-font-xl);
   letter-spacing: -0.02em;
   padding: 0 8px 18px;
 }
@@ -378,9 +379,9 @@ watch(
 .app__nav-group {
   margin: 12px 0 3px;
   padding: 0 12px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.09em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
@@ -396,7 +397,7 @@ watch(
   min-height: var(--q-control-height);
   box-sizing: border-box;
   padding: 9px 12px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   color: var(--q-mut);
   font-weight: 500;
   font-size: var(--q-font-ui);
@@ -420,6 +421,16 @@ watch(
   color: var(--q-on-accent);
   font-weight: 700;
 }
+/* The feedback row is a <button>: strip the UA chrome so it is
+ * indistinguishable from the RouterLink rows around it. */
+.app__nav-item--action {
+  width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .app__nav-icon {
   width: 18px;
   height: 18px;
@@ -430,7 +441,7 @@ watch(
   margin-top: auto;
   padding: 10px;
   background: var(--q-panel-2);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   border: 1px solid var(--q-border-soft);
   display: flex;
   flex-direction: column;
@@ -472,6 +483,29 @@ watch(
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Same tones as the Home status pill (useSyncIndicator). */
+.app__sync {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.app__sync > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app__sync-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+.app__sync[data-tone='ok'] { color: var(--q-ok-ink); }
+.app__sync[data-tone='warn'] { color: var(--q-part-ink); }
+.app__sync[data-tone='error'] { color: var(--q-err-ink); }
+.app__sync-icon--busy { animation: app-account-spin 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .app__sync-icon--busy { animation: none; }
+}
 .app__guest-btn {
   display: block;
   width: 100%;
@@ -479,9 +513,9 @@ watch(
   border: 1px solid var(--q-btn-border);
   background: var(--q-panel);
   color: var(--q-ink);
-  font: 600 12px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-small) var(--q-font-family);
   padding: 8px;
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   cursor: pointer;
   transition: color var(--q-transition-fast), background-color var(--q-transition-fast), transform var(--q-transition-fast);
 }
@@ -520,14 +554,19 @@ watch(
     bottom: 0;
     left: 0;
     right: 0;
-    height: calc(64px + env(safe-area-inset-bottom));
+    height: calc(var(--q-tabbar-height) + env(safe-area-inset-bottom));
     gap: 2px;
     padding: 6px calc(6px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
       calc(6px + env(safe-area-inset-left));
     background: var(--q-card);
     border-top: 1px solid var(--q-border);
-    z-index: 40;
+    z-index: var(--q-z-bar);
     transition: transform var(--q-transition-normal);
+    /* A long-press on a tab must not open the iOS link preview or select
+     * the label — the bar is chrome, not a list of links to inspect. */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   .app__tabbar--hidden {
     transform: translateY(100%);
@@ -548,7 +587,7 @@ watch(
      * previous inset pseudo-element was narrower than the cell and long
      * labels ("Übersicht") spilled out of the highlight. */
     padding: 5px 2px 4px;
-    border-radius: 12px;
+    border-radius: var(--q-radius-card);
     min-width: 0;
     min-height: 48px;
     overflow: hidden;
@@ -582,14 +621,15 @@ watch(
     stroke-width: 2.2px;
   }
   .app__main {
-    padding-bottom: calc(80px + env(safe-area-inset-bottom));
+    padding-bottom: calc(var(--q-tabbar-height) + 16px + env(safe-area-inset-bottom));
     /* clears the iOS status bar / notch in standalone PWA mode; the
        practice route reserves this itself via .practice__topbar instead
        (see the --hidden override below), since it has no tabbar/sidebar
        chrome to hang the padding off of. */
     padding-top: env(safe-area-inset-top);
   }
-  .app__tabbar--hidden ~ .app__main {
+  .app__tabbar--hidden ~ .app__main,
+  .app__main--tool {
     padding-bottom: 0;
     padding-top: 0;
   }
@@ -603,12 +643,31 @@ watch(
     background: var(--q-page);
     /* above the sticky route headers (z10/z30), below drawer (z80) and
        modals (z100+) */
-    z-index: 45;
+    z-index: var(--q-z-chrome);
     pointer-events: none;
     transition: opacity var(--q-transition-normal);
   }
   .app__tabbar--hidden ~ .app__scrim {
     opacity: 0;
+  }
+}
+
+/*
+ * Phones held sideways have ~360px of height. A 64px tab bar with stacked
+ * icon + label takes a fifth of it; icon and label side by side in a 48px bar
+ * keep every destination one tap away for a third of the cost.
+ */
+@media (max-width: 899px) and (max-height: 500px) and (orientation: landscape) {
+  /* The shorter --q-tabbar-height itself is set globally in styles/app.css. */
+  .app__tab {
+    flex-direction: row;
+    gap: 6px;
+    min-height: 40px;
+    padding-block: 4px;
+  }
+  .app__tab-icon {
+    width: 20px;
+    height: 20px;
   }
 }
 </style>

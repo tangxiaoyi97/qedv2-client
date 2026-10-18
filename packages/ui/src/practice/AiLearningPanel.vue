@@ -173,7 +173,7 @@ defineExpose({
 <style scoped>
 .q-learning__head--hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .q-learning__head--hidden :deep(button) { display: none; }
-.q-learning__intro { margin: 0; color: var(--q-mut); font-size: 14px; line-height: 1.65; }
+.q-learning__intro { margin: 0; color: var(--q-mut); font-size: var(--q-font-ui); line-height: 1.65; }
 
 .q-learning {
   display: flex;
@@ -191,7 +191,7 @@ defineExpose({
 .q-learning__head h3 {
   margin: 0;
   color: var(--q-ink);
-  font-size: 15px;
+  font-size: var(--q-font-md);
   font-weight: 750;
 }
 .q-learning__head :deep(.q-icon-button) {
@@ -201,7 +201,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.65;
   color: var(--q-ink-2);
   min-width: 0;
@@ -217,12 +217,12 @@ defineExpose({
 .q-learning__eyebrow {
   width: max-content;
   padding: 4px 8px;
-  border-radius: 999px;
+  border-radius: var(--q-radius-pill);
   background: var(--q-accent-bg);
   color: var(--q-accent-strong);
-  font-size: 10.5px;
-  font-weight: 750;
-  letter-spacing: 0.05em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
 }
 .q-learning__content blockquote {
@@ -231,7 +231,7 @@ defineExpose({
   border-left: 3px solid var(--q-border-2);
   background: var(--q-panel);
   color: var(--q-mut);
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
 }
 .q-learning__action {
   display: flex;
@@ -262,7 +262,7 @@ defineExpose({
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--q-err-border);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-err-bg);
   color: var(--q-err-ink);
 }
@@ -270,17 +270,17 @@ defineExpose({
   margin: 0;
 }
 .q-learning__billing-note {
-  font-size: 12px;
+  font-size: var(--q-font-small);
 }
 .q-learning__storage {
   margin: 0;
   color: var(--q-warn-ink, var(--q-mut));
-  font-size: 12px;
+  font-size: var(--q-font-small);
   line-height: 1.45;
 }
 .q-learning__foot {
   color: var(--q-faint);
-  font-size: 11px;
+  font-size: var(--q-font-xs);
 }
 .q-learning__foot summary {
   cursor: pointer;
@@ -288,7 +288,7 @@ defineExpose({
 .q-learning__foot span {
   display: block;
   margin-top: 4px;
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
 }
 @media (max-width: 360px) {
   .q-learning__actions :deep(.q-btn) {

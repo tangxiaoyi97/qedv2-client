@@ -210,7 +210,7 @@ function onOptionClick(i: number, event: MouseEvent): void {
   margin-bottom: 10px;
 }
 .q-choice__hint {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   color: var(--q-mut-2);
   transition: color 0.15s ease;
@@ -236,7 +236,7 @@ function onOptionClick(i: number, event: MouseEvent): void {
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--q-border-2);
-  border-radius: 11px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   color: var(--q-ink);
   font: inherit;
@@ -246,7 +246,7 @@ function onOptionClick(i: number, event: MouseEvent): void {
   width: 100%;
   /* Short while answering — this is tap feedback. The review states below
    * override it with a slower ease, since that IS the result being shown. */
-  transition: border-color 0.1s ease, background 0.1s ease;
+  transition: border-color 0.1s ease, background 0.1s ease, transform 0.1s ease;
 }
 .q-choice__select {
   position: absolute;
@@ -256,6 +256,12 @@ function onOptionClick(i: number, event: MouseEvent): void {
   border-radius: inherit;
   background: transparent;
   cursor: inherit;
+}
+/* Tap feedback while answering: the option itself answers the press, since
+ * a touch screen never shows the hover that a mouse user gets. */
+.q-choice__opt:has(> .q-choice__select:active:not([aria-disabled='true'])) {
+  background: var(--q-panel);
+  transform: scale(0.995);
 }
 .q-choice__select:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -295,12 +301,12 @@ function onOptionClick(i: number, event: MouseEvent): void {
 .q-choice__box {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   border: 1.5px solid var(--q-check-border);
   background: var(--q-card);
   display: inline-grid;
   place-items: center;
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   font-weight: 700;
   flex: none;
   box-sizing: border-box;
@@ -348,7 +354,7 @@ function onOptionClick(i: number, event: MouseEvent): void {
 }
 
 .q-choice__letter {
-  font: 600 11px ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-check-border);
   flex: none;
 }

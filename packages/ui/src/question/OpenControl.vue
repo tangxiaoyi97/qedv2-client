@@ -123,7 +123,7 @@ watch(() => props.modelValue.text, () => { void nextTick(resize); });
   padding: 11px 14px;
   overflow-x: auto;
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-panel);
 }
 

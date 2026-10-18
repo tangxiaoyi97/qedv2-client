@@ -240,7 +240,7 @@ const emit = defineEmits<{
   bottom: var(--q-keyboard-inset, 0px);
   left: var(--practice-rail-width, 0px);
   right: 0;
-  z-index: 40;
+  z-index: var(--q-z-bar);
   background: var(--q-card);
   border-top: 1px solid var(--q-border);
   border-left: 1px solid var(--q-border);
@@ -260,7 +260,7 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   max-height: calc(
-    100dvh - var(--practice-topbar-height, calc(56px + env(safe-area-inset-top)))
+    100dvh - var(--practice-topbar-height, calc(var(--q-topbar-height) + env(safe-area-inset-top)))
   );
 }
 
@@ -312,21 +312,33 @@ const emit = defineEmits<{
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 44px;
+  min-height: var(--q-touch-target);
   min-width: 0;
   flex: 1;
 }
 
-/* the capsule keeps its state tint, but takes the Lösung toggle's outlined
- * geometry so the bar reads as ONE control family */
+/*
+ * One control family. The grading capsule keeps its state tint, the learning
+ * entry its accent, but all three secondary controls share height, radius,
+ * type and border — so the bar reads as one row of controls next to the
+ * primary action instead of three differently-sized widgets.
+ */
+.practice-bar__grading :deep(.q-grading-capsule),
+.practice-bar__solution-toggle,
+.practice-bar__learning-toggle {
+  box-sizing: border-box;
+  min-height: var(--q-control-height);
+  border-radius: var(--q-radius-control);
+  font-family: inherit;
+  font-size: var(--q-font-meta);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: none;
+}
 .practice-bar__grading :deep(.q-grading-capsule) {
-  min-height: 44px;
   padding: 0 14px;
-  border-radius: 9px;
   gap: 7px;
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .practice-bar__right {
@@ -340,6 +352,9 @@ const emit = defineEmits<{
   justify-content: flex-end;
 }
 .practice-bar__right > :deep(.q-btn) { max-width: 100%; }
+/* "Prüfen" → "Bewertung übernehmen" → "Weiter": a floor keeps the action
+ * from jumping sideways under the cursor as the phase changes. */
+.practice-bar__primary { min-width: 7.5rem; }
 /* A brief save must not flash the normal disabled-state opacity on/off. */
 .practice-bar .practice-bar__primary--busy:disabled { opacity: 1; cursor: wait; }
 
@@ -355,7 +370,7 @@ const emit = defineEmits<{
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: var(--q-font-meta);
   color: var(--q-mut-2);
 }
 
@@ -367,7 +382,7 @@ const emit = defineEmits<{
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--q-ink);
-  font-size: 15px;
+  font-size: var(--q-font-md);
 }
 
 .practice-bar__visually-hidden {
@@ -384,7 +399,7 @@ const emit = defineEmits<{
 }
 
 .practice-bar__preview-hint {
-  font: 500 11px ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-hint);
 }
 
@@ -396,9 +411,9 @@ const emit = defineEmits<{
   margin-top: 14px;
 }
 .practice-bar__mastery-label {
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
@@ -411,16 +426,10 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
   padding: 0 var(--q-control-chevron-inset);
-  border-radius: 9px;
   border: 1px solid var(--q-border-2);
   background: var(--q-card);
   color: var(--q-mut);
-  font-size: 11.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   cursor: pointer;
 }
 .practice-bar__learning-toggle {
@@ -428,16 +437,22 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-width: 44px;
-  min-height: 44px;
+  min-width: var(--q-touch-target);
   padding: 0 12px;
   border: 1px solid var(--q-border-2);
-  border-radius: 9px;
   background: var(--q-card);
   color: var(--q-mut);
-  font-size: 11.5px;
-  font-weight: 700;
   cursor: pointer;
+  transition: background-color var(--q-transition-fast), border-color var(--q-transition-fast),
+    color var(--q-transition-fast), transform var(--q-transition-fast);
+}
+.practice-bar__learning-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.practice-bar__learning-toggle:active:not(:disabled),
+.practice-bar__solution-toggle:active {
+  transform: scale(0.97);
 }
 .practice-bar__learning-toggle--on {
   border-color: var(--q-accent);
@@ -451,7 +466,8 @@ const emit = defineEmits<{
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .practice-bar__solution-toggle:hover {
+  .practice-bar__solution-toggle:hover,
+  .practice-bar__learning-toggle:not(:disabled):not(.practice-bar__learning-toggle--on):hover {
     color: var(--q-ink);
     border-color: var(--q-border-3);
   }
@@ -497,22 +513,29 @@ const emit = defineEmits<{
   }
 }
 .practice-bar--inline { box-shadow: none; }
-.practice-bar--review { border-radius: 16px 16px 0 0; transition: border-radius 240ms ease, box-shadow 240ms ease; }
+.practice-bar--review { border-radius: var(--q-radius-dialog) var(--q-radius-dialog) 0 0; transition: border-radius 240ms ease, box-shadow 240ms ease; }
 .practice-bar--review.practice-bar--full { border-radius: 0; }
 @media (prefers-reduced-motion: reduce) {
   .practice-bar--review { transition: none; }
 }
-:is(.practice-bar--inline, .practice-bar--review) .practice-bar__learning-toggle { border-color: transparent; background: transparent; color: var(--q-accent-strong); font-size: 13px; }
+:is(.practice-bar--inline, .practice-bar--review) .practice-bar__learning-toggle:not(.practice-bar__learning-toggle--on) { color: var(--q-accent-strong); }
+/*
+ * Phones, page-based review. One line, thumb-first: the grading capsule (dot
+ * only) and the learning entry keep their size at the left, and the primary
+ * action takes every remaining pixel — the widest, most reachable target in
+ * the bar. Previously the row wrapped, and below 380px the grading override
+ * disappeared entirely while the lone primary button slid to the left edge.
+ */
 @media (max-width: 640px) {
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__row { flex-wrap: wrap; gap: 8px; }
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__right { gap: 8px; flex-wrap: wrap; }
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__left { min-height: 0; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__row { flex-wrap: nowrap; gap: 8px; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__left { flex: 0 0 auto; min-height: 0; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__left:empty { display: none; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__right { flex: 1 1 auto; gap: 8px; flex-wrap: nowrap; margin-left: 0; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__primary { flex: 1 1 auto; min-width: 0; }
   :is(.practice-bar--inline, .practice-bar--review) .practice-bar__preview { display: none; }
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__grading :deep(.q-grading-capsule) { padding: 0 8px; }
+  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__grading :deep(.q-grading-capsule) { padding: 0 10px; }
 }
 @media (max-width: 380px) {
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__left { display: none; }
-  :is(.practice-bar--inline, .practice-bar--review) .practice-bar__right { width: 100%; justify-content: space-between; }
   :is(.practice-bar--inline, .practice-bar--review) .practice-bar__learning-toggle span { position: static; width: auto; height: auto; clip-path: none; }
 }
 
@@ -521,6 +544,6 @@ const emit = defineEmits<{
   margin: 0;
   padding: 10px 0;
   color: var(--q-faint);
-  font-size: 13px;
+  font-size: var(--q-font-meta);
 }
 </style>

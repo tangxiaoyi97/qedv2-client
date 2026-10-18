@@ -90,6 +90,15 @@ describe('advanceFsrsForGrading (supplement §1.3 mapping)', () => {
       expect(s.lastReview).toBe(NOW.toISOString());
     }
   });
+
+  it('keeps every grading synchronizable when imported counters are saturated', () => {
+    const saturated = { ...reviewed, reps: 2_147_483_647, lapses: 2_147_483_647 };
+    for (const grading of ['good', 'careless', 'meh', 'baffled'] as const) {
+      const next = advanceFsrsForGrading(saturated, grading, NOW);
+      expect(next.reps).toBe(2_147_483_647);
+      expect(next.lapses).toBe(2_147_483_647);
+    }
+  });
 });
 
 describe('entry helpers', () => {

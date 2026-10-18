@@ -673,7 +673,7 @@ function confirmLegacyRedo(): void {
   max-width: 100%;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 16px;
   margin-bottom: 18px;
 }
@@ -700,7 +700,7 @@ function confirmLegacyRedo(): void {
   background: transparent;
   color: var(--q-accent-strong);
   cursor: pointer;
-  font: 700 10.5px 'Public Sans', system-ui, sans-serif;
+  font: 700 var(--q-font-2xs) var(--q-font-family);
 }
 .hist__filter-clear[aria-hidden='true'] { visibility: hidden; }
 .hist__filter-bar {
@@ -710,8 +710,10 @@ function confirmLegacyRedo(): void {
   min-height: 44px;
   margin-top: 8px;
 }
-.hist__filter-clear:hover {
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .hist__filter-clear:hover {
+    color: var(--q-ink);
+  }
 }
 .hist__filter-clear:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -764,7 +766,7 @@ function confirmLegacyRedo(): void {
   padding: 11px 13px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   cursor: pointer;
   font: inherit;
   color: var(--q-ink);
@@ -806,13 +808,13 @@ function confirmLegacyRedo(): void {
   display: inline-flex;
   flex: none;
   color: var(--q-mut-2);
-  font-size: 9.5px;
+  font-size: var(--q-font-micro);
   font-weight: 650;
   line-height: 1.25;
   white-space: nowrap;
 }
 .hist__row-points {
-  font: 700 12px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-small) var(--q-font-mono);
   color: var(--q-mut);
   flex: none;
   font-variant-numeric: tabular-nums;
@@ -833,7 +835,7 @@ function confirmLegacyRedo(): void {
   color: var(--q-mut-2);
   font-size: var(--q-font-ui);
   background: var(--q-panel);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -871,7 +873,7 @@ function confirmLegacyRedo(): void {
   box-sizing: border-box;
   padding: 22px;
   border: 1px solid var(--q-border);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   background: var(--q-card);
   box-shadow: var(--q-shadow-modal);
 }
@@ -883,7 +885,7 @@ function confirmLegacyRedo(): void {
 .hist-legacy__title {
   margin: 0 44px 6px 0;
   color: var(--q-ink);
-  font-size: 17px;
+  font-size: var(--q-font-lg);
   line-height: 1.35;
 }
 .hist-legacy__text {

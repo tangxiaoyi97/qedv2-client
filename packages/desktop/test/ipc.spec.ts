@@ -52,6 +52,9 @@ function options(): DesktopIpcOptions {
     getState: vi.fn(() => ({ busy: false, targets: [] })),
     applyUpdates: vi.fn(async () => undefined),
     relaunchToApply: vi.fn(async () => undefined),
+    pauseDownload: vi.fn(async () => undefined),
+    resumeDownload: vi.fn(async () => undefined),
+    cancelDownload: vi.fn(async () => undefined),
   });
   const network = Object.assign(new EventEmitter(), { isOnline: vi.fn(() => true) });
   const storage = {
@@ -74,6 +77,8 @@ function options(): DesktopIpcOptions {
     core,
     updates,
     network,
+    desktopStorage: { getOverview: vi.fn(async () => ({ categories: [] })), cleanup: vi.fn(async () => ({ results: [] })) },
+    desktopSupport: { platform: 'darwin', arch: 'arm64', localCoreSupported: true },
     openDesktopWindow: vi.fn(),
     applyThemePreference: vi.fn(),
     applyAccentPreference: vi.fn(),
@@ -113,6 +118,34 @@ describe('Desktop IPC native-shell boundary', () => {
     electronMocks.handlers.clear();
     electronMocks.windows.length = 0;
     vi.clearAllMocks();
+  });
+
+  it('only permits bounded cleanup categories, never paths or learning data', async () => {
+    const desktop = options();
+    installDesktopIpc(desktop);
+    for (const invalid of [undefined, [], ['database'], ['../data'], ['auth'], ['cache', 'logs', 'downloads', 'cache'], [{ path: '/tmp' }]]) {
+      await expect(invoke(IPC.desktopStorageCleanup, invalid)).rejects.toThrow('Invalid desktop cleanup targets');
+    }
+    expect(desktop.desktopStorage.cleanup).not.toHaveBeenCalled();
+    await invoke(IPC.desktopStorageCleanup, ['logs', 'cache', 'logs']);
+    expect(desktop.desktopStorage.cleanup).toHaveBeenCalledExactlyOnceWith(['logs', 'cache']);
+    await expect(invoke(IPC.desktopSupport)).resolves.toEqual(desktop.desktopSupport);
+    await invoke(IPC.desktopStorageOverview);
+    expect(desktop.desktopStorage.getOverview).toHaveBeenCalledTimes(1);
+    const handler = electronMocks.handlers.get(IPC.desktopStorageCleanup)!;
+    expect(() => handler({ senderFrame: { parent: null, url: 'https://untrusted.example' } }, ['cache'])).toThrow();
+    expect(desktop.desktopStorage.cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards download controls through the trusted sender boundary', async () => {
+    const desktop = options();
+    installDesktopIpc(desktop);
+    await invoke(IPC.updatePause);
+    await invoke(IPC.updateResume);
+    await invoke(IPC.updateCancel);
+    expect(desktop.updates.pauseDownload).toHaveBeenCalledTimes(1);
+    expect(desktop.updates.resumeDownload).toHaveBeenCalledTimes(1);
+    expect(desktop.updates.cancelDownload).toHaveBeenCalledTimes(1);
   });
 
   it('applies native language only after storage commits and still broadcasts if menus fail', async () => {
@@ -272,6 +305,24 @@ describe('Desktop IPC native-shell boundary', () => {
     );
     expect(desktop.openDesktopWindow).toHaveBeenCalledTimes(3);
     installed.dispose();
+  });
+
+  it('forwards native wake independently of link changes and removes the listener on shutdown', () => {
+    const desktop = options();
+    const live = browserWindow(101);
+    const closed = browserWindow(102, true);
+    electronMocks.windows = [live, closed];
+    const installed = installDesktopIpc(desktop);
+
+    desktop.network.emit('resume', true);
+    expect(live.webContents.send).toHaveBeenCalledExactlyOnceWith(IPC.networkResume, true);
+    expect(closed.webContents.send).not.toHaveBeenCalled();
+    desktop.network.emit('change', false);
+    expect(live.webContents.send).toHaveBeenLastCalledWith(IPC.networkChange, false);
+    installed.dispose();
+    desktop.network.emit('resume', true);
+    expect(live.webContents.send).toHaveBeenCalledTimes(2);
+    expect(desktop.network.listenerCount('resume')).toBe(0);
   });
 
   it('rejects non-top-level and foreign-origin senders before any action', async () => {

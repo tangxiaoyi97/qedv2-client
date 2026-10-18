@@ -92,13 +92,13 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   background: none;
 }
 .q-solution--plain .q-solution__note-label { font-family: inherit; text-transform: none; letter-spacing: 0; }
-.q-solution--plain .q-solution__note-text { font-family: inherit; font-size: 12px; }
+.q-solution--plain .q-solution__note-text { font-family: inherit; font-size: var(--q-font-small); }
 
 .q-solution__body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.7;
   color: var(--q-ink-2);
 }
@@ -118,11 +118,11 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   border-left: 2px solid var(--q-border-2);
 }
 .q-solution__alternative-label {
-  font-size: 10.5px;
-  font-weight: 700;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
   color: var(--q-faint);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--q-eyebrow-tracking);
 }
 .q-solution__divider {
   display: flex;
@@ -137,9 +137,9 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   background: var(--q-border-2);
 }
 .q-solution__divider-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
@@ -161,16 +161,16 @@ function imageFigures(entry: SolutionEntry): ImageFigure[] {
   padding: 10px 13px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
 }
 .q-solution__note-label {
-  font: 700 10px ui-monospace, Menlo, monospace;
-  letter-spacing: 0.07em;
+  font: var(--q-eyebrow-weight) var(--q-eyebrow-size) var(--q-font-mono);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
 .q-solution__note-text {
-  font: 500 11.5px/1.6 ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-xs)/1.6 var(--q-font-mono);
   color: var(--q-mut);
   overflow-wrap: break-word;
 }

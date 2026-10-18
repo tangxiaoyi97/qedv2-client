@@ -39,7 +39,7 @@ withDefaults(
   gap: 14px;
   padding: 48px 20px;
   border: 1px solid var(--q-border);
-  border-radius: 11px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
 }
 .q-loadpanel--bare {
@@ -54,7 +54,7 @@ withDefaults(
   border-radius: 3px;
 }
 .q-loadpanel__label {
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   color: var(--q-mut);
 }
 </style>

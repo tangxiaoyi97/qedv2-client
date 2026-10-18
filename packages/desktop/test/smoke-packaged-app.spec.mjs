@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -56,6 +56,51 @@ describe('packaged application smoke helpers', () => {
     await executableFixture(ambiguous, 'one/win-unpacked/QED2.exe')
     await executableFixture(ambiguous, 'two/win-unpacked/QED2.exe')
     await expect(discoverPackagedExecutable(ambiguous, 'win32')).rejects.toThrow(/More than one/u)
+  })
+
+  it.each([
+    ['darwin', 'mac-arm64/QED2 Preview.app/Contents/MacOS/QED2 Preview'],
+    ['win32', 'win-unpacked/QED2 Preview.exe'],
+    ['linux', 'linux-unpacked/qed2-preview'],
+  ])('discovers the exact preview executable on %s', async (platform, relativePath) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'qed2-preview-discovery-'))
+    try {
+      const executable = await executableFixture(root, relativePath)
+      await expect(discoverPackagedExecutable(root, platform)).resolves.toBe(executable)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['darwin', 'mac-arm64/QED2.app/Contents/MacOS/QED2', 'mac-arm64/QED2 Preview.app/Contents/MacOS/QED2 Preview'],
+    ['win32', 'win-unpacked/QED2.exe', 'win-unpacked/QED2 Preview.exe'],
+    ['linux', 'linux-unpacked/qed2', 'linux-unpacked/qed2-preview'],
+  ])('rejects mixed stable and preview executables on %s', async (platform, stable, preview) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'qed2-preview-discovery-'))
+    try {
+      await executableFixture(root, stable)
+      await executableFixture(root, preview)
+      await expect(discoverPackagedExecutable(root, platform)).rejects.toThrow(/More than one/u)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['darwin', 'mac-arm64/QED2Preview.app/Contents/MacOS/QED2 Preview'],
+    ['darwin', 'mac-arm64/QED2 Preview.app/Contents/MacOS/QED2'],
+    ['darwin', 'mac-arm64/QED2.app/Contents/MacOS/QED2 Preview'],
+    ['win32', 'win-unpacked/QED2 Preview Other.exe'],
+    ['linux', 'linux-unpacked/qed2-preview-other'],
+  ])('rejects names outside the exact application mapping: %s %s', async (platform, relativePath) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'qed2-preview-discovery-'))
+    try {
+      await executableFixture(root, relativePath)
+      await expect(discoverPackagedExecutable(root, platform)).rejects.toThrow(/No unpacked/u)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('fails packaged smoke when a generated theme icon was omitted', async () => {

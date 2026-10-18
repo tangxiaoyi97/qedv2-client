@@ -18,4 +18,13 @@ describe('expression preview matches the notation used to grade', () => {
     expect(expressionPreviewLatex('x(x+1)', ['x'])).toBe(math.parse('x*(x+1)').toTex({ parenthesis: 'auto' }));
     expect(expressionPreviewLatex('x_n(x_n+1)', ['x_n'])).toBe(math.parse('xn*(xn+1)').toTex({ parenthesis: 'auto' }));
   });
+
+  it('does not render unbounded pasted input or deeply nested notation', () => {
+    expect(expressionPreviewLatex('x+'.repeat(3_000) + 'x')).toBeUndefined();
+    expect(expressionPreviewLatex('('.repeat(100) + 'x' + ')'.repeat(100))).toBeUndefined();
+  });
+
+  it('treats variable names as literal strings during normalization', () => {
+    expect(() => expressionPreviewLatex('x', ['['])).not.toThrow();
+  });
 });

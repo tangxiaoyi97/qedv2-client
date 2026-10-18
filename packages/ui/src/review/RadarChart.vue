@@ -164,12 +164,12 @@ const labels = computed(() =>
   fill: var(--q-accent-strong);
 }
 .q-radar__label {
-  font-family: 'Public Sans', system-ui, sans-serif;
+  font-family: var(--q-font-family);
   font-weight: 700;
   fill: var(--q-mut);
 }
 .q-radar__hint {
-  font-family: 'Public Sans', system-ui, sans-serif;
+  font-family: var(--q-font-family);
   font-weight: 600;
   fill: var(--q-faint);
 }

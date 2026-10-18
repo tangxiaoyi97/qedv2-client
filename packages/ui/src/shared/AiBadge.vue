@@ -46,11 +46,11 @@ withDefaults(
   align-items: center;
   gap: 3px;
   flex: none;
-  border-radius: 999px;
+  border-radius: var(--q-radius-pill);
   background: var(--q-chip-bg);
   border: 1px solid var(--q-chip-border);
   color: var(--q-chip-ink);
-  font-family: 'Public Sans', system-ui, sans-serif;
+  font-family: var(--q-font-family);
   font-weight: 800;
   /* Two letters only — the wide tracking a longer word wants makes "KI" read
    * as two separate marks. */
@@ -63,11 +63,11 @@ withDefaults(
 
 .q-aibadge--sm {
   padding: 3px 7px 3px 6px;
-  font-size: 9.5px;
+  font-size: var(--q-font-micro);
 }
 .q-aibadge--md {
   padding: 4px 9px 4px 7px;
-  font-size: 10.5px;
+  font-size: var(--q-font-2xs);
 }
 
 .q-aibadge__spark {

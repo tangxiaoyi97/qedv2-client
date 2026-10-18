@@ -10,6 +10,25 @@ body {
 html {
   /* Filtering and route changes may add a scrollbar without moving the page. */
   scrollbar-gutter: stable;
+  /*
+   * Focus and anchor scrolling stop short of fixed chrome. Without this a
+   * field focused near the bottom of a phone screen lands underneath the tab
+   * bar (or the practice action bar, which publishes its live height here),
+   * and the iOS keyboard then covers what little was left of it.
+   */
+  scroll-padding-top: var(--q-scroll-pad-top, 0px);
+  scroll-padding-bottom: calc(var(--q-scroll-pad-bottom, 0px) + var(--q-keyboard-inset, 0px));
+}
+@media (max-width: 899px) {
+  :root {
+    --q-scroll-pad-bottom: calc(var(--q-tabbar-height) + env(safe-area-inset-bottom) + 12px);
+  }
+}
+/* Phones held sideways: a compact tab bar (see App.vue). */
+@media (max-width: 899px) and (max-height: 500px) and (orientation: landscape) {
+  :root {
+    --q-tabbar-height: 48px;
+  }
 }
 #app {
   min-height: 100vh;
@@ -19,9 +38,9 @@ html {
 body {
   background: var(--q-page);
   color: var(--q-ink);
-  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  font-family: var(--q-font-family);
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.55;
   /* no single wide element may pan the whole app sideways (mobile PWA) */
   overflow-x: hidden;
@@ -78,7 +97,7 @@ a {
   padding-inline: 8px;
   background: var(--q-err);
   color: var(--q-on-err);
-  font: 800 8px/4px 'Public Sans', system-ui, sans-serif;
+  font: 800 8px/4px var(--q-font-family);
   letter-spacing: 0.35em;
   text-align: right;
   pointer-events: none;

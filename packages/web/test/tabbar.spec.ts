@@ -94,6 +94,21 @@ describe('mobile tab bar', () => {
     }
   });
 
+  it('draws sidebar feedback as an ordinary row of the navigation list', async () => {
+    const { host, unmount } = await mountShell('/');
+    const nav = host.querySelector('.app__sidebar .app__nav')!;
+    const entry = nav.querySelector<HTMLButtonElement>('[data-feedback-entry="software"]')!;
+    // Same row class and direct parent as the links around it — no boxed
+    // icon squeezed beside „Einstellungen" any more.
+    expect(entry.classList.contains('app__nav-item')).toBe(true);
+    expect(entry.parentElement).toBe(nav);
+    expect(entry.textContent?.trim()).toBe('Feedback');
+    expect(entry.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(nav.querySelector('.feedback-entry, .app__settings-row')).toBeNull();
+    unmount();
+    vi.unstubAllGlobals();
+  });
+
   it('tints the tab itself so a long label cannot spill out of the highlight', () => {
     // The old highlight was an `inset: 6px 8px` pseudo-element, i.e. narrower
     // than its own cell — "Übersicht" rendered past the tinted area.

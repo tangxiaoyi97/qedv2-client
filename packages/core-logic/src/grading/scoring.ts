@@ -5,7 +5,17 @@
  * behaves as allOrNothing with `points ?? 1`.
  */
 import type { Scoring } from '../model/question.js';
-import type { Verdict } from './types.js';
+import type { IndeterminateResult, Verdict } from './types.js';
+
+/** Correct answer items cannot establish arbitrary prose rubric criteria. */
+export function rubricAssessmentRequired(scoring: Scoring | undefined): IndeterminateResult | undefined {
+  if (scoring?.mode !== 'rubric') return undefined;
+  return {
+    verdict: 'indeterminate',
+    reason: 'rubric-requires-self-assessment',
+    maxPoints: scoring.criteria.reduce((sum, criterion) => sum + criterion.points, 0),
+  };
+}
 
 export interface ScoringContext {
   /** Correctly answered items (blanks / pairs / correctly-selected options). */

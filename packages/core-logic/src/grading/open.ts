@@ -6,7 +6,7 @@
  *   - otherwise: overall full / partial (half, rounded to 2 dp) / none.
  */
 import type { OpenAnswer, Scoring } from '../model/question.js';
-import type { BreakdownItem, GradeResult, OpenSubmission } from './types.js';
+import type { BreakdownItem, GradeResult, OpenSubmission, SelfAssessment } from './types.js';
 import { applyScoring, resolveVerdict } from './scoring.js';
 
 const EPS = 1e-9;
@@ -36,11 +36,20 @@ export function gradeOpen(
   points: number | undefined,
 ): GradeResult {
   void answer; // rubric RichText + grader flag are presentation-only in v1
-  const manualPoints = submission.selfAssessment.awardedPoints;
+  return gradeSelfAssessment(scoring, points, submission.selfAssessment);
+}
+
+/** Apply an explicit self-assessment while retaining the original answer kind. */
+export function gradeSelfAssessment(
+  scoring: Scoring | undefined,
+  points: number | undefined,
+  selfAssessment: SelfAssessment,
+): GradeResult {
+  const manualPoints = selfAssessment.awardedPoints;
   // A criterion selection is authoritative. UI drafts can also carry a
   // cached point total from an earlier selection; it must neither override
   // the checked criteria nor discard their breakdown when grading.
-  const hasCriteria = scoring?.mode === 'rubric' && submission.selfAssessment.criteriaMet !== undefined;
+  const hasCriteria = scoring?.mode === 'rubric' && selfAssessment.criteriaMet !== undefined;
   if (!hasCriteria && typeof manualPoints === 'number' && Number.isFinite(manualPoints)) {
     const maxPoints = maxPointsFor(scoring, points);
     const awardedPoints = roundPoints(Math.min(Math.max(manualPoints, 0), maxPoints));
@@ -50,7 +59,7 @@ export function gradeOpen(
   }
 
   if (scoring?.mode === 'rubric') {
-    const met = submission.selfAssessment.criteriaMet ?? [];
+    const met = selfAssessment.criteriaMet ?? [];
     // Missing array entries (or a missing array) read as "not met".
     const flags = scoring.criteria.map((_, i) => met[i] === true);
     const allMet = flags.every(Boolean);
@@ -82,7 +91,7 @@ export function gradeOpen(
     fallbackPoints: points,
   });
 
-  const overall = submission.selfAssessment.overall ?? 'none';
+  const overall = selfAssessment.overall ?? 'none';
   const awardedPoints =
     overall === 'full'
       ? maxPoints

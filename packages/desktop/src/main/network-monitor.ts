@@ -6,7 +6,18 @@ import { net, powerMonitor } from 'electron';
 export class NetworkMonitor extends EventEmitter {
   private online = true;
   private timer: NodeJS.Timeout | undefined;
-  private readonly onResume = () => this.sample();
+  private resumeTimer: NodeJS.Timeout | undefined;
+  private readonly onResume = () => {
+    // Interfaces/proxies may change while asleep without changing isOnline().
+    // Give the OS a short reconnect window and coalesce repeated wake signals.
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = setTimeout(() => {
+      this.resumeTimer = undefined;
+      this.sample();
+      this.emit('resume', this.online);
+    }, 2_000);
+    this.resumeTimer.unref();
+  };
 
   start(): void {
     if (this.timer) return;
@@ -23,6 +34,8 @@ export class NetworkMonitor extends EventEmitter {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = undefined;
     powerMonitor.off('resume', this.onResume);
   }
 

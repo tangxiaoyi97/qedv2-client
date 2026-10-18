@@ -27,7 +27,7 @@ const open = ref(props.defaultOpen ?? false);
 <style scoped>
 .q-collapse {
   border: 1px solid var(--q-border-2);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   overflow: hidden;
 }
 .q-collapse__head {
@@ -45,10 +45,10 @@ const open = ref(props.defaultOpen ?? false);
 }
 .q-collapse__title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
 }
 .q-collapse__sub {
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   color: var(--q-mut-2);
 }
 .q-collapse__chev {

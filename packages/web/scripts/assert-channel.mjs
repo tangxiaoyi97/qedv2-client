@@ -17,6 +17,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveVersion } from './commit.mjs';
+import { resolveEndpoints } from './channel.mjs';
 
 const channel = process.argv[2] === 'preview' ? 'preview' : 'stable';
 const dist = join(process.cwd(), 'dist');
@@ -33,8 +34,7 @@ const REQUIRED_STABLE_TOKENS = [
   'qedsync.barcarolle.studio',
 ];
 const REQUIRED_PREVIEW_TOKENS = [
-  'qedcore-pv.barcarolle.studio',
-  'qedsync-pv.barcarolle.studio',
+  ...(channel === 'preview' ? Object.values(resolveEndpoints('preview')) : []),
   'QED2-CHANNEL:preview',
 ];
 
@@ -55,7 +55,7 @@ const found = new Map();
 for (const file of files) {
   if (/\.(png|jpg|jpeg|ico|woff2?)$/i.test(file)) continue;
   const text = readFileSync(file, 'utf8');
-  for (const token of PREVIEW_TOKENS) {
+  for (const token of [...PREVIEW_TOKENS, ...REQUIRED_PREVIEW_TOKENS]) {
     if (text.includes(token)) found.set(token, file);
   }
 }

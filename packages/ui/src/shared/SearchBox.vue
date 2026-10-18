@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 9px;
   border: 1px solid var(--q-border-3);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   padding: 0 12px;
   min-height: var(--q-control-height);
@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   border: none;
   background: none;
-  font: 400 16px 'Public Sans', system-ui, sans-serif;
+  font: 400 var(--q-font-input) var(--q-font-family);
   color: var(--q-ink);
   outline: none;
 }

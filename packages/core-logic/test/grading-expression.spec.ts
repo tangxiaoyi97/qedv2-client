@@ -111,6 +111,12 @@ describe('gradeExpression — algebraic equivalence', () => {
     expect(grade('0', ['x'], 'sin(20*pi*x)').verdict).toBe('incorrect');
   });
 
+  it('does not alias distinct variables when the variable count exceeds the sample count', () => {
+    const vars = Array.from({ length: 21 }, (_, index) => `x${index}`);
+    expect(grade('x0', vars, 'x20').verdict).toBe('incorrect');
+    expect(grade('x0+x20', vars, 'x20+x0').verdict).toBe('correct');
+  });
+
   it('(x-2)(x+2) ≡ x^2-4', () => {
     expect(grade('(x-2)(x+2)', ['x'], 'x^2-4').verdict).toBe('correct');
   });
@@ -151,6 +157,40 @@ describe('gradeExpression — left-hand-side stripping', () => {
 });
 
 describe('gradeExpression — degradation paths', () => {
+  it.each([
+    'evaluate("x", {x: 1})',
+    'random()',
+    'sum(ones(10))',
+    'max(range(1, 10))',
+    'combinations(1000000000, 500000000)',
+    'permutations(1000000000, 500000000)',
+    '[1; 2][1]',
+    '2 cm',
+  ])('falls back to self-assessment for non-scalar or executable input: %s', (expr) => {
+    expect(grade('1', [], expr)).toMatchObject({ verdict: 'indeterminate', reason: 'cas-unreliable' });
+  });
+
+  it.each([
+    'x+'.repeat(3_000) + 'x',
+    '('.repeat(100) + 'x' + ')'.repeat(100),
+    'x^'.repeat(100) + 'x',
+  ])('bounds pasted expression complexity without throwing', (expr) => {
+    expect(grade('x', ['x'], expr)).toMatchObject({ verdict: 'indeterminate', reason: 'cas-unreliable' });
+    expect(grade(expr, ['x'], 'x')).toMatchObject({ verdict: 'indeterminate', reason: 'cas-unreliable' });
+  });
+
+  it('continues to grade scalar functions and constants', () => {
+    expect(grade('sqrt(x)', ['x'], 'nthRoot(x, 2)').verdict).toBe('correct');
+    expect(grade('1', [], 'sin(pi/2)').verdict).toBe('correct');
+    expect(grade('120', [], '5!').verdict).toBe('correct');
+    expect(grade('x', ['x'], 'max(x,x)').verdict).toBe('correct');
+    expect(grade('6', [], 'sum(1,2,3)').verdict).toBe('correct');
+    expect(grade('24', [], 'prod(2,3,4)').verdict).toBe('correct');
+    expect(grade('2*pi', [], 'tau').verdict).toBe('correct');
+    expect(grade('2', [], 're(2)').verdict).toBe('correct');
+    expect(grade('2', [], 'im(2i)').verdict).toBe('correct');
+  });
+
   it('unparsable canonical → indeterminate cas-parse-error', () => {
     const r = grade('\\unknowncmd{x}', ['x'], 'x');
     expect(r.verdict).toBe('indeterminate');

@@ -812,7 +812,7 @@ async function clearCache(): Promise<void> {
   display: block;
   margin-top: var(--q-space-1);
   color: var(--q-faint);
-  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 var(--q-font-mono);
   text-align: right;
 }
 

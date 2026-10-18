@@ -6,7 +6,7 @@ const { t, formatNumber } = useI18n();
  * AI help owns a separate dialog and never replaces the scoring controls. */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router';
-import { Cloud, HardDrive, MessageSquareWarning, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
+import { Cloud, CloudOff, HardDrive, ListOrdered, MessageSquareWarning, PanelLeftClose, PanelLeftOpen } from 'lucide-vue-next';
 import {
   type AiAssessResult,
   type AiExplainResult,
@@ -135,6 +135,44 @@ function measureTopbar(): void {
   const el = topbarEl.value;
   if (el) topbarHeight.value = Math.ceil(el.getBoundingClientRect().height);
 }
+/**
+ * The fixed bottom stack (drawer handle + action row, and the drawer itself
+ * while open) changes height with the phase, the detent and the keyboard.
+ * Notices float above it and focus scrolling keeps fields clear of it, so
+ * both need its real height rather than a constant.
+ */
+const barHeight = ref(0);
+let barObserver: ResizeObserver | undefined;
+let observedBar: Element | null = null;
+function measureBar(): void {
+  barHeight.value = observedBar ? Math.ceil(observedBar.getBoundingClientRect().height) : 0;
+}
+/** The bar remounts per question, so its element is tracked through a function ref. */
+function setBarRef(instance: unknown): void {
+  const el = (instance as { $el?: unknown } | null)?.$el;
+  const next = el instanceof Element ? el : null;
+  if (next === observedBar) return;
+  if (observedBar) barObserver?.unobserve(observedBar);
+  observedBar = next;
+  if (next && typeof ResizeObserver !== 'undefined') {
+    barObserver ??= new ResizeObserver(measureBar);
+    barObserver.observe(next);
+  }
+  measureBar();
+}
+/**
+ * Focus and anchor scrolling honour the root's scroll padding. Publishing the
+ * fixed chrome there means a field focused near the bottom — the usual place
+ * for an answer — is scrolled above the action bar (and, on iOS, the
+ * keyboard) instead of being left underneath it.
+ */
+watch([topbarHeight, barHeight], ([top, bar]) => {
+  const root = document.documentElement.style;
+  if (top > 0) root.setProperty('--q-scroll-pad-top', `${top + 8}px`);
+  // No bar (loading, summary) means no bottom chrome: the shell's tab-bar
+  // default must not apply on this focus route either.
+  root.setProperty('--q-scroll-pad-bottom', `${bar > 0 ? bar + 12 : 0}px`);
+});
 /**
  * A grade picked while the part is still unanswered is a pre-declaration, not
  * a review: writing it straight through advanced FSRS once, and answering
@@ -1480,6 +1518,9 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onBeforeUnload);
   window.removeEventListener('resize', measureTopbar);
   topbarObserver?.disconnect();
+  barObserver?.disconnect();
+  document.documentElement.style.removeProperty('--q-scroll-pad-top');
+  document.documentElement.style.removeProperty('--q-scroll-pad-bottom');
   document.removeEventListener('pointerdown', onDocumentPointerDown);
   practice.suspendContentPin();
 });
@@ -1631,6 +1672,7 @@ const currentCompetencyCodes = computed(() =>
     :style="{
       '--practice-sheet-height': `${solutionReserve}px`,
       ...(topbarHeight > 0 ? { '--practice-topbar-height': `${topbarHeight}px` } : {}),
+      ...(barHeight > 0 ? { '--practice-bar-height': `${barHeight}px` } : {}),
     }"
   >
     <!-- top bar -->
@@ -1644,12 +1686,12 @@ const currentCompetencyCodes = computed(() =>
         :data-confirm-label="t('Beenden?')"
         @click.stop="exit"
       />
-      <button
+      <QIconButton
         v-if="current && practice.sessionAccessible"
-        type="button" class="practice__feedback" data-feedback-entry="question"
+        class="practice__feedback" data-feedback-entry="question"
         :aria-label="t('Aufgabe melden')" :title="t('Aufgabe melden')" aria-haspopup="dialog"
         @click="openQuestionFeedback"
-      ><MessageSquareWarning :size="20" aria-hidden="true" /></button>
+      ><MessageSquareWarning /></QIconButton>
       <div class="practice__progress">
         <div class="practice__progress-label">
           <template v-if="!preparedBlocked && !contentLoading && practice.phase === 'running' && practice.sessionAccessible">{{ t('Aufgabe {current} von {total}', { current: practice.index + 1, total: practice.total }) }}</template>
@@ -1663,34 +1705,34 @@ const currentCompetencyCodes = computed(() =>
           :active="!contentLoading && practice.phase === 'running' && practice.sessionAccessible"
         />
       </div>
-      <div
-        v-if="practice.phase === 'running' && practice.sessionAccessible && showProgramRail"
-        class="practice__session-controls"
-      >
-        <button
-          type="button"
-          class="practice__rail-toggle"
-          :aria-label="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
-          :title="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
-          :aria-expanded="!railCollapsed"
-          aria-controls="practice-program-rail"
-          @click="toggleRail"
-        >
-          <PanelLeftOpen v-if="railCollapsed" :size="20" aria-hidden="true" />
-          <PanelLeftClose v-else :size="20" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          class="practice__session-button"
-          :aria-label="t('Programmliste öffnen')"
-          :aria-expanded="mobileRailOpen"
-          aria-controls="practice-program-drawer"
-          @click="mobileRailOpen = true"
-        >
-          ☰
-        </button>
+      <!-- Always rendered, even empty: it mirrors the exit + feedback pair on
+           the left so the progress stays centred on the screen. -->
+      <div class="practice__topbar-actions">
+        <template v-if="practice.phase === 'running' && practice.sessionAccessible && showProgramRail">
+          <QIconButton
+            class="practice__rail-toggle"
+            :aria-label="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
+            :title="railCollapsed ? t('Programmliste einblenden') : t('Programmliste ausblenden')"
+            :aria-expanded="!railCollapsed"
+            aria-controls="practice-program-rail"
+            @click="toggleRail"
+          >
+            <PanelLeftOpen v-if="railCollapsed" />
+            <PanelLeftClose v-else />
+          </QIconButton>
+          <QIconButton
+            class="practice__session-button"
+            :aria-label="t('Programmliste öffnen')"
+            :title="t('Programmliste öffnen')"
+            :aria-expanded="mobileRailOpen"
+            aria-haspopup="dialog"
+            aria-controls="practice-program-drawer"
+            @click="mobileRailOpen = true"
+          >
+            <ListOrdered />
+          </QIconButton>
+        </template>
       </div>
-      <span v-else class="practice__spacer" />
     </div>
 
     <div class="practice__stage q-crossfade" :aria-busy="contentLoading">
@@ -1932,6 +1974,7 @@ const currentCompetencyCodes = computed(() =>
 
         <PracticeBottomBar
           :key="currentInteraction"
+          :ref="setBarRef"
           v-model:solution-detent="solutionDetent"
           :top-reserve="topbarHeight || undefined"
           :state="playerState"
@@ -2041,20 +2084,25 @@ const currentCompetencyCodes = computed(() =>
         </PracticeHelpDialog>
 
 
-        <div v-if="practice.warning" class="practice__warning" role="alert">{{ t(practice.warning) }}</div>
-        <div v-if="commitError || selfAssessmentDraftError || pendingGradingSaveError || answerDraftSaveError" class="practice__warning" role="alert">
-          <span>{{ t(commitError ?? selfAssessmentDraftError ?? pendingGradingSaveError ?? answerDraftSaveError ?? '') }}</span>
-          <QButton
-            v-if="!commitBusy"
-            variant="secondary"
-            size="sm"
-            @click="abandonUndurableAndExit"
-          >
-            {{ t('Ohne Speichern verlassen') }}
-          </QButton>
-        </div>
-        <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__offline">
-          {{ t('Offline — wird später synchronisiert') }}
+        <!-- One stack above the bottom bar: two notices used to share the same
+             fixed spot and paint over each other. -->
+        <div class="practice__notices">
+          <div v-if="practice.warning" class="practice__notice practice__warning" role="alert">{{ t(practice.warning) }}</div>
+          <div v-if="commitError || selfAssessmentDraftError || pendingGradingSaveError || answerDraftSaveError" class="practice__notice practice__warning" role="alert">
+            <span>{{ t(commitError ?? selfAssessmentDraftError ?? pendingGradingSaveError ?? answerDraftSaveError ?? '') }}</span>
+            <QButton
+              v-if="!commitBusy"
+              variant="secondary"
+              size="sm"
+              @click="abandonUndurableAndExit"
+            >
+              {{ t('Ohne Speichern verlassen') }}
+            </QButton>
+          </div>
+          <div v-if="progress.syncStatus.state === 'offline' && auth.isLoggedIn" class="practice__notice practice__offline" role="status">
+            <CloudOff :size="14" aria-hidden="true" />
+            <span>{{ t('Offline — wird später synchronisiert') }}</span>
+          </div>
         </div>
       </div>
     </transition>
@@ -2064,7 +2112,7 @@ const currentCompetencyCodes = computed(() =>
 
 <style scoped>
 .practice__help-modes { display: flex; gap: 8px; margin: 0 0 20px; }
-.practice__help-modes button { font: inherit; font-size: 12px; font-weight: 650; border: 1px solid transparent; border-radius: 8px; background: var(--q-panel); color: var(--q-mut); padding: 10px 14px; min-height: 44px; cursor: pointer; }
+.practice__help-modes button { font: inherit; font-size: var(--q-font-small); font-weight: 650; border: 1px solid transparent; border-radius: var(--q-radius-control); background: var(--q-panel); color: var(--q-mut); padding: 10px 14px; min-height: var(--q-control-height); cursor: pointer; }
 .practice__help-modes button[aria-pressed='true'] { color: var(--q-accent-strong); background: var(--q-accent-bg); border-color: var(--q-accent); }
 .practice__help-modes button:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 3px; }
 
@@ -2087,7 +2135,7 @@ const currentCompetencyCodes = computed(() =>
     --practice-rail-width: 0px;
   }
   .practice :deep(.practice-bar) {
-    transition: left 220ms cubic-bezier(0.22, 1, 0.36, 1), border-radius 240ms ease, box-shadow var(--q-transition-normal);
+    transition: left var(--q-transition-layout), border-radius 240ms ease, box-shadow var(--q-transition-normal);
   }
 }
 /* Stacks the phase panels so loading and content overlap during the swap
@@ -2105,16 +2153,19 @@ const currentCompetencyCodes = computed(() =>
   overflow: hidden;
 }
 .practice__topbar {
-  height: calc(56px + env(safe-area-inset-top));
+  --practice-topbar-gap: var(--q-space-4);
+  height: calc(var(--q-topbar-height) + env(safe-area-inset-top));
   display: flex;
   align-items: center;
-  padding: env(safe-area-inset-top) 16px 0;
+  /* Landscape phones put the notch at the side: keep the corner controls
+   * clear of it, as the bottom bar already does. */
+  padding: env(safe-area-inset-top) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--q-border);
-  gap: 16px;
+  gap: var(--practice-topbar-gap);
   position: sticky;
   top: 0;
   background: var(--q-card);
-  z-index: 30;
+  z-index: var(--q-z-sticky);
 }
 .practice__close {
   --practice-exit-width: var(--q-icon-control-size);
@@ -2128,9 +2179,9 @@ const currentCompetencyCodes = computed(() =>
   font-size: var(--q-font-small);
   overflow: hidden;
   transition:
-    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    flex-basis 220ms cubic-bezier(0.22, 1, 0.36, 1),
-    gap 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    width var(--q-transition-layout),
+    flex-basis var(--q-transition-layout),
+    gap var(--q-transition-layout),
     background-color var(--q-transition-fast),
     color var(--q-transition-fast),
     opacity var(--q-transition-fast);
@@ -2158,9 +2209,9 @@ const currentCompetencyCodes = computed(() =>
   opacity: 0;
   transform: translateX(-4px);
   transition:
-    max-width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    max-width var(--q-transition-layout),
     opacity var(--q-transition-fast),
-    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform var(--q-transition-layout);
 }
 .practice__close--armed::after {
   max-width: 12ch;
@@ -2176,10 +2227,28 @@ const currentCompetencyCodes = computed(() =>
   flex-direction: column;
   gap: 5px;
 }
-.practice__feedback { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 44px; width: 44px; height: 44px; border: 1px solid var(--q-border-2); border-radius: var(--q-radius-control); background: var(--q-card); color: var(--q-ink-2); cursor: pointer; }
-.practice__feedback:focus-visible { outline: 3px solid var(--q-accent); outline-offset: 2px; }
+/*
+ * Right-hand group. It reserves the same width as the exit + feedback pair on
+ * the left, so the progress label sits in the middle of the screen rather
+ * than half an icon off to one side.
+ */
+.practice__topbar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--q-space-1);
+  min-width: calc(2 * var(--q-icon-control-size) + var(--practice-topbar-gap));
+}
+.practice__topbar:not(:has(.practice__feedback)) .practice__topbar-actions {
+  min-width: var(--q-icon-control-size);
+}
 @media (max-width: 520px) {
-  .practice__topbar { gap: 8px; padding-right: 10px; padding-left: 10px; }
+  .practice__topbar {
+    --practice-topbar-gap: var(--q-space-2);
+    padding-right: max(10px, env(safe-area-inset-right));
+    padding-left: max(10px, env(safe-area-inset-left));
+  }
   .practice__progress-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .practice__topbar:has(.practice__close--armed) .practice__progress { flex-basis: 0; }
 }
@@ -2188,19 +2257,21 @@ const currentCompetencyCodes = computed(() =>
   font-weight: 600;
   text-align: center;
   color: var(--q-ink-2);
+  /* "9 von 20" → "10 von 20" must not nudge the centred label. */
+  font-variant-numeric: tabular-nums;
 }
 .practice__session-rail-shell {
   width: var(--practice-rail-width);
-  height: calc(100vh - 56px);
-  height: calc(100dvh - 56px);
+  height: calc(100vh - var(--practice-topbar-height, var(--q-topbar-height)));
+  height: calc(100dvh - var(--practice-topbar-height, var(--q-topbar-height)));
   flex: none;
   position: sticky;
-  top: var(--practice-topbar-height, 56px);
+  top: var(--practice-topbar-height, var(--q-topbar-height));
   display: flex;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  transition: width 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: width var(--q-transition-layout);
 }
 .practice__session-rail-contents {
   box-sizing: border-box;
@@ -2212,7 +2283,7 @@ const currentCompetencyCodes = computed(() =>
   padding: 16px 10px 10px;
   background: var(--q-panel);
   border-right: 1px solid var(--q-border);
-  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 180ms ease, transform var(--q-transition-layout);
 }
 .practice--rail-collapsed .practice__session-rail-contents {
   opacity: 0;
@@ -2239,10 +2310,11 @@ const currentCompetencyCodes = computed(() =>
   padding: 10px 8px 1px;
   border-top: 1px solid var(--q-border-soft);
   color: var(--q-faint);
-  font-size: 10.5px;
+  font-size: var(--q-font-2xs);
   font-weight: 600;
   line-height: 1.25;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .practice__source-footer > svg {
   flex: none;
@@ -2292,41 +2364,9 @@ const currentCompetencyCodes = computed(() =>
 .practice__logo-accent {
   color: var(--q-accent);
 }
-/* The track itself is PracticeProgressBar's business now. */
-.practice__spacer {
-  width: 44px;
-}
-.practice__session-controls {
-  width: 44px;
-  flex: none;
-}
-.practice__session-button,
-.practice__rail-toggle {
-  width: 44px;
-  height: 44px;
-  flex: none;
-  border-radius: 8px;
-  border: none;
-  background: none;
-  color: var(--q-mut-2);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-}
+/* Desktop collapses the side rail; below 1024px the list opens as a drawer.
+ * Both are QIconButtons, the same family as exit and feedback. */
 .practice__session-button { display: none; }
-.practice__rail-toggle:focus-visible,
-.practice__session-button:focus-visible {
-  outline: 2px solid var(--q-accent);
-  outline-offset: 2px;
-}
-@media (hover: hover) and (pointer: fine) {
-  .practice__session-button:hover,
-  .practice__rail-toggle:hover {
-    background: var(--q-panel);
-  }
-}
 
 .practice__running {
   display: flex;
@@ -2362,37 +2402,64 @@ const currentCompetencyCodes = computed(() =>
   padding-bottom: calc(var(--practice-sheet-height, 0px) + 180px + var(--q-keyboard-inset, 0px));
 }
 .practice__qprompt {
-  font-size: 15.5px;
+  font-size: var(--q-font-md);
   line-height: 1.65;
   margin-bottom: 18px;
   /* wide inline KaTeX scrolls here instead of panning the whole page */
   overflow-x: auto;
 }
 
-.practice__warning {
+/*
+ * Notices float just above the real bottom bar — whatever it currently
+ * holds (handle, open drawer, a keyboard-lifted row). A fixed 76px offset
+ * used to put them on top of the review handle.
+ */
+.practice__notices {
   position: fixed;
-  bottom: calc(76px + env(safe-area-inset-bottom));
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: min(90vw, 560px);
+  left: var(--practice-rail-width, 0px);
+  right: 0;
+  bottom: calc(
+    var(--practice-bar-height, calc(68px + env(safe-area-inset-bottom))) + var(--q-keyboard-inset, 0px) + var(--q-space-2)
+  );
+  z-index: var(--q-z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: 0 max(var(--q-space-4), env(safe-area-inset-right)) 0 max(var(--q-space-4), env(safe-area-inset-left));
+  pointer-events: none;
+}
+.practice__notices:empty { display: none; }
+.practice__notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--q-space-2) var(--q-space-3);
+  max-width: min(100%, 560px);
+  padding: var(--q-space-2) var(--q-space-3);
+  border-radius: var(--q-radius-control);
+  font-size: var(--q-font-small);
+  line-height: 1.45;
+  text-align: center;
+  box-shadow: var(--q-shadow-panel);
+  pointer-events: auto;
+}
+.practice__warning {
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
   color: var(--q-part-ink);
-  font-size: var(--q-font-small);
-  padding: 6px 12px;
-  border-radius: 8px;
-  z-index: 41;
 }
+/* Being offline is not a problem to fix — a quiet pill, not a warning. */
 .practice__offline {
-  position: fixed;
-  bottom: calc(76px + env(safe-area-inset-bottom));
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: var(--q-font-small);
-  color: var(--q-faint);
+  padding-block: var(--q-space-1);
+  background: var(--q-panel);
+  border: 1px solid var(--q-border);
+  color: var(--q-mut-2);
+  box-shadow: none;
   pointer-events: none;
 }
+.practice__offline > svg { flex: none; }
 
 /* centered states */
 .practice__center {
@@ -2409,7 +2476,7 @@ const currentCompetencyCodes = computed(() =>
   max-width: 560px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 22px;
   display: flex;
   flex-direction: column;
@@ -2417,7 +2484,7 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__skeleton-bar {
   height: 12px;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-track);
   animation: pulse 1.4s ease-in-out infinite;
 }
@@ -2436,7 +2503,7 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__error-title {
   font-weight: 700;
-  font-size: 16px;
+  font-size: var(--q-font-lg);
   margin: 0 0 8px;
 }
 .practice__error-text {
@@ -2482,7 +2549,7 @@ const currentCompetencyCodes = computed(() =>
   padding: 26px 22px 22px;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 16px;
+  border-radius: var(--q-radius-card);
   box-shadow: var(--q-shadow-card);
 }
 
@@ -2495,7 +2562,7 @@ const currentCompetencyCodes = computed(() =>
   justify-content: center;
 }
 .practice__result-points {
-  font-size: 44px;
+  font-size: var(--q-font-hero);
   font-weight: 800;
   line-height: 1;
   letter-spacing: -0.02em;
@@ -2544,7 +2611,7 @@ const currentCompetencyCodes = computed(() =>
   gap: 4px;
 }
 .practice__result-verdict-num {
-  font-size: 19px;
+  font-size: var(--q-font-xl);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
@@ -2560,9 +2627,9 @@ const currentCompetencyCodes = computed(() =>
 }
 .practice__result-section-title {
   margin: 0 0 9px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
   text-align: center;
@@ -2591,9 +2658,10 @@ const currentCompetencyCodes = computed(() =>
     display: none;
   }
   .practice__session-button {
-    display: grid;
+    display: inline-grid;
   }
   .practice__rail-toggle { display: none; }
+  .practice__notices { left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2608,12 +2676,9 @@ const currentCompetencyCodes = computed(() =>
   }
 }
 
-@media (pointer: coarse) {
-  /* 44px touch targets in the always-visible chrome (fits the 56px topbar). */
-  .practice__session-button,
-  .practice__spacer {
-    min-width: 44px;
-    height: 44px;
-  }
+/* Short landscape phones: every pixel of height goes to the question. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .practice__topbar { --q-topbar-height: 48px; }
+  .practice__content { padding-top: var(--q-space-4); }
 }
 </style>

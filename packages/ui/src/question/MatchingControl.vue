@@ -348,7 +348,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   min-width: 0;
   padding: 10px 12px;
   border: 1px solid var(--q-border-2);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   transition: border-color 0.3s ease, background 0.3s ease, color 0.3s ease;
 }
@@ -367,7 +367,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__left {
   flex: 1;
   min-width: 0;
-  font-size: 14.5px;
+  font-size: var(--q-font-ui);
   overflow-wrap: anywhere;
 }
 
@@ -389,7 +389,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   border-radius: 0;
   background: transparent;
   color: var(--q-mut-2);
-  font: 700 16px 'Public Sans', system-ui, sans-serif; /* ≥16px: no iOS focus-zoom */
+  font: 700 var(--q-font-input) var(--q-font-family); /* ≥16px: no iOS focus-zoom */
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
@@ -413,7 +413,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 .q-match__select:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--q-radius-xs);
 }
 .q-match__select:disabled {
   cursor: default;
@@ -446,10 +446,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--q-border-2);
-  border-radius: 11px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   color: var(--q-ink);
-  font: 400 14px 'Public Sans', system-ui, sans-serif;
+  font: 400 var(--q-font-ui) var(--q-font-family);
   text-align: left;
   cursor: pointer;
   transition: border-color 0.1s ease, background 0.1s ease;
@@ -541,7 +541,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
 }
 
 .q-match__pool-letter {
-  font: 600 11px ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-faint);
   margin-right: 4px;
 }
@@ -551,12 +551,12 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   padding: 12px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
 }
 .q-match__pool-title {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
   margin-bottom: 8px;
@@ -574,7 +574,7 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   min-width: 0;
 }
 .q-match__pool-group-title {
-  font: 800 12px ui-monospace, Menlo, monospace;
+  font: 800 var(--q-font-small) var(--q-font-mono);
   color: var(--q-accent-strong);
   padding: 0 2px;
 }
@@ -582,10 +582,10 @@ function gapOptionState(leftIdx: number, rightIdx: number): GapOptionState {
   display: inline-flex;
   align-items: center;
   padding: 5px 10px;
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-card);
   border: 1px solid var(--q-border-2);
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   font-weight: 600;
   max-width: 100%;
   min-width: 0;

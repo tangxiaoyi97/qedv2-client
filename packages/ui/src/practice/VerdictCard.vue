@@ -68,7 +68,7 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
   align-items: center;
   gap: 13px;
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   border: 1.5px solid;
   animation: q-verdict-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
@@ -101,13 +101,13 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
   flex: 1;
 }
 .q-verdict__label {
-  font-size: 15px;
+  font-size: var(--q-font-md);
   font-weight: 800;
   letter-spacing: -0.01em;
 }
 .q-verdict__note {
   margin-top: 3px;
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   line-height: 1.45;
   opacity: 0.85;
   overflow-wrap: break-word;
@@ -120,7 +120,7 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
   gap: 4px;
 }
 .q-verdict__points {
-  font: 750 14px ui-monospace, Menlo, monospace;
+  font: 750 var(--q-font-ui) var(--q-font-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -128,7 +128,7 @@ const points = computed(() => formatScoreRatio(props.result.awardedPoints, props
   border: none;
   background: none;
   padding: 0;
-  font: 700 12px 'Public Sans', system-ui, sans-serif;
+  font: 700 var(--q-font-small) var(--q-font-family);
   color: inherit;
   opacity: 0.75;
   cursor: pointer;

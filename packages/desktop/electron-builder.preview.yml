@@ -1,0 +1,14 @@
+extends: ./electron-builder.unsigned.yml
+appId: studio.barcarolle.qed2.preview
+productName: QED2 Preview
+artifactName: QED2-Preview-${version}-${os}-${arch}.${ext}
+directories:
+  output: dist-preview
+publish: null
+linux:
+  executableName: qed2-preview
+  artifactName: QED2-Preview-${version}-linux-x64.${ext}
+deb:
+  packageName: qed2-preview
+rpm:
+  packageName: qed2-preview

@@ -1,6 +1,6 @@
 {
   "name": "@qed2/desktop",
-  "version": "2.5.0",
+  "version": "2.5.2-beta.1",
   "description": "QED2 local-first Electron node for macOS, Windows and Linux",
   "homepage": "https://qed.barcarolle.studio",
   "author": "Tang Xiaoyi",
@@ -25,7 +25,8 @@
     "package": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.unsigned.yml --dir",
     "dist": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.unsigned.yml",
     "dist:signed": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml",
-    "release:signed": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --publish always"
+    "release:signed": "pnpm runtime:prepare && pnpm build && electron-builder --config electron-builder.yml --publish always",
+    "dist:preview": "node scripts/preview.mjs"
   },
   "dependencies": {
     "electron-updater": "6.8.9"
@@ -33,10 +34,10 @@
   "devDependencies": {
     "@qed2/core-logic": "workspace:*",
     "@types/node": "^24.10.0",
-    "electron": "42.7.1",
+    "electron": "42.10.0",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.1",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.11"
   }
 }

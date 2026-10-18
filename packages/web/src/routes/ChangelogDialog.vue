@@ -73,7 +73,7 @@ function releaseDate(iso: string): string {
   display: flex;
   flex-direction: column;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   overflow: hidden;
 }
@@ -86,17 +86,17 @@ function releaseDate(iso: string): string {
 .clog__spark {
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-chip-bg);
   color: var(--q-accent-strong);
   display: grid;
   place-items: center;
-  font-size: 15px;
+  font-size: var(--q-font-md);
   flex: none;
 }
 .clog__title {
   font-weight: 800;
-  font-size: 17px;
+  font-size: var(--q-font-lg);
   letter-spacing: -0.01em;
 }
 .clog__body {
@@ -118,7 +118,7 @@ function releaseDate(iso: string): string {
   margin-bottom: 6px;
 }
 .clog__version {
-  font: 800 13px 'Public Sans', system-ui, sans-serif;
+  font: 800 var(--q-font-meta) var(--q-font-family);
   letter-spacing: -0.01em;
   color: var(--q-ink);
 }
@@ -129,11 +129,11 @@ function releaseDate(iso: string): string {
   font-variant-numeric: tabular-nums;
 }
 .clog__draft {
-  font: 700 9.5px 'Public Sans', system-ui, sans-serif;
+  font: 700 var(--q-font-micro) var(--q-font-family);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-neutral-bg);
   border: 1px solid var(--q-neutral-border);
   color: var(--q-neutral);

@@ -4,6 +4,7 @@ import { useI18n } from '../i18n.js';
 import QChip from '../shared/QChip.vue';
 import CompetencyChip from '../shared/CompetencyChip.vue';
 import StarButton from '../shared/StarButton.vue';
+import { formatUiScore } from '../shared/format-score.js';
 import { ExternalLink } from 'lucide-vue-next';
 
 const { t } = useI18n();
@@ -36,7 +37,7 @@ const emit = defineEmits<{
       <QChip v-if="format" tone="neutral">{{ format }}</QChip>
     </div>
     <div class="practice-qhead__subline">
-      <span class="practice-qhead__source">{{ sourceLine }}<template v-if="points != null"> · {{ points }} P</template></span>
+      <span class="practice-qhead__source">{{ sourceLine }}<template v-if="points != null"> · <span class="practice-qhead__points">{{ formatUiScore(points) }}&nbsp;{{ t('P') }}</span></template></span>
       <a
         v-if="officialUrl"
         class="practice-qhead__official"
@@ -65,7 +66,7 @@ const emit = defineEmits<{
 }
 
 .practice-qhead__title {
-  font-size: 26px;
+  font-size: var(--q-font-headline);
   line-height: 1.25;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -94,9 +95,13 @@ const emit = defineEmits<{
 }
 
 .practice-qhead__source {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-faint);
   font-weight: 500;
+}
+.practice-qhead__points {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .practice-qhead__official {
@@ -104,7 +109,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 5px;
   color: var(--q-mut-2);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
   line-height: 1;
   text-decoration: none;
@@ -122,6 +127,15 @@ const emit = defineEmits<{
   text-decoration: underline;
 }
 
+@media (pointer: coarse) {
+  /* A 12px text link is a hard target for a finger. Grow the hit area
+   * vertically without moving the line it sits on. */
+  .practice-qhead__official {
+    padding-block: 14px;
+    margin-block: -14px;
+  }
+}
+
 .practice-qhead__official-icon {
   width: 12px;
   height: 12px;
@@ -130,7 +144,7 @@ const emit = defineEmits<{
 
 @media (max-width: 640px) {
   .practice-qhead__title {
-    font-size: 21px;
+    font-size: var(--q-font-title);
   }
 }
 </style>

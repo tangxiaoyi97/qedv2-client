@@ -79,24 +79,24 @@ const result = computed(() => props.state.result);
 
 <style scoped>
 .practice-review { display: flex; flex-direction: column; gap: 28px; }
-.practice-review h2 { margin: 0 0 12px; color: var(--q-ink); font-size: 15px; font-weight: 750; }
-.practice-review__result { display: flex; align-items: center; gap: 9px; font-size: 15px; }
-.practice-review__result span { margin-left: auto; font-size: 13px; font-variant-numeric: tabular-nums; }
+.practice-review h2 { margin: 0 0 12px; color: var(--q-ink); font-size: var(--q-font-md); font-weight: 750; }
+.practice-review__result { display: flex; align-items: center; gap: 9px; font-size: var(--q-font-md); }
+.practice-review__result span { margin-left: auto; font-size: var(--q-font-meta); font-variant-numeric: tabular-nums; }
 .practice-review__result--correct { color: var(--q-ok-ink); }
 .practice-review__result--partial { color: var(--q-part-ink); }
 .practice-review__result--incorrect { color: var(--q-err-ink); }
-.practice-review__empty { margin: 0; color: var(--q-faint); font-size: 13px; }
+.practice-review__empty { margin: 0; color: var(--q-faint); font-size: var(--q-font-meta); }
 .practice-review__assessment { padding-top: 24px; border-top: 1px solid var(--q-border-soft); }
-.practice-review__rubric { color: var(--q-mut); font-size: 13px; line-height: 1.7; margin-bottom: 16px; }
+.practice-review__rubric { color: var(--q-mut); font-size: var(--q-font-meta); line-height: 1.7; margin-bottom: 16px; }
 .practice-review__rubric summary { cursor: pointer; padding: 8px 0; }
 .practice-review__mastery { margin-top: 22px; }
-.practice-review__mastery h3 { font-size: 13px; font-weight: 650; margin: 0 0 10px; }
-.practice-review__assist { display: inline-flex; align-items: center; gap: 7px; padding: 8px 0; margin-top: 16px; border: none; background: none; color: var(--q-accent-strong); font: inherit; font-size: 13px; font-weight: 650; min-height: 44px; cursor: pointer; }
-.practice-review__assist:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 4px; border-radius: 4px; }
+.practice-review__mastery h3 { font-size: var(--q-font-meta); font-weight: 650; margin: 0 0 10px; }
+.practice-review__assist { display: inline-flex; align-items: center; gap: 7px; padding: 8px 0; margin-top: 16px; border: none; background: none; color: var(--q-accent-strong); font: inherit; font-size: var(--q-font-meta); font-weight: 650; min-height: 44px; cursor: pointer; }
+.practice-review__assist:focus-visible { outline: 2px solid var(--q-accent); outline-offset: 4px; border-radius: var(--q-radius-xs); }
 .practice-review :deep(.q-selfassess) { padding: 0; background: none; border-radius: 0; }
-.practice-review :deep(.q-selfassess__title) { font-size: 15px; }
+.practice-review :deep(.q-selfassess__title) { font-size: var(--q-font-md); }
 .practice-review :deep(.q-selfassess__segments) { margin-left: 0; }
-.practice-review :deep(.q-selfassess__segment) { min-width: 64px; min-height: 44px; font-size: 15px; }
+.practice-review :deep(.q-selfassess__segment) { min-width: 64px; min-height: 44px; font-size: var(--q-font-md); }
 .practice-review :deep(.q-selfassess__total) { padding: 10px 0 0; background: none; border: none; color: var(--q-mut); font-weight: 500; }
 .practice-review :deep(.q-gpick__opt) { border-color: transparent; background: var(--q-panel); box-shadow: none; }
 .practice-review :deep(.q-gpick__opt--on) { background: var(--q-accent-bg); border-color: var(--q-accent); }

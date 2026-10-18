@@ -13,8 +13,8 @@ defineProps<{ tone?: 'accent' | 'neutral' | 'warn' }>();
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 11.5px;
+  border-radius: var(--q-radius-pill);
+  font-size: var(--q-font-xs);
   font-weight: 700;
   white-space: nowrap;
 }

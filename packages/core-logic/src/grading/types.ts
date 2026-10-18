@@ -99,14 +99,17 @@ export interface GradeResult {
 }
 
 /**
- * `expression` grading may be indeterminate: the CAS cannot reliably decide
- * equivalence (contract & supplement §5: never hard-fail the user — fall back
- * to self-assessment against the displayed correct answer).
+ * Automated grading may require self-assessment: the CAS cannot reliably
+ * decide equivalence, or an authored rubric requires human judgement.
+ * An unresolved assessment must never carry a provisional score.
  */
 export interface IndeterminateResult {
   verdict: 'indeterminate';
-  reason: 'cas-parse-error' | 'cas-unreliable';
+  reason: 'cas-parse-error' | 'cas-unreliable' | 'rubric-requires-self-assessment';
   maxPoints: number;
+  correct?: never;
+  awardedPoints?: never;
+  breakdown?: never;
 }
 
 export type GradeOutcome = GradeResult | IndeterminateResult;

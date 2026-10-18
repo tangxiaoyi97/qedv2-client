@@ -1,22 +1,44 @@
 <script setup lang="ts">
 import { useI18n } from '../i18n.js';
 
+import { nextTick, ref, watch } from 'vue';
 import SessionItemList from './SessionItemList.vue';
 import type { SessionItem } from './SessionItemList.vue';
 
 const { t } = useI18n();
 
-defineProps<{
+const props = defineProps<{
   items: readonly SessionItem[];
   gradedCount: number;
   total: number;
 }>();
 
 const emit = defineEmits<{ jump: [index: number] }>();
+
+/*
+ * Advancing past the last visible row used to leave the current question
+ * below the fold of the rail. Only the rail's own scroll offset moves —
+ * never the page, and never while the rail is collapsed (inert).
+ */
+const rail = ref<HTMLElement | null>(null);
+watch(
+  () => props.items.findIndex((item) => item.state === 'current'),
+  async (index) => {
+    if (index < 0) return;
+    await nextTick();
+    const container = rail.value;
+    const row = container?.querySelector<HTMLElement>('.q-sitems__item--current');
+    if (!container || !row || container.closest('[inert]')) return;
+    const box = container.getBoundingClientRect();
+    const target = row.getBoundingClientRect();
+    if (target.top < box.top) container.scrollTop -= box.top - target.top + 8;
+    else if (target.bottom > box.bottom) container.scrollTop += target.bottom - box.bottom + 8;
+  },
+);
 </script>
 
 <template>
-  <aside class="practice-rail" :aria-label="t('Programmübersicht')">
+  <aside ref="rail" class="practice-rail" :aria-label="t('Programmübersicht')">
     <div class="practice-rail__head">
       <span class="practice-rail__title">{{ t('Programm') }}</span>
       <span class="practice-rail__count">{{ gradedCount }}/{{ total }}</span>
@@ -34,9 +56,9 @@ const emit = defineEmits<{ jump: [index: number] }>();
   padding: 16px 10px;
   overflow-y: auto;
   position: sticky;
-  top: 56px;
-  height: calc(100vh - 56px);
-  height: calc(100dvh - 56px);
+  top: var(--q-topbar-height);
+  height: calc(100vh - var(--q-topbar-height));
+  height: calc(100dvh - var(--q-topbar-height));
 }
 
 .practice-rail__head {
@@ -47,15 +69,16 @@ const emit = defineEmits<{ jump: [index: number] }>();
 }
 
 .practice-rail__title {
-  font-size: 10.5px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
 
 .practice-rail__count {
-  font: 700 11px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-xs) var(--q-font-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--q-mut-2);
 }
 

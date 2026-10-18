@@ -444,6 +444,234 @@ describe('progress sync orchestration', () => {
     expect(ids[2]).toBe(ids[1]);
   });
 
+  it('automatically replays a failed conflict resolution and shows a newer conflict', async () => {
+    const progress = await setup();
+    const ids: string[] = [];
+    let resolves = 0;
+    const serverConflict = (serverVersion: number) => ({
+      result: 'conflict', serverVersion, serverChecksum: 'conflict',
+      conflicts: [], autoMergeable: { perPart: [], perCompetency: [] },
+    });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/me/sync')) return json(serverConflict(6));
+      expect(String(input)).toContain('/me/sync/resolve');
+      ids.push(JSON.parse(String(init?.body)).clientMutationId);
+      resolves += 1;
+      if (resolves === 1) throw new TypeError('connection interrupted');
+      return json(serverConflict(8));
+    }));
+    try {
+      await expect(progress.syncNow({ quiet: true })).resolves.toBe('conflict');
+      await expect(progress.resolveConflict({})).rejects.toThrow();
+      expect(progress.syncStatus.state).toBe('offline');
+      progress.scheduleCloudRecovery(true);
+      await vi.waitFor(() => expect(progress.conflict?.serverVersion).toBe(8));
+      expect(progress.syncStatus.state).toBe('conflict');
+      expect(ids).toHaveLength(2);
+      expect(ids[1]).toBe(ids[0]);
+      expect(await syncMutationJournal.listPending({ serverBaseUrl: SERVER, userId: 'u1' })).toEqual([]);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('syncs newer local work after replaying a successful conflict resolution', async () => {
+    const progress = await setup();
+    let resolves = 0;
+    let syncs = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me/state')) {
+        return json({ archiveVersion: 7, checksum: archiveChecksum(EMPTY.content), ...EMPTY.content });
+      }
+      if (String(input).endsWith('/me/sync/resolve')) {
+        resolves += 1;
+        if (resolves === 1) throw new TypeError('response lost');
+        return json({ result: 'resolved', archiveVersion: 7, checksum: archiveChecksum(EMPTY.content) });
+      }
+      syncs += 1;
+      return json(syncs === 1 ? {
+        result: 'conflict', serverVersion: 6, serverChecksum: 'conflict',
+        conflicts: [], autoMergeable: EMPTY.content,
+      } : { result: 'fast-forward', archiveVersion: 8, checksum: archiveChecksum(EVOLVED_F2.content) });
+    }));
+    try {
+      await progress.syncNow({ quiet: true });
+      await expect(progress.resolveConflict({})).rejects.toThrow();
+      await archiveStore.save(EVOLVED_F2);
+      progress.scheduleCloudRecovery(true);
+      await vi.waitFor(() => expect(progress.syncStatus.state).toBe('synced'));
+      expect(progress.conflict).toBeUndefined();
+      expect(progress.archive.content).toEqual(EVOLVED_F2.content);
+      expect(progress.archive.baseVersion).toBe(8);
+      expect(resolves).toBe(2);
+      expect(syncs).toBe(2);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('does not reuse an earlier archive choice after another device changes the cloud', async () => {
+    const progress = await setup();
+    await archiveStore.save(EVOLVED_F1);
+    let serverVersion = 3;
+    let resolves = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me/state')) {
+        return json({ archiveVersion: serverVersion, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content });
+      }
+      resolves += 1;
+      serverVersion = 4;
+      return json({
+        result: 'conflict', serverVersion, serverChecksum: archiveChecksum(EVOLVED_F2.content),
+        conflicts: [], autoMergeable: EVOLVED_F2.content,
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await progress.reconcileOnLogin();
+      await progress.resolveArchiveChoice('local');
+      expect(progress.archiveChoice?.serverState.archiveVersion).toBe(4);
+      expect(resolves).toBe(1);
+      const refresh = vi.spyOn(useAuthStore(), 'refreshSessionForRecovery');
+      progress.scheduleCloudRecovery(true);
+      await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(resolves).toBe(1);
+      expect(progress.archiveChoice?.serverState.archiveVersion).toBe(4);
+      expect(progress.syncStatus.state).toBe('idle');
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('clears the acknowledged archive choice when manual upload recovers its receipt', async () => {
+    const progress = await setup();
+    await archiveStore.save(EVOLVED_F1);
+    let resolves = 0;
+    const ids: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/me/state')) {
+        const content = resolves ? EVOLVED_F1.content : EVOLVED_F2.content;
+        return json({ archiveVersion: resolves ? 4 : 3, checksum: archiveChecksum(content), ...content });
+      }
+      expect(String(input)).toContain('/me/sync/resolve');
+      ids.push(JSON.parse(String(init?.body)).clientMutationId);
+      resolves += 1;
+      if (resolves === 1) throw new TypeError('acknowledgement lost');
+      return json({ result: 'resolved', archiveVersion: 4, checksum: archiveChecksum(EVOLVED_F1.content) });
+    }));
+    try {
+      await progress.reconcileOnLogin();
+      await progress.resolveArchiveChoice('local');
+      expect(progress.archiveChoice).toBeDefined();
+      expect(progress.syncStatus.state).toBe('offline');
+      await expect(progress.syncCloudNow()).resolves.toBe('synced');
+      expect(progress.archiveChoice).toBeUndefined();
+      expect(progress.archive.content).toEqual(EVOLVED_F1.content);
+      expect(progress.archive.baseVersion).toBe(4);
+      expect(ids).toHaveLength(2);
+      expect(ids[1]).toBe(ids[0]);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('retries after repeated cross-window writes exhaust one sync round', async () => {
+    const progress = await setup();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    let syncs = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me/state')) {
+        return json({ archiveVersion: 4, checksum: archiveChecksum(EMPTY.content), ...EMPTY.content });
+      }
+      syncs += 1;
+      if (syncs <= 4) await archiveStore.setStarred(`parallel-${syncs}`, true, new Date());
+      return json({ result: 'fast-forward', archiveVersion: syncs, checksum: 'accepted' });
+    }));
+    try {
+      await expect(progress.syncNow({ quiet: true })).resolves.toBe('blocked');
+      expect(syncs).toBe(4);
+      expect(timers.mock.calls.some((call) => call[1] === 5_000)).toBe(true);
+      progress.scheduleCloudRecovery(true);
+      await vi.waitFor(() => expect(progress.syncStatus.state).toBe('synced'));
+      expect(syncs).toBe(5);
+      expect(progress.archive.content.perPart).toHaveLength(4);
+      expect(progress.archive.baseVersion).toBe(5);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it('expedites backoff on resume and coalesces wakes during an upload', async () => {
+    const progress = await setup();
+    await progress.stageAttempt({
+      clientAttemptId: 'resume-upload', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    const refresh = vi.spyOn(useAuthStore(), 'refreshSessionForRecovery');
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let uploads = 0;
+    let checks = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/me/attempts')) {
+        uploads += 1;
+        await gate;
+        return json({ recorded: 1 });
+      }
+      expect(String(input)).toContain('/me/state');
+      checks += 1;
+      return json({ archiveVersion: 0, checksum: archiveChecksum(EMPTY.content), ...EMPTY.content });
+    }));
+    try {
+      progress.scheduleCloudRecovery();
+      expect(timers).toHaveBeenLastCalledWith(expect.any(Function), 5_000);
+      progress.scheduleCloudRecovery(true);
+      expect(timers).toHaveBeenLastCalledWith(expect.any(Function), 0);
+      await vi.waitFor(() => expect(uploads).toBe(1));
+      progress.scheduleCloudRecovery(true);
+      progress.scheduleCloudRecovery(true);
+      progress.scheduleCloudRecovery(true);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(checks).toBe(0);
+      release();
+      await vi.waitFor(() => expect(checks).toBe(2));
+      expect(uploads).toBe(1);
+      expect(refresh).toHaveBeenCalledTimes(2);
+      expect(await attemptOutbox.count(OWNER_U1)).toBe(0);
+    } finally {
+      release();
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it.each([0, 1])('publishes offline startup status with %i queued attempts', async (pendingCount) => {
+    const progress = await setup();
+    if (pendingCount) await progress.stageAttempt({
+      clientAttemptId: 'offline-boot', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    useAppStore().online = false;
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      progress.scheduleCloudRecovery(true);
+      await vi.waitFor(() => {
+        expect(progress.syncStatus.state).toBe('offline');
+        expect(progress.attemptUploadStatus).toMatchObject({
+          state: pendingCount ? 'pending' : 'idle', pendingCount,
+        });
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
   it('keeps audit attempts durably queued offline and removes them after an acknowledged retry', async () => {
     const progress = await setup();
     const attempt = {
@@ -513,6 +741,100 @@ describe('progress sync orchestration', () => {
       progress.cancelCloudRecovery();
     }
   });
+
+  it('refreshes credentials before a manual archive and history upload', async () => {
+    const progress = await setup();
+    const auth = useAuthStore();
+    await progress.stageAttempt({
+      clientAttemptId: 'refreshed-upload', questionId: 'q1', partId: 'q1-a',
+      correct: true, awardedPoints: 1, gradedAt: '2026-08-07T10:45:00.000Z',
+    });
+    const refresh = vi.spyOn(auth, 'refreshSessionForRecovery').mockImplementation(async () => {
+      auth.session = { ...auth.session!, token: 'refreshed-token' };
+      return true;
+    });
+    const paths: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer refreshed-token');
+      const path = new URL(String(input)).pathname;
+      paths.push(path);
+      return path.endsWith('/me/attempts')
+        ? json({ recorded: 1 })
+        : json({ result: 'fast-forward', archiveVersion: 1, checksum: archiveChecksum(EMPTY.content) });
+    }));
+    await expect(progress.syncCloudNow()).resolves.toBe('synced');
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(paths).toEqual(['/me/attempts', '/me/sync']);
+    expect(await attemptOutbox.count(OWNER_U1)).toBe(0);
+  });
+
+  it('defers uploads if refreshing an expired session is temporarily unavailable', async () => {
+    const progress = await setup();
+    const refresh = vi.spyOn(useAuthStore(), 'refreshSessionForRecovery').mockResolvedValue(false);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      await expect(progress.syncCloudNow()).resolves.toBe('offline');
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(progress.syncStatus.state).toBe('offline');
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(timers).toHaveBeenLastCalledWith(expect.any(Function), 5_000);
+    } finally {
+      progress.cancelCloudRecovery();
+    }
+  });
+
+  it.each(['pending reconciliation', 'archive choice', 'conflict'] as const)(
+    'preserves %s when another window refreshes the same account token',
+    async (state) => {
+      const progress = await setup();
+      const auth = useAuthStore();
+      await archiveStore.save(EVOLVED_F1);
+      vi.stubGlobal('fetch', vi.fn(async () => {
+        if (state === 'pending reconciliation') throw new TypeError('temporarily offline');
+        if (state === 'conflict') return json({
+          result: 'conflict', serverVersion: 3, serverChecksum: archiveChecksum(EVOLVED_F2.content),
+          conflicts: [], autoMergeable: EVOLVED_F2.content,
+        });
+        return json({ archiveVersion: 3, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content });
+      }));
+      try {
+        if (state === 'conflict') await progress.syncNow({ quiet: true });
+        else await progress.reconcileOnLogin();
+        progress.pauseCloudRecovery();
+        auth.session = { ...auth.session!, token: 'other-window-token' };
+        await progress.activateUserProfile(OWNER_U1, true);
+        progress.rebindCloudRecoverySession('test-token');
+        const paths: string[] = [];
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer other-window-token');
+          const path = new URL(String(input)).pathname;
+          paths.push(path);
+          if (path.endsWith('/me/state')) {
+            return json({ archiveVersion: 3, checksum: archiveChecksum(EVOLVED_F2.content), ...EVOLVED_F2.content });
+          }
+          expect(path).toBe('/me/sync/resolve');
+          return json({ result: 'resolved', archiveVersion: 4, checksum: 'resolved' });
+        }));
+        if (state === 'pending reconciliation') {
+          progress.scheduleCloudRecovery(true);
+          await vi.waitFor(() => expect(progress.archiveChoice).toBeDefined());
+          expect(paths).toEqual(['/me/state']);
+        }
+        if (state === 'conflict') await progress.resolveConflict({});
+        else await progress.resolveArchiveChoice('local');
+        expect(paths.at(-1)).toBe('/me/sync/resolve');
+        expect(progress.syncStatus.state).toBe('synced');
+        expect(progress.archive.baseVersion).toBe(4);
+        expect(progress.archiveChoice).toBeUndefined();
+        expect(progress.conflict).toBeUndefined();
+      } finally {
+        progress.cancelCloudRecovery();
+      }
+    },
+  );
 
   it('manual sync cannot switch to another account halfway through the upload', async () => {
     const progress = await setup();

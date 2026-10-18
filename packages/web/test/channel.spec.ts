@@ -75,4 +75,25 @@ describe('release channel', () => {
       server: 'https://qedsync-pv.barcarolle.studio',
     });
   });
+
+  it('supports an isolated beta deployment path and local smoke endpoints', () => {
+    expect(withEnv({ QED2_CHANNEL: 'preview', QED2_DEFAULT_CORE: 'https://beta.example.test/core', QED2_DEFAULT_SERVER: 'http://127.0.0.1:8080' }, resolveEndpoints))
+      .toEqual({ core: 'https://beta.example.test/core', server: 'http://127.0.0.1:8080' });
+  });
+
+  it('rejects production, insecure remote, credential-bearing and malformed preview endpoints', () => {
+    for (const endpoint of ['https://qedsync.barcarolle.studio', 'https://qedsync.barcarolle.studio.', 'https://qedcore.barcarolle.studio./v1', 'https://qedcore.barcarolle.studio/v1', 'http://remote.example.test', 'https://user:secret@beta.example.test', 'https://beta.example.test?key=secret', 'https://beta.example.test#fragment', '']) {
+      expect(() => withEnv({ QED2_CHANNEL: 'preview', QED2_PREVIEW_REPLACES_STABLE: undefined, QED2_DEFAULT_CORE: endpoint, QED2_DEFAULT_SERVER: 'https://beta.example.test/server' }, resolveEndpoints), endpoint).toThrow();
+    }
+  });
+
+  it('requires an explicit replacement deployment to reuse the existing service addresses', () => {
+    const endpoints = { QED2_CHANNEL: 'preview', QED2_DEFAULT_CORE: 'https://qedcore.barcarolle.studio', QED2_DEFAULT_SERVER: 'https://qedsync.barcarolle.studio' };
+    for (const flag of [undefined, 'false', 'TRUE', '1']) {
+      expect(() => withEnv({ ...endpoints, QED2_PREVIEW_REPLACES_STABLE: flag }, resolveEndpoints)).toThrow();
+    }
+    expect(withEnv({ ...endpoints, QED2_PREVIEW_REPLACES_STABLE: 'true' }, resolveEndpoints))
+      .toEqual({ core: endpoints.QED2_DEFAULT_CORE, server: endpoints.QED2_DEFAULT_SERVER });
+    expect(() => withEnv({ ...endpoints, QED2_PREVIEW_REPLACES_STABLE: 'true', QED2_DEFAULT_SERVER: 'http://qedsync.barcarolle.studio' }, resolveEndpoints)).toThrow();
+  });
 });

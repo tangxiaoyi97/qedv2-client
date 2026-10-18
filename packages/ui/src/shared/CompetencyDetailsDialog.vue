@@ -151,7 +151,7 @@ watch(() => [props.open, props.code, props.locale] as const, async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: var(--q-radius-dialog);
   background: var(--q-card);
   color: var(--q-ink);
   box-shadow: 0 18px 70px rgba(0, 0, 0, 0.2);
@@ -164,19 +164,19 @@ watch(() => [props.open, props.code, props.locale] as const, async () => {
   flex: none;
 }
 .q-competency-dialog__heading { flex: 1; min-width: 0; }
-.q-competency-dialog__heading p { margin: 0 0 4px; color: var(--q-faint); font-size: 11.5px; }
-.q-competency-dialog__heading h2 { margin: 0; font-size: 21px; line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.q-competency-dialog__heading p { margin: 0 0 4px; color: var(--q-faint); font-size: var(--q-font-xs); }
+.q-competency-dialog__heading h2 { margin: 0; font-size: var(--q-font-xl); line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .q-competency-dialog__languages { display: flex; flex: none; gap: 2px; }
 .q-competency-dialog__languages button {
   min-width: 44px;
   min-height: 44px;
   padding: 0 10px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: transparent;
   color: var(--q-faint);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   cursor: pointer;
 }
@@ -195,23 +195,23 @@ watch(() => [props.open, props.code, props.locale] as const, async () => {
   overflow-wrap: anywhere;
 }
 .q-competency-dialog__group { margin-bottom: 18px; }
-.q-competency-dialog__group :deep(.q-md) { font-size: 17px; font-weight: 750; line-height: 1.45; color: var(--q-ink); }
+.q-competency-dialog__group :deep(.q-md) { font-size: var(--q-font-lg); font-weight: 750; line-height: 1.45; color: var(--q-ink); }
 .q-competency-dialog__group :deep(.q-md__p) { margin: 0; }
-.q-competency-dialog__description.q-md { font-size: 15px; line-height: 1.7; }
+.q-competency-dialog__description.q-md { font-size: var(--q-font-md); line-height: 1.7; }
 .q-competency-dialog__footnotes { margin-top: 20px; padding-left: 12px; border-left: 2px solid var(--q-accent); }
 .q-competency-dialog__footnote { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
-.q-competency-dialog__footnote :deep(.q-md) { min-width: 0; font-size: 12.5px; color: var(--q-mut); }
+.q-competency-dialog__footnote :deep(.q-md) { min-width: 0; font-size: var(--q-font-meta); color: var(--q-mut); }
 .q-competency-dialog__marker { flex: none; margin-top: 8px; color: var(--q-accent-strong); font-weight: 700; }
 .q-competency-dialog__notes { margin-top: 20px; }
-.q-competency-dialog__notes summary { min-height: 44px; padding: 10px 0; box-sizing: border-box; font-size: 13px; font-weight: 650; color: var(--q-mut); cursor: pointer; }
-.q-competency-dialog__notes :deep(.q-md) { font-size: 13px; color: var(--q-mut); }
-.q-competency-dialog__source { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 24px; color: var(--q-faint); font-size: 11.5px; }
+.q-competency-dialog__notes summary { min-height: 44px; padding: 10px 0; box-sizing: border-box; font-size: var(--q-font-meta); font-weight: 650; color: var(--q-mut); cursor: pointer; }
+.q-competency-dialog__notes :deep(.q-md) { font-size: var(--q-font-meta); color: var(--q-mut); }
+.q-competency-dialog__source { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 24px; color: var(--q-faint); font-size: var(--q-font-xs); }
 .q-competency-dialog__source a { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--q-accent-strong); text-decoration: none; }
 .q-competency-dialog__source a:hover { text-decoration: underline; }
 .q-competency-dialog__error p,
-.q-competency-dialog__unavailable { margin: 0 0 14px; color: var(--q-mut); font-size: 13px; line-height: 1.6; }
+.q-competency-dialog__unavailable { margin: 0 0 14px; color: var(--q-mut); font-size: var(--q-font-meta); line-height: 1.6; }
 .q-competency-dialog__fallback { margin-top: 22px; }
-.q-competency-dialog__fallback-label { margin: 0 0 8px; font-size: 11.5px; font-weight: 650; color: var(--q-faint); }
+.q-competency-dialog__fallback-label { margin: 0 0 8px; font-size: var(--q-font-xs); font-weight: 650; color: var(--q-faint); }
 .q-competency-dialog__footer { display: flex; justify-content: flex-end; flex: none; padding: 12px 24px; border-top: 1px solid var(--q-border-soft); }
 .competency-dialog-enter-active,
 .competency-dialog-leave-active { transition: opacity 160ms ease; }

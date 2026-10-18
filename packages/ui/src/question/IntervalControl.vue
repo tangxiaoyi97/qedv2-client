@@ -115,9 +115,9 @@ const correctNotation = computed(() => {
 .q-interval__input { width: 100%; text-align: center; }
 .q-interval__bracket { width: 48px; padding-inline: 9px 19px; background-position: right 4px center; cursor: pointer; }
 .q-interval__sep { color: var(--q-mut); }
-.q-interval__preview { margin-top: 8px; text-align: center; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--q-mut); }
+.q-interval__preview { margin-top: 8px; text-align: center; font-size: var(--q-font-md); font-variant-numeric: tabular-nums; color: var(--q-mut); }
 .q-interval__review { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-.q-interval__verdict, .q-interval__correct { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--q-radius-control, 10px); font-size: 14px; }
+.q-interval__verdict, .q-interval__correct { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--q-radius-control, 10px); font-size: var(--q-font-ui); }
 .q-interval__verdict--ok { border: 1px solid var(--q-ok); background: var(--q-ok-bg); }
 .q-interval__verdict--partial { border: 1px solid var(--q-part-border); background: var(--q-part-bg); }
 .q-interval__verdict--err { border: 1px solid var(--q-err); background: var(--q-err-bg); }

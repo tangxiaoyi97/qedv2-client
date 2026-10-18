@@ -726,8 +726,10 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   font-weight: 700;
   text-decoration: none;
 }
-.prog__leaderboard-link:hover {
-  text-decoration: underline;
+@media (hover: hover) and (pointer: fine) {
+  .prog__leaderboard-link:hover {
+    text-decoration: underline;
+  }
 }
 .prog__leaderboard-link:focus-visible {
   outline: 2px solid var(--q-accent);
@@ -777,12 +779,12 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   min-width: 0;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 14px 16px;
 }
 .prog__stat-num {
   font-weight: 800;
-  font-size: 24px;
+  font-size: var(--q-font-title);
 }
 .prog__stat-label {
   font-size: var(--q-font-small);
@@ -794,7 +796,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   max-width: 100%;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 16px;
   margin-bottom: 18px;
 }
@@ -823,10 +825,10 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog__detail-btn {
   border: 1px solid var(--q-border-2);
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-panel);
   color: var(--q-mut);
-  font: 700 11px 'Public Sans', system-ui, sans-serif;
+  font: 700 var(--q-font-xs) var(--q-font-family);
   padding: 5px 9px;
   cursor: pointer;
 }
@@ -882,7 +884,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog__activity-metric {
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-panel);
   padding: 10px 12px;
   min-width: 0;
@@ -891,7 +893,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog__activity-metric small {
   display: block;
   color: var(--q-faint);
-  font-size: 10.5px;
+  font-size: var(--q-font-2xs);
   font-weight: 700;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -902,7 +904,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog__activity-metric b {
   display: block;
   margin: 5px 0 1px;
-  font-size: 22px;
+  font-size: var(--q-font-title);
   line-height: 1;
   font-weight: 850;
   color: var(--q-ink);
@@ -912,7 +914,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   grid-template-columns: 1fr;
   gap: 5px;
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-panel);
   padding: 9px 10px;
 }
@@ -1012,7 +1014,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   color: var(--q-mut-2);
   font-size: var(--q-font-ui);
   background: var(--q-panel);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1039,7 +1041,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   flex-direction: column;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   overflow: hidden;
 }
@@ -1056,7 +1058,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog-modal__title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--q-font-md);
   font-weight: 800;
 }
 .prog-modal__body {
@@ -1089,7 +1091,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog-modal__chart-card {
   min-width: 0;
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: color-mix(in srgb, var(--q-panel) 72%, transparent);
   padding: 12px;
 }
@@ -1133,7 +1135,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog-modal__group,
 .prog-modal__category {
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: color-mix(in srgb, var(--q-panel) 70%, transparent);
   padding: 10px;
 }
@@ -1167,10 +1169,10 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog-modal__mini-link {
   flex: none;
   border: 1px solid var(--q-border-2);
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-card);
   color: var(--q-accent-strong);
-  font: 750 11px 'Public Sans', system-ui, sans-serif;
+  font: 750 var(--q-font-xs) var(--q-font-family);
   padding: 5px 8px;
   cursor: pointer;
 }
@@ -1194,23 +1196,23 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 }
 .prog-modal__summary-card span {
   display: block;
-  font-size: 10.5px;
+  font-size: var(--q-eyebrow-size);
   color: var(--q-faint);
-  font-weight: 800;
+  font-weight: var(--q-eyebrow-weight);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--q-eyebrow-tracking);
 }
 .prog-modal__summary-card b {
   display: block;
   margin-top: 4px;
-  font-size: 20px;
+  font-size: var(--q-font-xl);
   line-height: 1;
 }
 .prog-modal__summary-card,
 .prog-modal__day-state {
   min-width: 0;
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-panel);
   padding: 10px 12px;
 }
@@ -1233,11 +1235,11 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   gap: 9px;
   padding: 9px 10px;
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-panel);
 }
 .prog-modal__timeline-row time {
-  font: 750 11px ui-monospace, Menlo, monospace;
+  font: 750 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-faint);
 }
 .prog-modal__row {
@@ -1247,7 +1249,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   min-width: 0;
   padding: 9px 10px;
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-panel);
 }
 .prog-modal__row-main {
@@ -1272,7 +1274,7 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
 .prog-modal__metawarn {
   margin-bottom: 12px;
   padding: 9px 12px;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
   color: var(--q-part-ink);
@@ -1289,11 +1291,11 @@ useModalA11y(detailCard, computed(() => detailKind.value !== null), closeDetail)
   align-items: center;
   gap: 10px;
   padding: 7px 8px;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-card);
 }
 .prog-modal__competency-code {
-  font: 800 11px ui-monospace, Menlo, monospace;
+  font: 800 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-accent-strong);
 }
 .prog-modal__competency :deep(.q-mastery__code) { display: none; }
