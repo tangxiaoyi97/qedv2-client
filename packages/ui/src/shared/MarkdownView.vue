@@ -62,7 +62,7 @@ const MarkdownBlocks = defineComponent({
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
-  font-size: 13.5px;
+  font-size: var(--q-font-meta);
   line-height: 1.6;
   color: var(--q-ink-2);
 }
@@ -76,13 +76,13 @@ const MarkdownBlocks = defineComponent({
   margin-top: 0;
 }
 .q-md :deep(.q-md__h1) {
-  font-size: 18px;
+  font-size: var(--q-font-lg);
 }
 .q-md :deep(.q-md__h2) {
-  font-size: 15px;
+  font-size: var(--q-font-md);
 }
 .q-md :deep(.q-md__h3) {
-  font-size: 13.5px;
+  font-size: var(--q-font-meta);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--q-mut);
@@ -113,20 +113,20 @@ const MarkdownBlocks = defineComponent({
 .q-md :deep(li > .q-md__p:first-child) { margin-top: 0; }
 .q-md :deep(li > .q-md__p:last-child) { margin-bottom: 0; }
 .q-md :deep(.q-md__code) {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   font-size: 0.88em;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 4px;
+  border-radius: var(--q-radius-xs);
   padding: 1px 5px;
 }
 .q-md :deep(.q-md__pre) {
   max-width: 100%;
   overflow-x: auto;
   padding: 10px 12px;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-panel);
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   font-size: 0.88em;
   white-space: pre;
   overflow-wrap: normal;

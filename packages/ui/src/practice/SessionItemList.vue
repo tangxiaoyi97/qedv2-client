@@ -24,6 +24,7 @@ import { useI18n } from '../i18n.js';
  * roomier ones are the default because it is the touch surface.
  */
 import { VERDICT_LABELS } from '@qed2/core-logic';
+import { ArrowRight } from 'lucide-vue-next';
 import StateIcon from '../shared/StateIcon.vue';
 
 const { t } = useI18n();
@@ -74,7 +75,7 @@ function title(item: SessionItem): string {
             :state="item.state as 'correct' | 'partial' | 'incorrect'"
             :size="props.dense ? 15 : 16"
           />
-          <span v-else-if="item.state === 'current'" class="q-sitems__now">→</span>
+          <ArrowRight v-else-if="item.state === 'current'" class="q-sitems__now" :size="props.dense ? 15 : 16" :stroke-width="2.6" />
           <span v-else class="q-sitems__pending" />
         </span>
         <span class="q-sitems__nr">{{ item.index + 1 }}</span>
@@ -104,23 +105,29 @@ function title(item: SessionItem): string {
   align-items: center;
   gap: 9px;
   width: 100%;
+  /* The drawer is the touch surface: every row is a full-size target. */
+  min-height: var(--q-touch-target);
   padding: 10px 8px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: none;
   color: var(--q-mut);
-  font: 600 13px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-meta) var(--q-font-family);
   text-align: left;
   cursor: pointer;
 }
 .q-sitems--dense .q-sitems__item {
   gap: 8px;
+  min-height: 0;
   padding: 7px 8px;
-  font: 500 12px 'Public Sans', system-ui, sans-serif;
+  font: 500 var(--q-font-small) var(--q-font-family);
 }
 
 .q-sitems__item:disabled {
   cursor: default;
+}
+.q-sitems__item:not(:disabled):active {
+  background: var(--q-panel-2);
 }
 .q-sitems__item--done {
   color: var(--q-faint);
@@ -158,7 +165,6 @@ function title(item: SessionItem): string {
 
 .q-sitems__now {
   color: var(--q-accent-strong);
-  font-weight: 800;
 }
 
 .q-sitems__pending {
@@ -170,14 +176,14 @@ function title(item: SessionItem): string {
 }
 
 .q-sitems__nr {
-  font: 700 11px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-xs) var(--q-font-mono);
   color: var(--q-faint);
   width: 24px;
   flex: none;
   text-align: right;
 }
 .q-sitems--dense .q-sitems__nr {
-  font: 600 10.5px ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-2xs) var(--q-font-mono);
   width: 20px;
 }
 

@@ -72,6 +72,9 @@ describe('desktop preload surface', () => {
     expect(exposed.update?.checkForUpdates).toBeUndefined();
     expect(exposed.update?.applyUpdates).toBeUndefined();
     expect(exposed.update?.relaunchToApply).toBeUndefined();
+    expect(exposed.update?.pauseDownload).toBeUndefined();
+    expect(exposed.update?.resumeDownload).toBeUndefined();
+    expect(exposed.update?.cancelDownload).toBeUndefined();
     expect(exposed.update?.getState).toEqual(expect.any(Function));
     await exposed.shell?.openDesktopWindow?.('node');
     expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.shellOpenWindow, 'node');
@@ -147,6 +150,24 @@ describe('desktop preload surface', () => {
     expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updateCheck);
     expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updateApply, ['app']);
     expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updateRelaunch);
+    await exposed.update?.pauseDownload?.();
+    await exposed.update?.resumeDownload?.();
+    await exposed.update?.cancelDownload?.();
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updatePause);
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updateResume);
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.updateCancel);
+  });
+
+  it('offers typed space management without exposing filesystem access', async () => {
+    await import('../src/preload.js');
+    const exposed = electronMocks.exposeInMainWorld.mock.calls[0]?.[1] as Partial<PlatformPorts>;
+    await exposed.shell?.desktopStorage?.getOverview();
+    await exposed.shell?.desktopStorage?.cleanup(['downloads', 'logs']);
+    await exposed.shell?.getDesktopSupport?.();
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.desktopStorageOverview);
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.desktopStorageCleanup, ['downloads', 'logs']);
+    expect(electronMocks.invoke).toHaveBeenCalledWith(IPC.desktopSupport);
+    expect(Object.keys(exposed.shell?.desktopStorage ?? {}).sort()).toEqual(['cleanup', 'getOverview']);
   });
 
   it('exposes only the bounded native window role for session isolation', async () => {
@@ -155,6 +176,21 @@ describe('desktop preload surface', () => {
 
     const exposed = electronMocks.exposeInMainWorld.mock.calls[0]?.[1] as Partial<PlatformPorts>;
     expect(exposed.shell?.windowKind).toBe('practice');
+  });
+
+  it('delivers wake connectivity through the typed network port and supports unsubscription', async () => {
+    await import('../src/preload.js');
+    const exposed = electronMocks.exposeInMainWorld.mock.calls[0]?.[1] as Partial<PlatformPorts>;
+    const resumed = vi.fn();
+    const remove = exposed.network?.onResume?.(resumed);
+    const listeners = electronMocks.on.mock.calls
+      .filter(([channel]) => channel === IPC.networkResume)
+      .map(([, listener]) => listener);
+    for (const listener of listeners) listener({}, false);
+    expect(exposed.network?.isOnline()).toBe(false);
+    expect(resumed).toHaveBeenCalledExactlyOnceWith(false);
+    remove?.();
+    expect(electronMocks.removeListener).toHaveBeenCalledWith(IPC.networkResume, listeners.at(-1));
   });
 
   it('uses the WindowManager capability argument when duplicate CLI values exist', async () => {

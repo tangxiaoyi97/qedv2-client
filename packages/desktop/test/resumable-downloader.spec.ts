@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdtemp, readFile, readdir, rm, truncate } from 'node:fs/promises';
+import { appendFile, chmod, mkdtemp, readFile, readdir, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -72,6 +72,103 @@ afterEach(async () => {
 });
 
 describe('ResumableArtifactDownloader', () => {
+  it.each(['discard', 'inspect', 'resetAutomaticRecovery', 'pauseRecovery', 'cleanupExpiredDownloads'] as const)(
+    '%s locks the cache before its first asynchronous filesystem operation', async (operation) => {
+      const directory = await root();
+      const fetchMock = vi.fn(async () => response(payload, 200, { etag: '"release"' })) as unknown as typeof fetch;
+      const instance = downloader(directory, fetchMock);
+      const maintaining = instance[operation]();
+      await expect(instance.stage(descriptor)).rejects.toMatchObject({ code: 'ERR_DOWNLOAD_BUSY' });
+      expect(fetchMock).not.toHaveBeenCalled();
+      await maintaining;
+      const verified = await instance.stage(descriptor);
+      expect(await readFile(verified.path)).toEqual(payload);
+    },
+  );
+
+  it('does not start an already aborted download', async () => {
+    const directory = await root();
+    const fetchMock = vi.fn();
+    const reason = Object.assign(new Error('paused'), { code: 'ERR_CANCELLED' });
+    await expect(downloader(directory, fetchMock).stage(descriptor, {
+      signal: AbortSignal.abort(reason),
+    })).rejects.toBe(reason);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it('aborts an idle reader promptly, checkpoints its bytes, and does not await a stuck cancellation', async () => {
+    const directory = await root();
+    const controller = new AbortController();
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const stream = new ReadableStream<Uint8Array>({
+      start(streamController) { streamController.enqueue(payload.subarray(0, 5)); },
+      cancel,
+    });
+    const first = downloader(directory, vi.fn(async () => new Response(stream, {
+      headers: { etag: '"qed2-v2.1.0"' },
+    })) as unknown as typeof fetch);
+    let checkpointed!: () => void;
+    const hasCheckpoint = new Promise<void>((resolve) => { checkpointed = resolve; });
+    const download = first.stage(descriptor, {
+      signal: controller.signal,
+      onProgress: ({ persistedBytes }) => { if (persistedBytes === 5) checkpointed(); },
+    });
+    const rejection = expect(download).rejects.toMatchObject({ code: 'ERR_CANCELLED' });
+    await hasCheckpoint;
+    controller.abort(Object.assign(new Error('paused'), { code: 'ERR_CANCELLED' }));
+    await rejection;
+    expect(cancel).toHaveBeenCalledOnce();
+    await expect(first.inspect()).resolves.toMatchObject({ downloadedBytes: 5, state: 'partial' });
+    await first.pauseRecovery();
+    await expect(first.inspect()).resolves.toMatchObject({ paused: true });
+    await first.resetAutomaticRecovery();
+    expect((await first.inspect())?.paused).toBeUndefined();
+  });
+
+  it('stops before verification promotion and reuses the fully persisted partial on retry', async () => {
+    const directory = await root();
+    const fetchMock = vi.fn(async () => response(payload, 200, { etag: '"release"' })) as unknown as typeof fetch;
+    const instance = downloader(directory, fetchMock);
+    const controller = new AbortController();
+    await expect(instance.stage(descriptor, {
+      signal: controller.signal,
+      onVerifying: () => controller.abort(Object.assign(new Error('paused'), { code: 'ERR_CANCELLED' })),
+    })).rejects.toMatchObject({ code: 'ERR_CANCELLED' });
+    expect(await readdir(directory)).not.toContain(descriptor.assetName);
+    await expect(instance.inspect()).resolves.toMatchObject({ downloadedBytes: payload.length, state: 'partial' });
+    const verified = await instance.stage(descriptor);
+    expect(await readFile(verified.path)).toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('cancels the network body when the journal becomes unwritable after response headers', async () => {
+    if (process.platform === 'win32') return; // Windows ACL behavior is not represented by POSIX chmod.
+    const directory = await root();
+    const cancel = vi.fn();
+    const instance = downloader(directory, vi.fn(async () => {
+      await chmod(directory, 0o500);
+      return new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: { etag: '"release"' } });
+    }) as unknown as typeof fetch);
+    try {
+      await expect(instance.stage(descriptor)).rejects.toMatchObject({ code: 'EACCES' });
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally { await chmod(directory, 0o700); }
+  });
+
+  it('recognizes GitHub secondary rate limits on HTTP 403 and closes their body', async () => {
+    const directory = await root();
+    const cancel = vi.fn();
+    const instance = downloader(directory, vi.fn(async () => new Response(
+      new ReadableStream<Uint8Array>({ cancel }),
+      { status: 403, headers: { 'retry-after': '120' } },
+    )) as unknown as typeof fetch);
+    await expect(instance.stage(descriptor)).rejects.toMatchObject({
+      code: 'ERR_UPDATER_RATE_LIMITED', retryAfter: '120', statusCode: 403,
+    });
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it('persists byte progress and verifies size plus both hashes', async () => {
     const directory = await root();
     const fetchMock = vi.fn(async () => response(payload, 200, {
@@ -169,6 +266,18 @@ describe('ResumableArtifactDownloader', () => {
     expect(await readdir(directory)).toContainEqual(
       expect.stringMatching(/^QED2-2\.1\.0-mac-arm64\.dmg\.part\.range-ignored-/),
     );
+  });
+
+  it('rechecks full-file capacity before restarting a download whose Range was ignored', async () => {
+    const directory = await root();
+    await expect(downloader(directory, vi.fn(async () => response(payload.subarray(0, 4), 200, {
+      etag: '"release"',
+    })) as unknown as typeof fetch).stage(descriptor)).rejects.toMatchObject({ code: 'ERR_DOWNLOAD_TRUNCATED' });
+    const fetchMock = vi.fn(async () => response(payload, 200, { etag: '"release"' })) as unknown as typeof fetch;
+    const instance = downloader(directory, fetchMock, async () => payload.length - 4);
+    await expect(instance.stage(descriptor)).rejects.toMatchObject({ code: 'ENOSPC' });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await expect(instance.inspect()).resolves.toMatchObject({ downloadedBytes: 0, state: 'partial' });
   });
 
   it('drops a partial file and restarts when the strong ETag changes', async () => {

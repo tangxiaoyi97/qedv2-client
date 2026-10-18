@@ -33,10 +33,10 @@ withDefaults(
   align-items: center;
   gap: 12px;
   padding: 24px;
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-panel);
   color: var(--q-mut-2);
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   text-align: center;
 }
 .q-notice--error {

@@ -297,7 +297,7 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
   display: flex;
   flex-direction: column;
   background: var(--q-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   overflow: hidden;
 }
@@ -310,7 +310,7 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
 }
 .fdlg__title {
   font-weight: 800;
-  font-size: 17px;
+  font-size: var(--q-font-lg);
   letter-spacing: -0.01em;
   margin: 0;
 }
@@ -327,9 +327,9 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
   gap: 7px;
 }
 .fdlg__label {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
@@ -343,11 +343,11 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
   align-items: center;
   gap: 5px;
   padding: 5px 11px;
-  border-radius: 20px;
+  border-radius: var(--q-radius-pill);
   border: 1px solid var(--q-border-3);
   background: var(--q-card);
   color: var(--q-ink-2);
-  font: 600 12px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-small) var(--q-font-family);
   cursor: pointer;
   white-space: nowrap;
   transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
@@ -379,7 +379,7 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
 .fdlg__tick {
   color: var(--q-accent-strong);
   font-weight: 800;
-  font-size: 11px;
+  font-size: var(--q-font-xs);
 }
 .fdlg__footer {
   display: flex;
@@ -394,7 +394,7 @@ const countText = computed(() => t('{count} Treffer', { count: props.resultCount
 .fdlg__count {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   font-weight: 600;
   color: var(--q-mut);
   white-space: nowrap;

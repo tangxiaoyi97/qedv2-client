@@ -129,6 +129,7 @@ function isTransportFailure(error: unknown): boolean {
 async function readBoundedJson(response: Response, maximumBytes: number, label: string): Promise<unknown> {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > maximumBytes) {
+    void response.body?.cancel().catch(() => undefined);
     throw codedReleaseError(`${label} exceeds the size limit`, 'ERR_UPDATER_INVALID_RELEASE_FEED');
   }
   if (!response.body) {
@@ -143,7 +144,7 @@ async function readBoundedJson(response: Response, maximumBytes: number, label: 
       if (done) break;
       length += value.byteLength;
       if (length > maximumBytes) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw codedReleaseError(`${label} exceeds the size limit`, 'ERR_UPDATER_INVALID_RELEASE_FEED');
       }
       chunks.push(value);
@@ -152,6 +153,7 @@ async function readBoundedJson(response: Response, maximumBytes: number, label: 
       .decode(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), length));
     return JSON.parse(source) as unknown;
   } catch (error) {
+    void reader.cancel().catch(() => undefined);
     if ((error as { code?: unknown })?.code === 'ERR_UPDATER_INVALID_RELEASE_FEED') throw error;
     if (isTransportFailure(error)) throw error;
     throw codedReleaseError(`${label} is malformed`, 'ERR_UPDATER_INVALID_RELEASE_FEED');
@@ -426,11 +428,16 @@ export async function fetchApprovedDesktopRelease(
     `https://api.github.com/repos/${UPDATE_REPOSITORY_OWNER}/${UPDATE_REPOSITORY_NAME}/releases/latest`,
     { headers, signal: AbortSignal.timeout(12_000), cache: 'no-store', redirect: 'error' },
   );
-  if (response.status === 404) return undefined;
+  if (response.status === 404) {
+    void response.body?.cancel().catch(() => undefined);
+    return undefined;
+  }
   if (isRateLimitedResponse(response)) {
+    void response.body?.cancel().catch(() => undefined);
     throw codedReleaseError('GitHub Desktop release request was rate limited', 'ERR_UPDATER_RATE_LIMITED', response.status);
   }
   if (!response.ok) {
+    void response.body?.cancel().catch(() => undefined);
     throw codedReleaseError('GitHub Desktop release request failed', `HTTP_ERROR_${response.status}`, response.status);
   }
   const release = await readBoundedJson(response, MAX_RELEASE_API_BYTES, 'GitHub Desktop release response');
@@ -458,6 +465,7 @@ export async function fetchApprovedDesktopRelease(
     cache: 'no-store',
   }, fetchImpl);
   if (isRateLimitedResponse(manifestResponse)) {
+    void manifestResponse.body?.cancel().catch(() => undefined);
     throw codedReleaseError(
       'GitHub Desktop release manifest request was rate limited',
       'ERR_UPDATER_RATE_LIMITED',
@@ -465,6 +473,7 @@ export async function fetchApprovedDesktopRelease(
     );
   }
   if (!manifestResponse.ok) {
+    void manifestResponse.body?.cancel().catch(() => undefined);
     throw codedReleaseError(
       'GitHub Desktop release manifest request failed',
       `HTTP_ERROR_${manifestResponse.status}`,

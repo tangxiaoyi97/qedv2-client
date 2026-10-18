@@ -11,6 +11,7 @@ import {
   type FileHandle,
 } from 'node:fs/promises';
 import { basename, resolve, sep } from 'node:path';
+import { cleanupExpiredUpdateStorage, inspectUpdateStorage } from './update-storage-maintenance.js';
 import {
   buildReleaseAssetUrl,
   fetchApprovedReleaseUrl,
@@ -77,6 +78,8 @@ export interface DownloadJournalV1 {
   lastErrorCode?: string;
   /** Automatic timers/network events must not retry until the user explicitly asks. */
   manualRetryRequired?: boolean;
+  /** User pause survives process restarts and must never trigger automatic recovery. */
+  paused?: boolean;
 }
 
 export interface VerifiedArtifact {
@@ -158,12 +161,13 @@ function parseJournal(value: unknown, now: number): DownloadJournalV1 | undefine
     (value.automaticAttempts as number) > 10_000 ||
     (value.nextRetryAt !== undefined && !validTimestamp(value.nextRetryAt, now + 365 * 24 * 60 * 60 * 1_000)) ||
     (value.lastErrorCode !== undefined && (typeof value.lastErrorCode !== 'string' || value.lastErrorCode.length > 128)) ||
-    (value.manualRetryRequired !== undefined && typeof value.manualRetryRequired !== 'boolean')
+    (value.manualRetryRequired !== undefined && typeof value.manualRetryRequired !== 'boolean') ||
+    (value.paused !== undefined && typeof value.paused !== 'boolean')
   ) return undefined;
 
   const age = now - Date.parse(value.updatedAt as string);
   const ttl = value.state === 'verified' ? VERIFIED_TTL_MS : PARTIAL_TTL_MS;
-  if (age > ttl) return undefined;
+  if (age > ttl && value.paused !== true) return undefined;
   return value as unknown as DownloadJournalV1;
 }
 
@@ -184,6 +188,7 @@ function clearAutomaticRecoveryFields(journal: DownloadJournalV1): DownloadJourn
   delete cleared.nextRetryAt;
   delete cleared.lastErrorCode;
   delete cleared.manualRetryRequired;
+  delete cleared.paused;
   return cleared;
 }
 
@@ -211,18 +216,28 @@ function contentRange(value: string | null): { start: number; end: number; total
   return { start: start!, end: end!, total: total! };
 }
 
-async function hashFile(path: string): Promise<{ sha256: string; sha512: string }> {
+async function hashFile(path: string, signal?: AbortSignal): Promise<{ sha256: string; sha512: string }> {
+  signal?.throwIfAborted();
   const sha256 = createHash('sha256');
   const sha512 = createHash('sha512');
   await new Promise<void>((resolvePromise, reject) => {
-    const input = createReadStream(path, { highWaterMark: 1024 * 1024 });
+    const input = createReadStream(path, { highWaterMark: 1024 * 1024, signal });
+    let failure: unknown;
+    let ended = false;
     input.on('data', (chunk: string | Buffer) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       sha256.update(bytes);
       sha512.update(bytes);
     });
-    input.on('error', reject);
-    input.on('end', resolvePromise);
+    input.on('error', (error) => { failure = error; });
+    input.on('end', () => { ended = true; });
+    // A cancelled hash must release the OS file handle before pause/cancel
+    // can rename/remove it (especially on Windows) or shutdown can finish.
+    input.on('close', () => {
+      if (failure !== undefined) reject(failure);
+      else if (!ended) reject(codedDownloadError('Update verification could not read the file', 'EIO'));
+      else resolvePromise();
+    });
   });
   return { sha256: sha256.digest('hex'), sha512: sha512.digest('base64') };
 }
@@ -271,11 +286,18 @@ async function syncDirectory(directory: string): Promise<void> {
 async function readWithIdleTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ) {
   let timer: NodeJS.Timeout | undefined;
+  let onAbort: (() => void) | undefined;
   try {
+    signal?.throwIfAborted();
     return await Promise.race([
       reader.read(),
+      new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal?.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(codedDownloadError('Update download became idle', 'ETIMEDOUT')), timeoutMs);
         timer.unref();
@@ -283,6 +305,7 @@ async function readWithIdleTimeout(
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
 }
 
@@ -313,27 +336,62 @@ export class ResumableArtifactDownloader {
     });
   }
 
+  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.active) throw codedDownloadError('An update cache operation is already active', 'ERR_DOWNLOAD_BUSY');
+    this.active = true;
+    try { return await operation(); } finally { this.active = false; }
+  }
+
   hasRecoverySync(): boolean {
     return existsSync(this.journalPath());
   }
 
   async inspect(): Promise<DownloadJournalV1 | undefined> {
-    await this.ensureRoot();
-    return await this.readJournal();
+    return this.exclusive(async () => {
+      await this.ensureRoot();
+      return await this.readJournal();
+    });
+  }
+
+  async getStorageUsage(): Promise<{ bytes: number; cleanableBytes: number }> {
+    return inspectUpdateStorage(this.rootDirectory, [], this.now());
+  }
+
+  async cleanupExpiredDownloads(): Promise<number> {
+    return this.exclusive(async () => {
+      return cleanupExpiredUpdateStorage(this.rootDirectory, [], this.now());
+    });
   }
 
   async resetAutomaticRecovery(): Promise<void> {
-    await this.ensureRoot();
-    const journal = await this.readJournal();
-    if (!journal || (
-      journal.automaticAttempts === 0 &&
-      journal.nextRetryAt === undefined &&
-      journal.lastErrorCode === undefined &&
-      journal.manualRetryRequired === undefined
-    )) return;
-    await this.writeJournal({
-      ...clearAutomaticRecoveryFields(journal),
-      updatedAt: new Date(this.now()).toISOString(),
+    return this.exclusive(async () => {
+      await this.ensureRoot();
+      const journal = await this.readJournal();
+      if (!journal || (
+        journal.automaticAttempts === 0 &&
+        journal.nextRetryAt === undefined &&
+        journal.lastErrorCode === undefined &&
+        journal.manualRetryRequired === undefined &&
+        journal.paused === undefined
+      )) return;
+      await this.writeJournal({
+        ...clearAutomaticRecoveryFields(journal),
+        updatedAt: new Date(this.now()).toISOString(),
+      });
+    });
+  }
+
+  /** Called after an active stage has settled, so a checkpoint cannot overwrite the pause. */
+  async pauseRecovery(descriptor?: ArtifactDescriptor): Promise<void> {
+    return this.exclusive(async () => {
+      await this.ensureRoot();
+      let journal = await this.readJournal();
+      if (descriptor && (!journal || !sameDescriptor(journal, descriptor))) {
+        this.validateDescriptor(descriptor);
+        journal = await this.prepareJournal(descriptor);
+      }
+      if (!journal) return;
+      await this.writeJournal({ ...journal, paused: true, updatedAt: new Date(this.now()).toISOString() });
     });
   }
 
@@ -342,31 +400,33 @@ export class ResumableArtifactDownloader {
     retryAt?: number,
     minimumAttempts = 0,
   ): Promise<DownloadJournalV1 | undefined> {
-    await this.ensureRoot();
-    const journal = await this.readJournal();
-    if (!journal) return undefined;
-    const normalizedCode = /^[A-Z0-9_]{1,128}$/.test(code) ? code : 'APP_UPDATE_DOWNLOAD_FAILED';
-    const now = this.now();
-    const boundedRetryAt = retryAt !== undefined && Number.isFinite(retryAt)
-      ? Math.min(Math.max(retryAt, now), now + 365 * 24 * 60 * 60 * 1_000)
-      : undefined;
-    const boundedMinimumAttempts = Number.isInteger(minimumAttempts) && minimumAttempts >= 0
-      ? Math.min(minimumAttempts, 10_000)
-      : 0;
-    const manualRetryRequired = normalizedCode === 'APP_UPDATE_STORAGE_UNAVAILABLE';
-    const next: DownloadJournalV1 = {
-      ...journal,
-      automaticAttempts: manualRetryRequired
-        ? journal.automaticAttempts
-        : Math.min(Math.max(journal.automaticAttempts + 1, boundedMinimumAttempts), 10_000),
-      lastErrorCode: normalizedCode,
-      updatedAt: new Date(now).toISOString(),
-      ...(boundedRetryAt === undefined ? {} : { nextRetryAt: new Date(boundedRetryAt).toISOString() }),
-      ...(manualRetryRequired ? { manualRetryRequired: true } : {}),
-    };
-    if (boundedRetryAt === undefined) delete next.nextRetryAt;
-    if (!manualRetryRequired) delete next.manualRetryRequired;
-    return await this.writeJournal(next);
+    return this.exclusive(async () => {
+      await this.ensureRoot();
+      const journal = await this.readJournal();
+      if (!journal) return undefined;
+      const normalizedCode = /^[A-Z0-9_]{1,128}$/.test(code) ? code : 'APP_UPDATE_DOWNLOAD_FAILED';
+      const now = this.now();
+      const boundedRetryAt = retryAt !== undefined && Number.isFinite(retryAt)
+        ? Math.min(Math.max(retryAt, now), now + 365 * 24 * 60 * 60 * 1_000)
+        : undefined;
+      const boundedMinimumAttempts = Number.isInteger(minimumAttempts) && minimumAttempts >= 0
+        ? Math.min(minimumAttempts, 10_000)
+        : 0;
+      const manualRetryRequired = normalizedCode === 'APP_UPDATE_STORAGE_UNAVAILABLE';
+      const next: DownloadJournalV1 = {
+        ...journal,
+        automaticAttempts: manualRetryRequired
+          ? journal.automaticAttempts
+          : Math.min(Math.max(journal.automaticAttempts + 1, boundedMinimumAttempts), 10_000),
+        lastErrorCode: normalizedCode,
+        updatedAt: new Date(now).toISOString(),
+        ...(boundedRetryAt === undefined ? {} : { nextRetryAt: new Date(boundedRetryAt).toISOString() }),
+        ...(manualRetryRequired ? { manualRetryRequired: true } : {}),
+      };
+      if (boundedRetryAt === undefined) delete next.nextRetryAt;
+      if (!manualRetryRequired) delete next.manualRetryRequired;
+      return await this.writeJournal(next);
+    });
   }
 
   async stage(
@@ -374,17 +434,21 @@ export class ResumableArtifactDownloader {
     options: {
       signal?: AbortSignal;
       onProgress?: (progress: { persistedBytes: number; totalBytes: number }) => void;
+      onVerifying?: () => void;
     } = {},
   ): Promise<VerifiedArtifact> {
     if (this.active) throw codedDownloadError('An update download is already active', 'ERR_DOWNLOAD_BUSY');
     this.validateDescriptor(descriptor);
     this.active = true;
     try {
+      options.signal?.throwIfAborted();
       await this.ensureRoot();
       let journal = await this.prepareJournal(descriptor);
       const readyPath = this.readyPath(descriptor.assetName);
       if (await safeFileSize(readyPath) !== undefined) {
-        const verified = await this.verifyReadyFile(readyPath, descriptor);
+        options.onVerifying?.();
+        const verified = await this.verifyReadyFile(readyPath, descriptor, options.signal);
+        options.signal?.throwIfAborted();
         journal = await this.writeJournal({
           ...clearAutomaticRecoveryFields(journal),
           state: 'verified',
@@ -425,14 +489,16 @@ export class ResumableArtifactDownloader {
       options.onProgress?.({ persistedBytes: offset, totalBytes: descriptor.size });
 
       if (offset < descriptor.size) {
-        await this.assertDiskSpace(descriptor.size - offset);
         journal = await this.download(descriptor, journal, offset, options, true);
       }
       const finalPartSize = await safeFileSize(partPath);
       if (finalPartSize !== descriptor.size) {
         throw codedDownloadError('Update download ended before the expected size', 'ERR_DOWNLOAD_TRUNCATED');
       }
-      const verifiedPart = await this.verifyReadyFile(partPath, descriptor);
+      options.signal?.throwIfAborted();
+      options.onVerifying?.();
+      const verifiedPart = await this.verifyReadyFile(partPath, descriptor, options.signal);
+      options.signal?.throwIfAborted();
       await rename(partPath, readyPath);
       await syncDirectory(this.rootDirectory);
       await this.writeJournal({
@@ -441,6 +507,7 @@ export class ResumableArtifactDownloader {
         downloadedBytes: descriptor.size,
         updatedAt: new Date(this.now()).toISOString(),
       });
+      options.signal?.throwIfAborted();
       options.onProgress?.({ persistedBytes: descriptor.size, totalBytes: descriptor.size });
       return { ...verifiedPart, path: readyPath, reused: false };
     } catch (error) {
@@ -512,8 +579,14 @@ export class ResumableArtifactDownloader {
   }
 
   async discard(): Promise<void> {
-    await this.ensureRoot();
-    const journal = await this.readJournal();
+    return this.exclusive(async () => {
+      await this.ensureRoot();
+      const journal = await this.readJournal();
+      await this.discardJournalFiles(journal);
+    });
+  }
+
+  private async discardJournalFiles(journal: DownloadJournalV1 | undefined): Promise<void> {
     if (journal) {
       for (const path of [this.partPath(journal.assetName), this.readyPath(journal.assetName)]) {
         await unlink(path).catch((error) => {
@@ -645,7 +718,7 @@ export class ResumableArtifactDownloader {
   private async prepareJournal(descriptor: ArtifactDescriptor): Promise<DownloadJournalV1> {
     const existing = await this.readJournal();
     if (existing && sameDescriptor(existing, descriptor)) return existing;
-    if (existing) await this.discard();
+    if (existing) await this.discardJournalFiles(existing);
     const now = new Date(this.now()).toISOString();
     return await this.writeJournal({
       formatVersion: 1,
@@ -692,6 +765,9 @@ export class ResumableArtifactDownloader {
     },
     mayReset: boolean,
   ): Promise<DownloadJournalV1> {
+    options.signal?.throwIfAborted();
+    // Re-check after a rejected Range response, which may require a full file.
+    await this.assertDiskSpace(descriptor.size - offset);
     const headers = new Headers({
       Accept: 'application/octet-stream',
       'Accept-Encoding': 'identity',
@@ -710,7 +786,9 @@ export class ResumableArtifactDownloader {
       },
       this.fetchImpl,
     );
-    if (response.status === 429) {
+    if (response.status === 429 || (response.status === 403 && (
+      response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')
+    ))) {
       response.body?.cancel().catch(() => undefined);
       const retryAfter = response.headers.get('retry-after');
       throw codedDownloadError('GitHub rate limited the desktop update download', 'ERR_UPDATER_RATE_LIMITED', {
@@ -773,16 +851,25 @@ export class ResumableArtifactDownloader {
     }
     if (!response.body) throw codedDownloadError('Desktop update response has no body', 'ERR_DOWNLOAD_PROTOCOL');
 
-    journal = await this.writeJournal({
-      ...journal,
-      validator: offset === 0 ? validator : journal.validator,
-      updatedAt: new Date(this.now()).toISOString(),
-    });
     const partPath = this.partPath(descriptor.assetName);
     const flags = offset === 0
       ? fsConstants.O_CREAT | fsConstants.O_TRUNC | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0)
       : fsConstants.O_APPEND | fsConstants.O_WRONLY | (fsConstants.O_NOFOLLOW ?? 0);
-    const file = await open(partPath, flags, 0o600);
+    let file: FileHandle;
+    try {
+      options.signal?.throwIfAborted();
+      journal = await this.writeJournal({
+        ...journal,
+        validator: offset === 0 ? validator : journal.validator,
+        updatedAt: new Date(this.now()).toISOString(),
+      });
+      file = await open(partPath, flags, 0o600);
+    } catch (error) {
+      // Header success does not transfer ownership of a network body to the
+      // file writer until its journal and destination are writable.
+      void response.body.cancel().catch(() => undefined);
+      throw error;
+    }
     const reader = response.body.getReader();
     let persistedBytes = offset;
     let writtenBytes = offset;
@@ -805,10 +892,11 @@ export class ResumableArtifactDownloader {
     };
     try {
       for (;;) {
-        const { done, value } = await readWithIdleTimeout(reader, this.idleTimeoutMs);
+        const { done, value } = await readWithIdleTimeout(reader, this.idleTimeoutMs, options.signal);
         if (done) break;
+        options.signal?.throwIfAborted();
         if (writtenBytes + value.byteLength > descriptor.size) {
-          await reader.cancel().catch(() => undefined);
+          void reader.cancel().catch(() => undefined);
           throw codedDownloadError('Desktop update response exceeded the approved size', 'ERR_DOWNLOAD_OVERSIZED');
         }
         await writeAll(file, Buffer.from(value));
@@ -817,7 +905,7 @@ export class ResumableArtifactDownloader {
       }
       await checkpoint(true);
     } catch (error) {
-      await reader.cancel().catch(() => undefined);
+      void reader.cancel().catch(() => undefined);
       await checkpoint(true).catch((checkpointError) => {
         this.logger.warn('Could not checkpoint an interrupted desktop update', checkpointError);
       });
@@ -835,12 +923,13 @@ export class ResumableArtifactDownloader {
   private async verifyReadyFile(
     path: string,
     descriptor: Pick<ArtifactDescriptor, 'size' | 'sha256' | 'sha512'>,
+    signal?: AbortSignal,
   ): Promise<Omit<VerifiedArtifact, 'reused'>> {
     const size = await safeFileSize(path);
     if (size !== descriptor.size) {
       throw codedDownloadError('Desktop update size differs from the approved manifest', 'ERR_DOWNLOAD_INTEGRITY');
     }
-    const digest = await hashFile(path);
+    const digest = await hashFile(path, signal);
     if (digest.sha256 !== descriptor.sha256 || digest.sha512 !== descriptor.sha512) {
       throw codedDownloadError('Desktop update checksum differs from the approved manifest', 'ERR_DOWNLOAD_INTEGRITY');
     }

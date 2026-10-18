@@ -67,8 +67,8 @@ const label = computed(() => t(GRADING_LABELS[props.grading]));
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 11.5px;
+  border-radius: var(--q-radius-pill);
+  font-size: var(--q-font-xs);
   font-weight: 700;
   font-family: inherit;
   line-height: 1.4;
@@ -116,7 +116,7 @@ const label = computed(() => t(GRADING_LABELS[props.grading]));
   outline-offset: 2px;
 }
 .q-grading-capsule__caret {
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   opacity: 0.75;
 }
 

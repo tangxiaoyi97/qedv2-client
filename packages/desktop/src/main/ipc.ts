@@ -7,6 +7,9 @@ import {
   type CoreRuntimeStatus,
   type CoreSourcePreference,
   type DesktopWindowTarget,
+  type DesktopCleanupTarget,
+  type DesktopStoragePort,
+  type DesktopSupportInfo,
   type StorageAddress,
   type StorageBatchCommit,
   type StorageChange,
@@ -24,6 +27,8 @@ export interface DesktopIpcOptions {
   core: CoreSupervisor;
   updates: UpdateCoordinator;
   network: NetworkMonitor;
+  desktopStorage: DesktopStoragePort;
+  desktopSupport: DesktopSupportInfo;
   openDesktopWindow(target: DesktopWindowTarget): void;
   applyThemePreference(preference: unknown): void;
   applyAccentPreference?(preference: unknown): void;
@@ -35,6 +40,7 @@ const CORE_SOURCES = new Set<CoreSourcePreference>(['local', 'remote']);
 const CORE_SOURCE_STORAGE_KEY = 'core-source';
 const UPDATE_TARGETS = new Set(['app', 'core', 'bank'] as const);
 const DESKTOP_WINDOWS = new Set<DesktopWindowTarget>(['practice', 'updates', 'node']);
+const CLEANUP_TARGETS = new Set<DesktopCleanupTarget>(['cache', 'downloads', 'logs']);
 const MAX_STORAGE_BATCH_ADDRESSES = 32;
 
 function validateText(value: unknown, name: string, maxLength = 4_096): string {
@@ -144,6 +150,12 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
   const coreBaseUrl = `${options.renderer.origin}/__qed2_core`;
   const channels = [
     IPC.storageGet,
+    IPC.desktopStorageOverview,
+    IPC.desktopStorageCleanup,
+    IPC.desktopSupport,
+    IPC.updatePause,
+    IPC.updateResume,
+    IPC.updateCancel,
     IPC.storageSet,
     IPC.storageDelete,
     IPC.storageKeys,
@@ -382,6 +394,18 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     await options.updates.applyUpdates(targets as Array<'app' | 'core' | 'bank'>);
   });
   handle(IPC.updateRelaunch, () => options.updates.relaunchToApply());
+  handle(IPC.updatePause, () => options.updates.pauseDownload());
+  handle(IPC.updateResume, () => options.updates.resumeDownload());
+  handle(IPC.updateCancel, () => options.updates.cancelDownload());
+  handle(IPC.desktopStorageOverview, () => options.desktopStorage.getOverview());
+  handle(IPC.desktopSupport, () => structuredClone(options.desktopSupport));
+  handle(IPC.desktopStorageCleanup, (_event, rawTargets: unknown) => {
+    if (!Array.isArray(rawTargets) || rawTargets.length === 0 || rawTargets.length > 3
+      || !rawTargets.every((target) => CLEANUP_TARGETS.has(target as DesktopCleanupTarget))) {
+      throw new TypeError('Invalid desktop cleanup targets');
+    }
+    return options.desktopStorage.cleanup([...new Set(rawTargets)] as DesktopCleanupTarget[]);
+  });
   handle(IPC.networkGet, () => options.network.isOnline());
   handle(IPC.shellOpenWindow, (_event, rawTarget: unknown) => {
     if (!DESKTOP_WINDOWS.has(rawTarget as DesktopWindowTarget)) {
@@ -397,9 +421,11 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
     broadcast(IPC.updateState, options.updates.getState());
   };
   const onNetworkChange = (online: boolean) => broadcast(IPC.networkChange, online);
+  const onNetworkResume = (online: boolean) => broadcast(IPC.networkResume, online);
   options.core.on('status', onCoreStatus);
   options.updates.on('state', onUpdateState);
   options.network.on('change', onNetworkChange);
+  options.network.on('resume', onNetworkResume);
 
   return {
     dispose() {
@@ -407,6 +433,7 @@ export function installDesktopIpc(options: DesktopIpcOptions): {
       options.core.off('status', onCoreStatus);
       options.updates.off('state', onUpdateState);
       options.network.off('change', onNetworkChange);
+      options.network.off('resume', onNetworkResume);
     },
   };
 }

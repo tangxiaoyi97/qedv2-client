@@ -308,7 +308,24 @@ describe('practice asset snapshot integrity', () => {
     expect(practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     expect(assetRequests).toEqual([ASSET_PATH]);
-    if (mode === 'prepared') expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(requestCount);
+  });
+
+  it('keeps a live immutable question and figure snapshot when returning after going offline', async () => {
+    const bytes = new TextEncoder().encode('verified-png');
+    const { practice, assetRequests } = await startWithAsset(await assetReply(bytes));
+    const attemptId = practice.items[0]!.clientAttemptId;
+    practice.suspendContentPin();
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
+
+    await expect(practice.restoreSession('manual')).resolves.toBe(true);
+
+    expect(practice.phase).toBe('running');
+    expect(practice.items[0]!.clientAttemptId).toBe(attemptId);
+    expect(practice.assetUrl('assets/fig/q1.png')).toBe('blob:q1');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(assetRequests).toEqual([ASSET_PATH]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it.each([

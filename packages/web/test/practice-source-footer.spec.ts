@@ -348,6 +348,27 @@ describe('practice question-bank footer', () => {
     summary.unmount();
   });
 
+  it('draws every top-bar control as one icon-button family and keeps the progress centred', async () => {
+    const mounted = await mountPractice({ shell: originalShell, source: 'remote', mode: 'current' });
+    try {
+      const topbar = mounted.host.querySelector<HTMLElement>('.practice__topbar')!;
+      const controls = [...topbar.querySelectorAll<HTMLButtonElement>('button')];
+      expect(controls.length).toBe(4);
+      for (const control of controls) {
+        expect(control.classList.contains('q-icon-btn'), control.className).toBe(true);
+        expect(control.getAttribute('aria-label')).toBeTruthy();
+      }
+      // Exit and feedback stay together on the left; the list controls mirror
+      // them on the right, so the progress between the two is centred.
+      expect(topbar.firstElementChild?.hasAttribute('data-practice-exit')).toBe(true);
+      const actions = topbar.querySelector('.practice__topbar-actions')!;
+      expect(actions.querySelector('.practice__rail-toggle')).not.toBeNull();
+      expect(actions.querySelector('.practice__session-button svg')).not.toBeNull();
+      expect(topbar.textContent).not.toContain('☰');
+      expect(actions.querySelector('.practice__session-button')?.getAttribute('aria-haspopup')).toBe('dialog');
+    } finally { mounted.unmount(); }
+  });
+
   it('reveals local provenance and the archive marker only with Desktop capability', async () => {
     const desktopShell: ShellPort = {
       capabilities: { desktop: true, nativeMenu: true, nativeTitleBar: true },

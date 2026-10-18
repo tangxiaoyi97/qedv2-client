@@ -5,15 +5,17 @@
  * which feeds tiered scoring (the mode the bank actually uses here).
  */
 import type { MatchingAnswer, Scoring } from '../model/question.js';
-import type { BreakdownItem, GradeResult, MatchingSubmission } from './types.js';
-import { applyScoring, resolveVerdict } from './scoring.js';
+import type { BreakdownItem, GradeOutcome, MatchingSubmission } from './types.js';
+import { applyScoring, resolveVerdict, rubricAssessmentRequired } from './scoring.js';
 
 export function gradeMatching(
   answer: MatchingAnswer,
   submission: MatchingSubmission,
   scoring: Scoring | undefined,
   points: number | undefined,
-): GradeResult {
+): GradeOutcome {
+  const assessment = rubricAssessmentRequired(scoring);
+  if (assessment) return assessment;
   const expectedByLeft = new Map<number, number>();
   for (const [l, r] of answer.pairs) expectedByLeft.set(l, r);
 

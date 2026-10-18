@@ -361,7 +361,7 @@ function onStageKeydown(event: KeyboardEvent): void {
 }
 .q-figview__scale {
   margin-right: auto;
-  font: 700 12px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-small) var(--q-font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--q-mut-2);
 }
@@ -389,8 +389,8 @@ function onStageKeydown(event: KeyboardEvent): void {
   outline-offset: 2px;
 }
 .q-figview__reset {
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--q-radius-sm);
+  font-size: var(--q-font-small);
   padding: 7px 12px;
 }
 .q-figview__zoom-btn {
@@ -446,7 +446,7 @@ function onStageKeydown(event: KeyboardEvent): void {
   -webkit-user-select: none;
   -webkit-user-drag: none;
   background: #fff;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   box-shadow: var(--q-shadow-panel);
   will-change: transform;
 }

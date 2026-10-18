@@ -41,7 +41,7 @@ const title = computed(() => t(props.starred ? 'Gemerkt' : 'Merken'));
   padding: 4px;
   border: none;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   cursor: pointer;
   color: var(--q-mut-2);
   line-height: 1;

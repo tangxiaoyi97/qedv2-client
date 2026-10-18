@@ -9,6 +9,7 @@ import {
   dialog,
   nativeImage,
   nativeTheme,
+  screen,
   session,
   shell,
   type Event,
@@ -21,6 +22,7 @@ import {
   type DesktopWindowTarget,
 } from '@qed2/core-logic';
 import { CoreSupervisor } from './main/core-supervisor.js';
+import { DiskSpaceManager } from './main/disk-space-manager.js';
 import { ElectronCoreProcessLauncher } from './main/electron-process-launcher.js';
 import { installDesktopIpc } from './main/ipc.js';
 import { DesktopLogger } from './main/logger.js';
@@ -32,6 +34,7 @@ import {
   resetPreloadCodeCaches,
 } from './main/preload-cache-migration.js';
 import { RendererServer, DESKTOP_TOKEN_HEADER } from './main/renderer-server.js';
+import { desktopReleaseIdentity, type DesktopReleaseChannel } from './main/release-channel.js';
 import { resolveRuntime, type RuntimeDescriptor } from './main/runtime-layout.js';
 import { openSqliteStorageWithRecovery } from './main/storage.js';
 import { ElectronStorageCodec } from './main/storage-codec.js';
@@ -46,18 +49,28 @@ import {
 } from './main/update-coordinator.js';
 import { WindowManager } from './main/window-manager.js';
 
-const APP_NAME = 'QED2';
+declare const __DESKTOP_CHANNEL__: DesktopReleaseChannel;
+const releaseIdentity = desktopReleaseIdentity(__DESKTOP_CHANNEL__);
+const APP_NAME = releaseIdentity.name;
 const DEFAULT_UI_PORT = 1122;
 const DEFAULT_CORE_PORT = 1022;
-const SESSION_PARTITION = 'persist:qed2-desktop-v2';
+const SESSION_PARTITION = releaseIdentity.sessionPartition;
 const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const UPDATE_RECOVERY_INTERVAL_MS = 5 * 60 * 1_000;
 const CORE_SOURCE_STORAGE_KEY = 'core-source';
 const ACCENT_STORAGE_KEY = 'accent';
 
 app.setName(APP_NAME);
+if (__DESKTOP_CHANNEL__ === 'preview') {
+  // Keep beta archives, login tokens, caches and the single-instance lock away
+  // from a user's stable installation. Preserve explicit test/managed profiles.
+  if (!app.commandLine.hasSwitch('user-data-dir')) {
+    app.setPath('userData', resolve(app.getPath('appData'), APP_NAME));
+  }
+  app.setAppLogsPath(resolve(app.getPath('userData'), 'logs'));
+}
 app.enableSandbox();
-if (process.platform === 'win32') app.setAppUserModelId('studio.barcarolle.qed2');
+if (process.platform === 'win32') app.setAppUserModelId(releaseIdentity.appId);
 
 let windows: WindowManager | undefined;
 let nativeLocale: 'de' | 'en' = 'de';
@@ -342,10 +355,9 @@ async function bootstrap(): Promise<void> {
     arch: process.arch,
     packaged: app.isPackaged,
   });
-  const selfUpdateAvailability = await inspectSelfUpdateAvailability(
-    app.isPackaged,
-    process.resourcesPath,
-  );
+  const selfUpdateAvailability = releaseIdentity.selfUpdate
+    ? await inspectSelfUpdateAvailability(app.isPackaged, process.resourcesPath)
+    : { available: false, reason: 'preview-manual' as const };
   const updateAvailabilityDetail = {
     available: selfUpdateAvailability.available,
     reason: selfUpdateAvailability.reason,
@@ -596,12 +608,34 @@ async function bootstrap(): Promise<void> {
       dispatch: (command, target) => windows?.dispatchShellCommand(command, target),
     });
   };
+  const desktopStorage = new DiskSpaceManager({
+    userDataPath: app.getPath('userData'),
+    databaseDirectory: resolve(app.getPath('userData'), 'data'),
+    logger,
+    browserCache: {
+      getSize: () => uiSession.getCacheSize(),
+      clear: () => uiSession.clearCache(),
+    },
+    downloads: {
+      inspect: () => updates.getStorageUsage(),
+      cleanup: () => updates.cleanupExpiredDownloads(),
+    },
+  });
   const desktopIpc = installDesktopIpc({
     renderer: rendererAddress,
     storage,
     core,
     updates,
     network,
+    desktopStorage,
+    desktopSupport: {
+      platform: ['darwin', 'win32', 'linux'].includes(process.platform)
+        ? process.platform as 'darwin' | 'win32' | 'linux'
+        : 'other',
+      arch: process.arch,
+      localCoreSupported: (process.platform === 'darwin' && ['arm64', 'x64'].includes(process.arch))
+        || (['win32', 'linux'].includes(process.platform) && process.arch === 'x64'),
+    },
     openDesktopWindow: (target: DesktopWindowTarget) => {
       windows?.openWindow(target);
     },
@@ -612,6 +646,9 @@ async function bootstrap(): Promise<void> {
   applyLocalePreference(storage.get('config', 'locale'));
 
   windows.openMainWindow();
+  const onDisplaysChanged = (): void => windows?.fitWindowsToDisplays();
+  screen.on('display-removed', onDisplaysChanged);
+  screen.on('display-metrics-changed', onDisplaysChanged);
   // Local is the first-launch default. A persisted Remote choice deliberately
   // keeps the bundled process dormant until a pinned Local session needs it.
   // During Local startup the dynamic gateway remains usable through the
@@ -619,7 +656,7 @@ async function bootstrap(): Promise<void> {
   void core.getEndpoint();
 
   const maintainUpdates = async (): Promise<void> => {
-    if (!updates.isSelfUpdateAvailable() || !network.isOnline() || updates.getState().busy) return;
+    if (shuttingDown || !updates.isSelfUpdateAvailable() || !network.isOnline() || updates.getState().busy) return;
     if (updates.hasPendingDownload()) {
       await updates.resumePendingDownload();
       return;
@@ -637,7 +674,7 @@ async function bootstrap(): Promise<void> {
       !updates.hasPendingDownload() ||
       updates.getState().busy
     ) return;
-    void updates.resumePendingDownload();
+    void updates.resumePendingDownload().catch((error: unknown) => logger.warn('Update recovery failed', error));
   }, UPDATE_RECOVERY_INTERVAL_MS);
   updateRecoveryTimer.unref();
   const initialUpdateTimer = setTimeout(() => {
@@ -645,18 +682,21 @@ async function bootstrap(): Promise<void> {
   }, 30_000);
   initialUpdateTimer.unref();
   const onNetworkRestored = (online: boolean) => {
-    if (!updates.isSelfUpdateAvailable() || !online || !updates.hasPendingDownload()) return;
-    void updates.resumePendingDownload();
+    if (shuttingDown || !updates.isSelfUpdateAvailable() || !online || !updates.hasPendingDownload()) return;
+    void updates.resumePendingDownload().catch((error: unknown) => logger.warn('Connected update recovery failed', error));
   };
   network.on('change', onNetworkRestored);
+  network.on('resume', onNetworkRestored);
 
   app.on('activate', () => windows?.openMainWindow());
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
   });
   app.on('before-quit', (event: Event) => {
-    if (shuttingDown) return;
     event.preventDefault();
+    // Repeated quit requests must not bypass checkpoint/storage flushes.
+    // Completed cleanup exits explicitly, without another before-quit event.
+    if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(updateTimer);
     clearInterval(updateRecoveryTimer);
@@ -670,6 +710,7 @@ async function bootstrap(): Promise<void> {
         windows?.flushWindowState() ?? Promise.resolve(),
         core.stop(),
         renderer.stop(),
+        updates.shutdown(),
       ]);
       for (const [index, result] of primary.entries()) {
         if (result.status === 'rejected') {
@@ -686,6 +727,11 @@ async function bootstrap(): Promise<void> {
       await cleanup('desktop IPC', () => desktopIpc.dispose());
       await cleanup('network listener', () => {
         network.off('change', onNetworkRestored);
+        network.off('resume', onNetworkRestored);
+      });
+      await cleanup('display listeners', () => {
+        screen.off('display-removed', onDisplaysChanged);
+        screen.off('display-metrics-changed', onDisplaysChanged);
       });
       await cleanup('native theme listener', () => {
         nativeTheme.off('updated', onNativeThemeUpdated);

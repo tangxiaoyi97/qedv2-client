@@ -80,7 +80,7 @@ function radioTabIndex(option: Grading, index: number): 0 | -1 {
   min-height: 44px;
   padding: 8px 4px;
   border: 1px solid var(--q-border-2);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   color: var(--q-mut);
   font-family: inherit;
@@ -110,7 +110,7 @@ function radioTabIndex(option: Grading, index: number): 0 | -1 {
 }
 
 .q-gpick__label {
-  font-size: 10px;
+  font-size: var(--q-font-micro);
   font-weight: 700;
   line-height: 1.25;
   text-align: center;

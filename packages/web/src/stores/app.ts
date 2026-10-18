@@ -381,6 +381,23 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function init(): Promise<void> {
+    if (!networkSubscribed) {
+      networkSubscribed = true;
+      ports.network.onChange((v) => {
+        if (online.value === v) return;
+        online.value = v;
+        // Boot already resolves the endpoint after loading its configuration.
+        // Do not configure it with defaults while that configuration is loading.
+        if (!ready.value) return;
+        // A desktop runtime may move from remote fallback back to its local
+        // core (or vice versa) as reachability changes.
+        void resolveCoreEndpoint().then(refreshServiceInfo);
+      });
+      // Construction and init may be separated by asynchronous shell startup.
+      // Subscribe first so neither that gap nor storage/Core initialization can
+      // leave the renderer with stale connectivity and suppress later uploads.
+      online.value = ports.network.isOnline();
+    }
     subscribeStorageChanges();
     config.value = (await readSafeConfig()).value;
     attemptOutbox.configureLegacyAccountOwner(() => AMBIGUOUS_ACCOUNT_ATTEMPT_OWNER);
@@ -401,16 +418,6 @@ export const useAppStore = defineStore('app', () => {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
       if (theme.value === 'system') applyThemeToDom('system');
     });
-    if (!networkSubscribed) {
-      networkSubscribed = true;
-      ports.network.onChange((v) => {
-        if (online.value === v) return;
-        online.value = v;
-        // A desktop runtime may move from remote fallback back to its local
-        // core (or vice versa) as reachability changes.
-        void resolveCoreEndpoint().then(refreshServiceInfo);
-      });
-    }
     ready.value = true;
     refreshServiceInfo();
   }

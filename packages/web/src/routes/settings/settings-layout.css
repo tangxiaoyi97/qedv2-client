@@ -94,7 +94,7 @@ textarea.q-settings-field {
   background: transparent;
   color: var(--q-mut-2);
   cursor: pointer;
-  font: 600 var(--q-font-ui)/1.4 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui)/1.4 var(--q-font-family);
   text-align: center;
   transition: background-color var(--q-transition-fast), color var(--q-transition-fast);
 }

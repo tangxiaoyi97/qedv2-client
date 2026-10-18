@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
+import { createApp, nextTick } from 'vue';
 import {
   accountStorageIdentity,
   DEFAULT_CONFIG,
@@ -16,7 +17,15 @@ import {
   type CoreRuntimePort,
   type ShellPort,
   type LearningEvent,
+  type GradeResult,
+  type Grading,
+  type NumericSubmission,
+  type QuestionPart,
+  type SelfAssessment,
 } from '@qed2/core-logic';
+import PartPlayer from '../../ui/src/practice/PartPlayer.vue';
+import type { PartPlayerDraft } from '../../ui/src/practice/part-player-types.js';
+import rubricBank from '../../core-logic/test/fixtures/rubric-bank-parts.json';
 import {
   archiveStore,
   attemptOutbox,
@@ -222,6 +231,88 @@ describe('practice session persistence', () => {
       openQuestion('q3', 3),
       numericQuestion('q4', 4),
     ]);
+  });
+
+  it.each([
+    { commit: '7a39f243dfe7dc51c938fde26d3e351eb7dc7d97', partId: '2019-nt2-t2-03-a2', criteriaMet: [true], points: 1, verdict: 'correct' },
+    { commit: '7a39f243dfe7dc51c938fde26d3e351eb7dc7d97', partId: '2019-nt2-t2-03-a2', criteriaMet: [false], points: 0, verdict: 'incorrect' },
+    { commit: 'acfde51773be1463af5624b93dc1392bb354a2db', partId: '2022-ht-t2-01-a2', criteriaMet: [true, false], points: 0.5, verdict: 'partial' },
+  ])('persists only the confirmed rubric score ($partId / $verdict), including after reload', async ({ commit, partId, criteriaMet, points, verdict }) => {
+    const source = rubricBank.records.find((record) => record.commit === commit && record.part.id === partId)!;
+    const part = source.part as unknown as QuestionPart;
+    if (part.answer?.kind !== 'numeric') throw new Error('Invalid numeric fixture');
+    const q: Question = { ...question(source.questionId, 1), parts: [part] };
+    await seedImmutableOfflineQuestions([q]);
+    let { practice } = await freshStores();
+    await practice.startQuestions([q.id]);
+    const submission: NumericSubmission = {
+      kind: 'numeric', values: Object.fromEntries(part.answer.blanks.map((blank) => [blank.id, String(blank.value)])),
+    };
+    let saveDraft: Promise<boolean> | undefined;
+    let saveGrade: Promise<GradedRecord | undefined> | undefined;
+    const mounted: Array<{ unmount(): void; host: HTMLDivElement }> = [];
+    const mountPlayer = (restoredDraft?: PartPlayerDraft) => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      const app = createApp(PartPlayer, {
+        part, chromeless: true, restoredAnswerDraft: submission, restoredDraft,
+        onDraft(draft: PartPlayerDraft) { saveDraft = practice.saveSelfAssessmentDraft(part.id, draft); },
+        onGraded(payload: { result: GradeResult; submission: NumericSubmission; manualGrading?: Grading }) {
+          saveGrade = practice.recordGraded({ part, ...payload });
+        },
+      });
+      mounted.push({ unmount: () => app.unmount(), host });
+      return app.mount(host) as unknown as {
+        submit(): void; setSelfAssessment(value: SelfAssessment): void; confirmSelfAssessment(): void;
+      };
+    };
+    try {
+      const first = mountPlayer();
+      first.submit();
+      await nextTick();
+      await saveDraft;
+      first.confirmSelfAssessment();
+      expect(saveGrade).toBeUndefined();
+      expect(await historyLog.count()).toBe(0);
+      expect(await attemptOutbox.count(GUEST_ATTEMPT_OWNER)).toBe(0);
+      expect((await archiveStore.load()).content.perPart).toHaveLength(0);
+      first.setSelfAssessment({ criteriaMet });
+      await nextTick();
+      await saveDraft;
+      mounted[0]!.unmount();
+      mounted[0]!.host.remove();
+      mounted.shift();
+
+      ({ practice } = await freshStores());
+      await expect(practice.restoreSession()).resolves.toBe(true);
+      expect(practice.currentSelfAssessmentDraft).toMatchObject({ submission, assessment: { criteriaMet }, selectedPoints: points });
+      const restored = mountPlayer(practice.currentSelfAssessmentDraft!);
+      restored.confirmSelfAssessment();
+      restored.confirmSelfAssessment();
+      await nextTick();
+      expect(saveGrade).toBeDefined();
+      await saveGrade;
+
+      const correct = verdict === 'correct';
+      expect(practice.currentReview?.result).toMatchObject({ verdict, correct, awardedPoints: points, maxPoints: 1 });
+      expect(practice.currentReview?.result.breakdown?.map((item) => item.correct)).toEqual(criteriaMet);
+      expect(practice.currentSelfAssessmentDraft).toBeUndefined();
+      const durable = await storage.get<{ graded: GradedRecord[] }>(STORAGE.app, activeSessionKey());
+      expect(durable?.graded).toHaveLength(1);
+      expect(durable?.graded[0]?.result).toEqual(practice.currentReview?.result);
+      expect(durable).not.toHaveProperty('selfAssessmentDraft');
+      const attempts = await attemptOutbox.list(GUEST_ATTEMPT_OWNER);
+      expect(attempts).toHaveLength(1);
+      expect(attempts[0]).toMatchObject({ partId, correct, awardedPoints: points });
+      const history = await historyLog.list();
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ partId, verdict, awardedPoints: points });
+      const progressPart = (await archiveStore.load()).content.perPart.find((entry) => entry.partId === partId);
+      expect(progressPart?.lastResult).toMatchObject({ correct, awardedPoints: points });
+      expect(progressPart?.fsrs.reps).toBe(1);
+    } finally {
+      for (const view of mounted) { view.unmount(); view.host.remove(); }
+    }
   });
 
   it('hands off the exact durable selection in click order, including after reload', async () => {
@@ -2637,7 +2728,7 @@ describe('practice content revision integrity', () => {
     );
   });
 
-  it('moves an already-running remote session to a fail-closed error when restore goes offline', async () => {
+  it('keeps a verified live remote session usable offline while requiring proof again after restart', async () => {
     const q1 = question('q1', 1);
     const rawHash = '7'.repeat(64);
     vi.stubGlobal('fetch', vi.fn(async (rawUrl: string) => {
@@ -2652,13 +2743,27 @@ describe('practice content revision integrity', () => {
     const { practice } = await freshStores();
     await practice.startQuestions(['q1'], 'remote');
     expect(practice.phase).toBe('running');
+    const pin = useAppStore().pinnedCoreContent;
+    const attemptId = practice.items[0]!.clientAttemptId;
+    practice.suspendContentPin();
+    expect(useAppStore().pinnedCoreContent).toBeUndefined();
 
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('offline'))));
     await expect(practice.restoreSession()).resolves.toBe(true);
 
-    expect(practice.phase).toBe('error');
-    expect(practice.questions.size).toBe(0);
-    expect(practice.error).toContain('ursprüngliche Version dieser Aufgaben');
+    expect(practice.phase).toBe('running');
+    expect(practice.current?.question).toEqual(q1);
+    expect(practice.items[0]!.clientAttemptId).toBe(attemptId);
+    expect(useAppStore().pinnedCoreContent).toBe(pin);
+    expect(fetch).not.toHaveBeenCalled();
+    await gradeCurrent(practice);
+    expect(practice.graded[0]?.clientAttemptId).toBe(attemptId);
+
+    const restarted = await freshStores();
+    await expect(restarted.practice.restoreSession()).resolves.toBe(true);
+    expect(restarted.practice.phase).toBe('error');
+    expect(restarted.practice.questions.size).toBe(0);
+    expect(restarted.practice.error).toContain('ursprüngliche Version dieser Aufgaben');
   });
 
   it('backfills the first confirmed commit so retry cannot drift to a newer deployment', async () => {

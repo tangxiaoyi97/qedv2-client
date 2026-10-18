@@ -546,12 +546,12 @@ onBeforeUnmount(() => {
 }
 .q-heat__latest {
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   padding: 5px 8px;
   min-height: 30px;
   background: var(--q-panel);
   color: var(--q-accent-strong);
-  font: 650 11px 'Public Sans', system-ui, sans-serif;
+  font: 650 var(--q-font-xs) var(--q-font-family);
   cursor: pointer;
 }
 .q-heat__latest:disabled {
@@ -567,7 +567,7 @@ onBeforeUnmount(() => {
   .q-heat__latest { min-height: 44px; }
 }
 .q-heat__legend-text {
-  font-size: 10.5px;
+  font-size: var(--q-font-2xs);
   color: var(--q-faint);
 }
 .q-heat__legend-text:first-child {

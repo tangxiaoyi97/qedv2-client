@@ -298,4 +298,9 @@ export const webEn: Record<string, string> = {
   'Version unbekannt. Aktuelle Bank muss bestätigt werden.': 'Unknown version. Confirm using current questions.',
   'Quelle {source}, Bank {revision}.': 'Source {source}, bank {revision}.',
   '{verdict}: {title}. {points}, {time}. {provenance} Erneut üben.': '{verdict}: {title}. {points}, {time}. {provenance} Practise again.',
+  'Synchronisiert': 'Synced',
+  'Konflikt': 'Conflict',
+  'Synchronisierung fehlgeschlagen': 'Sync failed',
+  'Synchronisierung: {status}': 'Sync: {status}',
+  'Konto und Synchronisierung': 'Account and sync',
 };

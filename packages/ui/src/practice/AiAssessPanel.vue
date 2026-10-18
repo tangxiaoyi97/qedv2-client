@@ -224,10 +224,10 @@ watch(
   min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--q-border-2);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: var(--q-card);
   color: var(--q-ink);
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   font-weight: 700;
   cursor: pointer;
   transition: border-color var(--q-transition-fast), background var(--q-transition-fast);
@@ -250,13 +250,13 @@ watch(
   margin-bottom: 8px;
 }
 .q-aia__head-text {
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   font-weight: 600;
   color: var(--q-mut-2);
 }
 .q-aia__summary {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-ink);
 }
 
@@ -272,7 +272,7 @@ watch(
   display: block;
   padding: 9px 11px 8px;
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-card);
 }
 /* Low confidence, or a positive the model could not evidence — the two cases
@@ -290,7 +290,7 @@ watch(
 }
 .q-aia__criterion {
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   font-weight: 600;
   color: var(--q-ink);
   overflow-wrap: anywhere;
@@ -304,7 +304,7 @@ watch(
   width: max-content;
   max-width: 100%;
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--q-font-xs);
   font-weight: 650;
   list-style-position: outside;
 }
@@ -314,7 +314,7 @@ watch(
 }
 .q-aia__quote {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   font-weight: 500;
   line-height: 1.5;
   color: var(--q-mut);
@@ -326,7 +326,7 @@ watch(
 .q-aia__quote-warn {
   display: block;
   margin-top: 4px;
-  font-size: 9.5px;
+  font-size: var(--q-font-micro);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -334,7 +334,7 @@ watch(
 }
 .q-aia__reason {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   line-height: 1.5;
   color: var(--q-faint);
 }
@@ -354,7 +354,7 @@ watch(
 .q-aia__confidence {
   margin-left: auto;
   flex: none;
-  font: 700 10.5px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-2xs) var(--q-font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--q-faint);
 }
@@ -366,7 +366,7 @@ watch(
 .q-aia__same {
   margin: 0;
   color: var(--q-ok-ink);
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   font-weight: 650;
 }
 
@@ -382,18 +382,18 @@ watch(
   padding: 10px 12px;
   border: 1px solid var(--q-err-border);
   background: var(--q-err-bg);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
 }
 .q-aia__error-text {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-err-ink);
 }
 .q-aia__billing-note,
 .q-aia__storage {
   margin: 0;
   color: var(--q-warn-ink, var(--q-mut));
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   line-height: 1.45;
 }
 .q-aia__storage {
@@ -401,15 +401,15 @@ watch(
 }
 .q-aia__foot {
   margin: 10px 0 0;
-  font-size: 11px;
+  font-size: var(--q-font-xs);
   line-height: 1.5;
   color: var(--q-faint);
 }
 .q-aia__model {
   display: block;
   margin-top: 2px;
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 10px;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-font-micro);
   color: var(--q-hint);
 }
 </style>

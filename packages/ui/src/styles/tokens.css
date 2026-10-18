@@ -14,24 +14,25 @@ html, body {
    * a PWA with its own sync, not a document — a stray pull at the top of a
    * list must never reload the page mid-session. */
   overscroll-behavior-y: none;
-  /* Prevent double-tap-to-zoom on tappable UI (nav/tabs/buttons).
-   * NOTE: pinch-zoom is additionally disabled via the viewport meta tag
-   * (maximum-scale=1, user-scalable=no) — a deliberate product decision to
-   * keep the fixed bottom bar stable while practicing. Figures opt out of
-   * that lock through the FigureViewer overlay, which pans and zooms itself. */
+  /* Prevent double-tap-to-zoom on tappable UI (nav/tabs/buttons) without
+   * removing the 300ms-free tap. Pinch-zoom stays available: the viewport
+   * meta deliberately does not set user-scalable=no, and figures add their
+   * own pan/zoom overlay on top through the FigureViewer. */
   touch-action: manipulation;
   /* Android/WebKit paint a system-blue slab on every tap, which clashes with
    * the app's own press states. Tinting it with the theme accent keeps the
-   * press feedback (only 8 elements define a custom :active) while making it
-   * look like part of the app. */
+   * press feedback while making it look like part of the app. */
   -webkit-tap-highlight-color: var(--q-accent-ring);
+  /* iOS enlarges text after an orientation change unless told not to. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 .q-app {
   background: var(--q-page);
   color: var(--q-ink);
-  font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  font-family: var(--q-font-family);
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+  font-size: var(--q-font-body);
   line-height: 1.55;
 }
 
@@ -56,8 +57,9 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 100;
-  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  z-index: var(--q-z-modal);
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   background: rgba(0, 0, 0, 0.4);
 }
 
@@ -97,7 +99,7 @@ body.q-modal-open {
   padding: 10px 12px;
   background: var(--q-card);
   color: var(--q-ink);
-  font: 500 var(--q-font-input)/1.4 'Public Sans', system-ui, sans-serif;
+  font: 500 var(--q-font-input)/1.4 var(--q-font-family);
   transition: border-color var(--q-transition-fast), background-color var(--q-transition-fast);
 }
 .q-input::placeholder { color: var(--q-mut-2); opacity: 1; }
@@ -124,7 +126,7 @@ body.q-modal-open {
   border: 0;
   border-radius: calc(var(--q-radius-control) - 3px);
   padding: 8px 12px;
-  font: 600 var(--q-font-ui)/1.3 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui)/1.3 var(--q-font-family);
   color: var(--q-mut);
   background: transparent;
   cursor: pointer;
@@ -209,7 +211,7 @@ body.q-modal-open {
 :where(.q-app, #app) :focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--q-radius-xs);
 }
 
 /* ------------------------------------------------------------------ *
@@ -252,6 +254,7 @@ body.q-modal-open {
   margin: 0;
   font-weight: 800;
   font-size: var(--q-font-title);
+  line-height: 1.25;
   letter-spacing: -0.01em;
 }
 @media (max-width: 520px) {
@@ -273,7 +276,7 @@ body.q-modal-open {
   position: relative;
   overflow: hidden;
   background: var(--q-panel);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
 }
 .q-skeleton::after {
   content: '';
@@ -288,6 +291,68 @@ body.q-modal-open {
     transform: translateX(100%);
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Shared text roles.
+ *
+ * Twenty-seven components each styled their own small uppercase label with
+ * a slightly different size (10–12px), weight and letter-spacing. They are
+ * one role: a quiet heading for the block below it.
+ * ------------------------------------------------------------------ */
+.q-eyebrow {
+  margin: 0;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
+  line-height: 1.3;
+  text-transform: uppercase;
+  color: var(--q-faint);
+}
+/* Counters, scores and IDs: digits keep their width while they change. */
+.q-num {
+  font-variant-numeric: tabular-nums;
+}
+/* Spoken, never drawn. One definition instead of a copy per component. */
+.q-visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * Touch.
+ *
+ * Long-pressing a tab, a list row or a button on iOS opens the link-preview
+ * callout or starts a text selection over the label — both read as the app
+ * misbehaving. Content (questions, solutions, answers) stays selectable.
+ * ------------------------------------------------------------------ */
+@media (pointer: coarse) {
+  :where(.q-app, #app) :is(button, [role='button'], [role='tab'], [role='radio'], nav a) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+/* Generic press feedback for tappable surfaces that are not buttons
+ * (cards, rows). Buttons already carry their own :active state. */
+.q-pressable {
+  transition: transform var(--q-transition-fast), background-color var(--q-transition-fast),
+    border-color var(--q-transition-fast);
+}
+@media (pointer: coarse) {
+  /* Not while a control inside the card is the thing being pressed. */
+  .q-pressable:active:not(:has(:is(button, a):active)) {
+    transform: scale(0.985);
+  }
+}
+:root[data-input-modality='keyboard'] .q-pressable:active { transform: none; }
 
 /* Respect vestibular sensitivities: kill every transition/animation. */
 @media (prefers-reduced-motion: reduce) {

@@ -125,7 +125,7 @@ function markOf(blankId: string): BreakdownItem | undefined {
 
 .q-numeric__label {
   flex: none;
-  font-size: 14.5px;
+  font-size: var(--q-font-ui);
   font-style: italic;
   color: var(--q-mut-2);
   overflow-wrap: break-word;
@@ -147,16 +147,16 @@ function markOf(blankId: string): BreakdownItem | undefined {
 .q-numeric__unit {
   flex: none;
   padding: 6px 10px;
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   background: var(--q-neutral-bg);
   color: var(--q-mut);
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 600;
 }
 
 .q-numeric__verdict {
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   font-weight: 700;
   white-space: nowrap;
 }
@@ -171,10 +171,10 @@ function markOf(blankId: string): BreakdownItem | undefined {
   margin-top: 7px;
   padding: 7px 11px;
   border: 1.5px dashed var(--q-ok);
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-card);
   color: var(--q-ok-ink);
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   font-weight: 600;
   overflow-wrap: break-word;
 }

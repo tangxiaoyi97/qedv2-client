@@ -25,6 +25,7 @@ import { authStore as authStorage, localProfileStore, ports } from './services.j
 import { useI18n } from './i18n.js';
 import { setUiLocale } from '@qed2/ui';
 import { recoverAdminNavigation } from './platform/admin-navigation-recovery.js';
+import { installCloudRecovery } from './platform/cloud-recovery.js';
 
 setUiLocale(document.documentElement.lang === 'en' ? 'en' : 'de');
 const { t } = useI18n();
@@ -78,10 +79,7 @@ async function boot(): Promise<void> {
   bootProgress(78, 'Konto wird geprüft …');
   const auth = useAuthStore();
   await auth.init();
-  if (auth.isLoggedIn) {
-    void progress.flushAttemptOutbox();
-    void progress.syncNow({ quiet: true, compareChecksum: true });
-  }
+  const removeCloudRecovery = installCloudRecovery(ports.network, auth, progress);
 
   // After a deploy, long-lived sessions can hold a router that still points
   // at old hashed chunks. Keep the existing one-reload recovery behavior.
@@ -113,6 +111,7 @@ async function boot(): Promise<void> {
   window.addEventListener('focus', revalidateAccount);
   document.addEventListener('visibilitychange', revalidateAccount);
   window.addEventListener('beforeunload', () => {
+    removeCloudRecovery();
     removeShellCommandListener();
     window.removeEventListener('focus', revalidateAccount);
     document.removeEventListener('visibilitychange', revalidateAccount);

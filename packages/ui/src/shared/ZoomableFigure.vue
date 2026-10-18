@@ -62,7 +62,7 @@ const activation = createOptionActivation();
 .q-zfig:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 3px;
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
 }
 
 .q-zfig__img {
@@ -70,7 +70,7 @@ const activation = createOptionActivation();
   max-width: 100%;
   height: auto;
   border: 1px solid var(--q-border);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   background: #fff;
 }
 
@@ -84,7 +84,7 @@ const activation = createOptionActivation();
   place-items: center;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   border: 1px solid var(--q-border-2);
   background: var(--q-card);
   color: var(--q-mut-2);

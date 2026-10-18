@@ -3,7 +3,7 @@ import { useI18n } from '../i18n.js';
 
 /**
  * Self-assessment (prototype 2e, lower half) — used after submitting `open`
- * parts and for `expression` parts the CAS could not decide.
+ * parts, authored rubric scoring, and expressions the CAS could not decide.
  *
  * rubric scoring → one checkbox per criterion (its points on the right);
  * anything else → the exact point totals supported by the part's scoring.
@@ -136,7 +136,7 @@ function scoreTabIndex(index: number): 0 | -1 {
           <template v-if="met[i]">✓</template>
         </span>
         <span class="q-selfassess__desc">{{ criterion.desc }}</span>
-        <span class="q-selfassess__pts">{{ criterion.points }}&nbsp;P</span>
+        <span class="q-selfassess__pts">{{ formatScore(criterion.points) }}&nbsp;{{ t('P') }}</span>
       </button>
     </div>
 
@@ -173,7 +173,7 @@ function scoreTabIndex(index: number): 0 | -1 {
 .q-selfassess {
   padding: 14px;
   background: var(--q-panel-2);
-  border-radius: 11px;
+  border-radius: var(--q-radius-control);
 }
 .q-selfassess__head {
   display: flex;
@@ -183,21 +183,21 @@ function scoreTabIndex(index: number): 0 | -1 {
 }
 .q-selfassess__title {
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--q-font-meta);
 }
 .q-selfassess__rubric {
   padding: 11px 13px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
-  font-size: 12.5px;
+  border-radius: var(--q-radius-sm);
+  font-size: var(--q-font-meta);
   line-height: 1.6;
   margin-bottom: 12px;
 }
 .q-selfassess__rubric-title {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
   margin-bottom: 6px;
@@ -211,11 +211,11 @@ function scoreTabIndex(index: number): 0 | -1 {
   min-height: 44px;
   padding: 8px 11px;
   border: 1px dashed var(--q-border-2);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   background: var(--q-card);
   color: var(--q-mut);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 650;
   text-align: left;
   cursor: pointer;
@@ -239,7 +239,7 @@ function scoreTabIndex(index: number): 0 | -1 {
   gap: 10px;
   padding: 9px 11px;
   background: var(--q-card);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
   border: 1px solid var(--q-border);
   cursor: pointer;
   font: inherit;
@@ -254,11 +254,11 @@ function scoreTabIndex(index: number): 0 | -1 {
 .q-selfassess__check {
   width: 20px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   border: 1.5px solid var(--q-check-border);
   display: inline-grid;
   place-items: center;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   flex: none;
   box-sizing: border-box;
@@ -270,11 +270,11 @@ function scoreTabIndex(index: number): 0 | -1 {
 }
 .q-selfassess__desc {
   flex: 1;
-  font-size: 12.5px;
+  font-size: var(--q-font-meta);
   min-width: 0;
 }
 .q-selfassess__pts {
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   font-weight: 700;
   color: var(--q-mut-2);
   flex: none;
@@ -288,13 +288,13 @@ function scoreTabIndex(index: number): 0 | -1 {
 .q-selfassess__segments {
   display: flex;
   border: 1px solid var(--q-btn-border);
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   overflow: hidden;
   margin-left: auto;
 }
 .q-selfassess__segment {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--q-mut-2);
@@ -327,13 +327,13 @@ function scoreTabIndex(index: number): 0 | -1 {
   padding: 10px 12px;
   background: var(--q-part-bg);
   border: 1px solid var(--q-part-border);
-  border-radius: 9px;
-  font-size: 12.5px;
+  border-radius: var(--q-radius-sm);
+  font-size: var(--q-font-meta);
   color: var(--q-part-ink);
   font-weight: 600;
 }
 .q-selfassess__total b {
-  font-size: 15px;
+  font-size: var(--q-font-md);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }

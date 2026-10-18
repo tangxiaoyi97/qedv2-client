@@ -1,0 +1,8 @@
+- **bewertung:** aufgaben mit bewertungsraster zeigen ihre kriterien zur selbstbewertung; eine richtige zahl wird nicht mehr automatisch mit null punkten gespeichert
+- **desktop preview:** eigener datenspeicher und vollständige offline-aufgabensammlung; neue testversionen werden als separate installationspakete bereitgestellt
+- **üben:** einheitliche steuerung in der kopfzeile, fortschritt mittig; auf dem handy nimmt die hauptaktion die ganze breite ein
+- **bewertung:** auch auf kleinen handys nach dem prüfen änderbar; hinweise überdecken die lösungsleiste nicht mehr
+- **touch:** programmliste per wischen schließen, größere tippflächen, eingabefelder rutschen nicht unter die aktionsleiste
+- **oberfläche:** einheitliche schriftgrößen, ecken und beschriftungen; sync-status jetzt auch auf dem handy
+- **offline:** gespeichertes konto ohne netzwerk-wartezeit öffnen; bereits geladene, geprüfte übungen auch nach dem seitenwechsel fortsetzen
+- **desktop-sync:** ausstehende uploads nach verbindungsrückkehr und ruhezustand fortsetzen; ablaufende anmeldung vor dem upload erneuern und fehlgeschlagene archivübertragungen erneut versuchen

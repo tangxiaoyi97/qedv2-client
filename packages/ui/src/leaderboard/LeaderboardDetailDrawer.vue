@@ -113,7 +113,7 @@ const accuracy = computed(() => {
 .leader-detail__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: var(--q-z-modal);
   display: grid;
   place-items: center;
   padding: 16px;
@@ -235,7 +235,7 @@ const accuracy = computed(() => {
 
 .leader-detail__periods strong {
   color: var(--q-accent-strong);
-  font-size: 20px;
+  font-size: var(--q-font-xl);
   font-variant-numeric: tabular-nums;
 }
 
@@ -273,7 +273,7 @@ const accuracy = computed(() => {
 
 .leader-detail__accuracy b {
   color: var(--q-accent-strong);
-  font-size: 28px;
+  font-size: var(--q-font-display);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }

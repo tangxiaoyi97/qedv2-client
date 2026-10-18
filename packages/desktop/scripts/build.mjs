@@ -17,6 +17,9 @@ const common = {
   platform: 'node',
   logLevel: 'info',
   external: ['electron', 'electron-updater'],
+  define: {
+    __DESKTOP_CHANNEL__: JSON.stringify(process.env.QED2_CHANNEL === 'preview' ? 'preview' : 'stable'),
+  },
 };
 
 await Promise.all([

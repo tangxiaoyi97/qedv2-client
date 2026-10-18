@@ -6,8 +6,8 @@
  * inherently open, so UIs may leave the flag in any state.
  */
 import type { IntervalAnswer, Scoring } from '../model/question.js';
-import type { BreakdownItem, GradeResult, IntervalSubmission } from './types.js';
-import { applyScoring, resolveVerdict } from './scoring.js';
+import type { BreakdownItem, GradeOutcome, IntervalSubmission } from './types.js';
+import { applyScoring, resolveVerdict, rubricAssessmentRequired } from './scoring.js';
 import { parseDecimalInput } from './numeric.js';
 
 /** Numeric bound comparison epsilon (values come from short exam decimals). */
@@ -45,7 +45,9 @@ export function gradeInterval(
   submission: IntervalSubmission,
   scoring: Scoring | undefined,
   points: number | undefined,
-): GradeResult {
+): GradeOutcome {
+  const assessment = rubricAssessmentRequired(scoring);
+  if (assessment) return assessment;
   const lower = checkBound(answer.lower, answer.lowerClosed, submission.lower, submission.lowerClosed);
   const upper = checkBound(answer.upper, answer.upperClosed, submission.upper, submission.upperClosed);
 

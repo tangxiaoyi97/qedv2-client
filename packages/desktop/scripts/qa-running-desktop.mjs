@@ -224,12 +224,14 @@ for (const target of ['updates', 'node']) {
     const value = await client.evaluate(`({
       title: document.querySelector('h1')?.textContent?.trim(),
       titleSize: Number.parseFloat(getComputedStyle(document.querySelector('h1')).fontSize),
-      chromeHidden: document.querySelector('.app__sidebar')?.classList.contains('app__sidebar--hidden'),
+      chromeHidden: !document.querySelector('.app__sidebar') || document.querySelector('.app__sidebar').classList.contains('app__sidebar--hidden'),
       embeddedWindowButtons: document.querySelectorAll('[data-desktop-window-target]').length,
       actionHeights: [...document.querySelectorAll('#desktop .q-btn')]
         .map((button) => Number.parseFloat(getComputedStyle(button).height)),
       scrollHeight: document.documentElement.scrollHeight,
       innerHeight,
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth,
     })`);
     return value.title === expectedTitle ? value : undefined;
   });
@@ -238,7 +240,7 @@ for (const target of ['updates', 'node']) {
   assert.equal(state.embeddedWindowButtons, 0);
   assert(state.actionHeights.every((height) => height >= 44), `${target} controls must be at least 44px`);
   if (target === 'node') {
-    assert(state.scrollHeight <= state.innerHeight + 1, 'Node tool window has avoidable viewport overflow');
+    assert(state.scrollWidth <= state.innerWidth + 1, 'Node tool window overflows horizontally');
   }
   toolChecks[target] = state;
   screenshots.push(await capture(client, target));

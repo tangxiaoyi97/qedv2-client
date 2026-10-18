@@ -21,8 +21,8 @@ env:
   QED2_EXPECTED_CORE_VERSION: 1.14.1
   QED2_EXPECTED_BANK_REPOSITORY: tangxiaoyi97/srdpmppr
   QED2_EXPECTED_BANK_REF: pastpapers
-  QED2_EXPECTED_BANK_SHA: acfde51773be1463af5624b93dc1392bb354a2db
-  QED2_EXPECTED_BANK_COMMIT_COUNT: '9'
+  QED2_EXPECTED_BANK_SHA: 7a39f243dfe7dc51c938fde26d3e351eb7dc7d97
+  QED2_EXPECTED_BANK_COMMIT_COUNT: '10'
 
 jobs:
   native-verify:
@@ -183,13 +183,39 @@ jobs:
       - name: Install Core dependencies
         run: pnpm --dir ../qedv2-core install --frozen-lockfile
 
+      - name: Resolve Desktop package channel
+        id: desktop-channel
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const version = JSON.parse(readFileSync('packages/desktop/package.json', 'utf8')).version;
+          const workspaceVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          if (version !== workspaceVersion) throw new Error('Desktop and workspace versions must match');
+          const preview = version.split('+', 1)[0].includes('-');
+          appendFileSync(process.env.GITHUB_OUTPUT, [
+            `channel=${preview ? 'preview' : 'stable'}`,
+            `replaces_stable=${preview}`,
+            `builder_config=electron-builder.${preview ? 'preview' : 'unsigned'}.yml`,
+            '',
+          ].join('\n'));
+          console.log(`Desktop ${version}: ${preview ? 'preview' : 'stable'} package`);
+          NODE
+
       - name: Verify complete client workspace
         shell: bash
         run: |
           set -euo pipefail
           pnpm typecheck
           pnpm test
-          pnpm --filter @qed2/desktop build
+
+      - name: Build Desktop for candidate channel
+        env:
+          QED2_CHANNEL: ${{ steps.desktop-channel.outputs.channel }}
+          QED2_PREVIEW_REPLACES_STABLE: ${{ steps.desktop-channel.outputs.replaces_stable }}
+          QED2_DEFAULT_CORE: https://qedcore.barcarolle.studio
+          QED2_DEFAULT_SERVER: https://qedsync.barcarolle.studio
+        run: pnpm --filter @qed2/desktop build
 
       - name: Verify bundled Core
         shell: bash
@@ -397,7 +423,8 @@ jobs:
       - name: Smoke-test unpacked package
         run: >-
           pnpm --filter @qed2/desktop exec electron-builder
-          --config electron-builder.unsigned.yml
+          --config ${{ steps.desktop-channel.outputs.builder_config }}
+          --config.directories.output=dist-packages
           ${{ matrix.builder }} ${{ matrix.arch }} --dir --publish never
 
       - name: Verify runtime copied into unpacked package

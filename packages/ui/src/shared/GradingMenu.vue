@@ -163,13 +163,13 @@ onBeforeUnmount(() => {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
-  z-index: 50;
+  z-index: var(--q-z-popover);
   min-width: 232px;
   max-width: calc(100vw - 24px);
   padding: 6px;
   background: var(--q-card);
   border: 1px solid var(--q-border-2);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   box-shadow: var(--q-shadow-panel);
   display: flex;
   flex-direction: column;
@@ -190,7 +190,7 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: transparent;
   font-family: inherit;
   text-align: left;
@@ -215,17 +215,17 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .q-grading-menu__label {
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   font-weight: 700;
 }
 .q-grading-menu__hint {
-  font-size: 11.5px;
+  font-size: var(--q-font-xs);
   color: var(--q-mut-2);
 }
 .q-grading-menu__check {
   margin-left: auto;
   font-weight: 800;
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   color: var(--q-accent-strong);
   flex: none;
 }

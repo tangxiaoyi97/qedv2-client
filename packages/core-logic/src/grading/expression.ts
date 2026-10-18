@@ -9,6 +9,7 @@ import type { MathNode } from 'mathjs';
 import type { ExpressionAnswer, Scoring } from '../model/question.js';
 import type { ExpressionSubmission, GradeOutcome } from './types.js';
 import { latexToMathjs } from './latex.js';
+import { rubricAssessmentRequired } from './scoring.js';
 import { expressionMath as math, isBoundedExpressionSource, isSafeScalarExpression } from './expression-safety.js';
 
 /* ------------------------------------------------------------------ *
@@ -214,11 +215,11 @@ export function gradeExpression(
   scoring: Scoring | undefined,
   points: number | undefined,
 ): GradeOutcome {
+  const assessment = rubricAssessmentRequired(scoring);
+  if (assessment) return assessment;
   // Scoring: expression parts are allOrNothing in practice (a single blank),
-  // so we replicate applyScoring's allOrNothing arm inline instead of
-  // importing ./scoring.js — keeps this module decoupled from the scoring
-  // module that is developed independently. perBlank/tiered/rubric make no
-  // sense for one expression and fall back to `points ?? 1`.
+  // so the automatic result uses that point total. Rubrics were handled
+  // above; legacy perBlank/tiered configurations keep the points fallback.
   const maxPoints = scoring?.mode === 'allOrNothing' ? scoring.points : (points ?? 1);
 
   const incorrect: GradeOutcome = {

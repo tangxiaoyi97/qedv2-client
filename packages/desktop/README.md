@@ -46,6 +46,58 @@ state are debounce-persisted. Legacy desktop Settings URLs redirect to these
 routes only when the desktop capability is present; ordinary Web/PWA clients
 fall back to Settings and never render or reserve desktop-only UI.
 
+Normal windows are fitted to the available display work area before first
+show and after display removal or scale/work-area changes. Full-screen,
+maximized, and minimized windows remain under OS control. After system resume,
+the network monitor allows a short reconnect window and retries eligible
+pending downloads even when the online flag did not change.
+
+### Offline practice and archive recovery
+
+Known-offline startup opens the saved account's isolated local profile without
+waiting for a login request to time out. The bundled Core and question bank
+remain available. A running practice session with a fully verified remote or
+historical snapshot can also be reopened offline using its retained questions
+and images; restoring after a restart still checks the saved bank revision.
+
+Startup, reconnect, and system wake share one archive/history recovery loop.
+It refreshes an expiring login before uploading, retains pending mutations
+through outages, and uses backoff for transient failures. Wake can expedite a
+pending retry even when the OS still reports the same online state. Recovery
+compares archive checksums before writing and preserves explicit archive and
+conflict choices; it does not choose between different saves on the learner's
+behalf. A rejected login keeps the account's local archive and pending history
+for the next login to that account.
+
+### Downloads and local space
+
+The Update Center exposes pause, resume, and discard for the resumable manual
+package downloader on macOS, Windows, and Linux. Pausing preserves the durable
+checkpoint across relaunches and prevents automatic recovery from overriding
+the user's choice. Resuming revalidates release metadata and retains complete
+size/hash verification. Discard waits for file I/O to settle before removing
+that package. Native self-install channels only expose controls they actually
+support. Application shutdown stops the manual downloader before closing local
+storage and retains its recovery intent.
+
+The local-node and Desktop overview pages report the current OS/architecture,
+available filesystem space, database size, browser HTTP cache, downloaded
+updates, and application logs. Cleanup requires a selection and confirmation:
+
+- HTTP cache is cleared through Electron's session API.
+- Only expired, recognized update files are removed. Current, paused, and
+  verified pending packages are protected; active updater work excludes cleanup.
+- Only archived application logs are removed, serialized with log writes.
+- Accounts, learning records, settings, databases, and recovery backups are
+  preserved. Unknown or unsafe filesystem entries are never followed or deleted.
+
+Unavailable measurements are shown as unavailable rather than zero. These
+capabilities are absent from Web/PWA; no arbitrary path or filesystem operation
+is exposed to renderer code. `package:smoke` verifies the actual native bridge,
+safe cleanup, data preservation, local Core continuity, and narrow/light/dark
+storage layout using a disposable profile. Windows/Linux native runs still
+require their respective hosts.
+
 ## Local runtime and ports
 
 The packaged Core is launched as an Electron utility process and reads the

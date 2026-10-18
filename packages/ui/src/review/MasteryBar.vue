@@ -49,7 +49,7 @@ const percent = computed(() => Math.round(Math.min(1, Math.max(0, props.mastery)
   min-width: 0;
 }
 .q-mastery__code {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-accent-strong);
   flex: none;
@@ -83,7 +83,7 @@ const percent = computed(() => Math.round(Math.min(1, Math.max(0, props.mastery)
   flex: none;
   width: 44px;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--q-font-xs);
   font-weight: 700;
 }
 .q-mastery__label--high {

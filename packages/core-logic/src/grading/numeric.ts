@@ -5,8 +5,8 @@
  * suffix (the blank's own unit) is stripped before parsing.
  */
 import type { NumericAnswer, Scoring } from '../model/question.js';
-import type { BreakdownItem, GradeResult, NumericSubmission } from './types.js';
-import { applyScoring, resolveVerdict } from './scoring.js';
+import type { BreakdownItem, GradeOutcome, NumericSubmission } from './types.js';
+import { applyScoring, resolveVerdict, rubricAssessmentRequired } from './scoring.js';
 
 /**
  * Absolute guard added on top of `tol` so IEEE-754 noise cannot reject an
@@ -41,7 +41,9 @@ export function gradeNumeric(
   submission: NumericSubmission,
   scoring: Scoring | undefined,
   points: number | undefined,
-): GradeResult {
+): GradeOutcome {
+  const assessment = rubricAssessmentRequired(scoring);
+  if (assessment) return assessment;
   const perBlankPts = scoring?.mode === 'perBlank' ? scoring.pointsPerCorrect : undefined;
 
   const breakdown: BreakdownItem[] = [];

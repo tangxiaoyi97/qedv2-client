@@ -5,9 +5,7 @@
  * anything touching `process` lives in an untyped .mjs helper that is declared
  * ambiently in src/env.d.ts.
  *
- * Channels differ ONLY in configuration — endpoints, manifest identity and a
- * sentinel string. Feature code never branches on the channel; it lives on the
- * `preview` git branch instead, so a stable build cannot contain it at all.
+ * Channels differ in endpoints, manifest identity and a sentinel string.
  */
 
 /** Anything other than an exact "preview" is stable — fail safe, not open. */
@@ -26,8 +24,21 @@ export function resolveEndpoints(channel = resolveChannel()) {
   // Stable is deliberately immutable. A stale shell/CI variable must not be
   // able to point the production bundle at preview (or at an arbitrary host).
   if (channel === 'stable') return { core: '', server: '' };
-  return {
+  const endpoints = {
     core: process.env.QED2_DEFAULT_CORE ?? 'https://qedcore-pv.barcarolle.studio',
     server: process.env.QED2_DEFAULT_SERVER ?? 'https://qedsync-pv.barcarolle.studio',
   };
+  for (const [service, endpoint] of Object.entries(endpoints)) {
+    let url;
+    try { url = new URL(endpoint); } catch { throw new Error(`Invalid preview ${service} endpoint`); }
+    const hostname = url.hostname.replace(/\.+$/, '');
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
+    if (
+      (url.protocol !== 'https:' && !(loopback && url.protocol === 'http:')) ||
+      url.username || url.password || url.search || url.hash ||
+      (['qedcore.barcarolle.studio', 'qedsync.barcarolle.studio', 'qed.barcarolle.studio'].includes(hostname)
+        && process.env.QED2_PREVIEW_REPLACES_STABLE !== 'true')
+    ) throw new Error(`Preview ${service} must use an isolated HTTPS service or local loopback`);
+  }
+  return endpoints;
 }

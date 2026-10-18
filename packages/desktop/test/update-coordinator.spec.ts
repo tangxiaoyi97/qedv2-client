@@ -257,6 +257,27 @@ async function prepareAvailable(coordinator: UpdateCoordinator): Promise<void> {
   expect(appState(coordinator.getState()).phase).toBe('available');
 }
 
+const manualBytes = Buffer.from('resumable verified desktop package');
+async function manualFixture(fetchImpl: typeof fetch) {
+  const directory = await mkdtemp(join(tmpdir(), 'qed2-download-controls-'));
+  const release = approvedDesktopRelease();
+  const name = 'QED2-2.1.0-mac-arm64.dmg';
+  const approved: ApprovedDesktopRelease = { ...release, assets: { ...release.assets, [name]: {
+    ...release.assets[name]!, size: manualBytes.length,
+    sha256: createHash('sha256').update(manualBytes).digest('hex'),
+    sha512: createHash('sha512').update(manualBytes).digest('base64'),
+  } } };
+  const downloader = new ResumableArtifactDownloader(directory, logger(), {
+    fetch: fetchImpl, reserveBytes: 0, checkpointBytes: 1,
+    availableBytes: async () => 1024 * 1024,
+  });
+  const options = { downloader, approvedRelease: async () => approved,
+    platform: 'darwin' as const, arch: 'arm64',
+    selfUpdateAvailability: { available: true, reason: 'unsigned-manual' } as const };
+  return { ...createCoordinator(options), downloader, directory, options,
+    cleanup: () => rm(directory, { recursive: true, force: true }) };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -315,6 +336,144 @@ describe('UpdateRecoveryJournal', () => {
 });
 
 describe('UpdateCoordinator', () => {
+  it('waits for stale cache discard before starting a fresh release check', async () => {
+    const recoveryStore = new MemoryRecoveryStore();
+    recoveryStore.set('desktop-update', 'pending-app-download', {
+      fromVersion: '1.0.0', latestVersion: '1.1.0', requestedAt: '2026-08-07T00:00:00.000Z',
+      attempts: 0, status: 'downloading',
+    });
+    let finishDiscard!: () => void;
+    const discard = vi.fn(() => new Promise<void>((resolve) => { finishDiscard = resolve; }));
+    const downloader = { hasRecoverySync: () => true, discard } as unknown as ResumableArtifactDownloader;
+    const fixture = createCoordinator({ recoveryStore, downloader });
+    const checking = fixture.coordinator.checkForUpdates();
+    expect(discard).toHaveBeenCalledOnce();
+    expect(fixture.approvedRelease).not.toHaveBeenCalled();
+    expect(fixture.updater.checkForUpdates).not.toHaveBeenCalled();
+    finishDiscard();
+    await checking;
+    expect(fixture.approvedRelease).toHaveBeenCalledOnce();
+    expect(appState(fixture.coordinator.getState()).phase).toBe('available');
+  });
+
+  it('persists pause across restart, preserves it through checks, and explicitly resumes the verified range', async () => {
+    let attempts = 0;
+    const fetchMock = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (attempts++ === 0) return new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(manualBytes.subarray(0, 5)); },
+      }), { headers: { etag: '"release"' } });
+      expect(new Headers(init?.headers).get('range')).toBe('bytes=5-');
+      return new Response(manualBytes.subarray(5), { status: 206, headers: {
+        etag: '"release"', 'content-range': `bytes 5-${manualBytes.length - 1}/${manualBytes.length}`,
+      } });
+    }) as unknown as typeof fetch;
+    const fixture = await manualFixture(fetchMock);
+    try {
+      await prepareAvailable(fixture.coordinator);
+      const applying = fixture.coordinator.applyUpdates(['app']);
+      await vi.waitFor(() => expect(appState(fixture.coordinator.getState()).progress?.completed).toBe(5));
+      await fixture.coordinator.pauseDownload();
+      await expect(applying).resolves.toBeUndefined();
+      expect(appState(fixture.coordinator.getState())).toMatchObject({ phase: 'paused',
+        progress: { completed: 5 }, downloadControls: { canPause: false, canResume: true, canCancel: true } });
+      await fixture.coordinator.checkForUpdates();
+      expect(appState(fixture.coordinator.getState()).phase).toBe('paused');
+      expect(await fixture.coordinator.resumePendingDownload()).toBe(false);
+      await expect(fixture.downloader.inspect()).resolves.toMatchObject({ paused: true, downloadedBytes: 5 });
+
+      const restarted = createCoordinator({ ...fixture.options, recoveryStore: fixture.recoveryStore });
+      // Call immediately while the asynchronous persisted-pause inspection is still running.
+      await restarted.coordinator.checkForUpdates();
+      expect(appState(restarted.coordinator.getState()).phase).toBe('paused');
+      expect(restarted.approvedRelease).not.toHaveBeenCalled();
+      expect(await restarted.coordinator.resumePendingDownload()).toBe(false);
+      await restarted.coordinator.resumeDownload();
+      expect(appState(restarted.coordinator.getState()).phase).toBe('restart-required');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('cancels active I/O before deleting only the current download and resolves the apply operation', async () => {
+    const cancel = vi.fn();
+    const fixture = await manualFixture(vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(manualBytes.subarray(0, 4)); }, cancel,
+    }), { headers: { etag: '"release"' } })) as unknown as typeof fetch);
+    try {
+      await prepareAvailable(fixture.coordinator);
+      const applying = fixture.coordinator.applyUpdates(['app']);
+      await vi.waitFor(() => expect(appState(fixture.coordinator.getState()).progress?.completed).toBe(4));
+      await fixture.coordinator.cancelDownload();
+      await expect(applying).resolves.toBeUndefined();
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(fixture.recoveryStore.pending()).toBeUndefined();
+      expect(fixture.downloader.hasRecoverySync()).toBe(false);
+      expect(appState(fixture.coordinator.getState())).toMatchObject({ phase: 'available' });
+      expect(fixture.coordinator.getState().busy).toBe(false);
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('persists pause even when interrupted before the first network request or journal', async () => {
+    const fetchMock = vi.fn();
+    const fixture = await manualFixture(fetchMock);
+    let finishReset!: () => void;
+    const reset = vi.spyOn(fixture.downloader, 'resetAutomaticRecovery').mockImplementationOnce(() => new Promise<void>((resolve) => { finishReset = resolve; }));
+    try {
+      await prepareAvailable(fixture.coordinator);
+      const applying = fixture.coordinator.applyUpdates(['app']);
+      await vi.waitFor(() => expect(reset).toHaveBeenCalledOnce());
+      const pausing = fixture.coordinator.pauseDownload();
+      finishReset();
+      await Promise.all([applying, pausing]);
+      expect(fetchMock).not.toHaveBeenCalled();
+      await expect(fixture.downloader.inspect()).resolves.toMatchObject({ paused: true, downloadedBytes: 0 });
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('shuts down an idle stream with a durable recovery checkpoint, without recording a user pause', async () => {
+    const fixture = await manualFixture(vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(manualBytes.subarray(0, 6)); },
+    }), { headers: { etag: '"release"' } })) as unknown as typeof fetch);
+    try {
+      await prepareAvailable(fixture.coordinator);
+      const applying = fixture.coordinator.applyUpdates(['app']);
+      await vi.waitFor(() => expect(appState(fixture.coordinator.getState()).progress?.completed).toBe(6));
+      await fixture.coordinator.shutdown();
+      await applying;
+      expect(fixture.recoveryStore.pending()).toMatchObject({ status: 'downloading', attempts: 0 });
+      const journal = await fixture.downloader.inspect();
+      expect(journal?.downloadedBytes).toBe(6);
+      expect(journal?.paused).toBeUndefined();
+      await expect(fixture.coordinator.applyUpdates(['app'])).rejects.toMatchObject({ code: 'APP_UPDATE_BUSY' });
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('never starts a download when shutdown occurs during its prerequisite metadata check', async () => {
+    let finishCheck!: (release: ApprovedDesktopRelease) => void;
+    const { coordinator, updater } = createCoordinator({ approvedRelease: () => new Promise((resolve) => { finishCheck = resolve; }) });
+    const applying = coordinator.applyUpdates(['app']);
+    const rejection = expect(applying).rejects.toMatchObject({ code: 'APP_UPDATE_BUSY' });
+    await vi.waitFor(() => expect(finishCheck).toBeTypeOf('function'));
+    await coordinator.shutdown();
+    finishCheck(approvedDesktopRelease());
+    await rejection;
+    expect(updater.downloadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('holds a maintenance lock across cache cleanup so no check or download can start', async () => {
+    const fixture = await manualFixture(vi.fn());
+    let finishCleanup!: (bytes: number) => void;
+    vi.spyOn(fixture.downloader, 'cleanupExpiredDownloads').mockImplementationOnce(() => new Promise((resolve) => { finishCleanup = resolve; }));
+    try {
+      const cleanup = fixture.coordinator.cleanupExpiredDownloads();
+      await expect(fixture.coordinator.checkForUpdates()).rejects.toMatchObject({ code: 'APP_UPDATE_BUSY' });
+      await expect(fixture.coordinator.applyUpdates(['app'])).rejects.toMatchObject({ code: 'APP_UPDATE_BUSY' });
+      expect(await fixture.coordinator.cleanupExpiredDownloads()).toMatchObject({ status: 'skipped', reason: 'download-active' });
+      finishCleanup(32);
+      await expect(cleanup).resolves.toMatchObject({ status: 'cleaned', freedBytes: 32 });
+      expect(fixture.coordinator.getState().busy).toBe(false);
+    } finally { await fixture.cleanup(); }
+  });
+
   it('configures a stable, explicit and fail-closed updater policy', async () => {
     const { coordinator, updater, approvedRelease } = createCoordinator();
 
@@ -898,7 +1057,7 @@ describe('UpdateCoordinator', () => {
     });
   });
 
-  it('disables update commands and recovery for unpacked builds without updater metadata', async () => {
+  it.each(['configuration-missing', 'preview-manual'] as const)('disables commands, stable release requests and recovery when %s', async (reason) => {
     const recoveryStore = new MemoryRecoveryStore();
     recoveryStore.set('desktop-update', 'pending-app-download', {
       fromVersion: '2.0.0',
@@ -909,7 +1068,7 @@ describe('UpdateCoordinator', () => {
     });
     const { coordinator, updater, approvedRelease } = createCoordinator({
       recoveryStore,
-      selfUpdateAvailability: { available: false, reason: 'configuration-missing' },
+      selfUpdateAvailability: { available: false, reason },
     });
 
     expect(coordinator.isSelfUpdateAvailable()).toBe(false);

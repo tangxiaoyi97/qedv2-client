@@ -68,7 +68,7 @@ function onInput(event: Event): void {
 </template>
 
 <style scoped>
-.q-expr__input { width: 100%; font-family: ui-monospace, Menlo, monospace; }
+.q-expr__input { width: 100%; font-family: var(--q-font-mono); }
 .q-expr__input--ok { border-color: var(--q-ok); background: var(--q-ok-bg); }
 .q-expr__input--err { border-color: var(--q-err); background: var(--q-err-bg); }
 .q-expr__input--indet { border-color: var(--q-part-border); background: var(--q-part-bg); }
@@ -84,7 +84,7 @@ function onInput(event: Event): void {
   gap: 12px;
   overflow-x: auto;
 }
-.q-expr__preview-label { font-size: 12px; font-weight: 600; color: var(--q-mut); flex: none; }
-.q-expr__verdict-note { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.q-expr__preview-label { font-size: var(--q-font-small); font-weight: 600; color: var(--q-mut); flex: none; }
+.q-expr__verdict-note { margin-top: 12px; display: flex; align-items: center; gap: 8px; font-size: var(--q-font-meta); font-weight: 600; }
 .q-expr__canonical { border-color: var(--q-ok); border-style: dashed; background: var(--q-card); flex-wrap: wrap; }
 </style>

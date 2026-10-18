@@ -2,6 +2,9 @@
 import { LoaderCircle } from 'lucide-vue-next';
 defineProps<{
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  /** `sm` is for buttons inside notices and dense rows. On touch screens it
+   * keeps the full 44px hit area; only the padding and type shrink. */
+  size?: 'md' | 'sm';
   disabled?: boolean;
   loading?: boolean;
   type?: 'button' | 'submit';
@@ -12,7 +15,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 <template>
   <button
     class="q-btn"
-    :class="[`q-btn--${variant ?? 'primary'}`, { 'q-btn--loading': loading }]"
+    :class="[`q-btn--${variant ?? 'primary'}`, { 'q-btn--loading': loading, 'q-btn--sm': size === 'sm' }]"
     :disabled="disabled || loading"
     :aria-busy="loading || undefined"
     :type="type ?? 'button'"
@@ -29,7 +32,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font: 700 var(--q-font-ui, 14px) 'Public Sans', system-ui, sans-serif;
+  font: 700 var(--q-font-ui, 14px) var(--q-font-family);
   min-height: var(--q-control-height);
   box-sizing: border-box;
   padding: 11px 20px;
@@ -38,7 +41,7 @@ defineEmits<{ click: [ev: MouseEvent] }>();
   border: none;
   transition: background-color var(--q-transition-fast), color var(--q-transition-fast), border-color var(--q-transition-fast), opacity var(--q-transition-fast), transform var(--q-transition-fast);
 }
-.q-btn__content { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.q-btn__content { display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-wrap: balance; }
 .q-btn--loading .q-btn__content { opacity: 0; }
 .q-btn--loading:disabled { opacity: 0.8; cursor: wait; }
 .q-btn__spinner { position: absolute; inset: 0; display: grid; place-items: center; }
@@ -98,5 +101,13 @@ defineEmits<{ click: [ev: MouseEvent] }>();
 .q-btn:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
+}
+.q-btn.q-btn--sm {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: var(--q-font-meta);
+}
+@media (pointer: coarse) {
+  .q-btn.q-btn--sm { min-height: var(--q-touch-target); }
 }
 </style>

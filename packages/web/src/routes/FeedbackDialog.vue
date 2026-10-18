@@ -295,7 +295,7 @@ onBeforeUnmount(() => { invalidate(); window.removeEventListener('beforeunload',
 <style scoped>
 .feedback-dialog { position: fixed; inset: 0; z-index: 160; display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); background: var(--q-scrim, rgb(0 0 0 / .48)); }
 .feedback-dialog, .feedback-dialog * { animation: none !important; transition: none !important; }
-.feedback-dialog__card { width: min(100%, 620px); min-width: 0; max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; padding: 22px; border: 1px solid var(--q-border); border-radius: var(--q-radius-card); background: var(--q-card); color: var(--q-ink); box-shadow: var(--q-shadow-modal); }
+.feedback-dialog__card { width: min(100%, 620px); min-width: 0; max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; padding: 22px; border: 1px solid var(--q-border); border-radius: var(--q-radius-dialog); background: var(--q-card); color: var(--q-ink); box-shadow: var(--q-shadow-modal); }
 .feedback-dialog__header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
 .feedback-dialog h2 { font-size: var(--q-font-section, 20px); margin: 0; }
 .feedback-dialog__context { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; padding: 14px; border: 1px solid var(--q-border); border-radius: var(--q-radius-control); background: var(--q-panel-2); font-size: var(--q-font-small); line-height: 1.5; margin: 0 0 18px; }

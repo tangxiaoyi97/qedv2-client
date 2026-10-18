@@ -39,11 +39,11 @@ useModalA11y(panel, ref(true), () => emit('close'));
 .practice-help {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  z-index: var(--q-z-dialog);
   display: grid;
   place-items: center;
   padding: 24px;
-  background: var(--q-backdrop, rgba(20, 16, 23, 0.4));
+  background: rgba(0, 0, 0, 0.4);
 }
 .practice-help__dialog {
   width: min(100%, 680px);
@@ -52,10 +52,10 @@ useModalA11y(panel, ref(true), () => emit('close'));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: var(--q-radius-dialog);
   background: var(--q-card);
   color: var(--q-ink);
-  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--q-shadow-modal);
 }
 .practice-help__header {
   display: flex;
@@ -66,16 +66,16 @@ useModalA11y(panel, ref(true), () => emit('close'));
 }
 .practice-help__header > svg { color: var(--q-accent-strong); margin-top: 5px; flex: none; }
 .practice-help__heading { flex: 1; min-width: 0; }
-.practice-help__heading h2 { margin: 0; font-size: 19px; letter-spacing: -0.02em; }
-.practice-help__heading p { margin: 5px 0 0; color: var(--q-faint); font-size: 12px; overflow-wrap: anywhere; }
+.practice-help__heading h2 { margin: 0; font-size: var(--q-font-lg); letter-spacing: -0.02em; }
+.practice-help__heading p { margin: 5px 0 0; color: var(--q-faint); font-size: var(--q-font-small); overflow-wrap: anywhere; }
 .practice-help__body { padding: 8px 24px 24px; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .practice-help__footer { display: flex; justify-content: flex-end; padding: 14px 24px; border-top: 1px solid var(--q-border-soft); flex: none; }
 @media (max-width: 640px) {
   .practice-help { padding: max(12px, env(safe-area-inset-top)) 0 0; align-items: end; }
-  .practice-help__dialog { width: 100%; max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - var(--q-keyboard-inset, 0px)); border-radius: 18px 18px 0 0; }
-  .practice-help__header { padding: 18px 18px 14px; }
-  .practice-help__body { padding: 8px 18px 22px; }
-  .practice-help__footer { padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); }
+  .practice-help__dialog { width: 100%; max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - var(--q-keyboard-inset, 0px)); border-radius: var(--q-radius-dialog) var(--q-radius-dialog) 0 0; }
+  .practice-help__header { padding: 18px max(18px, env(safe-area-inset-right)) 14px max(18px, env(safe-area-inset-left)); }
+  .practice-help__body { padding: 8px max(18px, env(safe-area-inset-right)) 22px max(18px, env(safe-area-inset-left)); }
+  .practice-help__footer { padding: 12px max(18px, env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
   .practice-help__footer :deep(.q-btn) { width: 100%; }
 }
 </style>

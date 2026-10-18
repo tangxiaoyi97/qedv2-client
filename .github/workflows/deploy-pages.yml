@@ -7,7 +7,16 @@ name: Deploy web to GitHub Pages
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      release_channel:
+        description: Release channel for the existing live domain
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - preview-replacement
 
 # Least-privilege token that the Pages deploy needs.
 permissions:
@@ -39,6 +48,56 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      # Prereleases require a deliberate dispatch or this exact release's
+      # checked-in intent. The existing main-only Pages protection still applies.
+      - name: Validate release channel and branch
+        id: release-channel
+        env:
+          REQUESTED_CHANNEL: ${{ inputs.release_channel || 'stable' }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          let channel = process.env.REQUESTED_CHANNEL;
+          const version = JSON.parse(readFileSync('packages/web/package.json', 'utf8')).version;
+          const workspaceVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+          if (process.env.GITHUB_REF !== 'refs/heads/main') {
+            throw new Error('The live Pages domain can only be deployed from main');
+          }
+          if (version !== workspaceVersion) throw new Error('Web and workspace versions must match');
+          let replacementPush = false;
+          if (process.env.GITHUB_EVENT_NAME === 'push' && version === '2.5.2-beta.1') {
+            const intent = JSON.parse(readFileSync('.github/pages-release.json', 'utf8'));
+            if (intent.channel !== 'preview-replacement' || intent.version !== version) {
+              throw new Error('The prerelease push requires the exact checked-in Pages replacement intent');
+            }
+            replacementPush = true;
+            channel = 'preview-replacement';
+          }
+          let artifactChannel;
+          if (channel === 'preview-replacement') {
+            if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' && !replacementPush) {
+              throw new Error('A preview replacement requires a manual dispatch or the exact checked-in release intent');
+            }
+            if (!/^\d+\.\d+\.\d+-[0-9A-Za-z][0-9A-Za-z.-]*(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+              throw new Error('A preview replacement requires a prerelease package version');
+            }
+            artifactChannel = 'preview';
+          } else if (channel === 'stable') {
+            if (!/^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/.test(version)) {
+              throw new Error('Stable Pages deployment rejects prerelease versions; dispatch preview-replacement explicitly');
+            }
+            artifactChannel = 'stable';
+          } else {
+            throw new Error('Unsupported Pages release channel');
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, [
+            `artifact_channel=${artifactChannel}`,
+            `replaces_stable=${artifactChannel === 'preview'}`,
+            '',
+          ].join('\n'));
+          console.log(`Validated ${channel} deployment of ${version} from ${process.env.GITHUB_REF}`);
+          NODE
+
       - name: Install (workspace)
         run: pnpm install --frozen-lockfile
 
@@ -53,11 +112,22 @@ jobs:
       # The changelog needs nothing from CI: which notes ship is decided by
       # CHANGELOG.md, which the release commit already carries.
       - name: Build web
+        env:
+          QED2_CHANNEL: ${{ steps.release-channel.outputs.artifact_channel }}
+          QED2_PREVIEW_REPLACES_STABLE: ${{ steps.release-channel.outputs.replaces_stable }}
+          QED2_DEFAULT_CORE: https://qedcore.barcarolle.studio
+          QED2_DEFAULT_SERVER: https://qedsync.barcarolle.studio
         run: pnpm --filter @qed2/web build
 
-      - name: Assert stable channel artifact
+      - name: Assert selected channel artifact
         working-directory: packages/web
-        run: node scripts/assert-channel.mjs stable
+        env:
+          QED2_CHANNEL: ${{ steps.release-channel.outputs.artifact_channel }}
+          QED2_PREVIEW_REPLACES_STABLE: ${{ steps.release-channel.outputs.replaces_stable }}
+          QED2_DEFAULT_CORE: https://qedcore.barcarolle.studio
+          QED2_DEFAULT_SERVER: https://qedsync.barcarolle.studio
+          EXPECTED_CHANNEL: ${{ steps.release-channel.outputs.artifact_channel }}
+        run: node scripts/assert-channel.mjs "$EXPECTED_CHANNEL"
 
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 

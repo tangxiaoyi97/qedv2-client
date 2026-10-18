@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const electronMocks = vi.hoisted(() => ({
   focusedWindow: undefined as BrowserWindow | undefined,
   shouldUseDarkColors: false,
+  workArea: { x: 0, y: 0, width: 1920, height: 1080 },
 }));
 
 vi.mock('electron', () => ({
@@ -25,7 +26,7 @@ vi.mock('electron', () => ({
   },
   screen: {
     getDisplayMatching: () => ({
-      workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+      workArea: electronMocks.workArea,
     }),
   },
 }));
@@ -66,6 +67,9 @@ class FakeBrowserWindow extends EventEmitter {
   maximized = false;
   fullScreen = false;
   focused = false;
+  normalBounds: Rectangle | undefined;
+  readonly setBounds = vi.fn((bounds: Rectangle) => { this.normalBounds = bounds; });
+  readonly setMinimumSize = vi.fn();
 
   constructor(readonly options: BrowserWindowConstructorOptions) {
     super();
@@ -91,7 +95,7 @@ class FakeBrowserWindow extends EventEmitter {
   setBackgroundColor(value: string): void { this.backgroundColors.push(value); }
   close(): void { this.emit('close'); this.destroyed = true; this.emit('closed'); }
   getNormalBounds(): Rectangle {
-    return { x: 20, y: 30, width: this.options.width ?? 800, height: this.options.height ?? 600 };
+    return this.normalBounds ?? { x: 20, y: 30, width: this.options.width ?? 800, height: this.options.height ?? 600 };
   }
 }
 
@@ -135,6 +139,61 @@ describe('WindowManager desktop-control windows', () => {
   beforeEach(() => {
     electronMocks.focusedWindow = undefined;
     electronMocks.shouldUseDarkColors = false;
+    electronMocks.workArea = { x: 0, y: 0, width: 1920, height: 1080 };
+  });
+
+  it('recovers a disconnected-monitor window within a small scaled desktop without changing its route', () => {
+    const { manager } = createManager();
+    const node = manager.openNodeDiagnosticsWindow() as unknown as FakeBrowserWindow;
+    node.normalBounds = { x: 2_400, y: 200, width: 900, height: 700 };
+    electronMocks.workArea = { x: -500, y: 0, width: 500, height: 400 };
+    manager.fitWindowsToDisplays();
+    expect(node.setBounds).toHaveBeenCalledExactlyOnceWith({ x: -500, y: 0, width: 500, height: 400 });
+    expect(node.setMinimumSize).toHaveBeenCalledWith(500, 400);
+    expect(node.loadedUrls).toHaveLength(1);
+    manager.fitWindowsToDisplays();
+    expect(node.setBounds).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves fullscreen, maximized and minimized windows under OS control', () => {
+    const { manager } = createManager();
+    const main = manager.openMainWindow() as unknown as FakeBrowserWindow;
+    const practice = manager.openPracticeWindow() as unknown as FakeBrowserWindow;
+    const updates = manager.openUpdateCenterWindow() as unknown as FakeBrowserWindow;
+    main.fullScreen = true;
+    practice.maximized = true;
+    updates.minimized = true;
+    manager.fitWindowsToDisplays();
+    for (const window of [main, practice, updates]) expect(window.setBounds).not.toHaveBeenCalled();
+  });
+
+  it('fits a fresh window before showing it on a small display', () => {
+    electronMocks.workArea = { x: 0, y: 0, width: 800, height: 500 };
+    const { manager } = createManager();
+    const main = manager.openMainWindow() as unknown as FakeBrowserWindow;
+    expect(main.visible).toBe(false);
+    main.emit('ready-to-show');
+    expect(main.setMinimumSize).toHaveBeenCalledWith(800, 500);
+    expect(main.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 800, height: 500 });
+    expect(main.visible).toBe(true);
+  });
+
+  it('recovers previously minimized and maximized windows after undocking', () => {
+    const { manager } = createManager();
+    const main = manager.openMainWindow() as unknown as FakeBrowserWindow;
+    main.normalBounds = { x: 2_000, y: 0, width: 1_100, height: 800 };
+    main.minimized = true;
+    electronMocks.workArea = { x: 0, y: 0, width: 1_000, height: 700 };
+    manager.fitWindowsToDisplays();
+    expect(main.setBounds).not.toHaveBeenCalled();
+    manager.openMainWindow();
+    expect(main.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 1_000, height: 700 });
+    main.normalBounds = { x: -2_000, y: -900, width: 1_100, height: 800 };
+    main.maximized = true;
+    manager.fitWindowsToDisplays();
+    main.maximized = false;
+    main.emit('unmaximize');
+    expect(main.normalBounds).toEqual({ x: 0, y: 0, width: 1_000, height: 700 });
   });
 
   it('opens distinct singleton windows on dedicated Desktop routes', () => {

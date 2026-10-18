@@ -14,6 +14,7 @@ import { QButton, QNotice, CollapsePanel } from '@qed2/ui';
 import { Cloud, HardDrive, LoaderCircle } from 'lucide-vue-next';
 import { useI18n } from '../../i18n.js';
 import SettingsCard from './SettingsCard.vue';
+import DesktopStorageSettings from './DesktopStorageSettings.vue';
 import { ports } from '../../services.js';
 import { useAppStore } from '../../stores/app.js';
 import { shortCommit } from '../../version-info.js';
@@ -58,7 +59,13 @@ const notice = ref('');
 const updateSnapshot = ref<UpdateSnapshot>();
 const snapshotLoading = ref(false);
 const openingWindow = ref<DesktopWindowTarget | null>(null);
+const downloadAction = ref<'pause' | 'resume' | 'cancel' | null>(null);
+const confirmingDownloadCancel = ref(false);
+const localSupport = ref<boolean>();
 let stopUpdateSubscription: (() => void) | undefined;
+let snapshotRevision = 0;
+let downloadCommandId = 0;
+let disposed = false;
 
 const isDesktopShell = ports.shell.capabilities.desktop;
 const activePanel = computed<DesktopPanel>(() => {
@@ -96,7 +103,7 @@ const sourceStatus = computed(() => {
   return t(runtimePhaseLabel.value);
 });
 
-const updateBusy = computed(() => snapshotLoading.value || updateSnapshot.value?.busy === true || busyAction.value !== null);
+const updateBusy = computed(() => snapshotLoading.value || updateSnapshot.value?.busy === true || busyAction.value !== null || downloadAction.value !== null);
 const appTarget = computed(() =>
   updateSnapshot.value?.targets.find((target) => target.target === 'app'),
 );
@@ -144,6 +151,7 @@ function updatePhaseLabel(target: UpdateTargetState): string {
     case 'checking': return t('Wird geprüft …');
     case 'available': return target.target === 'app' ? t('Download verfügbar') : t('Neuer Stand verfügbar');
     case 'downloading': return t('Wird heruntergeladen …');
+    case 'paused': return t('Download pausiert');
     case 'verifying': return t('Paket und Prüfsumme werden geprüft …');
     case 'installing': return t('Wird installiert …');
     case 'restart-required':
@@ -157,23 +165,25 @@ function updatePhaseLabel(target: UpdateTargetState): string {
 }
 
 function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) return t('Wird ermittelt …');
   if (bytes < 1024) return `${Math.max(0, Math.round(bytes))} B`;
   const decimal = (value: number) => formatNumber(value, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   if (bytes < 1024 * 1024) return `${decimal(bytes / 1024)} KB`;
-  return `${decimal(bytes / (1024 * 1024))} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${decimal(bytes / (1024 * 1024))} MB`;
+  return `${decimal(bytes / (1024 * 1024 * 1024))} GB`;
 }
 
 function progressView(progress: OperationProgress | undefined): ProgressView | null {
   if (!progress) return null;
-  const completed = Math.max(0, progress.completed);
+  const completed = Number.isFinite(progress.completed) ? Math.max(0, progress.completed) : 0;
   if (progress.unit === 'percent') {
     const value = Math.min(100, completed);
     return { determinate: true, value, max: 100, label: `${Math.round(value)} %` };
   }
-  if (progress.total !== undefined && progress.total > 0) {
+  if (progress.total !== undefined && Number.isFinite(progress.total) && progress.total > 0) {
     const value = Math.min(progress.total, completed);
     const label = progress.unit === 'bytes'
-      ? `${formatBytes(value)} / ${formatBytes(progress.total)}`
+      ? `${formatBytes(value)} / ${formatBytes(progress.total)} · ${Math.round(value / progress.total * 100)} %`
       : t('{done} / {total} Schritte', { done: Math.round(value), total: Math.round(progress.total) });
     return { determinate: true, value, max: progress.total, label };
   }
@@ -195,8 +205,18 @@ const targetViews = computed<TargetView[]>(() =>
 );
 
 function applySnapshot(snapshot: UpdateSnapshot): void {
+  if (disposed) return;
+  snapshotRevision += 1;
   updateSnapshot.value = snapshot;
   snapshotProblem.value = '';
+  if (!snapshot.targets.find((target) => target.target === 'app')?.downloadControls?.canCancel) {
+    confirmingDownloadCancel.value = false;
+  }
+  const phase = snapshot.targets.find((target) => target.target === 'app')?.phase;
+  // Resume is a long-running IPC call; streamed state makes it interruptible.
+  if (downloadAction.value === 'resume' && (phase === 'downloading' || phase === 'verifying')) {
+    downloadAction.value = null;
+  }
 }
 
 async function readUpdateSnapshot(): Promise<UpdateSnapshot | undefined> {
@@ -206,12 +226,16 @@ async function readUpdateSnapshot(): Promise<UpdateSnapshot | undefined> {
     return undefined;
   }
   snapshotLoading.value = true;
+  const requestedRevision = snapshotRevision;
   try {
     const snapshot = await ports.update.getState();
-    applySnapshot(snapshot);
-    return snapshot;
+    // A pushed progress/state event is newer than an already pending read.
+    if (requestedRevision === snapshotRevision) applySnapshot(snapshot);
+    return updateSnapshot.value;
   } catch {
-    snapshotProblem.value = t('Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.');
+    if (!disposed && requestedRevision === snapshotRevision) {
+      snapshotProblem.value = t('Der Aktualisierungsstatus konnte nicht geladen werden. Bitte erneut versuchen.');
+    }
     return undefined;
   } finally {
     snapshotLoading.value = false;
@@ -253,7 +277,7 @@ function updateCheckNotice(results: UpdateCheckResult[], snapshot: UpdateSnapsho
 }
 
 async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
-  if (!ports.coreRuntime.recover || busyAction.value) return;
+  if (!ports.coreRuntime.recover || busyAction.value || (localSupport.value === false && action !== 'use-remote')) return;
   busyAction.value = action;
   problem.value = '';
   notice.value = '';
@@ -269,7 +293,7 @@ async function recoverRuntime(action: CoreRecoveryAction): Promise<void> {
 }
 
 async function selectRuntimeSource(source: CoreSourcePreference): Promise<void> {
-  if (!ports.coreRuntime.selectSource || busyAction.value) return;
+  if (!ports.coreRuntime.selectSource || busyAction.value || (source === 'local' && localSupport.value === false)) return;
   if (source === app.coreSourcePreference && (
     source === 'remote' || (app.coreEndpointSource === 'local' && app.coreRuntimeStatus?.phase === 'ready')
   )) return;
@@ -292,7 +316,8 @@ async function checkForUpdates(): Promise<void> {
   if (
     !ports.update.capabilities.selfUpdate ||
     !ports.update.checkForUpdates ||
-    busyAction.value
+    busyAction.value ||
+    appTarget.value?.phase === 'paused'
   ) return;
   busyAction.value = 'check';
   problem.value = '';
@@ -319,8 +344,10 @@ async function applyAppUpdate(): Promise<void> {
   } catch {
     const snapshot = await readUpdateSnapshot();
     const state = snapshot?.targets.find((target) => target.target === 'app');
-    problem.value = state?.error?.message
-      ?? t('Die Aktualisierung konnte nicht vorbereitet werden. Der aktuelle Installationsstand bleibt unverändert.');
+    if (state?.phase !== 'paused') {
+      problem.value = state?.error ? t(state.error.message)
+        : t('Die Aktualisierung konnte nicht vorbereitet werden. Der aktuelle Installationsstand bleibt unverändert.');
+    }
   } finally {
     busyAction.value = null;
   }
@@ -340,8 +367,55 @@ async function relaunchToApply(): Promise<void> {
     } else {
       problem.value = t('QED2 konnte für die Installation nicht neu gestartet werden.');
     }
+  } finally {
+    // Manual package handoff keeps this window open after a successful reveal.
     busyAction.value = null;
   }
+}
+
+async function controlDownload(action: 'pause' | 'resume' | 'cancel'): Promise<void> {
+  const controls = appTarget.value?.downloadControls;
+  const supported = action === 'pause' ? controls?.canPause : action === 'resume' ? controls?.canResume : controls?.canCancel;
+  const operation = action === 'pause' ? ports.update.pauseDownload
+    : action === 'resume' ? ports.update.resumeDownload : ports.update.cancelDownload;
+  if (!supported || !operation || downloadAction.value) return;
+  const commandId = ++downloadCommandId;
+  downloadAction.value = action;
+  problem.value = '';
+  notice.value = '';
+  try {
+    await operation.call(ports.update);
+    if (commandId !== downloadCommandId || disposed) return;
+    await readUpdateSnapshot();
+    if (action === 'cancel') notice.value = t('Download verworfen. Du kannst ihn später erneut starten.');
+  } catch {
+    if (commandId !== downloadCommandId || disposed) return;
+    await readUpdateSnapshot();
+    problem.value = action === 'pause' ? t('Der Download konnte nicht pausiert werden. Bitte erneut versuchen.')
+      : action === 'resume' ? t('Der Download konnte nicht fortgesetzt werden. Bitte erneut versuchen.')
+        : t('Der Download konnte nicht verworfen werden. Bitte erneut versuchen.');
+  } finally {
+    if (commandId === downloadCommandId && !disposed) {
+      downloadAction.value = null;
+      if (action === 'cancel') confirmingDownloadCancel.value = false;
+      await nextTick();
+      if (action === 'cancel') root.value?.querySelector<HTMLButtonElement>('[data-update-check]')?.focus();
+      else root.value?.querySelector<HTMLButtonElement>('[data-download-control="resume"], [data-download-control="pause"]')?.focus();
+    }
+  }
+}
+
+async function confirmDownloadCancel(): Promise<void> {
+  confirmingDownloadCancel.value = true;
+  await nextTick();
+  root.value?.querySelector<HTMLElement>('#discard-download-title')?.focus();
+}
+
+async function dismissDownloadCancel(): Promise<void> {
+  if (downloadAction.value) return;
+  confirmingDownloadCancel.value = false;
+  await nextTick();
+  root.value?.querySelector<HTMLButtonElement>('[data-download-control="cancel"]')?.focus();
 }
 
 async function openDesktopWindow(target: DesktopWindowTarget): Promise<void> {
@@ -383,7 +457,10 @@ watch(
   { flush: 'post' },
 );
 
-onBeforeUnmount(() => stopUpdateSubscription?.());
+onBeforeUnmount(() => {
+  disposed = true;
+  stopUpdateSubscription?.();
+});
 </script>
 
 <template>
@@ -424,7 +501,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
           class="desktop-settings__source-option"
           data-source="local"
           :aria-pressed="app.coreSourcePreference === 'local'"
-          :disabled="busyAction !== null"
+          :disabled="busyAction !== null || localSupport === false"
           @click="selectRuntimeSource('local')"
         >
           <LoaderCircle v-if="busyAction === 'source-local'" :size="18" class="desktop-settings__spinner" aria-hidden="true" />
@@ -455,15 +532,17 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
         </dl>
         <p v-if="app.coreRuntimeStatus?.message" class="desktop-settings__message">{{ runtimeMessage(app.coreRuntimeStatus.message) }}</p>
         <div class="desktop-settings__actions desktop-settings__recovery">
-        <QButton v-if="ports.coreRuntime.recover" variant="secondary" :disabled="busyAction !== null" @click="recoverRuntime('retry')">
+        <QButton v-if="ports.coreRuntime.recover" variant="secondary" :disabled="busyAction !== null || localSupport === false" @click="recoverRuntime('retry')">
           {{ busyAction === 'retry' ? t('Core startet …') : t('Core neu starten') }}
         </QButton>
-        <QButton v-if="ports.coreRuntime.recover" variant="ghost" :disabled="busyAction !== null" @click="recoverRuntime('repair')">
+        <QButton v-if="ports.coreRuntime.recover" variant="ghost" :disabled="busyAction !== null || localSupport === false" @click="recoverRuntime('repair')">
           {{ busyAction === 'repair' ? t('Prüfung läuft …') : t('Laufzeit prüfen') }}
         </QButton>
         </div>
       </CollapsePanel>
     </SettingsCard>
+
+    <DesktopStorageSettings v-if="showRuntime" :busy="updateBusy || app.coreRuntimeStatus?.phase === 'recovering'" @support="localSupport = $event.localCoreSupported" />
 
     <SettingsCard
       v-if="!isToolWindow && ports.shell.openDesktopWindow"
@@ -516,7 +595,8 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
         </div>
         <QButton
           variant="secondary"
-          :disabled="updateBusy || !ports.update.capabilities.selfUpdate || !ports.update.checkForUpdates"
+          data-update-check
+          :disabled="updateBusy || appTarget?.phase === 'paused' || !ports.update.capabilities.selfUpdate || !ports.update.checkForUpdates"
           @click="checkForUpdates"
         >
           {{ busyAction === 'check' ? t('Suche läuft …') : t('Nach Updates suchen') }}
@@ -538,14 +618,15 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
               <template v-if="target.state.latestVersion"> → {{ target.state.latestVersion }}</template>
             </small>
           </div>
-          <div class="desktop-settings__target-status" role="status" aria-live="polite">
-            <span :data-phase="target.state.phase">{{ target.phaseLabel }}</span>
+          <div class="desktop-settings__target-status">
+            <span :data-phase="target.state.phase" role="status" aria-live="polite">{{ target.phaseLabel }}</span>
             <template v-if="target.progress">
               <progress
                 v-if="target.progress.determinate"
                 :aria-label="`${target.label}: ${target.phaseLabel}`"
                 :value="target.progress.value"
                 :max="target.progress.max"
+                :aria-valuetext="target.progress.label"
               >
                 {{ target.progress.label }}
               </progress>
@@ -560,6 +641,30 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
             {{ t(target.state.error.message) }}
             <code>{{ target.state.error.code }}</code>
           </p>
+          <div v-if="target.state.target === 'app' && target.state.downloadControls" class="desktop-settings__download">
+            <p v-if="target.state.phase === 'paused'" class="desktop-settings__message">{{ t('Dein Download bleibt gespeichert und kann fortgesetzt werden.') }}</p>
+            <div class="desktop-settings__actions">
+              <QButton v-if="target.state.downloadControls.canPause && ports.update.pauseDownload" variant="secondary" data-download-control="pause" :disabled="downloadAction !== null" :aria-busy="downloadAction === 'pause'" @click="controlDownload('pause')">
+                {{ downloadAction === 'pause' ? t('Wird pausiert …') : t('Download pausieren') }}
+              </QButton>
+              <QButton v-if="target.state.downloadControls.canResume && ports.update.resumeDownload" variant="secondary" data-download-control="resume" :disabled="downloadAction !== null" :aria-busy="downloadAction === 'resume'" @click="controlDownload('resume')">
+                {{ downloadAction === 'resume' ? t('Wird fortgesetzt …') : t('Download fortsetzen') }}
+              </QButton>
+              <QButton v-if="target.state.downloadControls.canCancel && ports.update.cancelDownload && !confirmingDownloadCancel" variant="ghost" data-download-control="cancel" :disabled="downloadAction !== null" @click="confirmDownloadCancel">
+                {{ t('Download verwerfen') }}
+              </QButton>
+            </div>
+            <div v-if="confirmingDownloadCancel" class="desktop-settings__confirmation" role="group" aria-labelledby="discard-download-title" @keydown.esc.prevent.stop="dismissDownloadCancel">
+              <h3 id="discard-download-title" tabindex="-1">{{ t('Download verwerfen?') }}</h3>
+              <p>{{ t('Bereits geladene Teile werden entfernt. Deine installierte App und dein Lernfortschritt bleiben erhalten.') }}</p>
+              <div class="desktop-settings__actions">
+                <QButton variant="secondary" :disabled="downloadAction !== null" @click="dismissDownloadCancel">{{ t('Download behalten') }}</QButton>
+                <QButton variant="danger" data-download-control="confirm-cancel" :disabled="downloadAction !== null || !target.state.downloadControls.canCancel" :aria-busy="downloadAction === 'cancel'" @click="controlDownload('cancel')">
+                  {{ downloadAction === 'cancel' ? t('Wird verworfen …') : t('Download endgültig verwerfen') }}
+                </QButton>
+              </div>
+            </div>
+          </div>
         </li>
       </ul>
 
@@ -647,7 +752,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   align-items: center;
   padding: var(--q-space-1) var(--q-space-2);
   border: 1px solid var(--q-border-soft);
-  border-radius: 999px;
+  border-radius: var(--q-radius-pill);
   background: var(--q-panel-2);
   color: var(--q-mut);
   font-size: var(--q-font-small);
@@ -726,7 +831,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
   margin: var(--q-space-1) 0 0;
   overflow: hidden;
   color: var(--q-ink);
-  font: 600 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-small)/1.5 var(--q-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -761,7 +866,7 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
 .desktop-settings__target-main small {
   overflow: hidden;
   color: var(--q-mut-2);
-  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 var(--q-font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -782,7 +887,13 @@ onBeforeUnmount(() => stopUpdateSubscription?.());
 .desktop-settings__target-status progress { width: min(180px, 100%); accent-color: var(--q-accent-strong); }
 .desktop-settings__target-status small { color: var(--q-mut-2); font-weight: 500; }
 .desktop-settings__target-message,
-.desktop-settings__target-error { grid-column: 1 / -1; }
+.desktop-settings__target-error,
+.desktop-settings__download { grid-column: 1 / -1; }
+.desktop-settings__download { display: grid; gap: var(--q-space-2); min-width: 0; }
+.desktop-settings__confirmation { padding: var(--q-space-3); border: 1px solid var(--q-border-soft); border-radius: var(--q-radius-control); background: var(--q-panel-2); }
+.desktop-settings__confirmation h3 { margin: 0; font-size: var(--q-font-ui); }
+.desktop-settings__confirmation p { margin: var(--q-space-2) 0; color: var(--q-mut); font-size: var(--q-font-small); }
+.desktop-settings__actions :deep(button) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .desktop-settings__target-error,
 .desktop-settings__problem {
   padding: var(--q-space-3);

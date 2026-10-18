@@ -212,7 +212,7 @@ watch(
   overflow-y: auto;
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 14px;
+  border-radius: var(--q-radius-dialog);
   box-shadow: var(--q-shadow-modal);
   padding: 24px;
   display: flex;
@@ -227,7 +227,7 @@ watch(
 }
 .authm__brand {
   font-weight: 800;
-  font-size: 22px;
+  font-size: var(--q-font-title);
   letter-spacing: -0.02em;
 }
 .authm__brand-accent {
@@ -244,7 +244,7 @@ watch(
   color: var(--q-mut);
 }
 .authm__input--mono {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   letter-spacing: 0.05em;
 }
 .authm__error {
@@ -252,14 +252,14 @@ watch(
   color: var(--q-err-ink);
   background: var(--q-err-bg);
   border: 1px solid var(--q-err-border);
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   padding: 9px 12px;
 }
 .authm__switch {
   border: none;
   background: none;
   text-align: center;
-  font: 600 var(--q-font-ui) 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui) var(--q-font-family);
   color: var(--q-accent-strong);
   cursor: pointer;
   min-height: var(--q-control-height);
@@ -279,7 +279,7 @@ watch(
 }
 .authm__invite-title {
   font-weight: 800;
-  font-size: 16px;
+  font-size: var(--q-font-lg);
   letter-spacing: -0.01em;
 }
 </style>

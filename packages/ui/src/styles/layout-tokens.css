@@ -1,32 +1,94 @@
 /* Layout, transitions and animations are not theme customization. */
 :root {
+  /*
+   * Type scale. Components pick a role, never a pixel value: before this
+   * scale existed the app carried 28 distinct literal sizes, several of them
+   * half a pixel apart for the same job.
+   */
+  --q-font-family: 'Public Sans', system-ui, -apple-system, sans-serif;
+  --q-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --q-font-micro: 10px; /* badges, chart and picker micro-labels */
+  --q-font-2xs: 10.5px; /* eyebrows, legends, tiny counters */
+  --q-font-xs: 11.5px; /* chips, compact control labels */
+  --q-font-small: 12px; /* captions, meta lines */
+  --q-font-meta: 13px; /* secondary text, list rows */
   --q-font-body: 14px;
   --q-font-ui: 14px;
-  --q-font-small: 12px;
-  --q-font-input: 16px;
-  --q-font-title: 22px;
-  --q-radius-control: 10px;
-  --q-radius-card: 14px;
-  --q-radius-dialog: 18px;
+  --q-font-md: 15px; /* emphasised body, panel headings */
+  --q-font-lg: 17px; /* dialog and section titles */
+  --q-font-xl: 20px; /* prominent figures inside cards */
+  --q-font-title: 22px; /* page titles */
+  --q-font-headline: 26px; /* the question title in practice */
+  --q-font-display: 30px; /* dashboard numbers */
+  --q-font-hero: 44px; /* the programme score */
+  --q-font-input: 16px; /* ≥16px: iOS never zooms a focused field */
+  /* One look for every small uppercase label (card heads, rails, legends). */
+  --q-eyebrow-size: var(--q-font-2xs);
+  --q-eyebrow-weight: 800;
+  --q-eyebrow-tracking: 0.07em;
+
+  --q-radius-xs: 6px; /* checkboxes, inline code, tiny plates */
+  --q-radius-sm: 8px; /* list rows, menu options, inner controls */
+  --q-radius-control: 10px; /* buttons, fields, toggles */
+  --q-radius-card: 14px; /* cards, popovers, panels */
+  --q-radius-dialog: 18px; /* dialogs and bottom sheets */
+  --q-radius-pill: 999px; /* chips and capsules */
+
   --q-space-1: 4px;
   --q-space-2: 8px;
   --q-space-3: 12px;
   --q-space-4: 16px;
   --q-space-5: 20px;
   --q-space-6: 24px;
+  --q-space-7: 32px;
+  --q-space-8: 40px;
+
   --q-sidebar-width: 240px;
+  /* Minimum hit area for anything tappable (Apple HIG 44pt). Fine pointers
+   * keep it; coarse pointers raise text controls below. */
+  --q-touch-target: 44px;
   --q-control-height: 44px;
   --q-icon-control-size: 44px;
   --q-icon-glyph-size: 20px;
   --q-control-chevron-size: 16px;
   --q-control-chevron-inset: 12px;
   --q-control-chevron-padding-end: 36px;
-  --q-transition-fast: 0.14s cubic-bezier(0.22, 1, 0.36, 1);
-  --q-transition-normal: 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Fixed chrome. Content offsets and scroll padding derive from these
+   * instead of repeating 56/64 in every view. */
+  --q-topbar-height: 56px;
+  --q-tabbar-height: 64px;
+
+  /* Stacking order, lowest first. */
+  --q-z-sticky: 30; /* sticky page headers, the practice top bar */
+  --q-z-bar: 40; /* fixed bottom bars */
+  --q-z-toast: 42; /* transient notices above a bottom bar */
+  --q-z-chrome: 45; /* the status-bar scrim */
+  --q-z-popover: 50;
+  --q-z-drawer: 80;
+  --q-z-modal: 100;
+  --q-z-dialog: 200; /* dialogs opened from inside a modal surface */
+
+  --q-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --q-transition-fast: 0.14s var(--q-ease-out);
+  --q-transition-normal: 0.22s var(--q-ease-out);
   --q-transition-spring: 0.28s cubic-bezier(0.25, 1, 0.5, 1);
+  /* Panels that change size or slide (rails, drawers, the exit control). */
+  --q-transition-layout: 220ms var(--q-ease-out);
   /* Header row and data row live in different files; editing one without the
    * other silently misaligns the table, so the track list is stated once. */
   --q-leaderboard-columns: 40px minmax(0, 1fr) 112px 88px 88px 16px;
+}
+
+/*
+ * Touch screens. A finger is less precise than a cursor and covers what it
+ * presses, so text controls (buttons, fields, segmented options) grow to the
+ * Material 48dp target. Icon controls stay at 44px: they live in 56px bars
+ * that cannot grow without pushing content down.
+ */
+@media (pointer: coarse) {
+  :root {
+    --q-control-height: 48px;
+  }
 }
 
 @media (max-width: 700px) {
@@ -34,4 +96,3 @@
     --q-leaderboard-columns: 24px minmax(0, 1fr) repeat(3, minmax(0, 0.6fr)) 12px;
   }
 }
-

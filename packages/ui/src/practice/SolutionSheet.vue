@@ -767,7 +767,7 @@ async function collapseFromKeyboard(): Promise<void> {
   align-items: center;
   gap: 9px;
   padding: 0 max(var(--q-sheet-content-gutter), env(safe-area-inset-right)) 12px max(var(--q-sheet-content-gutter), env(safe-area-inset-left));
-  font-size: 15px;
+  font-size: var(--q-font-md);
   font-weight: 700;
 }
 
@@ -868,7 +868,7 @@ async function collapseFromKeyboard(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   font-weight: 700;
 }
 .q-ssheet__verdict--correct {
@@ -882,7 +882,7 @@ async function collapseFromKeyboard(): Promise<void> {
 }
 .q-ssheet__verdict-points {
   margin-left: auto;
-  font: 700 12px ui-monospace, Menlo, monospace;
+  font: 700 var(--q-font-small) var(--q-font-mono);
   font-variant-numeric: tabular-nums;
   opacity: 0.85;
 }
@@ -953,14 +953,14 @@ async function collapseFromKeyboard(): Promise<void> {
 }
 .q-ssheet__title {
   margin: 0;
-  font-size: 15.5px;
+  font-size: var(--q-font-md);
   font-weight: 700;
   letter-spacing: -0.01em;
   color: var(--q-ink);
 }
 .q-ssheet__empty {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--q-font-meta);
   color: var(--q-faint);
 }
 .q-ssheet__entry {
@@ -972,14 +972,14 @@ async function collapseFromKeyboard(): Promise<void> {
 .q-ssheet__card {
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   padding: 12px 14px;
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.7;
   color: var(--q-ink-2);
 }
 .q-ssheet__steps {
-  font-size: 14px;
+  font-size: var(--q-font-ui);
   line-height: 1.7;
   color: var(--q-ink-2);
   overflow-wrap: break-word;
@@ -995,16 +995,16 @@ async function collapseFromKeyboard(): Promise<void> {
   gap: 4px;
   padding-left: 12px;
   border-left: 2px solid var(--q-border-2);
-  font-size: 13.5px;
+  font-size: var(--q-font-meta);
   line-height: 1.65;
   color: var(--q-ink-2);
 }
 .q-ssheet__short-alternative > span {
-  font-size: 10.5px;
-  font-weight: 700;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
   color: var(--q-faint);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: var(--q-eyebrow-tracking);
 }
 .q-ssheet__divider {
   display: flex;
@@ -1019,9 +1019,9 @@ async function collapseFromKeyboard(): Promise<void> {
   background: var(--q-border-2);
 }
 .q-ssheet__divider-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
@@ -1043,16 +1043,16 @@ async function collapseFromKeyboard(): Promise<void> {
   padding: 10px 13px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 9px;
+  border-radius: var(--q-radius-sm);
 }
 .q-ssheet__note-label {
-  font: 700 11px ui-monospace, Menlo, monospace;
-  letter-spacing: 0.07em;
+  font: var(--q-eyebrow-weight) var(--q-eyebrow-size) var(--q-font-mono);
+  letter-spacing: var(--q-eyebrow-tracking);
   text-transform: uppercase;
   color: var(--q-faint);
 }
 .q-ssheet__note-text {
-  font: 500 12px/1.6 ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.6 var(--q-font-mono);
   color: var(--q-mut);
   overflow-wrap: break-word;
 }
@@ -1082,7 +1082,7 @@ async function collapseFromKeyboard(): Promise<void> {
   width: 100%;
   text-align: left;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 650;
   line-height: 1.5;
 }
@@ -1110,6 +1110,6 @@ async function collapseFromKeyboard(): Promise<void> {
 .q-ssheet__handle--labelled:focus-visible {
   outline: 2px solid var(--q-accent);
   outline-offset: -3px;
-  border-radius: 4px;
+  border-radius: var(--q-radius-xs);
 }
 </style>

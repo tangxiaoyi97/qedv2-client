@@ -48,7 +48,7 @@ const parts = computed(() => {
 
 <style scoped>
 .q-snippet {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut-2);
   line-height: 1.5;
 }

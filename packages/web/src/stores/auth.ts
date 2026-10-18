@@ -44,6 +44,14 @@ export const useAuthStore = defineStore('auth', () => {
   let externalSessionTail: Promise<void> = Promise.resolve();
   let authGeneration = 0;
   let activeAuthAction: PendingAuthAction | undefined;
+  interface PendingRecoveryRefresh {
+    generation: number;
+    token: string;
+    issuer: string;
+    promise: Promise<boolean>;
+    committingSession?: Session;
+  }
+  let recoveryRefresh: PendingRecoveryRefresh | undefined;
 
   const isLoggedIn = computed(() =>
     !transitioning.value
@@ -247,17 +255,16 @@ export const useAuthStore = defineStore('auth', () => {
         ? { ...stored, serverBaseUrl: candidateIssuer! }
         : undefined;
       const progress = useProgressStore();
-      const sameIdentity = Boolean(candidate && previous
+      const sameAccount = Boolean(candidate && previous
         && candidate.user.id === previous.user.id
-        && candidate.token === previous.token
         && issuerOf(candidate) === issuerOf(previous));
       // Publish the new token only after its isolated profile is ready. If
       // storage/profile activation fails, the previous auth epoch remains.
       if (!transitionIsCurrent(generation)) return;
       try {
-        if (!sameIdentity) progress.cancelCloudRecovery();
+        if (!sameAccount) progress.cancelCloudRecovery();
         if (candidate) {
-          await progress.activateProfileForAuth(localAccountId(candidate), sameIdentity);
+          await progress.activateProfileForAuth(localAccountId(candidate), sameAccount);
           await recoverInviteOwnership(candidate);
         } else await progress.activateGuestProfile();
       } catch (error) {
@@ -269,7 +276,10 @@ export const useAuthStore = defineStore('auth', () => {
       if (!transitionIsCurrent(generation)) return;
       session.value = candidate;
       finishTransition(generation);
-      if (sameIdentity) progress.resumeCloudRecovery();
+      if (sameAccount && previous) {
+        if (candidate?.token !== previous.token) progress.rebindCloudRecoverySession(previous.token);
+        else progress.resumeCloudRecovery();
+      }
     };
     const run = externalSessionTail.then(reload, reload);
     const guarded = run.catch(async (error) => {
@@ -308,6 +318,9 @@ export const useAuthStore = defineStore('auth', () => {
       return;
     }
     if (generation !== authGeneration || transitionError.value) return;
+    if (recoveryRefresh?.generation === generation
+      && recoveryRefresh.committingSession
+      && snapshotMatchesSession(snapshot, recoveryRefresh.committingSession)) return;
     const action = activeAuthAction;
     if (action?.generation === generation) {
       const before = action.authSnapshot;
@@ -337,6 +350,92 @@ export const useAuthStore = defineStore('auth', () => {
         void refreshFromStorage();
       });
     }
+  }
+
+  /** Refresh only the still-current account before retrying cloud work. */
+  async function refreshSessionForRecovery(): Promise<boolean> {
+    const app = useAppStore();
+    const stored = session.value;
+    if (!app.online || !isLoggedIn.value || !stored) return false;
+    const issuer = issuerOf(stored)!;
+    const generation = authGeneration;
+    if (!authStorage.isExpiringSoon(stored, new Date())) return true;
+    if (recoveryRefresh?.generation === generation
+      && recoveryRefresh.token === stored.token
+      && recoveryRefresh.issuer === issuer) return recoveryRefresh.promise;
+
+    const isCurrent = () => transitionIsCurrent(generation, issuer)
+      && !transitioning.value
+      && session.value?.token === stored.token
+      && session.value?.user.id === stored.user.id;
+    const run = async (): Promise<boolean> => {
+      const snapshot = await authStorage.snapshot();
+      if (!isCurrent()) return false;
+      if (!snapshotMatchesSession(snapshot, stored)) {
+        await refreshFromStorage();
+        return false;
+      }
+      let next: Session;
+      try {
+        const refreshed = await new ServerClient(issuer, () => stored.token).refresh();
+        if (!isCurrent()) return false;
+        next = { ...stored, token: refreshed.token, expiresAt: refreshed.expiresAt };
+      } catch (error) {
+        if (!isCurrent()) return false;
+        if (!(error instanceof ApiError) || error.status !== 401) return false;
+        // Match startup's invalid-session handling. The account archive and
+        // outbox remain durable, ready for this same account's next login.
+        const signOutGeneration = beginTransition();
+        const progress = useProgressStore();
+        progress.pauseCloudRecovery();
+        try {
+          const cleared = await authStorage.clearSessionIfUnchanged(snapshot);
+          if (!transitionIsCurrent(signOutGeneration, issuer)) return false;
+          if (!cleared) {
+            finishTransition(signOutGeneration);
+            await refreshFromStorage();
+            return false;
+          }
+          progress.cancelCloudRecovery();
+          await progress.activateGuestProfile();
+          if (!transitionIsCurrent(signOutGeneration, issuer)) return false;
+          session.value = undefined;
+          finishTransition(signOutGeneration);
+          return false;
+        } catch (cause) {
+          lockTransition(signOutGeneration, cause);
+        }
+      }
+
+      // Keep the local profile usable while the refresh is in flight. CAS
+      // prevents a late response from reviving a signed-out/replaced account.
+      pending.committingSession = next;
+      const committed = await authStorage.setSessionIfUnchanged(next, snapshot);
+      if (!isCurrent()) return false;
+      if (!committed) {
+        await refreshFromStorage();
+        return false;
+      }
+      const latest = await authStorage.snapshot().catch((error) =>
+        lockTransition(generation, error));
+      if (!isCurrent()) return false;
+      if (!snapshotMatchesSession(latest, next)) {
+        await refreshFromStorage();
+        return false;
+      }
+      session.value = next;
+      return app.online;
+    };
+    const pending: PendingRecoveryRefresh = {
+      generation,
+      token: stored.token,
+      issuer,
+      promise: run().catch(() => false).finally(() => {
+        if (recoveryRefresh === pending) recoveryRefresh = undefined;
+      }),
+    };
+    recoveryRefresh = pending;
+    return pending.promise;
   }
 
   async function init(): Promise<void> {
@@ -381,24 +480,29 @@ export const useAuthStore = defineStore('auth', () => {
       useProgressStore().cancelCloudRecovery();
       await useProgressStore().activateProfileForAuth(localAccountId(stored));
       if (!transitionIsCurrent(generation, storedIssuer)) return;
-      const client = new ServerClient(storedIssuer!, () => stored.token);
-      if (authStorage.isExpiringSoon(stored, new Date())) {
-        const refreshed = await client.refresh();
-        if (!transitionIsCurrent(generation, storedIssuer)) return;
-        const next: Session = { ...stored, token: refreshed.token, expiresAt: refreshed.expiresAt };
-        useProgressStore().cancelCloudRecovery();
-        const committed = await authStorage.setSessionIfUnchanged(next, authSnapshot);
-        if (!committed) {
-          finishTransition(generation);
-          await refreshFromStorage();
-          return;
-        }
-        effective = next;
-      } else {
-        const identity = await client.me();
-        if (!transitionIsCurrent(generation, storedIssuer)) return;
-        if (identity.id !== stored.user.id) {
-          throw new Error('Stored login resolved to a different account');
+      // A known outage must not delay the local app behind the HTTP deadline.
+      // Even an expired bearer still identifies its isolated local archive;
+      // cloud recovery validates/refreshes it after connectivity returns.
+      if (useAppStore().online) {
+        const client = new ServerClient(storedIssuer!, () => stored.token);
+        if (authStorage.isExpiringSoon(stored, new Date())) {
+          const refreshed = await client.refresh();
+          if (!transitionIsCurrent(generation, storedIssuer)) return;
+          const next: Session = { ...stored, token: refreshed.token, expiresAt: refreshed.expiresAt };
+          useProgressStore().cancelCloudRecovery();
+          const committed = await authStorage.setSessionIfUnchanged(next, authSnapshot);
+          if (!committed) {
+            finishTransition(generation);
+            await refreshFromStorage();
+            return;
+          }
+          effective = next;
+        } else {
+          const identity = await client.me();
+          if (!transitionIsCurrent(generation, storedIssuer)) return;
+          if (identity.id !== stored.user.id) {
+            throw new Error('Stored login resolved to a different account');
+          }
         }
       }
     } catch (e) {
@@ -699,5 +803,6 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     refreshFromStorage,
     revalidateFromStorage,
+    refreshSessionForRecovery,
   };
 });

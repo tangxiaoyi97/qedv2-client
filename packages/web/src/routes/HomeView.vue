@@ -17,12 +17,20 @@ import { useActivityStore } from '../stores/activity.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useProgressStore } from '../stores/progress.js';
 import { useUiStore } from '../stores/ui.js';
+import { useSyncIndicator } from '../composables/useSyncIndicator.js';
 
 const router = useRouter();
 const auth = useAuthStore();
 const activityStore = useActivityStore();
 const progress = useProgressStore();
 const ui = useUiStore();
+const sync = useSyncIndicator();
+
+/** Phones have no sidebar account card; this pill is its stand-in. */
+function openAccount(): void {
+  if (auth.isLoggedIn) go('/settings');
+  else ui.openAuthModal();
+}
 
 /** Ticking clock so greeting/date roll over at midnight instead of going
  * stale in a long-lived PWA session. */
@@ -103,10 +111,21 @@ function openCategoryFilter(code: string): void {
 <template>
   <div class="home q-page">
     <div class="home__header">
-      <div>
-        <h1 class="home__greeting">{{ t(greeting) }} 👋</h1>
+      <div class="home__heading">
+        <h1 class="home__greeting q-page-title">{{ t(greeting) }} 👋</h1>
         <div class="home__date">{{ dateLine }}</div>
       </div>
+      <button
+        type="button"
+        class="home__status"
+        :data-tone="sync.tone"
+        :aria-label="auth.isLoggedIn ? t('Synchronisierung: {status}', { status: t(sync.label) }) : t('Anmelden')"
+        :title="t('Konto und Synchronisierung')"
+        @click="openAccount"
+      >
+        <component :is="sync.icon" class="home__status-icon" :class="{ 'home__status-icon--busy': sync.busy }" aria-hidden="true" />
+        <span class="home__status-label">{{ auth.isLoggedIn ? t(sync.label) : t('Anmelden') }}</span>
+      </button>
     </div>
 
     <div class="home__hero">
@@ -127,7 +146,7 @@ function openCategoryFilter(code: string): void {
       </div>
 
       <div
-        class="home__card home__card--wide home__card--click"
+        class="home__card home__card--wide home__card--click q-pressable"
         role="link"
         tabindex="0"
         @click="go('/progress')"
@@ -153,7 +172,7 @@ function openCategoryFilter(code: string): void {
       </div>
 
       <div
-        class="home__card home__card--click"
+        class="home__card home__card--click q-pressable"
         role="link"
         tabindex="0"
         @click="go('/history')"
@@ -174,7 +193,7 @@ function openCategoryFilter(code: string): void {
       </div>
 
       <div
-        class="home__card home__card--click"
+        class="home__card home__card--click q-pressable"
         role="link"
         tabindex="0"
         @click="go('/history')"
@@ -201,7 +220,7 @@ function openCategoryFilter(code: string): void {
       </div>
 
       <div
-        class="home__card home__card--wide home__card--click"
+        class="home__card home__card--wide home__card--click q-pressable"
         role="link"
         tabindex="0"
         @click="go('/progress')"
@@ -230,12 +249,54 @@ function openCategoryFilter(code: string): void {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: var(--q-space-3);
+}
+.home__heading {
+  min-width: 0;
+}
+/*
+ * Account / sync pill. Only phones and narrow tablets show it — from 900px
+ * the sidebar's account card carries the same reading (useSyncIndicator).
+ */
+.home__status {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  max-width: 48%;
+  min-height: var(--q-touch-target);
+  padding: 0 14px;
+  border: 1px solid var(--q-border-2);
+  border-radius: var(--q-radius-pill);
+  background: var(--q-card);
+  color: var(--q-mut);
+  font: 700 var(--q-font-small) var(--q-font-family);
+  cursor: pointer;
+  transition: transform var(--q-transition-fast), background-color var(--q-transition-fast);
+}
+.home__status:active { transform: scale(0.97); background: var(--q-panel); }
+.home__status[data-tone='ok'] { color: var(--q-ok-ink); }
+.home__status[data-tone='warn'] { color: var(--q-part-ink); border-color: var(--q-part-border); }
+.home__status[data-tone='error'] { color: var(--q-err-ink); border-color: var(--q-err-border); }
+.home__status-icon { width: 16px; height: 16px; flex: none; }
+.home__status-icon--busy { animation: home-status-spin 1.2s linear infinite; }
+@keyframes home-status-spin { to { transform: rotate(360deg); } }
+.home__status-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 899px) {
+  .home__status { display: inline-flex; }
+  /* The pill above is the sign-in entry on phones; don't offer it twice. */
+  .home__guest { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .home__status-icon--busy { animation: none; }
 }
 .home__greeting {
-  font-weight: 800;
-  font-size: 23px;
-  letter-spacing: -0.01em;
-  margin: 0;
+  overflow-wrap: anywhere;
 }
 .home__date {
   font-size: var(--q-font-ui);
@@ -244,7 +305,7 @@ function openCategoryFilter(code: string): void {
 }
 .home__hero {
   background: var(--q-cta-card);
-  border-radius: 14px;
+  border-radius: var(--q-radius-card);
   padding: 20px;
   display: flex;
   align-items: center;
@@ -260,7 +321,7 @@ function openCategoryFilter(code: string): void {
   color: var(--q-cta-card-label);
   font-size: var(--q-font-small);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   margin-bottom: 7px;
 }
@@ -282,7 +343,7 @@ function openCategoryFilter(code: string): void {
 .home__card {
   background: var(--q-card);
   border: 1px solid var(--q-border);
-  border-radius: 12px;
+  border-radius: var(--q-radius-card);
   padding: 16px;
   min-width: 0;
   grid-column: span 6;
@@ -309,14 +370,19 @@ function openCategoryFilter(code: string): void {
     border-color: var(--q-accent);
   }
 }
+.home__card--click:active {
+  border-color: var(--q-accent);
+}
 .home__card--click:focus-visible {
   border-color: var(--q-accent);
   outline: 2px solid var(--q-accent);
   outline-offset: 2px;
 }
+/* The label carries the head's bottom margin, so centre the chevron on the
+ * label's own line box rather than on the baseline (it sat ~4px high). */
 .home__card-head {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
@@ -337,6 +403,7 @@ function openCategoryFilter(code: string): void {
 .home__card-link {
   width: 16px;
   height: 16px;
+  margin-top: 1px;
   color: var(--q-accent-strong);
   flex: none;
 }
@@ -347,7 +414,9 @@ function openCategoryFilter(code: string): void {
 }
 .home__big b {
   font-weight: 800;
-  font-size: 30px;
+  font-size: var(--q-font-display);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
 }
 .home__big span {
   font-size: var(--q-font-small);
@@ -376,7 +445,7 @@ function openCategoryFilter(code: string): void {
   min-height: var(--q-control-height);
   padding: 8px 6px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--q-radius-sm);
   background: none;
   color: inherit;
   cursor: pointer;
@@ -413,7 +482,7 @@ function openCategoryFilter(code: string): void {
   color: var(--q-mut);
 }
 .home__recent-id {
-  font-family: ui-monospace, Menlo, monospace;
+  font-family: var(--q-font-mono);
   font-size: var(--q-font-small);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -435,7 +504,7 @@ function openCategoryFilter(code: string): void {
   padding: 13px 15px;
   background: var(--q-panel);
   border: 1px solid var(--q-border-soft);
-  border-radius: 10px;
+  border-radius: var(--q-radius-control);
   font-size: var(--q-font-ui);
   color: var(--q-mut-2);
   line-height: 1.55;
@@ -444,7 +513,7 @@ function openCategoryFilter(code: string): void {
   border: none;
   background: none;
   padding: 0;
-  font: 600 12.5px 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-meta) var(--q-font-family);
   color: var(--q-accent-strong);
   cursor: pointer;
   text-decoration: underline;

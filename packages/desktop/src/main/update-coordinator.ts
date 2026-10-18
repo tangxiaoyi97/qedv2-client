@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import type {
   UpdateCheckResult as QedUpdateCheckResult,
   UpdateSnapshot,
@@ -18,6 +19,7 @@ import {
 import {
   ResumableArtifactDownloader,
   type ArtifactDescriptor,
+  type DownloadJournalV1,
   type VerifiedArtifact,
 } from './resumable-downloader.js';
 import {
@@ -73,7 +75,7 @@ export interface UpdateCoordinatorOptions {
   selfUpdateAvailability?: SelfUpdateAvailability;
   /** Test seam; production uses bounded exponential-ish retry delays. */
   retryDelaysMs?: readonly number[];
-  wait?: (delayMs: number) => Promise<void>;
+  wait?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
   now?: () => number;
   installLifecycle?: UpdateInstallLifecycle;
   installHandoffTimeoutMs?: number;
@@ -117,7 +119,7 @@ export class UpdateCoordinator extends EventEmitter {
   private readonly approvedRelease: () => Promise<ApprovedDesktopRelease | undefined>;
   private readonly selfUpdateAvailability: SelfUpdateAvailability;
   private readonly retryDelaysMs: readonly number[];
-  private readonly wait: (delayMs: number) => Promise<void>;
+  private readonly wait: (delayMs: number, signal?: AbortSignal) => Promise<void>;
   private readonly now: () => number;
   private readonly installHandoffTimeoutMs: number;
   private readonly revealInstallPackage: (packagePath: string) => void;
@@ -143,6 +145,18 @@ export class UpdateCoordinator extends EventEmitter {
   private installHandoffConfirmed = false;
   private installWatchdog: NodeJS.Timeout | undefined;
   private checkedRelease: ApprovedDesktopRelease | undefined;
+  private manualDownloadAbort: AbortController | undefined;
+  private manualDownloadTask: Promise<void> | undefined;
+  private downloadControlTask: Promise<void> | undefined;
+  private downloadInterruption: 'pause' | 'cancel' | 'shutdown' | undefined;
+  private userPaused = false;
+  private closing = false;
+  private maintenanceActive = false;
+  private recoveryInspection: Promise<DownloadJournalV1 | undefined> | undefined;
+  private startupRecovery: Promise<void> | undefined;
+  private manualDescriptor: ArtifactDescriptor | undefined;
+  private cacheDiscardTask: Promise<void> | undefined;
+  private maintenanceTask: Promise<number> | undefined;
 
   constructor(
     private readonly appVersion: string,
@@ -167,7 +181,7 @@ export class UpdateCoordinator extends EventEmitter {
     this.retryDelaysMs = options.retryDelaysMs?.length
       ? [...options.retryDelaysMs]
       : DEFAULT_RETRY_DELAYS_MS;
-    this.wait = options.wait ?? ((delayMs) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+    this.wait = options.wait ?? ((delayMs, signal) => delay(delayMs, undefined, { signal }));
     this.now = options.now ?? Date.now;
     this.recoveryJournal = new UpdateRecoveryJournal(options.recoveryStore, logger, this.now);
     this.installHandoffTimeoutMs = options.installHandoffTimeoutMs ?? DEFAULT_INSTALL_HANDOFF_TIMEOUT_MS;
@@ -225,6 +239,9 @@ export class UpdateCoordinator extends EventEmitter {
       };
     }
     this.bindUpdaterEvents();
+    if (hasFileRecovery && this.selfUpdateAvailability.available && (!pending || pending.fromVersion === this.appVersion)) {
+      this.startupRecovery = this.restorePausedDownload().finally(() => { this.startupRecovery = undefined; });
+    }
   }
 
   isSelfUpdateAvailable(): boolean {
@@ -232,7 +249,165 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   getState(): UpdateSnapshot {
-    return structuredClone(this.state);
+    const snapshot = structuredClone(this.state);
+    const target = snapshot.targets.find((entry) => entry.target === 'app');
+    if (target && this.manualPackageInstall && this.downloader) {
+      const enabled = !this.closing && !this.maintenanceActive && !this.downloadControlTask && !this.cacheDiscardTask;
+      const downloading = this.activeOperation === 'downloading' && !!this.manualDownloadTask &&
+        (target.phase === 'downloading' || target.phase === 'verifying');
+      target.downloadControls = {
+        canPause: enabled && downloading && !this.manualDownloadAbort?.signal.aborted,
+        canResume: enabled && !snapshot.busy && target.phase === 'paused',
+        canCancel: enabled && (downloading || (!snapshot.busy && (
+          target.phase === 'paused' || target.phase === 'restart-required' ||
+          (target.phase === 'error' && this.downloader.hasRecoverySync())
+        ))),
+      };
+    }
+    return snapshot;
+  }
+
+  private async restorePausedDownload(): Promise<void> {
+    try {
+      const journal = await this.inspectRecovery();
+      if (journal?.paused && !this.state.busy && !this.downloadControlTask && !this.closing) {
+        this.userPaused = true;
+        this.patchTarget('app', {
+          phase: 'paused', latestVersion: journal.targetVersion,
+          progress: { completed: journal.downloadedBytes, total: journal.expectedSize, unit: 'bytes' },
+          message: 'Der Download ist pausiert. Bereits gespeicherte Daten bleiben erhalten.',
+        });
+      }
+    } catch (error) {
+      this.logger.warn('Could not restore a paused desktop download', error);
+    }
+  }
+
+  private inspectRecovery(): Promise<DownloadJournalV1 | undefined> {
+    if (this.recoveryInspection) return this.recoveryInspection;
+    let tracked: Promise<DownloadJournalV1 | undefined>;
+    tracked = (this.downloader?.inspect() ?? Promise.resolve(undefined)).finally(() => {
+      if (this.recoveryInspection === tracked) this.recoveryInspection = undefined;
+    });
+    this.recoveryInspection = tracked;
+    return tracked;
+  }
+
+  async getStorageUsage(): Promise<{ bytes: number | null; cleanableBytes: number | null; blocked: boolean }> {
+    if (!this.downloader) return { bytes: null, cleanableBytes: null, blocked: false };
+    try {
+      const usage = await this.downloader.getStorageUsage();
+      const blocked = this.closing || this.maintenanceActive || !!this.downloadControlTask || !!this.cacheDiscardTask || this.state.busy ||
+        this.target('app').phase === 'restart-required';
+      return { bytes: usage.bytes, cleanableBytes: blocked ? 0 : usage.cleanableBytes, blocked };
+    } catch {
+      return { bytes: null, cleanableBytes: null, blocked: false };
+    }
+  }
+
+  async cleanupExpiredDownloads(): Promise<{
+    status: 'cleaned' | 'skipped'; freedBytes: number; reason?: 'download-active' | 'unavailable' | 'unsafe-path';
+  }> {
+    if (this.startupRecovery) await this.startupRecovery;
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.cacheDiscardTask ||
+      this.recoveryInspection || this.resumeInFlight || this.state.busy ||
+      this.activeOperation !== 'idle' || this.target('app').phase === 'restart-required') {
+      return { status: 'skipped', freedBytes: 0, reason: 'download-active' };
+    }
+    if (!this.downloader) return { status: 'skipped', freedBytes: 0, reason: 'unavailable' };
+    this.maintenanceActive = true;
+    this.setBusy(true);
+    try {
+      this.maintenanceTask = this.downloader.cleanupExpiredDownloads();
+      return { status: 'cleaned', freedBytes: await this.maintenanceTask };
+    } catch (error) {
+      this.logger.warn('Could not clean expired desktop update files', error);
+      return { status: 'skipped', freedBytes: 0,
+        reason: (error as { code?: unknown })?.code === 'ERR_UNSAFE_MANAGED_PATH' ? 'unsafe-path' : 'unavailable' };
+    } finally {
+      this.maintenanceActive = false;
+      this.maintenanceTask = undefined;
+      this.setBusy(false);
+    }
+  }
+
+  pauseDownload(): Promise<void> {
+    return this.controlDownload('pause');
+  }
+
+  async resumeDownload(): Promise<void> {
+    if (this.startupRecovery) await this.startupRecovery;
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.cacheDiscardTask || this.state.busy) throw this.busyError();
+    if (!this.manualPackageInstall || !this.downloader || this.target('app').phase !== 'paused') {
+      throw Object.assign(new Error('Kein pausierter Download ist verfügbar.'), { code: 'APP_UPDATE_NOT_PAUSED' });
+    }
+    this.userPaused = false;
+    await this.applyUpdatesInternal(['app'], false);
+  }
+
+  cancelDownload(): Promise<void> {
+    return this.controlDownload('cancel');
+  }
+
+  private controlDownload(action: 'pause' | 'cancel'): Promise<void> {
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.cacheDiscardTask) return Promise.reject(this.busyError());
+    const controls = this.getState().targets.find((entry) => entry.target === 'app')?.downloadControls;
+    if (!controls || !(action === 'pause' ? controls.canPause : controls.canCancel)) {
+      return Promise.reject(Object.assign(new Error('Diese Download-Aktion ist derzeit nicht verfügbar.'), {
+        code: 'APP_UPDATE_CONTROL_UNAVAILABLE',
+      }));
+    }
+    this.userPaused = true; // Block automatic recovery before asynchronous cleanup begins.
+    this.downloadInterruption = action;
+    this.manualDownloadAbort?.abort(Object.assign(new Error('Desktop download stopped by user'), { code: 'ERR_CANCELLED' }));
+    const operation = (async () => {
+      await this.manualDownloadTask?.catch(() => undefined);
+      if (action === 'pause') {
+        await this.downloader!.pauseRecovery(this.manualDescriptor);
+        this.patchTarget('app', {
+          phase: 'paused',
+          message: 'Der Download ist pausiert. Bereits gespeicherte Daten bleiben erhalten.',
+        });
+      } else {
+        await this.downloader!.discard();
+        this.clearPendingDownload();
+        this.verifiedInstallPackagePath = undefined;
+        this.verifiedInstallArtifact = undefined;
+        this.manualDescriptor = undefined;
+        this.userPaused = false;
+        this.patchTarget('app', {
+          phase: 'available', message: 'Der Download wurde verworfen und kann neu gestartet werden.',
+        }, { clearProgress: true });
+      }
+    })().catch((error) => {
+      const classified = classifyUpdateError(error, 'downloading');
+      this.patchTarget('app', { phase: 'error', message: classified.message,
+        error: { code: classified.code, message: classified.message, retryable: true } });
+      throw publicUpdateError(classified);
+    });
+    let tracked: Promise<void>;
+    tracked = operation.finally(() => {
+      if (this.downloadControlTask === tracked) this.downloadControlTask = undefined;
+      this.downloadInterruption = undefined;
+      this.emitState();
+    });
+    this.downloadControlTask = tracked;
+    this.emitState();
+    return tracked;
+  }
+
+  /** Preserve restart recovery, but stop our network/verification/file work before Electron exits. */
+  async shutdown(): Promise<void> {
+    this.closing = true;
+    if (!this.downloadInterruption) this.downloadInterruption = 'shutdown';
+    this.manualDownloadAbort?.abort(Object.assign(new Error('Desktop application is shutting down'), { code: 'ERR_CANCELLED' }));
+    await Promise.allSettled([
+      this.manualDownloadTask, this.downloadControlTask, this.startupRecovery, this.cacheDiscardTask, this.maintenanceTask,
+    ]);
+  }
+
+  private busyError(): Error {
+    return Object.assign(new Error('Eine andere Aktualisierung läuft bereits.'), { name: 'UpdateError', code: 'APP_UPDATE_BUSY' });
   }
 
   hasPendingDownload(): boolean {
@@ -278,10 +453,18 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   private async performPendingDownloadResume(): Promise<boolean> {
+    if (this.cacheDiscardTask) await this.cacheDiscardTask;
+    const startupInspection = this.startupRecovery ? this.recoveryInspection : undefined;
+    if (this.startupRecovery) await this.startupRecovery;
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.userPaused) return false;
     if (!this.selfUpdateAvailability.available || !this.hasPendingDownload() || this.state.busy) return false;
     if (this.downloader) {
       try {
-        const journal = await this.downloader.inspect();
+        const journal = await (startupInspection ?? this.inspectRecovery());
+        if (journal?.paused) {
+          await this.restorePausedDownload();
+          return false;
+        }
         if (journal && journal.automaticAttempts >= MAX_AUTOMATIC_DOWNLOAD_ATTEMPTS) {
           const message = 'Die automatische Wiederherstellung wurde begrenzt. Bitte prüfe das Update manuell erneut.';
           this.patchTarget('app', {
@@ -317,6 +500,15 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   checkForUpdates(): Promise<QedUpdateCheckResult[]> {
+    if (this.cacheDiscardTask) return this.cacheDiscardTask.then(() => this.checkForUpdates());
+    if (this.startupRecovery) return this.startupRecovery.then(() => this.checkForUpdates());
+    if (this.closing || this.maintenanceActive || this.downloadControlTask) return Promise.reject(this.busyError());
+    if (this.userPaused) {
+      const latestVersion = this.target('app').latestVersion;
+      return Promise.resolve([{ target: 'app', currentVersion: this.appVersion,
+        ...(latestVersion === undefined ? {} : { latestVersion }), updateAvailable: true,
+        detail: 'Der Download ist pausiert und wird nur auf Wunsch fortgesetzt.' }]);
+    }
     if (!this.selfUpdateAvailability.available) {
       return Promise.resolve(this.unavailableResults());
     }
@@ -350,13 +542,17 @@ export class UpdateCoordinator extends EventEmitter {
     targets: Array<'app' | 'core' | 'bank'>,
     automaticRecovery: boolean,
   ): Promise<void> {
-    if (this.state.busy) {
+    if (this.cacheDiscardTask) await this.cacheDiscardTask;
+    if (this.startupRecovery) await this.startupRecovery;
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.state.busy) {
       throw Object.assign(new Error('Eine andere Aktualisierung läuft bereits.'), {
         name: 'UpdateError',
         code: 'APP_UPDATE_BUSY',
       });
     }
     const requested = new Set(targets);
+    if (automaticRecovery && this.userPaused) return;
+    if (!automaticRecovery) this.userPaused = false;
     if (requested.has('core') || requested.has('bank')) {
       // Executable Core code is intentionally delivered only inside a verified,
       // versioned desktop release. A bank-only A/B updater can be added without changing
@@ -384,6 +580,7 @@ export class UpdateCoordinator extends EventEmitter {
         return;
       }
     }
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.cacheDiscardTask || this.state.busy) throw this.busyError();
     if (this.target('app').phase !== 'available') return;
 
     const latestVersion = this.target('app').latestVersion;
@@ -411,7 +608,13 @@ export class UpdateCoordinator extends EventEmitter {
       status: 'downloading',
     });
     if (this.manualPackageInstall) {
-      await this.downloadManualPackage(latestVersion, automaticRecovery);
+      const task = this.downloadManualPackage(latestVersion, automaticRecovery);
+      this.manualDownloadTask = task;
+      this.emitState();
+      try { await task; } finally {
+        if (this.manualDownloadTask === task) this.manualDownloadTask = undefined;
+        this.emitState();
+      }
       return;
     }
     this.verifiedInstallPackagePath = undefined;
@@ -562,8 +765,12 @@ export class UpdateCoordinator extends EventEmitter {
       sha512: asset.sha512,
       installMode: 'manual-package',
     };
+    this.manualDescriptor = descriptor;
     this.verifiedInstallPackagePath = undefined;
     this.verifiedInstallArtifact = undefined;
+    const controller = new AbortController();
+    this.manualDownloadAbort = controller;
+    this.downloadInterruption = undefined;
     this.activeOperation = 'downloading';
     this.setBusy(true);
     this.patchTarget('app', {
@@ -574,18 +781,26 @@ export class UpdateCoordinator extends EventEmitter {
     try {
       for (let attempt = 0; attempt < this.retryDelaysMs.length; attempt += 1) {
         const delay = this.retryDelaysMs[attempt] ?? 0;
-        if (delay > 0) await this.wait(delay);
         try {
+          if (delay > 0) await this.wait(delay, controller.signal);
+          controller.signal.throwIfAborted();
           if (attempt === 0 && !automaticRecovery) {
             // A visible user retry creates a fresh automatic-recovery budget
             // but keeps already persisted bytes available for safe reuse.
             await this.downloader.resetAutomaticRecovery();
           }
           const verified = await this.downloader.stage(descriptor, {
+            signal: controller.signal,
+            onVerifying: () => {
+              if (!controller.signal.aborted) this.patchTarget('app', {
+                phase: 'verifying', latestVersion: release.version,
+                message: 'Paketgröße und Prüfsummen werden sicher geprüft …',
+              });
+            },
             onProgress: ({ persistedBytes, totalBytes }) => {
               if (this.activeOperation !== 'downloading') return;
               this.patchTarget('app', {
-                phase: 'downloading',
+                phase: this.target('app').phase === 'verifying' ? 'verifying' : 'downloading',
                 progress: { completed: persistedBytes, total: totalBytes, unit: 'bytes' },
                 message: attempt > 0
                   ? `Download wird ab ${persistedBytes} Byte fortgesetzt (Versuch ${attempt + 1}/${this.retryDelaysMs.length}) …`
@@ -593,6 +808,7 @@ export class UpdateCoordinator extends EventEmitter {
               });
             },
           });
+          controller.signal.throwIfAborted();
           this.patchTarget('app', {
             phase: 'verifying',
             latestVersion: release.version,
@@ -617,6 +833,11 @@ export class UpdateCoordinator extends EventEmitter {
           });
           return;
         } catch (error) {
+          if (controller.signal.aborted && this.downloadInterruption) {
+            // User controls and shutdown are expected lifecycle transitions;
+            // their caller persists pause/discard after all file I/O settles.
+            return;
+          }
           const classified = classifyUpdateError(error, 'downloading');
           const pending = this.readPendingDownload();
           let recoveryBudgetExhausted = false;
@@ -674,13 +895,14 @@ export class UpdateCoordinator extends EventEmitter {
         }
       }
     } finally {
+      if (this.manualDownloadAbort === controller) this.manualDownloadAbort = undefined;
       if (this.activeOperation === 'downloading') this.activeOperation = 'idle';
       this.setBusy(false);
     }
   }
 
   async relaunchToApply(): Promise<void> {
-    if (this.state.busy || this.activeOperation !== 'idle') {
+    if (this.closing || this.maintenanceActive || this.downloadControlTask || this.cacheDiscardTask || this.state.busy || this.activeOperation !== 'idle') {
       throw Object.assign(new Error('Eine andere Aktualisierung läuft bereits.'), {
         name: 'UpdateError',
         code: 'APP_UPDATE_BUSY',
@@ -860,6 +1082,7 @@ export class UpdateCoordinator extends EventEmitter {
         throw publicUpdateError(appFailure);
       }
 
+      if (this.closing) return [];
       if (approvedRelease === undefined) {
         this.checkedRelease = undefined;
         this.clearPendingDownload();
@@ -876,6 +1099,7 @@ export class UpdateCoordinator extends EventEmitter {
       let appFailure: ClassifiedUpdateError | undefined;
       try {
         const appResult = await this.checkAppUpdaterWithRetry();
+        if (this.closing) return [];
         if (appResult === null) {
           throw Object.assign(new Error('electron-updater does not support this installed format'), {
             code: 'ERR_UPDATER_OLD_FILE_NOT_FOUND',
@@ -1331,7 +1555,7 @@ export class UpdateCoordinator extends EventEmitter {
         if (item.target !== target) return item;
         const next = { ...item, ...patch, target } as UpdateTargetState;
         if (patch.phase && patch.phase !== 'error') delete next.error;
-        if (patch.phase && patch.phase !== 'downloading') delete next.progress;
+        if (patch.phase && !['downloading', 'paused', 'verifying', 'error'].includes(patch.phase)) delete next.progress;
         if (patch.phase && patch.phase !== 'restart-required') delete next.installMode;
         if (options.clearProgress) delete next.progress;
         if (options.clearLatestVersion) delete next.latestVersion;
@@ -1364,8 +1588,14 @@ export class UpdateCoordinator extends EventEmitter {
   }
 
   private discardDownloadCache(): void {
-    void this.downloader?.discard().catch((error) => {
+    if (!this.downloader || this.cacheDiscardTask) return;
+    let tracked: Promise<void>;
+    tracked = this.downloader.discard().catch((error) => {
       this.logger.warn('Could not clear the desktop update download cache', error);
+    }).finally(() => {
+      if (this.cacheDiscardTask === tracked) this.cacheDiscardTask = undefined;
+      this.emitState();
     });
+    this.cacheDiscardTask = tracked;
   }
 }

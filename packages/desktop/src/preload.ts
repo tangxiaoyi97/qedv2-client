@@ -5,6 +5,10 @@ import type {
   CoreRuntimeStatus,
   CoreSourcePreference,
   DesktopRendererKind,
+  DesktopCleanupTarget,
+  DesktopCleanupResult,
+  DesktopStorageOverview,
+  DesktopSupportInfo,
   DesktopWindowTarget,
   PlatformPorts,
   ShellCommand,
@@ -41,6 +45,9 @@ let online =
     ? true
     : (globalThis.navigator as { onLine?: boolean }).onLine !== false;
 ipcRenderer.on(IPC.networkChange, (_event, value: boolean) => {
+  online = value;
+});
+ipcRenderer.on(IPC.networkResume, (_event, value: boolean) => {
   online = value;
 });
 
@@ -90,12 +97,19 @@ const ports: Partial<PlatformPorts> = {
           relaunchToApply: async () => {
             await ipcRenderer.invoke(IPC.updateRelaunch);
           },
+          pauseDownload: async () => { await ipcRenderer.invoke(IPC.updatePause); },
+          resumeDownload: async () => { await ipcRenderer.invoke(IPC.updateResume); },
+          cancelDownload: async () => { await ipcRenderer.invoke(IPC.updateCancel); },
         }
       : {}),
   },
   network: {
     isOnline: () => online,
     onChange: (callback) => subscribe<boolean>(IPC.networkChange, (value) => {
+      online = value;
+      callback(value);
+    }),
+    onResume: (callback) => subscribe<boolean>(IPC.networkResume, (value) => {
       online = value;
       callback(value);
     }),
@@ -107,6 +121,14 @@ const ports: Partial<PlatformPorts> = {
     openDesktopWindow: async (target: DesktopWindowTarget) => {
       await ipcRenderer.invoke(IPC.shellOpenWindow, target);
     },
+    desktopStorage: {
+      getOverview: async () =>
+        (await ipcRenderer.invoke(IPC.desktopStorageOverview)) as DesktopStorageOverview,
+      cleanup: async (targets: DesktopCleanupTarget[]) =>
+        (await ipcRenderer.invoke(IPC.desktopStorageCleanup, targets)) as DesktopCleanupResult,
+    },
+    getDesktopSupport: async () =>
+      (await ipcRenderer.invoke(IPC.desktopSupport)) as DesktopSupportInfo,
   },
 };
 

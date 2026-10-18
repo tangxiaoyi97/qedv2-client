@@ -230,17 +230,17 @@ function clearActiveState(state: GradingOrUnseen): void {
   pointer-events: none;
 }
 .q-dist__total {
-  font-size: 22px;
+  font-size: var(--q-font-title);
   font-weight: 850;
   line-height: 1;
 }
 .q-dist__total-label {
   margin-top: 3px;
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--q-eyebrow-size);
+  font-weight: var(--q-eyebrow-weight);
   color: var(--q-faint);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--q-eyebrow-tracking);
 }
 .q-dist__legend {
   list-style: none;
@@ -257,7 +257,7 @@ function clearActiveState(state: GradingOrUnseen): void {
   width: 100%;
   min-width: 0;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--q-radius-xs);
   background: none;
   color: inherit;
   font: inherit;
@@ -268,7 +268,7 @@ function clearActiveState(state: GradingOrUnseen): void {
 }
 @media (pointer: coarse) {
   .q-dist__item-button {
-    min-height: 40px;
+    min-height: var(--q-touch-target);
   }
 }
 .q-dist__item-button:not(:disabled):hover,
@@ -293,7 +293,7 @@ function clearActiveState(state: GradingOrUnseen): void {
   opacity: 0.55;
 }
 .q-dist__label {
-  font-size: 12px;
+  font-size: var(--q-font-small);
   color: var(--q-mut);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -301,7 +301,7 @@ function clearActiveState(state: GradingOrUnseen): void {
 }
 .q-dist__count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--q-font-small);
   font-weight: 700;
   color: var(--q-ink-2);
   font-variant-numeric: tabular-nums;
@@ -320,11 +320,11 @@ function clearActiveState(state: GradingOrUnseen): void {
   stroke-width: 15;
 }
 .q-dist--large .q-dist__total {
-  font-size: 30px;
+  font-size: var(--q-font-display);
 }
 .q-dist--large .q-dist__label,
 .q-dist--large .q-dist__count {
-  font-size: 13px;
+  font-size: var(--q-font-meta);
 }
 @media (max-width: 420px) {
   .q-dist {

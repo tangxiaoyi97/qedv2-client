@@ -504,12 +504,14 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--q-mut);
   cursor: pointer;
-  font: 600 var(--q-font-ui)/1.3 'Public Sans', system-ui, sans-serif;
+  font: 600 var(--q-font-ui)/1.3 var(--q-font-family);
   transition: background var(--q-transition-fast), color var(--q-transition-fast);
 }
 
-.leaderboard__segments button:not(.leaderboard__segment--active):hover {
-  color: var(--q-ink);
+@media (hover: hover) and (pointer: fine) {
+  .leaderboard__segments button:not(.leaderboard__segment--active):hover {
+    color: var(--q-ink);
+  }
 }
 
 .leaderboard__segments button:focus-visible {
@@ -801,7 +803,7 @@ onBeforeUnmount(() => {
 
   .leaderboard__columns span:first-child {
     overflow: hidden;
-    font-size: 10px;
+    font-size: var(--q-font-micro);
   }
 
   .leaderboard__columns span:nth-child(3) {

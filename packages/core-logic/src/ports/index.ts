@@ -228,6 +228,7 @@ export type UpdatePhase =
   | 'checking'
   | 'available'
   | 'downloading'
+  | 'paused'
   | 'verifying'
   | 'installing'
   | 'restart-required'
@@ -241,6 +242,8 @@ export interface UpdateTargetState {
   latestVersion?: string;
   /** How a verified app package is handed off on this platform. */
   installMode?: 'self' | 'manual-package';
+  /** Controls only advertised when the downloader can safely honor them. */
+  downloadControls?: { canPause: boolean; canResume: boolean; canCancel: boolean };
   progress?: OperationProgress;
   message?: string;
   error?: {
@@ -275,6 +278,12 @@ export interface UpdatePort {
   applyUpdates?(targets: Array<'core' | 'bank' | 'app'>): Promise<void>;
   /** Desktop: hand off a verified app update; self-installers relaunch QED2. */
   relaunchToApply?(): Promise<void>;
+  /** Desktop: preserve a durable checkpoint and suppress automatic recovery. */
+  pauseDownload?(): Promise<void>;
+  /** Desktop: revalidate the release before continuing a paused transfer. */
+  resumeDownload?(): Promise<void>;
+  /** Desktop: stop the transfer and discard its current update package. */
+  cancelDownload?(): Promise<void>;
 }
 
 /* ------------------------------------------------------------------ *
@@ -285,6 +294,8 @@ export interface NetworkPort {
   isOnline(): boolean;
   /** Subscribe to connectivity changes; returns an unsubscribe fn. */
   onChange(cb: (online: boolean) => void): () => void;
+  /** Native wake after network interfaces settle, even if connectivity did not change. */
+  onResume?(cb: (online: boolean) => void): () => void;
 }
 
 /* ------------------------------------------------------------------ *
@@ -307,6 +318,41 @@ export type DesktopWindowTarget = 'practice' | 'updates' | 'node';
 /** Stable renderer scope supplied by Electron; absent in Web/PWA. */
 export type DesktopRendererKind = 'main' | DesktopWindowTarget;
 
+export type DesktopCleanupTarget = 'cache' | 'downloads' | 'logs';
+
+export interface DesktopStorageOverview {
+  measuredAt: string;
+  disk: { totalBytes: number | null; availableBytes: number | null };
+  categories: Array<{
+    id: 'database' | DesktopCleanupTarget;
+    bytes: number | null;
+    cleanableBytes: number | null;
+    blockedReason?: 'download-active' | 'unavailable';
+  }>;
+}
+
+export interface DesktopCleanupResult {
+  overview: DesktopStorageOverview;
+  results: Array<{
+    target: DesktopCleanupTarget;
+    status: 'cleaned' | 'skipped' | 'failed';
+    freedBytes: number;
+    reason?: 'download-active' | 'unavailable' | 'unsafe-path' | 'io-error';
+  }>;
+}
+
+export interface DesktopStoragePort {
+  getOverview(): Promise<DesktopStorageOverview>;
+  /** Only regenerable caches, expired downloads and archived logs are eligible. */
+  cleanup(targets: DesktopCleanupTarget[]): Promise<DesktopCleanupResult>;
+}
+
+export interface DesktopSupportInfo {
+  platform: 'darwin' | 'win32' | 'linux' | 'other';
+  arch: string;
+  localCoreSupported: boolean;
+}
+
 export interface ShellPort {
   readonly capabilities: {
     desktop: boolean;
@@ -325,6 +371,8 @@ export interface ShellPort {
    * BrowserWindows; the main process maps each target to one fixed singleton.
    */
   openDesktopWindow?(target: DesktopWindowTarget): Promise<void>;
+  desktopStorage?: DesktopStoragePort;
+  getDesktopSupport?(): Promise<DesktopSupportInfo>;
 }
 
 /** Everything a platform shell must provide to boot core-logic. */

@@ -942,7 +942,7 @@ async function openChangelog(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-1);
-  border-radius: 6px;
+  border-radius: var(--q-radius-xs);
   padding: var(--q-space-2);
   background: var(--q-card);
   box-shadow: var(--q-shadow-card);
@@ -963,7 +963,7 @@ async function openChangelog(): Promise<void> {
   width: 30%;
   min-width: 22px;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--q-radius-xs);
   margin-top: auto;
   background: var(--q-accent-strong);
 }
@@ -1085,7 +1085,7 @@ async function openChangelog(): Promise<void> {
   text-align: right;
 }
 .settings__vver b {
-  font: 600 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
+  font: 600 var(--q-font-small)/1.5 var(--q-font-mono);
   font-variant-numeric: tabular-nums;
 }
 /* ---- Versionen detail modal ---- */
@@ -1134,7 +1134,7 @@ async function openChangelog(): Promise<void> {
 }
 .vdetail__dd {
   margin: 0;
-  font: 500 var(--q-font-small)/1.5 ui-monospace, Menlo, monospace;
+  font: 500 var(--q-font-small)/1.5 var(--q-font-mono);
   color: var(--q-ink);
   word-break: break-all;
   min-width: 0;

@@ -3,7 +3,7 @@ import { createApp, nextTick, type Component } from 'vue';
 import { createPinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PlatformPorts, ShellPort, UpdateSnapshot } from '@qed2/core-logic';
+import type { DesktopStorageOverview, PlatformPorts, ShellPort, UpdateSnapshot } from '@qed2/core-logic';
 import DesktopSettings from '../src/routes/settings/DesktopSettings.vue';
 import desktopSettingsSource from '../src/routes/settings/DesktopSettings.vue?raw';
 import { ports } from '../src/services.js';
@@ -497,4 +497,229 @@ describe('capability-gated desktop settings', () => {
     expect(mounted.host.querySelector('[data-desktop-window-target]')).toBeNull();
     mounted.unmount();
   });
+
+  it('does not replace streamed progress with an older pending status read', async () => {
+    let finishRead!: (state: UpdateSnapshot) => void;
+    let emit!: (state: UpdateSnapshot) => void;
+    useDesktopPorts({
+      capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1',
+      getState: () => new Promise((resolve) => { finishRead = resolve; }),
+      onChange: (listener) => { emit = listener; return () => undefined; },
+      applyUpdates: vi.fn(async () => undefined),
+    });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    emit({ busy: true, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'downloading', progress: { completed: 60, total: 100, unit: 'percent' } }] });
+    finishRead({ busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'available' }] });
+    await settle();
+    expect(mounted.host.querySelector('progress')?.getAttribute('value')).toBe('60');
+    expect(mounted.host.textContent).toContain('Wird heruntergeladen');
+    expect(mounted.host.textContent).not.toContain('QED2 Desktop herunterladen');
+    mounted.unmount();
+  });
+
+  it('keeps pause available during a busy download, prevents duplicate commands and preserves progress', async () => {
+    let current: UpdateSnapshot = { busy: true, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'downloading', progress: { completed: 512, total: 1024, unit: 'bytes' }, downloadControls: { canPause: true, canResume: false, canCancel: true } }] };
+    let emit!: (state: UpdateSnapshot) => void;
+    let finishPause!: () => void;
+    const pauseDownload = vi.fn(() => new Promise<void>((resolve) => { finishPause = resolve; }));
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1', getState: async () => current,
+      onChange: (listener) => { emit = listener; return () => undefined; }, pauseDownload,
+      resumeDownload: vi.fn(async () => undefined), cancelDownload: vi.fn(async () => undefined) });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    const pause = mounted.host.querySelector<HTMLButtonElement>('[data-download-control="pause"]')!;
+    expect(pause.disabled).toBe(false);
+    expect(mounted.host.querySelector('progress')?.getAttribute('aria-valuetext')).toContain('50 %');
+    pause.click(); pause.click(); await settle();
+    expect(pauseDownload).toHaveBeenCalledTimes(1);
+    expect(pause.disabled).toBe(true);
+    current = { busy: false, targets: [{ ...current.targets[0]!, phase: 'paused', downloadControls: { canPause: false, canResume: true, canCancel: true } }] };
+    emit(current); finishPause(); await settle();
+    expect(mounted.host.textContent).toContain('Download pausiert');
+    expect(mounted.host.querySelector('progress')?.getAttribute('value')).toBe('512');
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-download-control="resume"]')?.disabled).toBe(false);
+    expect(mounted.host.querySelector('[role="alert"]')).toBeNull();
+    setUiLocale('en'); await nextTick();
+    expect(mounted.host.textContent).toContain('Download paused');
+    expect(mounted.host.textContent).toContain('Resume download');
+    mounted.unmount();
+  });
+
+  it('allows a resumed long-running download to be paused without an older promise unlocking the new command', async () => {
+    let current: UpdateSnapshot = { busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'paused', downloadControls: { canPause: false, canResume: true, canCancel: true } }] };
+    let emit!: (state: UpdateSnapshot) => void;
+    let finishResume!: () => void;
+    let finishPause!: () => void;
+    const resumeDownload = vi.fn(() => new Promise<void>((resolve) => { finishResume = resolve; }));
+    const pauseDownload = vi.fn(() => new Promise<void>((resolve) => { finishPause = resolve; }));
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1', getState: async () => current,
+      onChange: (listener) => { emit = listener; return () => undefined; }, resumeDownload, pauseDownload });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    mounted.host.querySelector<HTMLButtonElement>('[data-download-control="resume"]')!.click(); await settle();
+    current = { busy: true, targets: [{ ...current.targets[0]!, phase: 'downloading', downloadControls: { canPause: true, canResume: false, canCancel: true } }] };
+    emit(current); await settle();
+    const pause = mounted.host.querySelector<HTMLButtonElement>('[data-download-control="pause"]')!;
+    expect(pause.disabled).toBe(false); pause.click(); await settle();
+    finishResume(); await settle();
+    expect(pause.disabled).toBe(true);
+    expect(pauseDownload).toHaveBeenCalledTimes(1);
+    current = { busy: false, targets: [{ ...current.targets[0]!, phase: 'paused', downloadControls: { canPause: false, canResume: true, canCancel: true } }] };
+    emit(current); finishPause(); await settle();
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-download-control="resume"]')?.disabled).toBe(false);
+    mounted.unmount();
+  });
+
+  it('requires an explicit discard confirmation and restores keyboard focus on Escape', async () => {
+    let current: UpdateSnapshot = { busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'paused', downloadControls: { canPause: false, canResume: true, canCancel: true } }] };
+    const cancelDownload = vi.fn(async () => { current = { busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'available' }] }; });
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1', getState: async () => current, cancelDownload });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    mounted.host.querySelector<HTMLButtonElement>('[data-download-control="cancel"]')!.click(); await settle();
+    expect(cancelDownload).not.toHaveBeenCalled();
+    expect(document.activeElement?.id).toBe('discard-download-title');
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+    expect(document.activeElement).toBe(mounted.host.querySelector('[data-download-control="cancel"]'));
+    mounted.host.querySelector<HTMLButtonElement>('[data-download-control="cancel"]')!.click(); await settle();
+    mounted.host.querySelector<HTMLButtonElement>('[data-download-control="confirm-cancel"]')!.click(); await settle();
+    expect(cancelDownload).toHaveBeenCalledTimes(1);
+    expect(mounted.host.textContent).toContain('Download verworfen.');
+    mounted.unmount();
+  });
+
+  it('keeps malformed or unknown progress indeterminate without NaN labels', async () => {
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1', getState: async () => ({ busy: true, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'downloading', progress: { completed: NaN, total: Infinity, unit: 'bytes' } }] }) });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    expect(mounted.host.querySelector('progress')?.hasAttribute('value')).toBe(false);
+    expect(mounted.host.textContent).toContain('0 B geladen');
+    expect(mounted.host.textContent).not.toMatch(/NaN|Infinity/);
+    expect(mounted.host.querySelector('[data-download-control]')).toBeNull();
+    mounted.unmount();
+  });
+
+  it('shows device and storage facts, confirms only selected safe categories and preserves keyboard recovery', async () => {
+    setUiLocale('en');
+    const overview: DesktopStorageOverview = { measuredAt: '2026-10-10T00:00:00Z', disk: { totalBytes: 1024 ** 4, availableBytes: 8 * 1024 ** 3 }, categories: [
+      { id: 'database', bytes: 1024 ** 2, cleanableBytes: 0 },
+      { id: 'cache', bytes: 2 * 1024 ** 2, cleanableBytes: 1024 ** 2 },
+      { id: 'downloads', bytes: 5 * 1024 ** 2, cleanableBytes: 0, blockedReason: 'download-active' },
+      { id: 'logs', bytes: null, cleanableBytes: null, blockedReason: 'unavailable' },
+    ] };
+    let finishCleanup!: (result: Awaited<ReturnType<NonNullable<ShellPort['desktopStorage']>['cleanup']>>) => void;
+    const cleanup = vi.fn(() => new Promise<Awaited<ReturnType<NonNullable<ShellPort['desktopStorage']>['cleanup']>>>((resolve) => { finishCleanup = resolve; }));
+    useDesktopPorts({ capabilities: { selfUpdate: false }, getAppVersion: () => '2.5.1' });
+    ports.shell.desktopStorage = { getOverview: vi.fn(async () => overview), cleanup };
+    ports.shell.getDesktopSupport = vi.fn(async () => ({ platform: 'darwin' as const, arch: 'arm64', localCoreSupported: true }));
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=node');
+    await settle();
+    expect(mounted.host.querySelector('[data-desktop-storage]')?.getAttribute('data-state')).toBe('ready');
+    expect(mounted.host.textContent).toContain('macOS · Apple Silicon');
+    expect(mounted.host.textContent).toContain('8 GB');
+    expect(mounted.host.textContent).toContain('Accounts, learning progress, backups, and active or paused downloads will be kept.');
+    expect(mounted.host.querySelector('[data-storage-category="database"] input')).toBeNull();
+    expect(mounted.host.querySelector<HTMLInputElement>('[data-storage-category="downloads"] input')?.disabled).toBe(true);
+    expect(mounted.host.querySelector<HTMLInputElement>('[data-storage-category="logs"] input')?.disabled).toBe(true);
+    mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')!.click(); await settle();
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(document.activeElement?.id).toBe('storage-cleanup-title');
+    expect(mounted.host.textContent).toContain('Selected: Cache');
+    document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle();
+    expect(document.activeElement).toBe(mounted.host.querySelector('[data-storage-cleanup]'));
+    mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')!.click(); await settle();
+    const confirm = mounted.host.querySelector<HTMLButtonElement>('[data-storage-confirm]')!;
+    confirm.click(); confirm.click(); await settle();
+    expect(cleanup).toHaveBeenCalledExactlyOnceWith(['cache']);
+    expect(confirm.disabled).toBe(true);
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-storage-refresh]')?.disabled).toBe(true);
+    finishCleanup({ overview: { ...overview, categories: overview.categories.map((item) => item.id === 'cache' ? { ...item, cleanableBytes: 0 } : item) }, results: [{ target: 'cache', status: 'cleaned', freedBytes: 1024 ** 2 }] }); await settle();
+    expect(mounted.host.textContent).toContain('Freed 1 MB.');
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')?.disabled).toBe(true);
+    expect(document.activeElement).toBe(mounted.host.querySelector('[data-storage-refresh]'));
+    setUiLocale('de'); await nextTick();
+    expect(mounted.host.textContent).toContain('Auf diesem Gerät');
+    expect(mounted.host.textContent).toContain('1 MB freigegeben.');
+    mounted.unmount();
+  });
+
+  it('reports unavailable storage without treating unknown capacity as zero and supports a bounded refresh retry', async () => {
+    useDesktopPorts({ capabilities: { selfUpdate: false }, getAppVersion: () => '2.5.1' });
+    const getOverview = vi.fn<NonNullable<ShellPort['desktopStorage']>['getOverview']>()
+      .mockRejectedValueOnce(new Error('/private/user-profile must not reach the UI'))
+      .mockResolvedValue({ measuredAt: 'invalid', disk: { totalBytes: null, availableBytes: null }, categories: [{ id: 'cache', bytes: null, cleanableBytes: null, blockedReason: 'unavailable' }] });
+    ports.shell.desktopStorage = { getOverview, cleanup: vi.fn() };
+    ports.shell.getDesktopSupport = vi.fn(async () => ({ platform: 'other' as const, arch: 'unknown', localCoreSupported: false }));
+    ports.coreRuntime = { ...originalCoreRuntime, selectSource: vi.fn(), recover: vi.fn() };
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=node'); await settle();
+    expect(mounted.host.textContent).toContain('Speicherplatz konnte nicht ermittelt');
+    expect(mounted.host.textContent).not.toContain('/private/user-profile');
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-source="local"]')?.disabled).toBe(true);
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-source="remote"]')?.disabled).toBe(false);
+    mounted.host.querySelector<HTMLButtonElement>('[data-storage-refresh]')!.click(); await settle(); await settle();
+    expect(getOverview).toHaveBeenCalledTimes(2);
+    expect(mounted.host.querySelector('[data-desktop-storage]')?.getAttribute('data-state')).toBe('ready');
+    expect(mounted.host.textContent).toContain('Nicht verfügbar');
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')?.disabled).toBe(true);
+    expect(mounted.host.textContent).not.toContain('Invalid Date');
+    mounted.unmount();
+  });
+
+  it('does not read native maintenance capabilities in Web/PWA sessions or an update-only window', async () => {
+    const getOverview = vi.fn(); const getDesktopSupport = vi.fn();
+    ports.shell = { ...originalShell, getDesktopSupport, desktopStorage: { getOverview, cleanup: vi.fn() } };
+    const web = await mountDynamic(DesktopSettings, '/settings');
+    expect(web.host.textContent?.trim()).toBe(''); expect(getOverview).not.toHaveBeenCalled(); expect(getDesktopSupport).not.toHaveBeenCalled(); web.unmount();
+    useDesktopPorts({ capabilities: { selfUpdate: false }, getAppVersion: () => '2.5.1' });
+    ports.shell.getDesktopSupport = getDesktopSupport; ports.shell.desktopStorage = { getOverview, cleanup: vi.fn() };
+    const updates = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    expect(updates.host.querySelector('[data-desktop-storage]')).toBeNull(); expect(getOverview).not.toHaveBeenCalled(); expect(getDesktopSupport).not.toHaveBeenCalled(); updates.unmount();
+  });
+
+
+  it('releases the action after a successful manual package handoff keeps the app open', async () => {
+    const relaunchToApply = vi.fn(async () => undefined);
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1',
+      getState: async () => ({ busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'restart-required', installMode: 'manual-package' }] }), relaunchToApply });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    const reveal = [...mounted.host.querySelectorAll('button')].find((button) => button.textContent?.includes('Paket anzeigen'))!;
+    reveal.click(); await settle();
+    expect(relaunchToApply).toHaveBeenCalledTimes(1);
+    expect(reveal.disabled).toBe(false);
+    expect(reveal.textContent).toContain('Paket anzeigen');
+    mounted.unmount();
+  });
+
+  it('keeps cleanup failures private and requires refreshed facts before retrying', async () => {
+    const overview: DesktopStorageOverview = { measuredAt: '2026-10-10T00:00:00Z', disk: { totalBytes: 1024, availableBytes: 0 }, categories: [{ id: 'logs', bytes: 512, cleanableBytes: 256 }] };
+    const cleanup = vi.fn<NonNullable<ShellPort['desktopStorage']>['cleanup']>()
+      .mockRejectedValueOnce(new Error('/private/profile/logs: EACCES'))
+      .mockResolvedValue({ overview, results: [{ target: 'logs', status: 'skipped', freedBytes: 0, reason: 'download-active' }] });
+    useDesktopPorts({ capabilities: { selfUpdate: false }, getAppVersion: () => '2.5.1' });
+    ports.shell.desktopStorage = { getOverview: async () => overview, cleanup };
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=node'); await settle();
+    const open = () => mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')!.click();
+    open(); await settle(); mounted.host.querySelector<HTMLButtonElement>('[data-storage-confirm]')!.click(); await settle();
+    expect(mounted.host.textContent).toContain('Bereinigung konnte nicht abgeschlossen');
+    expect(mounted.host.textContent).not.toContain('/private/profile');
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-storage-cleanup]')?.disabled).toBe(true);
+    mounted.host.querySelector<HTMLButtonElement>('[data-storage-refresh]')!.click(); await settle(); await settle();
+    open(); await settle(); mounted.host.querySelector<HTMLButtonElement>('[data-storage-confirm]')!.click(); await settle();
+    expect(mounted.host.textContent).toContain('0 B freigegeben.');
+    expect(mounted.host.textContent).toContain('Ein Download ist aktiv. Seine Dateien wurden beibehalten.');
+    expect(mounted.host.textContent).not.toContain('Bereinigung konnte nicht abgeschlossen');
+    mounted.unmount();
+  });
+
+
+  it('disables a redundant update check while a saved download is paused', async () => {
+    const checkForUpdates = vi.fn(async () => []);
+    useDesktopPorts({ capabilities: { selfUpdate: true }, getAppVersion: () => '2.5.1', checkForUpdates,
+      getState: async () => ({ busy: false, targets: [{ target: 'app', currentVersion: '2.5.1', phase: 'paused', downloadControls: { canPause: false, canResume: true, canCancel: true } }] }),
+      resumeDownload: vi.fn(async () => undefined) });
+    const mounted = await mountDynamic(DesktopSettings, '/settings?desktopWindow=updates');
+    const check = mounted.host.querySelector<HTMLButtonElement>('[data-update-check]')!;
+    expect(check.disabled).toBe(true); check.click(); await settle();
+    expect(checkForUpdates).not.toHaveBeenCalled();
+    expect(mounted.host.querySelector<HTMLButtonElement>('[data-download-control="resume"]')?.disabled).toBe(false);
+    expect(mounted.host.textContent).not.toContain('Nicht alle Komponenten');
+    mounted.unmount();
+  });
+
 });

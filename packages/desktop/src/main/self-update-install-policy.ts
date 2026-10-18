@@ -9,6 +9,7 @@ export interface SelfUpdateAvailability {
   reason:
     | 'ready'
     | 'development'
+    | 'preview-manual'
     | 'unsigned-manual'
     | 'configuration-missing'
     | 'configuration-invalid'
@@ -278,6 +279,9 @@ export function selectManualReleaseAsset(
 }
 
 export function selfUpdateUnavailableMessage(reason: SelfUpdateAvailability['reason']): string {
+  if (reason === 'preview-manual') {
+    return 'QED2 Preview wird über neue Testpakete aktualisiert. Automatische Release-Updates sind deaktiviert.';
+  }
   return reason === 'development'
     ? 'Lokaler Entwicklungsbuild – Desktop-Aktualisierungen sind deaktiviert.'
     : 'Lokaler Test-Build – Desktop-Aktualisierungen sind nur in regulär installierten Release-Builds verfügbar.';

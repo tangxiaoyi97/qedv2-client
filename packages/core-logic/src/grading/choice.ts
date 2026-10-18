@@ -5,15 +5,17 @@
  * `correctCount` (perBlank/tiered count correctly SELECTED options only).
  */
 import type { ChoiceAnswer, Scoring } from '../model/question.js';
-import type { BreakdownItem, ChoiceSubmission, GradeResult } from './types.js';
-import { applyScoring, resolveVerdict } from './scoring.js';
+import type { BreakdownItem, ChoiceSubmission, GradeOutcome } from './types.js';
+import { applyScoring, resolveVerdict, rubricAssessmentRequired } from './scoring.js';
 
 export function gradeChoice(
   answer: ChoiceAnswer,
   submission: ChoiceSubmission,
   scoring: Scoring | undefined,
   points: number | undefined,
-): GradeResult {
+): GradeOutcome {
+  const assessment = rubricAssessmentRequired(scoring);
+  if (assessment) return assessment;
   const correctSet = new Set(answer.correct);
   const selectedSet = new Set(submission.selected);
 
